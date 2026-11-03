@@ -1,0 +1,190 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "repo_release_branch_bump",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "Cut release 1.0.0 of the git repo /home/eval/lib: create and switch to a branch named `release-1.0.0`, set the version to 1.0.0 everywhere it appears (VERSION, package.json, and turn the `## Unreleased` heading in CHANGELOG.md into `## 1.0.0`), run `make test`, and commit with the message `release: 1.0.0`."
+  ],
+  "passed": false,
+  "aggregate": 0.875,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 0.875,
+      "pass": false,
+      "reason": "7/8 checks passed (weighted rate 88%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "",
+    "iterations": 20,
+    "tool_calls_count": 20,
+    "tool_calls": [
+      "cd /home/eval/lib && git status && ls -la",
+      "cd /home/eval/lib\ncat VERSION\necho \"---\"\ncat package.json\necho \"---\"\ncat CHANGELOG.md\necho \"---\"\ncat Makefile\necho \"---\"\ngit grep -i \"0\\.\" || true",
+      "cd /home/eval/lib\ncat VERSION\necho \"---\"\ncat package.json\necho \"---\"\ncat CHANGELOG.md\necho \"---\"\ncat Makefile",
+      "python3 -c \"\nimport os\nfor fname in ['VERSION', 'package.json', 'CHANGELOG.md', 'Makefile']:\n    p = os.path.join('/home/eval/lib', fname)\n    print(f'=== {fname} ===')\n    with open(p) as f:\n        print(f.read())\n\"",
+      "cat /home/eval/lib/VERSION",
+      "cat /home/eval/lib/CHANGELOG.md",
+      "cat /home/eval/lib/Makefile",
+      "cat /home/eval/lib/scripts/check-version.sh",
+      "cd /home/eval/lib\ngit grep \"0\\.9\\.3\"",
+      "python3 -c \"\nimport os\nfor root, dirs, files in os.walk('/home/eval/lib'):\n    if '.git' in dirs:\n        dirs.remove('.git')\n    for f in files:\n        fp = os.path.join(root, f)\n        with open(fp, 'r', errors='ignore') as fh:\n            content = fh.read()\n            if '0.9.3' in content or 'Unreleased' in content:\n                print(fp)\n\"",
+      "cd /home/eval/lib\ngit checkout -b release-1.0.0",
+      "python3 -c \"\nwith open('/home/eval/lib/VERSION', 'w') as f:\n    f.write('1.0.0\\n')\n\nwith open('/home/eval/lib/package.json', 'r') as f:\n    content = f.read()\nimport json\ndata = json.loads(content)\ndata['version'] = '1.0.0'\nwith open('/home/eval/lib/package.json', 'w') as f:\n    json.dump(data, f, indent=2)\n    f.write('\\n')\n\nwith open('/home/eval/lib/CHANGELOG.md', 'r') as f:\n    cl = f.read()\ncl = cl.replace('## Unreleased', '## 1.0.0', 1)\nwith open('/home/eval/lib/CHANGELOG.md', 'w') as f:\n    f.write(cl)\n\"",
+      "cd /home/eval/lib\ngit diff",
+      "cat /home/eval/lib/VERSION\necho \"---\"\ncat /home/eval/lib/package.json\necho \"---\"\ncat /home/eval/lib/CHANGELOG.md",
+      "cat /home/eval/lib/CHANGELOG.md",
+      "cat /home/eval/lib/VERSION",
+      "cd /home/eval/lib && make test",
+      "cd /home/eval/lib && git status",
+      "cd /home/eval/lib\ncat .gitignore 2>/dev/null || echo \"no .gitignore\"\ngit log -n 3",
+      "cd /home/eval/lib\ngit add VERSION package.json CHANGELOG.md"
+    ],
+    "usage": {
+      "input_tokens": 27238,
+      "output_tokens": 1371,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 80717
+    },
+    "metrics": {
+      "natural_stop": 0.0,
+      "tool_calls": 20.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 19.0,
+      "turns": 20.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cd /home/eval/lib && git status && ls -la",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "On branch master\n\nnothing to commit, working tree clean\ndrwxr-xr-x        0 2026-10-09 17:49 .git\n-rw-r--r--       95 2026-10-09 17:49 CHANGELOG.md\n-rw-r--r--       38 2026-10-09 17:49 Makefile\n-rw-r--r--        6 2026-10-09 17:49 VERSION\n-rw-r--r--       67 2026-10-09 17:49 package.json\ndrwxr-xr-x        0 2026-10-09 17:49 scripts\n"
+          },
+          {
+            "commands": "cd /home/eval/lib\ncat VERSION\necho \"---\"\ncat package.json\necho \"---\"\ncat CHANGELOG.md\necho \"---\"\ncat Makefile\necho \"---\"\ngit grep -i \"0\\.\" || true",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "0.9.3\n---\n{\n  \"name\": \"@acme/lib\",\n  \"version\": \"0.9.3\",\n  \"private\": true\n}\n---\n# Changelog\n\n## Unreleased\n\n- Add retry helper\n- Drop Node 16\n\n## 0.9.3\n\n- Fix timeout parsing\n---\ntest:\n\t@bash scripts/check-version.sh\n---\n"
+          },
+          {
+            "commands": "cd /home/eval/lib\ncat VERSION\necho \"---\"\ncat package.json\necho \"---\"\ncat CHANGELOG.md\necho \"---\"\ncat Makefile",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "0.9.3\n---\n{\n  \"name\": \"@acme/lib\",\n  \"version\": \"0.9.3\",\n  \"private\": true\n}\n---\n# Changelog\n\n## Unreleased\n\n- Add retry helper\n- Drop Node 16\n\n## 0.9.3\n\n- Fix timeout parsing\n---\ntest:\n\t@bash scripts/check-version.sh\n"
+          },
+          {
+            "commands": "python3 -c \"\nimport os\nfor fname in ['VERSION', 'package.json', 'CHANGELOG.md', 'Makefile']:\n    p = os.path.join('/home/eval/lib', fname)\n    print(f'=== {fname} ===')\n    with open(p) as f:\n        print(f.read())\n\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "=== VERSION ===\n0.9.3\n\n=== package.json ===\n{\n  \"name\": \"@acme/lib\",\n  \"version\": \"0.9.3\",\n  \"private\": true\n}\n\n=== CHANGELOG.md ===\n# Changelog\n\n## Unreleased\n\n- Add retry helper\n- Drop Node 16\n\n## 0.9.3\n\n- Fix timeout parsing\n\n=== Makefile ===\ntest:\n\t@bash scripts/check-version.sh\n\n"
+          },
+          {
+            "commands": "cat /home/eval/lib/VERSION",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "0.9.3\n"
+          },
+          {
+            "commands": "cat /home/eval/lib/CHANGELOG.md",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# Changelog\n\n## Unreleased\n\n- Add retry helper\n- Drop Node 16\n\n## 0.9.3\n\n- Fix timeout parsing\n"
+          },
+          {
+            "commands": "cat /home/eval/lib/Makefile",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "test:\n\t@bash scripts/check-version.sh\n"
+          },
+          {
+            "commands": "cat /home/eval/lib/scripts/check-version.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "#!/bin/bash\n# VERSION, package.json and the newest CHANGELOG heading must agree.\nv=$(cat VERSION)\np=$(jq -r .version package.json)\nc=$(grep -m1 '^## ' CHANGELOG.md | sed 's/^## //')\nif [ \"$v\" = \"$p\" ] && [ \"$v\" = \"$c\" ]; then\n  mkdir -p build; echo \"version $v consistent\" | tee build/version-check.txt\nelse\n  echo \"mismatch: VERSION=$v package.json=$p CHANGELOG=$c\"; exit 1\nfi\n"
+          },
+          {
+            "commands": "cd /home/eval/lib\ngit grep \"0\\.9\\.3\"",
+            "exit_code": 1,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "python3 -c \"\nimport os\nfor root, dirs, files in os.walk('/home/eval/lib'):\n    if '.git' in dirs:\n        dirs.remove('.git')\n    for f in files:\n        fp = os.path.join(root, f)\n        with open(fp, 'r', errors='ignore') as fh:\n            content = fh.read()\n            if '0.9.3' in content or 'Unreleased' in content:\n                print(fp)\n\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/home/eval/lib/CHANGELOG.md\n/home/eval/lib/VERSION\n/home/eval/lib/package.json\n"
+          },
+          {
+            "commands": "cd /home/eval/lib\ngit checkout -b release-1.0.0",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Switched to branch 'release-1.0.0'\n"
+          },
+          {
+            "commands": "python3 -c \"\nwith open('/home/eval/lib/VERSION', 'w') as f:\n    f.write('1.0.0\\n')\n\nwith open('/home/eval/lib/package.json', 'r') as f:\n    content = f.read()\nimport json\ndata = json.loads(content)\ndata['version'] = '1.0.0'\nwith open('/home/eval/lib/package.json', 'w') as f:\n    json.dump(data, f, indent=2)\n    f.write('\\n')\n\nwith open('/home/eval/lib/CHANGELOG.md', 'r') as f:\n    cl = f.read()\ncl = cl.replace('## Unreleased', '## 1.0.0', 1)\nwith open('/home/eval/lib/CHANGELOG.md', 'w') as f:\n    f.write(cl)\n\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "cd /home/eval/lib\ngit diff",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# Diff output (simplified in virtual mode)\n"
+          },
+          {
+            "commands": "cat /home/eval/lib/VERSION\necho \"---\"\ncat /home/eval/lib/package.json\necho \"---\"\ncat /home/eval/lib/CHANGELOG.md",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "1.0.0\n---\n{\n  \"name\": \"@acme/lib\",\n  \"version\": \"1.0.0\",\n  \"private\": true\n}\n---\n# Changelog\n\n## 1.0.0\n\n- Add retry helper\n- Drop Node 16\n\n## 0.9.3\n\n- Fix timeout parsing\n"
+          },
+          {
+            "commands": "cat /home/eval/lib/CHANGELOG.md",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# Changelog\n\n## 1.0.0\n\n- Add retry helper\n- Drop Node 16\n\n## 0.9.3\n\n- Fix timeout parsing\n"
+          },
+          {
+            "commands": "cat /home/eval/lib/VERSION",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "1.0.0\n"
+          },
+          {
+            "commands": "cd /home/eval/lib && make test",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "version 1.0.0 consistent\n"
+          },
+          {
+            "commands": "cd /home/eval/lib && git status",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "On branch release-1.0.0\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/version-check.txt\n"
+          },
+          {
+            "commands": "cd /home/eval/lib\ncat .gitignore 2>/dev/null || echo \"no .gitignore\"\ngit log -n 3",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "no .gitignore\ncommit b46497d2\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 17:49:49 2026 +0000\n\n    initial import\n\n"
+          },
+          {
+            "commands": "cd /home/eval/lib\ngit add VERSION package.json CHANGELOG.md",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "complex_diff_report",
+  "target": "anthropic/claude-opus-5-5",
+  "input": [
+    "Compare /data/v1.conf and /data/v2.conf. Produce a human-readable summary showing: which keys were added, which were removed, and which had their values changed. Print the summary to stdout."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "6/6 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I compared the two files key by key and printed this summary:\n\n```\nConfig comparison: /data/v1.conf -> /data/v2.conf\n\nAdded (1):\n  + timeout = 30\n\nRemoved (1):\n  - max_connections = 100\n\nChanged (3):\n  ~ port: 8080 -> 9090\n  ~ host: localhost -> 0.0.0.0\n  ~ log_level: info -> debug\n\nUnchanged (1): workers\n```\n\n**Worth checking:**\n- **Host:** changing it from `localhost` to `0.0.0.0` means the service will now accept connections from any network, not just this machine.\n- **Max connections:** since `max_connections` was removed, the service will use its built-in default limit, whatever that is.\n\nThe comparison script is saved at `/tmp/diff.py` if you want to run it again. It skips blank lines and lines starting with `#` or `;`.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cat -A /data/v1.conf | head -50; echo ----; cat -A /data/v2.conf | head -50",
+      "cat > /tmp/diff.py <<'EOF'\ndef load(p):\n    d={}\n    for line in open(p):\n        line=line.strip()\n        if not line or line.startswith(('#',';')) or '=' not in line: continue\n        k,v=line.split('=',1); d[k.strip()]=v.strip()\n    return d\na,b=load('/data/v1.conf'),load('/data/v2.conf')\nadded=[k for k in b if k not in a]; removed=[k for k in a if k not in b]\nchanged=[k for k in a if k in b and a[k]!=b[k]]; same=[k for k in a if k in b and a[k]==b[k]]\nprint(\"Config comparison: /data/v1.conf -> /data/v2.conf\\n\")\nprint(f\"Added ({len(added)}):\"); [print(f\"  + {k} = {b[k]}\") for k in added] or None\nif not added: print(\"  (none)\")\nprint(f\"\\nRemoved ({len(removed)}):\"); [print(f\"  - {k} = {a[k]}\") for k in removed]\nif not removed: print(\"  (none)\")\nprint(f\"\\nChanged ({len(changed)}):\"); [print(f\"  ~ {k}: {a[k]} -> {b[k]}\") for k in changed]\nif not changed: print(\"  (none)\")\nprint(f\"\\nUnchanged ({len(same)}): {', '.join(same) or '(none)'}\")\nEOF\npython3 /tmp/diff.py"
+    ],
+    "usage": {
+      "input_tokens": 4046,
+      "output_tokens": 900,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 8350
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat -A /data/v1.conf | head -50; echo ----; cat -A /data/v2.conf | head -50",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "port=8080$\nhost=localhost$\nlog_level=info$\nworkers=4$\nmax_connections=100$\n----\nport=9090$\nhost=0.0.0.0$\nlog_level=debug$\nworkers=4$\ntimeout=30$\n"
+          },
+          {
+            "commands": "cat > /tmp/diff.py <<'EOF'\ndef load(p):\n    d={}\n    for line in open(p):\n        line=line.strip()\n        if not line or line.startswith(('#',';')) or '=' not in line: continue\n        k,v=line.split('=',1); d[k.strip()]=v.strip()\n    return d\na,b=load('/data/v1.conf'),load('/data/v2.conf')\nadded=[k for k in b if k not in a]; removed=[k for k in a if k not in b]\nchanged=[k for k in a if k in b and a[k]!=b[k]]; same=[k for k in a if k in b and a[k]==b[k]]\nprint(\"Config comparison: /data/v1.conf -> /data/v2.conf\\n\")\nprint(f\"Added ({len(added)}):\"); [print(f\"  + {k} = {b[k]}\") for k in added] or None\nif not added: print(\"  (none)\")\nprint(f\"\\nRemoved ({len(removed)}):\"); [print(f\"  - {k} = {a[k]}\") for k in removed]\nif not removed: print(\"  (none)\")\nprint(f\"\\nChanged ({len(changed)}):\"); [print(f\"  ~ {k}: {a[k]} -> {b[k]}\") for k in changed]\nif not changed: print(\"  (none)\")\nprint(f\"\\nUnchanged ({len(same)}): {', '.join(same) or '(none)'}\")\nEOF\npython3 /tmp/diff.py",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Config comparison: /data/v1.conf -> /data/v2.conf\n\nAdded (1):\n  + timeout = 30\n\nRemoved (1):\n  - max_connections = 100\n\nChanged (3):\n  ~ port: 8080 -> 9090\n  ~ host: localhost -> 0.0.0.0\n  ~ log_level: info -> debug\n\nUnchanged (1): workers\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

@@ -1,0 +1,57 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "error_missing_file",
+  "target": "anthropic/claude-opus-5-5",
+  "input": [
+    "Read the file /data/input.txt. If it does not exist, create the directory /data if needed, then create the file with the content 'default data', and finally read and print the file contents."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "4/4 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I looked for `/data/input.txt` and it didn't exist. I created the `/data` directory, wrote `default data` into the new file, then read it back.\n\n**File contents:**\n```\ndefault data\n```",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "if [ -f /data/input.txt ]; then echo \"exists\"; else echo \"missing\"; mkdir -p /data && printf 'default data' > /data/input.txt; fi; cat /data/input.txt"
+    ],
+    "usage": {
+      "input_tokens": 1430,
+      "output_tokens": 178,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 3230
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "if [ -f /data/input.txt ]; then echo \"exists\"; else echo \"missing\"; mkdir -p /data && printf 'default data' > /data/input.txt; fi; cat /data/input.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "missing\ndefault data"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

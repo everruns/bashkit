@@ -1,0 +1,63 @@
+{
+  "eval": "bashkit_generate",
+  "sample": "gen_log_rotate",
+  "target": "anthropic/claude-opus-5-5",
+  "input": [
+    "Write a bash script that rotates numbered log files.\n\nStarting files in /home/eval/logs (nothing else is in that directory):\n--- /home/eval/logs/app.log ---\nline c\n--- end ---\n--- /home/eval/logs/app.log.1 ---\nline b\n--- end ---\n--- /home/eval/logs/app.log.2 ---\nline a\n--- end ---\n--- /home/eval/logs/app.log.3 ---\nline 0\n--- end ---\n--- /home/eval/logs/app.log.old ---\nmanual backup\n--- end ---\n--- /home/eval/logs/worker.log ---\nw2\n--- end ---\n--- /home/eval/logs/worker.log.1 ---\nw1\n--- end ---\n\nDefine a shell function `rotate LOGFILE KEEP` implementing classic numbered rotation:\n- `LOGFILE.N` becomes `LOGFILE.N+1` for every existing N, highest first, so nothing is overwritten.\n- Afterwards no numbered file above KEEP may remain (delete any that would end up numbered higher than KEEP).\n- `LOGFILE` itself becomes `LOGFILE.1`, and a new empty `LOGFILE` is created.\n- Files that are not exactly `LOGFILE` or `LOGFILE.<number>` (for example `app.log.old`) must not be touched.\n\nThen call it twice: `rotate /home/eval/logs/app.log 3` and `rotate /home/eval/logs/worker.log 2`. Exit 0."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "9/9 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "The script below defines `rotate` and calls it on both logs.\n\n**Expected result:**\n\n| Log | After rotation |\n|---|---|\n| `app.log` | new and empty |\n| `app.log.1` | `line c` |\n| `app.log.2` | `line b` |\n| `app.log.3` | `line a` |\n| `app.log.old` | unchanged |\n| `line 0` (old `app.log.3`) | deleted |\n| `worker.log` | new and empty |\n| `worker.log.1` | `w2` |\n| `worker.log.2` | `w1` |\n\n**How `rotate` handles the cases:**\n- **Finding numbered files:** only names whose suffix is all digits count. Names like `app.log.old` are skipped and never touched.\n- **Order:** files are renamed from the highest number down, so no file overwrites another.\n- **Deleting old files:** any file whose new number would be above KEEP is deleted instead of renamed.\n- **The live log:** `LOGFILE` moves to `.1`. If KEEP is 0 it is removed instead. A new empty `LOGFILE` is then created.\n\n```bash\n#!/bin/bash\n\nrotate() {\n    local logfile=\"$1\" keep=\"$2\"\n    local f suffix n\n    local -a nums=()\n\n    for f in \"$logfile\".*; do\n        [[ -e \"$f\" ]] || continue\n        suffix=\"${f#\"$logfile\".}\"\n        if [[ \"$suffix\" =~ ^[0-9]+$ ]]; then\n            nums+=(\"$suffix\")\n        fi\n    done\n\n    if (( ${#nums[@]} > 0 )); then\n        local sorted\n        sorted=$(printf '%s\\n' \"${nums[@]}\" | sort -rn)\n        while IFS= read -r suffix; do\n            [[ -n \"$suffix\" ]] || continue\n            n=$((10#$suffix))\n            if (( n + 1 > keep )); then\n                rm -f -- \"$logfile.$suffix\"\n            else\n                mv -f -- \"$logfile.$suffix\" \"$logfile.$((n + 1))\"\n            fi\n        done <<< \"$sorted\"\n    fi\n\n    if [[ -e \"$logfile\" ]]; then\n        if (( keep >= 1 )); then\n            mv -f -- \"$logfile\" \"$logfile.1\"\n        else\n            rm -f -- \"$logfile\"\n        fi\n    fi\n    : > \"$logfile\"\n}\n\nrotate /home/eval/logs/app.log 3\nrotate /home/eval/logs/worker.log 2\nexit 0\n```",
+    "iterations": 1,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "#!/bin/bash\n\nrotate() {\n    local logfile=\"$1\" keep=\"$2\"\n    local f suffix n\n    local -a nums=()\n\n    for f in \"$logfile\".*; do\n        [[ -e \"$f\" ]] || continue\n        suffix=\"${f#\"$logfile\".}\"\n        if [[ \"$suffix\" =~ ^[0-9]+$ ]]; then\n            nums+=(\"$suffix\")\n        fi\n    done\n\n    if (( ${#nums[@]} > 0 )); then\n        local sorted\n        sorted=$(printf '%s\\n' \"${nums[@]}\" | sort -rn)\n        while IFS= read -r suffix; do\n            [[ -n \"$suffix\" ]] || continue\n            n=$((10#$suffix))\n            if (( n + 1 > keep )); then\n                rm -f -- \"$logfile.$suffix\"\n            else\n                mv -f -- \"$logfile.$suffix\" \"$logfile.$((n + 1))\"\n            fi\n        done <<< \"$sorted\"\n    fi\n\n    if [[ -e \"$logfile\" ]]; then\n        if (( keep >= 1 )); then\n            mv -f -- \"$logfile\" \"$logfile.1\"\n        else\n            rm -f -- \"$logfile\"\n        fi\n    fi\n    : > \"$logfile\"\n}\n\nrotate /home/eval/logs/app.log 3\nrotate /home/eval/logs/worker.log 2\nexit 0\n"
+    ],
+    "usage": {
+      "input_tokens": 952,
+      "output_tokens": 1108,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 10394
+    },
+    "metrics": {
+      "exec_ms": 10.0,
+      "exit_code": 0.0,
+      "extracted": 1.0,
+      "generate_ms": 10384.0,
+      "script_bytes": 1006.0,
+      "script_found": 1.0,
+      "timed_out": 0.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "#!/bin/bash\n\nrotate() {\n    local logfile=\"$1\" keep=\"$2\"\n    local f suffix n\n    local -a nums=()\n\n    for f in \"$logfile\".*; do\n        [[ -e \"$f\" ]] || continue\n        suffix=\"${f#\"$logfile\".}\"\n        if [[ \"$suffix\" =~ ^[0-9]+$ ]]; then\n            nums+=(\"$suffix\")\n        fi\n    done\n\n    if (( ${#nums[@]} > 0 )); then\n        local sorted\n        sorted=$(printf '%s\\n' \"${nums[@]}\" | sort -rn)\n        while IFS= read -r suffix; do\n            [[ -n \"$suffix\" ]] || continue\n            n=$((10#$suffix))\n            if (( n + 1 > keep )); then\n                rm -f -- \"$logfile.$suffix\"\n            else\n                mv -f -- \"$logfile.$suffix\" \"$logfile.$((n + 1))\"\n            fi\n        done <<< \"$sorted\"\n    fi\n\n    if [[ -e \"$logfile\" ]]; then\n        if (( keep >= 1 )); then\n            mv -f -- \"$logfile\" \"$logfile.1\"\n        else\n            rm -f -- \"$logfile\"\n        fi\n    fi\n    : > \"$logfile\"\n}\n\nrotate /home/eval/logs/app.log 3\nrotate /home/eval/logs/worker.log 2\nexit 0\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          }
+        ]
+      },
+      "generate": {
+        "extraction": "fenced",
+        "timed_out": false
+      }
+    }
+  },
+  "skipped": false
+}

@@ -1,0 +1,190 @@
+{
+  "eval": "bashkit_repo",
+  "sample": "repo_release_branch_bump",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "Cut release 1.0.0 of the git repo /home/eval/lib: create and switch to a branch named `release-1.0.0`, set the version to 1.0.0 everywhere it appears (VERSION, package.json, and turn the `## Unreleased` heading in CHANGELOG.md into `## 1.0.0`), run `make test`, and commit with the message `release: 1.0.0`."
+  ],
+  "passed": false,
+  "aggregate": 0.375,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 0.375,
+      "pass": false,
+      "reason": "3/8 checks passed (weighted rate 38%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "",
+    "iterations": 20,
+    "tool_calls_count": 20,
+    "tool_calls": [
+      "cd /home/eval/lib && git status && ls -la",
+      "cd /home/eval/lib\ncat VERSION\necho \"--- package.json ---\"\ncat package.json\necho \"--- CHANGELOG.md ---\"\ncat CHANGELOG.md\necho \"--- Makefile ---\"\ncat Makefile\nls -la scripts",
+      "cd /home/eval/lib\ncat VERSION\necho \"--- package.json ---\"\ncat package.json\necho \"--- CHANGELOG.md ---\"\ncat CHANGELOG.md\necho \"--- Makefile ---\"\ncat Makefile\necho \"--- scripts ---\"\nls -la scripts\ncat scripts/*",
+      "cat /home/eval/lib/VERSION",
+      "cat /home/eval/lib/CHANGELOG.md",
+      "cat /home/eval/lib/Makefile",
+      "cat /home/eval/lib/scripts/check-version.sh",
+      "git grep -i \"0.9.3\" /home/eval/lib",
+      "cd /home/eval/lib && git grep -i \"0.9.3\"",
+      "cd /home/eval/lib && git grep -n \"0.9\"",
+      "cd /home/eval/lib && git log -n 5 --oneline",
+      "cd /home/eval/lib && git grep \".\"",
+      "git config -l",
+      "cd /home/eval/lib && git config -l",
+      "git config --global -l",
+      "cd /home/eval/lib && git log -1 --pretty=fuller",
+      "git config user.name",
+      "git config user.email",
+      "cd /home/eval/lib\ngit checkout -b release-1.0.0",
+      "cd /home/eval/lib\necho -n \"1.0.0\" > VERSION\ncat VERSION\necho"
+    ],
+    "usage": {
+      "input_tokens": 20724,
+      "output_tokens": 888,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 34763
+    },
+    "metrics": {
+      "natural_stop": 0.0,
+      "tool_calls": 20.0,
+      "tool_calls_err": 3.0,
+      "tool_calls_ok": 17.0,
+      "turns": 20.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cd /home/eval/lib && git status && ls -la",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "On branch master\n\nnothing to commit, working tree clean\ndrwxr-xr-x        0 2026-10-09 05:08 .git\n-rw-r--r--       95 2026-10-09 05:08 CHANGELOG.md\n-rw-r--r--       38 2026-10-09 05:08 Makefile\n-rw-r--r--        6 2026-10-09 05:08 VERSION\n-rw-r--r--       67 2026-10-09 05:08 package.json\ndrwxr-xr-x        0 2026-10-09 05:08 scripts\n"
+          },
+          {
+            "commands": "cd /home/eval/lib\ncat VERSION\necho \"--- package.json ---\"\ncat package.json\necho \"--- CHANGELOG.md ---\"\ncat CHANGELOG.md\necho \"--- Makefile ---\"\ncat Makefile\nls -la scripts",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "0.9.3\n--- package.json ---\n{\n  \"name\": \"@acme/lib\",\n  \"version\": \"0.9.3\",\n  \"private\": true\n}\n--- CHANGELOG.md ---\n# Changelog\n\n## Unreleased\n\n- Add retry helper\n- Drop Node 16\n\n## 0.9.3\n\n- Fix timeout parsing\n--- Makefile ---\ntest:\n\t@bash scripts/check-version.sh\n-rw-r--r--      378 2026-10-09 05:08 check-version.sh\n"
+          },
+          {
+            "commands": "cd /home/eval/lib\ncat VERSION\necho \"--- package.json ---\"\ncat package.json\necho \"--- CHANGELOG.md ---\"\ncat CHANGELOG.md\necho \"--- Makefile ---\"\ncat Makefile\necho \"--- scripts ---\"\nls -la scripts\ncat scripts/*",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "0.9.3\n--- package.json ---\n{\n  \"name\": \"@acme/lib\",\n  \"version\": \"0.9.3\",\n  \"private\": true\n}\n--- CHANGELOG.md ---\n# Changelog\n\n## Unreleased\n\n- Add retry helper\n- Drop Node 16\n\n## 0.9.3\n\n- Fix timeout parsing\n--- Makefile ---\ntest:\n\t@bash scripts/check-version.sh\n--- scripts ---\n-rw-r--r--      378 2026-10-09 05:08 check-version.sh\n#!/bin/bash\n# VERSION, package.json and the newest CHANGELOG heading must agree.\nv=$(cat VERSION)\np=$(jq -r .version package.json)\nc=$(grep -m1 '^## ' CHANGELOG.md | sed 's/^## //')\nif [ \"$v\" = \"$p\" ] && [ \"$v\" = \"$c\" ]; then\n  mkdir -p build; echo \"version $v consistent\" | tee build/version-check.txt\nelse\n  echo \"mismatch: VERSION=$v package.json=$p CHANGELOG=$c\"; exit 1\nfi\n"
+          },
+          {
+            "commands": "cat /home/eval/lib/VERSION",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "0.9.3\n"
+          },
+          {
+            "commands": "cat /home/eval/lib/CHANGELOG.md",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# Changelog\n\n## Unreleased\n\n- Add retry helper\n- Drop Node 16\n\n## 0.9.3\n\n- Fix timeout parsing\n"
+          },
+          {
+            "commands": "cat /home/eval/lib/Makefile",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "test:\n\t@bash scripts/check-version.sh\n"
+          },
+          {
+            "commands": "cat /home/eval/lib/scripts/check-version.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "#!/bin/bash\n# VERSION, package.json and the newest CHANGELOG heading must agree.\nv=$(cat VERSION)\np=$(jq -r .version package.json)\nc=$(grep -m1 '^## ' CHANGELOG.md | sed 's/^## //')\nif [ \"$v\" = \"$p\" ] && [ \"$v\" = \"$c\" ]; then\n  mkdir -p build; echo \"version $v consistent\" | tee build/version-check.txt\nelse\n  echo \"mismatch: VERSION=$v package.json=$p CHANGELOG=$c\"; exit 1\nfi\n"
+          },
+          {
+            "commands": "git grep -i \"0.9.3\" /home/eval/lib",
+            "exit_code": 128,
+            "stderr": "internal error: fatal: pathspec '/home/eval/lib' is outside repository\n",
+            "stdout": ""
+          },
+          {
+            "commands": "cd /home/eval/lib && git grep -i \"0.9.3\"",
+            "exit_code": 1,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "cd /home/eval/lib && git grep -n \"0.9\"",
+            "exit_code": 1,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "cd /home/eval/lib && git log -n 5 --oneline",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "commit b465c80d\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 05:08:50 2026 +0000\n\n    initial import\n\n"
+          },
+          {
+            "commands": "cd /home/eval/lib && git grep \".\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "CHANGELOG.md:8:## 0.9.3\nMakefile:2:\t@bash scripts/check-version.sh\nVERSION:1:0.9.3\npackage.json:3:  \"version\": \"0.9.3\",\nscripts/check-version.sh:2:# VERSION, package.json and the newest CHANGELOG heading must agree.\nscripts/check-version.sh:4:p=$(jq -r .version package.json)\nscripts/check-version.sh:5:c=$(grep -m1 '^## ' CHANGELOG.md | sed 's/^## //')\nscripts/check-version.sh:7:  mkdir -p build; echo \"version $v consistent\" | tee build/version-check.txt\nscripts/check-version.sh:9:  echo \"mismatch: VERSION=$v package.json=$p CHANGELOG=$c\"; exit 1\n"
+          },
+          {
+            "commands": "git config -l",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "cd /home/eval/lib && git config -l",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "git config --global -l",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "cd /home/eval/lib && git log -1 --pretty=fuller",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "commit b465c80d\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 05:08:50 2026 +0000\n\n    initial import\n\n"
+          },
+          {
+            "commands": "git config user.name",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Eval Agent\n"
+          },
+          {
+            "commands": "git config user.email",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "eval@bashkit-eval.invalid\n"
+          },
+          {
+            "commands": "cd /home/eval/lib\ngit checkout -b release-1.0.0",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Switched to branch 'release-1.0.0'\n"
+          },
+          {
+            "commands": "cd /home/eval/lib\necho -n \"1.0.0\" > VERSION\ncat VERSION\necho",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "1.0.0\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

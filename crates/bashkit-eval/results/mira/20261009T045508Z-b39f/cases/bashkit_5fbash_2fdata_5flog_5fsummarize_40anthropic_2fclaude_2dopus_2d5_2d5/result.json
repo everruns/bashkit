@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "data_log_summarize",
+  "target": "anthropic/claude-opus-5-5",
+  "input": [
+    "Analyze /var/log/app.log and produce a count per log level (INFO, WARN, ERROR). Print each as 'LEVEL: N' on its own line."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Here are the counts per log level in `/var/log/app.log`:\n\n```\nINFO: 5\nWARN: 2\nERROR: 3\n```\n\nThe file has 10 lines, and every line starts with one of these three levels, so the counts add up to the full file.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "head -20 /var/log/app.log; wc -l /var/log/app.log",
+      "for l in INFO WARN ERROR; do echo \"$l: $(grep -c \"^$l:\" /var/log/app.log)\"; done"
+    ],
+    "usage": {
+      "input_tokens": 2444,
+      "output_tokens": 245,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 3502
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "head -20 /var/log/app.log; wc -l /var/log/app.log",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "INFO: app started\nINFO: connected to db\nWARN: slow query detected\nERROR: connection timeout\nINFO: retry succeeded\nWARN: high memory usage\nERROR: write failed\nINFO: request completed\nERROR: connection timeout\nINFO: shutting down\n10 /var/log/app.log\n"
+          },
+          {
+            "commands": "for l in INFO WARN ERROR; do echo \"$l: $(grep -c \"^$l:\" /var/log/app.log)\"; done",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "INFO: 5\nWARN: 2\nERROR: 3\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

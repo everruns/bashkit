@@ -1,0 +1,134 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "rt_pipeline_mail_domains",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "Write a bash script /home/eval/report.sh used as `bash /home/eval/report.sh INBOX_DIR OUT_FILE` (it will be run again later on other directories). INBOX_DIR holds message files `*.json` (names may contain spaces; ignore other files). Each is a JSON object whose optional \"to\" and \"cc\" fields are email address-list header strings like `\"Doe, John\" <john@example.com>, ann@x.org` (display names may be quoted and contain commas). Count every recipient address in to and cc by its domain (the part after '@', lowercased).\nFiles that are not valid JSON are skipped and reported on stderr as `skip: <file name>` (base name), in file name order. OUT_FILE gets one line `COUNT DOMAIN` per domain, sorted by count descending then domain. Exit 0.\nRun it on /data/inbox writing /out/domains.txt."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I have implemented `/home/eval/report.sh` to parse email recipient domains from JSON message files.\n\nKey details of the implementation:\n- Reads `*.json` files in `INBOX_DIR` sorted by filename. Non-JSON files such as `notes.txt` are ignored.\n- Catches invalid JSON or non-object JSON files, skipping them and printing `skip: <file name>` (basename) to stderr in sorted order.\n- Parses email headers in `\"to\"` and `\"cc\"` fields using Python's `email.utils.getaddresses` to handle complex address lists (e.g. display names with commas and quotes).\n- Normalizes extracted domains to lowercase and tallies occurrences across recipients.\n- Writes the domain counts to `OUT_FILE` formatted as `COUNT DOMAIN`, sorted primarily by count descending and secondarily by domain ascending, ensuring the parent directory exists and exiting with 0.\n\nThe script was executed on `/data/inbox` outputting to `/out/domains.txt`, logging `skip: broken.json` to stderr and correctly writing the recipient domain tallies.",
+    "iterations": 13,
+    "tool_calls_count": 12,
+    "tool_calls": [
+      "ls -la /\nls -la /data || true\nls -la /home/eval",
+      "ls -la /data\npython3 --version",
+      "ls -la /data/inbox",
+      "head -n 50 /data/inbox/*",
+      "python3 -c \"\nimport email.utils\ns = '\\\"Doe, John\\\" <JOHN@Example.com>, ann@x.org'\nprint(email.utils.getaddresses([s]))\n\"",
+      "python3 -c \"\nimport email.utils\ns = 'dan@x.org'\nprint(email.utils.getaddresses([s]))\ns2 = ''\nprint(email.utils.getaddresses([s2]))\n\"",
+      "python3 -c \"\nimport email.utils\nfor s in ['\\\"Doe, John\\\" <john@example.com>, ann@x.org', '', 'invalid', None, 'a@b.com, , c@d.com']:\n    if s:\n        for name, addr in email.utils.getaddresses([s]):\n            if '@' in addr:\n                domain = addr.split('@')[-1].lower()\n                print(name, addr, domain)\n\"",
+      "ls -d /out || true",
+      "cat << 'EOF' > /home/eval/report.sh\n#!/usr/bin/env bash\nset -e\n\nINBOX_DIR=\"$1\"\nOUT_FILE=\"$2\"\n\npython3 - \"$INBOX_DIR\" \"$OUT_FILE\" << 'PYEOF'\nimport sys\nimport os\nimport json\nimport email.utils\nfrom collections import Counter\n\ninbox_dir = sys.argv[1]\nout_file = sys.argv[2]\n\ncounts = Counter()\n\n# List message files matching *.json in inbox_dir, sorted by file name\ntry:\n    filenames = sorted([f for f in os.listdir(inbox_dir) if f.endswith('.json')])\nexcept FileNotFoundError:\n    filenames = []\n\nfor fname in filenames:\n    fpath = os.path.join(inbox_dir, fname)\n    if not os.path.isfile(fpath):\n        continue\n    try:\n        with open(fpath, 'r', encoding='utf-8') as f:\n            data = json.load(f)\n        if not isinstance(data, dict):\n            sys.stderr.write(f\"skip: {fname}\\n\")\n            continue\n    except Exception:\n        sys.stderr.write(f\"skip: {fname}\\n\")\n        continue\n\n    for field in ('to', 'cc'):\n        val = data.get(field)\n        if isinstance(val, str) and val.strip():\n            for _, addr in email.utils.getaddresses([val]):\n                if '@' in addr:\n                    domain = addr.split('@')[-1].lower()\n                    if domain:\n                        counts[domain] += 1\n\nout_dir = os.path.dirname(out_file)\nif out_dir:\n    os.makedirs(out_dir, exist_ok=True)\n\n# Sort by count descending, then domain ascending\nsorted_counts = sorted(counts.items(), key=lambda x: (-x[1], x[0]))\n\nwith open(out_file, 'w', encoding='utf-8') as f:\n    for domain, count in sorted_counts:\n        f.write(f\"{count} {domain}\\n\")\n\nPYEOF\n\nexit 0\nEOF\nchmod +x /home/eval/report.sh",
+      "bash /home/eval/report.sh /data/inbox /out/domains.txt",
+      "cat /out/domains.txt",
+      "ls -la /out/domains.txt\ncat /home/eval/report.sh"
+    ],
+    "usage": {
+      "input_tokens": 21477,
+      "output_tokens": 1303,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 32830
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 12.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 12.0,
+      "turns": 13.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /\nls -la /data || true\nls -la /home/eval",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "drwxr-xr-x        0 2026-10-09 18:05 bin\ndrwxr-xr-x        0 2026-10-09 18:13 data\ndrwxr-xr-x        0 2026-10-09 18:13 dev\ndrwxr-xr-x        0 2026-10-09 18:05 etc\ndrwxr-xr-x        0 2026-10-09 18:13 home\ndrwxr-xr-x        0 2026-10-09 18:05 proc\ndrwxr-xr-x        0 2026-10-09 18:05 root\ndrwxrwxrwx        0 2026-10-09 18:13 tmp\ndrwxr-xr-x        0 2026-10-09 18:05 usr\ndrwxr-xr-x        0 2026-10-09 18:13 inbox\n"
+          },
+          {
+            "commands": "ls -la /data\npython3 --version",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "drwxr-xr-x        0 2026-10-09 18:13 inbox\nPython 3.14.8\n"
+          },
+          {
+            "commands": "ls -la /data/inbox",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       87 2026-10-09 18:13 001.json\n-rw-r--r--       95 2026-10-09 18:13 002 reply.json\n-rw-r--r--       37 2026-10-09 18:13 003.json\n-rw-r--r--       99 2026-10-09 18:13 004 fwd fwd.json\n-rw-r--r--       25 2026-10-09 18:13 broken.json\n-rw-r--r--        9 2026-10-09 18:13 notes.txt\n"
+          },
+          {
+            "commands": "head -n 50 /data/inbox/*",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "==> /data/inbox/001.json <==\n{\"from\": \"ops@corp.io\", \"to\": \"\\\"Doe, John\\\" <JOHN@Example.com>, ann@x.org\", \"cc\": \"\"}\n\n==> /data/inbox/002 reply.json <==\n{\"from\": \"a@b.c\", \"to\": \"Team <team@CORP.io>\", \"cc\": \"\\\"Lee, A.\\\" <a.lee@x.org>, b@sub.x.org\"}\n\n==> /data/inbox/003.json <==\n{\"from\": \"z@z.z\", \"to\": \"ann@x.org\"}\n\n==> /data/inbox/004 fwd fwd.json <==\n{\"from\": \"x@y.z\", \"to\": \"\\\"Smith, J\\\" <js@example.COM>, \\\"Ops\\\" <ops@corp.io>\", \"cc\": \"dan@x.org\"}\n\n==> /data/inbox/broken.json <==\n{\"from\": \"q@q.q\", \"to\": \n\n==> /data/inbox/notes.txt <==\nnot mail\n"
+          },
+          {
+            "commands": "python3 -c \"\nimport email.utils\ns = '\\\"Doe, John\\\" <JOHN@Example.com>, ann@x.org'\nprint(email.utils.getaddresses([s]))\n\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "[('Doe, John', 'JOHN@Example.com'), ('', 'ann@x.org')]\n"
+          },
+          {
+            "commands": "python3 -c \"\nimport email.utils\ns = 'dan@x.org'\nprint(email.utils.getaddresses([s]))\ns2 = ''\nprint(email.utils.getaddresses([s2]))\n\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "[('', 'dan@x.org')]\n[('', '')]\n"
+          },
+          {
+            "commands": "python3 -c \"\nimport email.utils\nfor s in ['\\\"Doe, John\\\" <john@example.com>, ann@x.org', '', 'invalid', None, 'a@b.com, , c@d.com']:\n    if s:\n        for name, addr in email.utils.getaddresses([s]):\n            if '@' in addr:\n                domain = addr.split('@')[-1].lower()\n                print(name, addr, domain)\n\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Doe, John john@example.com example.com\n ann@x.org x.org\n a@b.com b.com\n c@d.com d.com\n"
+          },
+          {
+            "commands": "ls -d /out || true",
+            "exit_code": 0,
+            "stderr": "ls: cannot access '/out': No such file or directory\n",
+            "stdout": ""
+          },
+          {
+            "commands": "cat << 'EOF' > /home/eval/report.sh\n#!/usr/bin/env bash\nset -e\n\nINBOX_DIR=\"$1\"\nOUT_FILE=\"$2\"\n\npython3 - \"$INBOX_DIR\" \"$OUT_FILE\" << 'PYEOF'\nimport sys\nimport os\nimport json\nimport email.utils\nfrom collections import Counter\n\ninbox_dir = sys.argv[1]\nout_file = sys.argv[2]\n\ncounts = Counter()\n\n# List message files matching *.json in inbox_dir, sorted by file name\ntry:\n    filenames = sorted([f for f in os.listdir(inbox_dir) if f.endswith('.json')])\nexcept FileNotFoundError:\n    filenames = []\n\nfor fname in filenames:\n    fpath = os.path.join(inbox_dir, fname)\n    if not os.path.isfile(fpath):\n        continue\n    try:\n        with open(fpath, 'r', encoding='utf-8') as f:\n            data = json.load(f)\n        if not isinstance(data, dict):\n            sys.stderr.write(f\"skip: {fname}\\n\")\n            continue\n    except Exception:\n        sys.stderr.write(f\"skip: {fname}\\n\")\n        continue\n\n    for field in ('to', 'cc'):\n        val = data.get(field)\n        if isinstance(val, str) and val.strip():\n            for _, addr in email.utils.getaddresses([val]):\n                if '@' in addr:\n                    domain = addr.split('@')[-1].lower()\n                    if domain:\n                        counts[domain] += 1\n\nout_dir = os.path.dirname(out_file)\nif out_dir:\n    os.makedirs(out_dir, exist_ok=True)\n\n# Sort by count descending, then domain ascending\nsorted_counts = sorted(counts.items(), key=lambda x: (-x[1], x[0]))\n\nwith open(out_file, 'w', encoding='utf-8') as f:\n    for domain, count in sorted_counts:\n        f.write(f\"{count} {domain}\\n\")\n\nPYEOF\n\nexit 0\nEOF\nchmod +x /home/eval/report.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "bash /home/eval/report.sh /data/inbox /out/domains.txt",
+            "exit_code": 0,
+            "stderr": "skip: broken.json\n",
+            "stdout": ""
+          },
+          {
+            "commands": "cat /out/domains.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "4 x.org\n2 corp.io\n2 example.com\n1 sub.x.org\n"
+          },
+          {
+            "commands": "ls -la /out/domains.txt\ncat /home/eval/report.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       44 2026-10-09 18:14 /out/domains.txt\n#!/usr/bin/env bash\nset -e\n\nINBOX_DIR=\"$1\"\nOUT_FILE=\"$2\"\n\npython3 - \"$INBOX_DIR\" \"$OUT_FILE\" << 'PYEOF'\nimport sys\nimport os\nimport json\nimport email.utils\nfrom collections import Counter\n\ninbox_dir = sys.argv[1]\nout_file = sys.argv[2]\n\ncounts = Counter()\n\n# List message files matching *.json in inbox_dir, sorted by file name\ntry:\n    filenames = sorted([f for f in os.listdir(inbox_dir) if f.endswith('.json')])\nexcept FileNotFoundError:\n    filenames = []\n\nfor fname in filenames:\n    fpath = os.path.join(inbox_dir, fname)\n    if not os.path.isfile(fpath):\n        continue\n    try:\n        with open(fpath, 'r', encoding='utf-8') as f:\n            data = json.load(f)\n        if not isinstance(data, dict):\n            sys.stderr.write(f\"skip: {fname}\\n\")\n            continue\n    except Exception:\n        sys.stderr.write(f\"skip: {fname}\\n\")\n        continue\n\n    for field in ('to', 'cc'):\n        val = data.get(field)\n        if isinstance(val, str) and val.strip():\n            for _, addr in email.utils.getaddresses([val]):\n                if '@' in addr:\n                    domain = addr.split('@')[-1].lower()\n                    if domain:\n                        counts[domain] += 1\n\nout_dir = os.path.dirname(out_file)\nif out_dir:\n    os.makedirs(out_dir, exist_ok=True)\n\n# Sort by count descending, then domain ascending\nsorted_counts = sorted(counts.items(), key=lambda x: (-x[1], x[0]))\n\nwith open(out_file, 'w', encoding='utf-8') as f:\n    for domain, count in sorted_counts:\n        f.write(f\"{count} {domain}\\n\")\n\nPYEOF\n\nexit 0\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

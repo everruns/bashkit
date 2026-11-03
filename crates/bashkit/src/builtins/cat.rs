@@ -73,7 +73,8 @@ impl Builtin for Cat {
             return stream_plain(&ctx, &files, &stream).await;
         }
 
-        let mut raw = Vec::new();
+        let budget = ctx.shell.as_ref().map(|s| s.execution_budget);
+        let mut raw = crate::limits::BudgetedBytes::new(budget)?;
         let mut stderr = String::new();
         // Buffered stdin is read once: `cat - -` sees it at the first `-`.
         let mut stdin_used = false;
@@ -82,10 +83,10 @@ impl Builtin for Cat {
                 if let Some(stdin) = ctx.stdin
                     && !std::mem::replace(&mut stdin_used, true)
                 {
-                    raw.extend_from_slice(stdin.as_bytes());
+                    raw.try_extend_from_slice(stdin.as_bytes())?;
                 }
                 if let Some(input) = ctx.stdin_stream() {
-                    raw.extend_from_slice(&input.read_to_end().await);
+                    raw.try_extend_from_slice(&input.read_to_end().await?)?;
                 }
             } else {
                 let path = if Path::new(file).is_absolute() {
@@ -94,7 +95,7 @@ impl Builtin for Cat {
                     vfs_join(ctx.cwd, file).to_string_lossy().into_owned()
                 };
                 match ctx.fs.read_file(Path::new(&path)).await {
-                    Ok(bytes) => raw.extend_from_slice(&bytes),
+                    Ok(bytes) => raw.try_extend_from_slice(&bytes)?,
                     // GNU cat reports the operand and goes on with the rest.
                     Err(e) => {
                         let reason = crate::error::io_error_reason(&e);
@@ -104,6 +105,7 @@ impl Builtin for Cat {
             }
         }
 
+        let (raw, _raw_storage) = raw.into_parts();
         let mut result = if plain {
             ExecResult::ok_bytes(raw)
         } else {
@@ -136,7 +138,7 @@ async fn stream_plain(
     async fn send(ctx: &Context<'_>, stream: &super::StdoutStream, data: &[u8]) -> Result<bool> {
         for chunk in data.chunks(STREAM_CHUNK_BYTES) {
             ctx.consume_budget_work(1)?;
-            if !stream.write(chunk).await {
+            if !stream.write(chunk).await? {
                 return Ok(false);
             }
         }
@@ -155,7 +157,7 @@ async fn stream_plain(
             };
             if let Some(input) = ctx.stdin_stream() {
                 while ok {
-                    let chunk = input.read().await;
+                    let chunk = input.read().await?;
                     if chunk.is_empty() {
                         break;
                     }

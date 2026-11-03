@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "config_env_defaults",
+  "target": "openai/gpt-6-luna",
+  "input": [
+    "Write /scripts/start.sh that configures a service. It should read these environment variables and fall back to defaults when they're not set: DB_HOST (default 'localhost'), DB_PORT (default '5432'), DB_NAME (default 'myapp'), LOG_LEVEL (default 'info'). Print the resolved config as 'key=value' lines. If DB_HOST is explicitly set, also print 'custom_db=true'. Run the script twice: first with no env vars set (to test defaults), then with DB_HOST=db.prod.internal to test the override."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Created `/scripts/start.sh` and ran it in both cases.\n\nDefaults:\n```text\nDB_HOST=localhost\nDB_PORT=5432\nDB_NAME=myapp\nLOG_LEVEL=info\n```\n\nWith `DB_HOST=db.prod.internal`:\n```text\nDB_HOST=db.prod.internal\nDB_PORT=5432\nDB_NAME=myapp\nLOG_LEVEL=info\ncustom_db=true\n```",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "mkdir -p /scripts\ncat > /scripts/start.sh <<'EOF'\n#!/usr/bin/env bash\n\nDB_HOST=\"${DB_HOST-localhost}\"\nDB_PORT=\"${DB_PORT-5432}\"\nDB_NAME=\"${DB_NAME-myapp}\"\nLOG_LEVEL=\"${LOG_LEVEL-info}\"\n\nprintf 'DB_HOST=%s\\n' \"$DB_HOST\"\nprintf 'DB_PORT=%s\\n' \"$DB_PORT\"\nprintf 'DB_NAME=%s\\n' \"$DB_NAME\"\nprintf 'LOG_LEVEL=%s\\n' \"$LOG_LEVEL\"\n\nif [[ ${DB_HOST+x} ]]; then\n  printf 'custom_db=true\\n'\nfi\nEOF\nchmod +x /scripts/start.sh\nprintf '%s\\n' '--- defaults ---'\nenv -i /scripts/start.sh\nprintf '%s\\n' '--- DB_HOST override ---'\nenv -i DB_HOST=db.prod.internal /scripts/start.sh",
+      "cat > /scripts/start.sh <<'EOF'\n#!/usr/bin/env bash\n\ncustom_db=false\nif [[ ${DB_HOST+x} ]]; then\n  custom_db=true\nfi\n\nDB_HOST=\"${DB_HOST-localhost}\"\nDB_PORT=\"${DB_PORT-5432}\"\nDB_NAME=\"${DB_NAME-myapp}\"\nLOG_LEVEL=\"${LOG_LEVEL-info}\"\n\nprintf 'DB_HOST=%s\\n' \"$DB_HOST\"\nprintf 'DB_PORT=%s\\n' \"$DB_PORT\"\nprintf 'DB_NAME=%s\\n' \"$DB_NAME\"\nprintf 'LOG_LEVEL=%s\\n' \"$LOG_LEVEL\"\n\nif [[ $custom_db == true ]]; then\n  printf 'custom_db=true\\n'\nfi\nEOF\nchmod +x /scripts/start.sh\nprintf '%s\\n' '--- defaults ---'\nenv -i /scripts/start.sh\nprintf '%s\\n' '--- DB_HOST override ---'\nenv -i DB_HOST=db.prod.internal /scripts/start.sh"
+    ],
+    "usage": {
+      "input_tokens": 1719,
+      "output_tokens": 705,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 8133
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "mkdir -p /scripts\ncat > /scripts/start.sh <<'EOF'\n#!/usr/bin/env bash\n\nDB_HOST=\"${DB_HOST-localhost}\"\nDB_PORT=\"${DB_PORT-5432}\"\nDB_NAME=\"${DB_NAME-myapp}\"\nLOG_LEVEL=\"${LOG_LEVEL-info}\"\n\nprintf 'DB_HOST=%s\\n' \"$DB_HOST\"\nprintf 'DB_PORT=%s\\n' \"$DB_PORT\"\nprintf 'DB_NAME=%s\\n' \"$DB_NAME\"\nprintf 'LOG_LEVEL=%s\\n' \"$LOG_LEVEL\"\n\nif [[ ${DB_HOST+x} ]]; then\n  printf 'custom_db=true\\n'\nfi\nEOF\nchmod +x /scripts/start.sh\nprintf '%s\\n' '--- defaults ---'\nenv -i /scripts/start.sh\nprintf '%s\\n' '--- DB_HOST override ---'\nenv -i DB_HOST=db.prod.internal /scripts/start.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "--- defaults ---\nDB_HOST=localhost\nDB_PORT=5432\nDB_NAME=myapp\nLOG_LEVEL=info\ncustom_db=true\n--- DB_HOST override ---\nDB_HOST=db.prod.internal\nDB_PORT=5432\nDB_NAME=myapp\nLOG_LEVEL=info\ncustom_db=true\n"
+          },
+          {
+            "commands": "cat > /scripts/start.sh <<'EOF'\n#!/usr/bin/env bash\n\ncustom_db=false\nif [[ ${DB_HOST+x} ]]; then\n  custom_db=true\nfi\n\nDB_HOST=\"${DB_HOST-localhost}\"\nDB_PORT=\"${DB_PORT-5432}\"\nDB_NAME=\"${DB_NAME-myapp}\"\nLOG_LEVEL=\"${LOG_LEVEL-info}\"\n\nprintf 'DB_HOST=%s\\n' \"$DB_HOST\"\nprintf 'DB_PORT=%s\\n' \"$DB_PORT\"\nprintf 'DB_NAME=%s\\n' \"$DB_NAME\"\nprintf 'LOG_LEVEL=%s\\n' \"$LOG_LEVEL\"\n\nif [[ $custom_db == true ]]; then\n  printf 'custom_db=true\\n'\nfi\nEOF\nchmod +x /scripts/start.sh\nprintf '%s\\n' '--- defaults ---'\nenv -i /scripts/start.sh\nprintf '%s\\n' '--- DB_HOST override ---'\nenv -i DB_HOST=db.prod.internal /scripts/start.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "--- defaults ---\nDB_HOST=localhost\nDB_PORT=5432\nDB_NAME=myapp\nLOG_LEVEL=info\n--- DB_HOST override ---\nDB_HOST=db.prod.internal\nDB_PORT=5432\nDB_NAME=myapp\nLOG_LEVEL=info\ncustom_db=true\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

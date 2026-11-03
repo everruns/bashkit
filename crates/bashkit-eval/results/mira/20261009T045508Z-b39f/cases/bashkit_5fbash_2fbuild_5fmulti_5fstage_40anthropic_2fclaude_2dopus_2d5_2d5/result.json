@@ -1,0 +1,78 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "build_multi_stage",
+  "target": "anthropic/claude-opus-5-5",
+  "input": [
+    "Simulate a build pipeline: 1) Check that /src/main.c and /src/utils.c exist, 2) 'Compile' each .c file by copying it to /build/ with a .o extension and prepending '// compiled', 3) 'Link' by concatenating all .o files into /build/program with a '// linked' header, 4) 'Package' by creating a tar.gz of /build/ at /dist/release.tar.gz. Print status for each stage. If any stage fails, stop and report the error."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "6/6 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "The pipeline ran and all four stages passed. The script is saved at `/tmp/pipeline.sh`.\n\n```\n=== Stage 1/4 Check sources ===   [OK] Sources verified\n=== Stage 2/4 Compile ===         [OK] Compiled 2 file(s)\n=== Stage 3/4 Link ===            [OK] Linked\n=== Stage 4/4 Package ===         [OK] Packaged\n=== Pipeline SUCCESS ===\n```\n\n**What each stage did:**\n1. **Check:** confirmed that `/src/main.c` and `/src/utils.c` both exist.\n2. **Compile:** turned each `.c` file into `/build/<name>.o`, with `// compiled` added as the first line. It picks up every `.c` file in `/src`, not just those two.\n3. **Link:** created `/build/program`, which is `// linked` followed by all the `.o` files joined together:\n   ```\n   // linked\n   // compiled\n   int main() { return helper(); }\n   // compiled\n   int helper() { return 0; }\n   ```\n4. **Package:** created `/dist/release.tar.gz`. It contains `build/main.o`, `build/utils.o` and `build/program`.\n\n**Stopping on failure:** every step is checked, and if one goes wrong the script prints `[FAIL] <reason>` (to stderr) and the name of the stage it stopped at, then exits with code 1. I tested this by temporarily removing `utils.c`:\n```\n[FAIL] Missing source file: /src/utils.c\nPipeline aborted at stage: 1/4 Check sources\nexit=1\n```\nAfter the test I put `utils.c` back.\n\nThe script also fails if there are no `.c` files to compile, no `.o` files to link, a folder can't be created, or `tar` fails or produces an empty archive.",
+    "iterations": 5,
+    "tool_calls_count": 4,
+    "tool_calls": [
+      "ls -la /src /build /dist 2>&1; which tar gzip",
+      "ls -la /src; echo \"rc=$?\"; ls /dist; echo \"rc=$?\"; ls /",
+      "cat > /tmp/pipeline.sh <<'EOF'\n#!/bin/bash\nset -u\nSRC=/src; BUILD=/build; DIST=/dist\nfail() { echo \"[FAIL] $1\" >&2; echo \"Pipeline aborted at stage: $STAGE\"; exit 1; }\n\nSTAGE=\"1/4 Check sources\"; echo \"=== Stage $STAGE ===\"\nfor f in \"$SRC/main.c\" \"$SRC/utils.c\"; do\n  [[ -f \"$f\" ]] || fail \"Missing source file: $f\"\n  echo \"  found $f\"\ndone\necho \"[OK] Sources verified\"\n\nSTAGE=\"2/4 Compile\"; echo \"=== Stage $STAGE ===\"\nmkdir -p \"$BUILD\" || fail \"Cannot create $BUILD\"\nshopt -s nullglob\nsrcs=(\"$SRC\"/*.c)\n(( ${#srcs[@]} )) || fail \"No .c files in $SRC\"\nfor c in \"${srcs[@]}\"; do\n  o=\"$BUILD/$(basename \"${c%.c}\").o\"\n  { echo \"// compiled\"; cat \"$c\"; } > \"$o\" || fail \"Compile failed: $c\"\n  echo \"  $c -> $o\"\ndone\necho \"[OK] Compiled ${#srcs[@]} file(s)\"\n\nSTAGE=\"3/4 Link\"; echo \"=== Stage $STAGE ===\"\nobjs=(\"$BUILD\"/*.o)\n(( ${#objs[@]} )) || fail \"No object files to link\"\n{ echo \"// linked\"; cat \"${objs[@]}\"; } > \"$BUILD/program\" || fail \"Link failed\"\necho \"  linked ${objs[*]} -> $BUILD/program\"\necho \"[OK] Linked\"\n\nSTAGE=\"4/4 Package\"; echo \"=== Stage $STAGE ===\"\nmkdir -p \"$DIST\" || fail \"Cannot create $DIST\"\ntar -czf \"$DIST/release.tar.gz\" -C / build || fail \"tar failed\"\n[[ -s \"$DIST/release.tar.gz\" ]] || fail \"Archive empty or missing\"\necho \"  created $DIST/release.tar.gz\"\necho \"[OK] Packaged\"\necho \"=== Pipeline SUCCESS ===\"\nEOF\nchmod +x /tmp/pipeline.sh; bash /tmp/pipeline.sh; echo \"exit=$?\"",
+      "echo \"--- /build/program ---\"; cat /build/program; echo \"--- archive ---\"; tar -tzvf /dist/release.tar.gz\necho \"--- failure test ---\"; mv /src/utils.c /tmp/u.c; bash /tmp/pipeline.sh; echo \"exit=$?\"; mv /tmp/u.c /src/utils.c"
+    ],
+    "usage": {
+      "input_tokens": 7510,
+      "output_tokens": 1887,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 18173
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 4.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 4.0,
+      "turns": 5.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /src /build /dist 2>&1; which tar gzip",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "ls: cannot access '/build': No such file or directory\n/usr/bin/tar\n/usr/bin/gzip\n"
+          },
+          {
+            "commands": "ls -la /src; echo \"rc=$?\"; ls /dist; echo \"rc=$?\"; ls /",
+            "exit_code": 0,
+            "stderr": "ls: cannot access '/dist': No such file or directory\n",
+            "stdout": "-rw-r--r--       32 2026-10-09 05:04 main.c\n-rw-r--r--       27 2026-10-09 05:04 utils.c\nrc=0\nrc=2\nbin\ndev\netc\nhome\nproc\nroot\nsrc\ntmp\nusr\n"
+          },
+          {
+            "commands": "cat > /tmp/pipeline.sh <<'EOF'\n#!/bin/bash\nset -u\nSRC=/src; BUILD=/build; DIST=/dist\nfail() { echo \"[FAIL] $1\" >&2; echo \"Pipeline aborted at stage: $STAGE\"; exit 1; }\n\nSTAGE=\"1/4 Check sources\"; echo \"=== Stage $STAGE ===\"\nfor f in \"$SRC/main.c\" \"$SRC/utils.c\"; do\n  [[ -f \"$f\" ]] || fail \"Missing source file: $f\"\n  echo \"  found $f\"\ndone\necho \"[OK] Sources verified\"\n\nSTAGE=\"2/4 Compile\"; echo \"=== Stage $STAGE ===\"\nmkdir -p \"$BUILD\" || fail \"Cannot create $BUILD\"\nshopt -s nullglob\nsrcs=(\"$SRC\"/*.c)\n(( ${#srcs[@]} )) || fail \"No .c files in $SRC\"\nfor c in \"${srcs[@]}\"; do\n  o=\"$BUILD/$(basename \"${c%.c}\").o\"\n  { echo \"// compiled\"; cat \"$c\"; } > \"$o\" || fail \"Compile failed: $c\"\n  echo \"  $c -> $o\"\ndone\necho \"[OK] Compiled ${#srcs[@]} file(s)\"\n\nSTAGE=\"3/4 Link\"; echo \"=== Stage $STAGE ===\"\nobjs=(\"$BUILD\"/*.o)\n(( ${#objs[@]} )) || fail \"No object files to link\"\n{ echo \"// linked\"; cat \"${objs[@]}\"; } > \"$BUILD/program\" || fail \"Link failed\"\necho \"  linked ${objs[*]} -> $BUILD/program\"\necho \"[OK] Linked\"\n\nSTAGE=\"4/4 Package\"; echo \"=== Stage $STAGE ===\"\nmkdir -p \"$DIST\" || fail \"Cannot create $DIST\"\ntar -czf \"$DIST/release.tar.gz\" -C / build || fail \"tar failed\"\n[[ -s \"$DIST/release.tar.gz\" ]] || fail \"Archive empty or missing\"\necho \"  created $DIST/release.tar.gz\"\necho \"[OK] Packaged\"\necho \"=== Pipeline SUCCESS ===\"\nEOF\nchmod +x /tmp/pipeline.sh; bash /tmp/pipeline.sh; echo \"exit=$?\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "=== Stage 1/4 Check sources ===\n  found /src/main.c\n  found /src/utils.c\n[OK] Sources verified\n=== Stage 2/4 Compile ===\n  /src/main.c -> /build/main.o\n  /src/utils.c -> /build/utils.o\n[OK] Compiled 2 file(s)\n=== Stage 3/4 Link ===\n  linked /build/main.o /build/utils.o -> /build/program\n[OK] Linked\n=== Stage 4/4 Package ===\n  created /dist/release.tar.gz\n[OK] Packaged\n=== Pipeline SUCCESS ===\nexit=0\n"
+          },
+          {
+            "commands": "echo \"--- /build/program ---\"; cat /build/program; echo \"--- archive ---\"; tar -tzvf /dist/release.tar.gz\necho \"--- failure test ---\"; mv /src/utils.c /tmp/u.c; bash /tmp/pipeline.sh; echo \"exit=$?\"; mv /tmp/u.c /src/utils.c",
+            "exit_code": 0,
+            "stderr": "[FAIL] Missing source file: /src/utils.c\n",
+            "stdout": "--- /build/program ---\n// linked\n// compiled\nint main() { return helper(); }\n// compiled\nint helper() { return 0; }\n--- archive ---\ndrwxr-xr-x        0 build/\n-rw-r--r--       39 build/utils.o\n-rw-r--r--       44 build/main.o\n-rw-r--r--       93 build/program\n--- failure test ---\n=== Stage 1/4 Check sources ===\n  found /src/main.c\nPipeline aborted at stage: 1/4 Check sources\nexit=1\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

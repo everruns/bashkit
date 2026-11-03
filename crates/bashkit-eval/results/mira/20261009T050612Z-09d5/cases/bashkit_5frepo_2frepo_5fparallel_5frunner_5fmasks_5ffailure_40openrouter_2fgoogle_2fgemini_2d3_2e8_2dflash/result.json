@@ -1,0 +1,190 @@
+{
+  "eval": "bashkit_repo",
+  "sample": "repo_parallel_runner_masks_failure",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "In the git repo /home/eval/parser, `make test` runs the tests in parallel and always reports success, but CI says a test is broken. First fix tests/run.sh so a failing test makes `make test` fail (keep the tests running in parallel as background jobs). Then fix the bug in src/ that the failing test exposes, without editing the tests. Finish with `make test` and `make canary` (which must report a non-zero exit), and commit with a message starting with `fix:`."
+  ],
+  "passed": false,
+  "aggregate": 0.8571428571428571,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 0.8571428571428571,
+      "pass": false,
+      "reason": "6/7 checks passed (weighted rate 86%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "",
+    "iterations": 20,
+    "tool_calls_count": 20,
+    "tool_calls": [
+      "cd /home/eval/parser && ls -la && git status",
+      "cd /home/eval/parser && cat Makefile && ls -la tests src",
+      "cd /home/eval/parser && cat tests/run.sh && cat src/kv.sh",
+      "cd /home/eval/parser && ls -la tests/unit tests/canary && cat tests/unit/* tests/canary/*",
+      "cd /home/eval/parser && make canary",
+      "cd /home/eval/parser && make test",
+      "bash src/kv.sh\nbash -c '. src/kv.sh; parse_kv \"url=https://x.test/?q=1;mode=fast\" url; echo \"exit=$?\"'",
+      "bash -c 'wait -n 2>/dev/null; echo $?'",
+      "bash --version",
+      "bash -c '(exit 0)& p1=$!; (exit 3)& p2=$!; wait $p1; echo $?; wait $p2; echo $?'",
+      "bash -c 'pids=(); (exit 0) & pids+=($!); (exit 2) & pids+=($!); status=0; for p in \"${pids[@]}\"; do wait \"$p\" || status=1; done; echo status=$status'",
+      "bash -c 'pids=(); (exit 0) & pids+=($!); (exit 0) & pids+=($!); status=0; for p in \"${pids[@]}\"; do wait \"$p\" || status=1; done; echo status=$status'",
+      "cd /home/eval/parser && git log -n 5",
+      "cat << 'EOF' > /home/eval/parser/tests/run.sh\n#!/bin/bash\n# usage: run.sh DIR -> run DIR/test_*.sh in parallel; exit 1 if any fail\ndir=$1\nmkdir -p build\npids=()\nfor t in \"$dir\"/test_*.sh; do\n  bash \"$t\" > \"build/$(basename \"$t\" .sh).log\" 2>&1 &\n  pids+=($!)\ndone\nstatus=0\nfor p in \"${pids[@]}\"; do\n  wait \"$p\" || status=1\ndone\n[ \"$status\" -eq 0 ] && echo \"all tests passed in $dir\" | tee build/last-run.txt\nexit $status\nEOF",
+      "cd /home/eval/parser && make test",
+      "cd /home/eval/parser && cat build/*.log",
+      "cat << 'EOF' > /home/eval/parser/src/kv.sh\n# parse_kv 'k1=v1;k2=v2' KEY -> value for KEY (values may contain '=')\nparse_kv() {\n  local IFS=';' pair\n  for pair in $1; do\n    if [ \"${pair%%=*}\" = \"$2\" ]; then echo \"${pair#*=}\"; return 0; fi\n  done\n  return 1\n}\nEOF",
+      "cd /home/eval/parser && make test",
+      "cd /home/eval/parser && make canary",
+      "cd /home/eval/parser && cat build/canary.txt"
+    ],
+    "usage": {
+      "input_tokens": 28257,
+      "output_tokens": 1092,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 33089
+    },
+    "metrics": {
+      "natural_stop": 0.0,
+      "tool_calls": 20.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 19.0,
+      "turns": 20.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cd /home/eval/parser && ls -la && git status",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "drwxr-xr-x        0 2026-10-09 05:09 .git\n-rw-r--r--      221 2026-10-09 05:09 Makefile\ndrwxr-xr-x        0 2026-10-09 05:09 src\ndrwxr-xr-x        0 2026-10-09 05:09 tests\nOn branch master\n\nnothing to commit, working tree clean\n"
+          },
+          {
+            "commands": "cd /home/eval/parser && cat Makefile && ls -la tests src",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "test:\n\t@bash tests/run.sh tests/unit\n\n# The canary suite always contains a failing test: the runner must notice it.\ncanary:\n\t@mkdir -p build\n\t@bash tests/run.sh tests/canary; echo \"canary exit=$$?\" | tee build/canary.txt\ntests:\ndrwxr-xr-x        0 2026-10-09 05:09 canary\n-rw-r--r--      304 2026-10-09 05:09 run.sh\ndrwxr-xr-x        0 2026-10-09 05:09 unit\n\nsrc:\n-rw-r--r--      217 2026-10-09 05:09 kv.sh\n"
+          },
+          {
+            "commands": "cd /home/eval/parser && cat tests/run.sh && cat src/kv.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "#!/bin/bash\n# usage: run.sh DIR -> run DIR/test_*.sh in parallel; exit 1 if any fail\ndir=$1\nmkdir -p build\nfor t in \"$dir\"/test_*.sh; do\n  bash \"$t\" > \"build/$(basename \"$t\" .sh).log\" 2>&1 &\ndone\nwait\nstatus=$?\n[ \"$status\" -eq 0 ] && echo \"all tests passed in $dir\" | tee build/last-run.txt\nexit $status\n# parse_kv 'k1=v1;k2=v2' KEY -> value for KEY (values may contain '=')\nparse_kv() {\n  local IFS=';' pair\n  for pair in $1; do\n    if [ \"${pair%%=*}\" = \"$2\" ]; then echo \"${pair##*=}\"; return 0; fi\n  done\n  return 1\n}\n"
+          },
+          {
+            "commands": "cd /home/eval/parser && ls -la tests/unit tests/canary && cat tests/unit/* tests/canary/*",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "tests/unit:\n-rw-r--r--      152 2026-10-09 05:09 test_basic.sh\n-rw-r--r--      142 2026-10-09 05:09 test_equals_in_value.sh\n\ntests/canary:\n-rw-r--r--       39 2026-10-09 05:09 test_always_fails.sh\n-rw-r--r--        7 2026-10-09 05:09 test_ok.sh\n. src/kv.sh\n[ \"$(parse_kv 'a=1;b=2' b)\" = 2 ] || { echo 'b should be 2'; exit 1; }\nparse_kv 'a=1' z && { echo 'missing key must fail'; exit 1; }\nexit 0\n. src/kv.sh\ngot=$(parse_kv 'url=https://x.test/?q=1;mode=fast' url)\n[ \"$got\" = 'https://x.test/?q=1' ] || { echo \"url: got '$got'\"; exit 1; }\necho 'canary: expected failure'\nexit 1\nexit 0\n"
+          },
+          {
+            "commands": "cd /home/eval/parser && make canary",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "all tests passed in tests/canary\ncanary exit=0\n"
+          },
+          {
+            "commands": "cd /home/eval/parser && make test",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "all tests passed in tests/unit\n"
+          },
+          {
+            "commands": "bash src/kv.sh\nbash -c '. src/kv.sh; parse_kv \"url=https://x.test/?q=1;mode=fast\" url; echo \"exit=$?\"'",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "1\nexit=0\n"
+          },
+          {
+            "commands": "bash -c 'wait -n 2>/dev/null; echo $?'",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "127\n"
+          },
+          {
+            "commands": "bash --version",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Bashkit 0.18.2 (virtual bash interpreter)\n"
+          },
+          {
+            "commands": "bash -c '(exit 0)& p1=$!; (exit 3)& p2=$!; wait $p1; echo $?; wait $p2; echo $?'",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "0\n3\n"
+          },
+          {
+            "commands": "bash -c 'pids=(); (exit 0) & pids+=($!); (exit 2) & pids+=($!); status=0; for p in \"${pids[@]}\"; do wait \"$p\" || status=1; done; echo status=$status'",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "status=1\n"
+          },
+          {
+            "commands": "bash -c 'pids=(); (exit 0) & pids+=($!); (exit 0) & pids+=($!); status=0; for p in \"${pids[@]}\"; do wait \"$p\" || status=1; done; echo status=$status'",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "status=0\n"
+          },
+          {
+            "commands": "cd /home/eval/parser && git log -n 5",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "commit b465c9f1\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 05:09:50 2026 +0000\n\n    initial import\n\n"
+          },
+          {
+            "commands": "cat << 'EOF' > /home/eval/parser/tests/run.sh\n#!/bin/bash\n# usage: run.sh DIR -> run DIR/test_*.sh in parallel; exit 1 if any fail\ndir=$1\nmkdir -p build\npids=()\nfor t in \"$dir\"/test_*.sh; do\n  bash \"$t\" > \"build/$(basename \"$t\" .sh).log\" 2>&1 &\n  pids+=($!)\ndone\nstatus=0\nfor p in \"${pids[@]}\"; do\n  wait \"$p\" || status=1\ndone\n[ \"$status\" -eq 0 ] && echo \"all tests passed in $dir\" | tee build/last-run.txt\nexit $status\nEOF",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "cd /home/eval/parser && make test",
+            "exit_code": 2,
+            "stderr": "make: *** [Makefile:2: test] Error 1\n",
+            "stdout": ""
+          },
+          {
+            "commands": "cd /home/eval/parser && cat build/*.log",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "canary: expected failure\nurl: got '1'\n"
+          },
+          {
+            "commands": "cat << 'EOF' > /home/eval/parser/src/kv.sh\n# parse_kv 'k1=v1;k2=v2' KEY -> value for KEY (values may contain '=')\nparse_kv() {\n  local IFS=';' pair\n  for pair in $1; do\n    if [ \"${pair%%=*}\" = \"$2\" ]; then echo \"${pair#*=}\"; return 0; fi\n  done\n  return 1\n}\nEOF",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "cd /home/eval/parser && make test",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "all tests passed in tests/unit\n"
+          },
+          {
+            "commands": "cd /home/eval/parser && make canary",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "canary exit=1\n"
+          },
+          {
+            "commands": "cd /home/eval/parser && cat build/canary.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "canary exit=1\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

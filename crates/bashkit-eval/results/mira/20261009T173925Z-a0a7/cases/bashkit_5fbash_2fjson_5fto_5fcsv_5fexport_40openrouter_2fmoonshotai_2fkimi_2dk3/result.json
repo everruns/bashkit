@@ -1,0 +1,71 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "json_to_csv_export",
+  "target": "openrouter/moonshotai/kimi-k3",
+  "input": [
+    "Convert /data/employees.json (an array of objects with keys name, department, salary) to CSV format with a header row. Save the result to /data/employees.csv and print it. The output should have the header 'name,department,salary' followed by one data row per object."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "8/8 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "The conversion is complete. `/data/employees.csv` has been created with the header `name,department,salary` followed by 4 data rows, one per employee object:\n\n```\nname,department,salary\nAlice Chen,Engineering,120000\nBob Park,Marketing,95000\nCarol Wu,Engineering,115000\nDave Kim,Sales,88000\n```\n\nThe conversion was done using Python's `json` and `csv` modules: the JSON array was loaded from `/data/employees.json`, then written to CSV with the header row followed by each object's `name`, `department`, and `salary` values in order.",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "cat /data/employees.json",
+      "python3 << 'EOF'\nimport json, csv\n\nwith open('/data/employees.json') as f:\n    data = json.load(f)\n\nwith open('/data/employees.csv', 'w', newline='') as f:\n    writer = csv.writer(f)\n    writer.writerow(['name', 'department', 'salary'])\n    for obj in data:\n        writer.writerow([obj['name'], obj['department'], obj['salary']])\n\nprint(open('/data/employees.csv').read())\nEOF",
+      "ls -l /data/employees.csv && cat /data/employees.csv"
+    ],
+    "usage": {
+      "input_tokens": 3347,
+      "output_tokens": 494,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 7563
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 3.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat /data/employees.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "[{\"name\":\"Alice Chen\",\"department\":\"Engineering\",\"salary\":120000},{\"name\":\"Bob Park\",\"department\":\"Marketing\",\"salary\":95000},{\"name\":\"Carol Wu\",\"department\":\"Engineering\",\"salary\":115000},{\"name\":\"Dave Kim\",\"department\":\"Sales\",\"salary\":88000}]"
+          },
+          {
+            "commands": "python3 << 'EOF'\nimport json, csv\n\nwith open('/data/employees.json') as f:\n    data = json.load(f)\n\nwith open('/data/employees.csv', 'w', newline='') as f:\n    writer = csv.writer(f)\n    writer.writerow(['name', 'department', 'salary'])\n    for obj in data:\n        writer.writerow([obj['name'], obj['department'], obj['salary']])\n\nprint(open('/data/employees.csv').read())\nEOF",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "name,department,salary\nAlice Chen,Engineering,120000\nBob Park,Marketing,95000\nCarol Wu,Engineering,115000\nDave Kim,Sales,88000\n\n"
+          },
+          {
+            "commands": "ls -l /data/employees.csv && cat /data/employees.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--      132 2026-10-09 17:42 /data/employees.csv\nname,department,salary\r\nAlice Chen,Engineering,120000\r\nBob Park,Marketing,95000\r\nCarol Wu,Engineering,115000\r\nDave Kim,Sales,88000\r\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

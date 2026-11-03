@@ -2013,15 +2013,16 @@ def test_bash_external_handler_requires_python_true():
         Bash(python=False, external_functions=["foo"], external_handler=handler)
 
 
-def test_bash_execute_sync_with_handler_raises():
-    """execute_sync is not supported when external_handler is configured."""
+def test_bash_execute_sync_with_handler():
+    """External handlers use the same private-loop fallback as custom builtins."""
 
     async def handler(fn_name, args, kwargs):
         return "ok"
 
     bash = Bash(python=True, external_functions=["foo"], external_handler=handler)
-    with pytest.raises(RuntimeError, match="execute_sync"):
-        bash.execute_sync("python3 -c 'print(foo())'")
+    result = bash.execute_sync("python3 -c 'print(foo())'")
+    assert result.exit_code == 0, result.stderr
+    assert result.stdout == "ok\n"
 
 
 def test_bash_sync_handler_raises():

@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_hard",
+  "sample": "hard_log_p95",
+  "target": "openai/gpt-6.1-sol",
+  "input": [
+    "/home/eval/logs/access.log is an HTTP access log. Each well-formed line is: <timestamp> <method> <path> <status> <latency>ms, separated by single spaces. Produce /home/eval/logs/out/report.tsv with per-endpoint latency statistics.\n\nRules:\n- Skip lines that do not have exactly those 5 fields or whose latency is not a number followed by \"ms\" (e.g. truncation markers, or \"-\" for timed-out requests).\n- endpoint = path with any query string (\"?...\" onwards) removed, then a trailing \"/\" removed (unless the path is just \"/\").\n- Exclude /healthz and every path under /static/.\n- For each endpoint: count = number of requests, p50 and p95 = latency percentiles in ms using the nearest-rank method (sort latencies ascending; the p-th percentile is the value at 1-based position ceil(p/100 * count)), err_permille = floor(1000 * (requests with status >= 500) / count).\n- Output: tab-separated, a header line `endpoint\tcount\tp50\tp95\terr_permille`, then the top 5 endpoints ordered by p95 descending, then count descending, then endpoint ascending (byte order). Integers only, no padding."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "4/4 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Created `/home/eval/logs/out/report.tsv`:\n\n```tsv\nendpoint\tcount\tp50\tp95\terr_permille\n/api/items\t381\t270\t640\t41\n/api/search\t381\t210\t500\t62\n/api/login\t371\t240\t480\t37\n/api/orders\t371\t290\t480\t43\n/api/users\t379\t230\t430\t47\n```",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "ls -l /home/eval/logs/access.log; head -n 12 /home/eval/logs/access.log; command -v awk; command -v sort",
+      "mkdir -p /home/eval/logs/out\nexport LC_ALL=C\nwork=$(mktemp -d)\nawk 'BEGIN { FS=\" \"; OFS=\"\\t\" }\nNF == 5 && $5 ~ /^[0-9]+(\\.[0-9]+)?ms$/ {\n    endpoint=$3\n    sub(/\\?.*$/, \"\", endpoint)\n    if (endpoint ~ /^\\/static\\//) next\n    if (endpoint != \"/\") sub(/\\/$/, \"\", endpoint)\n    if (endpoint == \"/healthz\") next\n    latency=$5\n    sub(/ms$/, \"\", latency)\n    print endpoint, latency, ($4+0 >= 500 ? 1 : 0)\n}' /home/eval/logs/access.log | sort -t $'\\t' -k1,1 -k2,2n > \"$work/requests.tsv\"\nawk 'BEGIN { FS=OFS=\"\\t\" }\nfunction emit(    rank50,rank95) {\n    if (!n) return\n    rank50=int((n+1)/2)\n    rank95=int((95*n+99)/100)\n    printf \"%s\\t%d\\t%.0f\\t%.0f\\t%d\\n\", endpoint,n,values[rank50],values[rank95],int(1000*errors/n)\n}\n$1 != endpoint { emit(); endpoint=$1; n=0; errors=0 }\n{ values[++n]=$2; errors+=$3 }\nEND { emit() }\n' \"$work/requests.tsv\" | sort -t $'\\t' -k4,4nr -k2,2nr -k1,1 | head -n 5 > \"$work/top.tsv\"\n{ printf 'endpoint\\tcount\\tp50\\tp95\\terr_permille\\n'; cat \"$work/top.tsv\"; } > /home/eval/logs/out/report.tsv\nrm -rf \"$work\"\ncat /home/eval/logs/out/report.tsv"
+    ],
+    "usage": {
+      "input_tokens": 2581,
+      "output_tokens": 808,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 18922
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -l /home/eval/logs/access.log; head -n 12 /home/eval/logs/access.log; command -v awk; command -v sort",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--   139624 2026-10-09 05:30 /home/eval/logs/access.log\n2026-10-09T10:00:00 GET /api/orders 200 150ms\n2026-10-09T10:00:01 GET /api/items 200 70ms\n2026-10-09T10:00:02 GET /healthz 200 20ms\n2026-10-09T10:00:03 DELETE /api/users 404 120ms\n2026-10-09T10:00:04 POST /api/items 200 240ms\n2026-10-09T10:00:05 DELETE /api/search 503 190ms\n2026-10-09T10:00:06 GET /api/orders 404 160ms\n2026-10-09T10:00:07 GET /api/items 200 70ms\n2026-10-09T10:00:08 DELETE /api/items 200 320ms\n2026-10-09T10:00:09 GET /api/items 200 400ms\n2026-10-09T10:00:10 POST /static/app.js 200 280ms\n2026-10-09T10:00:11 DELETE /api/cart 200 280ms\n/usr/bin/awk\n/usr/bin/sort\n"
+          },
+          {
+            "commands": "mkdir -p /home/eval/logs/out\nexport LC_ALL=C\nwork=$(mktemp -d)\nawk 'BEGIN { FS=\" \"; OFS=\"\\t\" }\nNF == 5 && $5 ~ /^[0-9]+(\\.[0-9]+)?ms$/ {\n    endpoint=$3\n    sub(/\\?.*$/, \"\", endpoint)\n    if (endpoint ~ /^\\/static\\//) next\n    if (endpoint != \"/\") sub(/\\/$/, \"\", endpoint)\n    if (endpoint == \"/healthz\") next\n    latency=$5\n    sub(/ms$/, \"\", latency)\n    print endpoint, latency, ($4+0 >= 500 ? 1 : 0)\n}' /home/eval/logs/access.log | sort -t $'\\t' -k1,1 -k2,2n > \"$work/requests.tsv\"\nawk 'BEGIN { FS=OFS=\"\\t\" }\nfunction emit(    rank50,rank95) {\n    if (!n) return\n    rank50=int((n+1)/2)\n    rank95=int((95*n+99)/100)\n    printf \"%s\\t%d\\t%.0f\\t%.0f\\t%d\\n\", endpoint,n,values[rank50],values[rank95],int(1000*errors/n)\n}\n$1 != endpoint { emit(); endpoint=$1; n=0; errors=0 }\n{ values[++n]=$2; errors+=$3 }\nEND { emit() }\n' \"$work/requests.tsv\" | sort -t $'\\t' -k4,4nr -k2,2nr -k1,1 | head -n 5 > \"$work/top.tsv\"\n{ printf 'endpoint\\tcount\\tp50\\tp95\\terr_permille\\n'; cat \"$work/top.tsv\"; } > /home/eval/logs/out/report.tsv\nrm -rf \"$work\"\ncat /home/eval/logs/out/report.tsv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "endpoint\tcount\tp50\tp95\terr_permille\n/api/items\t381\t270\t640\t41\n/api/search\t381\t210\t500\t62\n/api/login\t371\t240\t480\t37\n/api/orders\t371\t290\t480\t43\n/api/users\t379\t230\t430\t47\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

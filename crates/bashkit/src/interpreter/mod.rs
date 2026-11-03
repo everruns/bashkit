@@ -10,6 +10,10 @@
 // validating string contents. This is safe because we check for non-empty strings.
 #![allow(clippy::unwrap_used)]
 
+// Decision: builtin array mutations use the same retained entry/byte accounting
+// as assignments. Clearing refunds both charges; indexed merges check each live
+// element in place. Refused entry/byte writes fail the host execution visibly.
+
 // Decision: function definition filenames share Arc<str> storage and live in
 // ScopedState beside functions. Charge filename/key bytes per function before
 // admission; replace/refund them with the definition so forks, rollback and
@@ -23,6 +27,9 @@
 // `name: msg` for bash shell builtins) and `prefix_builtin_diagnostics`
 // rewrites the line start at the single dispatch point
 // (`execute_builtin_arc`), before redirects or streaming see the text.
+// Diagnostic names are capped at 1,024 UTF-8 bytes without changing `$0`.
+// Rewriting leases both bytes and cached text before fallible allocation;
+// leases survive routing, and each scan/emission checks the request budget.
 // Execution plans and `/dev/stderr` operand data are not rewritten; usage
 // lines (`name: usage:`) and coreutils-style builtins (cat, grep, ...:
 // external programs in bash) stay unprefixed. Interactive shells
@@ -30,6 +37,10 @@
 // sandbox "Did you mean" / unavailable-command hints after
 // `command not found` are kept on purpose.
 
+// Decision: trap handlers share the function/source depth budget plus a
+// dedicated trap-nesting cap. Nested delivery skips an exhausted handler
+// with a diagnostic; handler logic failures never disturb the interrupted
+// command (TM-DOS-030), while the first resource-limit trip fails the exec.
 mod arithmetic;
 mod brace_expansion;
 mod completion;
@@ -40,6 +51,7 @@ mod glob;
 mod history;
 mod jobs;
 pub(crate) mod pipe;
+mod pipeline_admission;
 mod prompt;
 mod readline_bind;
 mod readline_defaults;
@@ -87,7 +99,10 @@ use crate::builtins::{self, Builtin};
 use crate::error::Error;
 use crate::error::Result;
 use crate::fs::FileSystem;
-use crate::limits::{BudgetedString, ExecutionCounters, ExecutionLimits, SessionLimits};
+use crate::limits::{
+    BudgetedString, ExecutionCounters, ExecutionLimits, HARD_MAX_TRAP_NESTING, LimitExceeded,
+    SessionLimits,
+};
 
 /// A single command history entry.
 #[derive(Debug, Clone)]
@@ -418,6 +433,9 @@ pub(crate) struct ShellRef<'a> {
     pub(crate) stdout_pipe: Option<Arc<pipe::Pipe>>,
     /// Stdin of a streaming filter stage (see `Context::stdin_stream`).
     pub(crate) stdin_pipe: Option<Arc<pipe::Pipe>>,
+    pub(crate) stderr_pipe: Option<Arc<pipe::Pipe>>,
+    pub(crate) command_routes: Option<[crate::command::CommandRoute; 2]>,
+    pub(crate) stdout_stream: Option<crate::command::CommandOutput>,
     /// Enclosing loops in the current function (`break`/`continue`).
     pub(crate) loop_depth: usize,
     /// Active function calls and `source`s (`return` is valid when > 0).
@@ -433,6 +451,40 @@ pub(crate) struct ShellRef<'a> {
 // interpreter state; others (e.g. `bash`, `command`, `exec`, `getopts`) live
 // only here. Listing every name guarantees inventory completeness regardless of
 // map membership.
+/// Interpreter named by a script's `#!` line, with the arguments that go
+/// before the script path. `None` for no shebang or a shell (`bash`/`sh`),
+/// which run the content in-process.
+///
+/// Decision: `#!/path/NAME [ARG]` keeps Linux semantics (everything after
+/// the interpreter is one argument); `#!/path/env [-S] NAME ARGS...` splits,
+/// matching `env -S`. Only the basename picks the builtin, so the path in the
+/// shebang never needs to exist in the VFS. The caller dispatches only to a
+/// registered builtin that is a real program (not `cd`, `export`, ...).
+fn shebang_interpreter(content: &str) -> Option<(String, Vec<String>)> {
+    let line = content.strip_prefix("#!")?.lines().next()?.trim();
+    let (interp, rest) = match line.split_once(char::is_whitespace) {
+        Some((i, r)) => (i, r.trim()),
+        None => (line, ""),
+    };
+    let base = interp.rsplit('/').next()?;
+    let (cmd, argv): (&str, Vec<String>) = if base == "env" {
+        let mut words = rest.split_whitespace();
+        let mut cmd = words.next()?;
+        if cmd == "-S" {
+            cmd = words.next()?;
+        }
+        (cmd, words.map(str::to_string).collect())
+    } else if rest.is_empty() {
+        (base, Vec::new())
+    } else {
+        (base, vec![rest.to_string()])
+    };
+    if cmd.is_empty() || cmd.starts_with('-') || matches!(cmd, "bash" | "sh") {
+        return None;
+    }
+    Some((cmd.to_string(), argv))
+}
+
 // Builtins that exist only inside a shell (no `/usr/bin` program of that
 // name), so `env NAME` cannot run them.
 const ENV_SHELL_ONLY_BUILTINS: &[&str] = &[
@@ -1566,6 +1618,46 @@ struct PipelineStageScope {
     prev_pipeline_stdin: Option<Option<crate::StreamData>>,
 }
 
+// A suspended final stage can be cancelled before exit_pipeline_stage runs.
+// Its subshell snapshot must still roll back, including session-owned leases.
+struct PipelineStageGuard {
+    interpreter: *mut Interpreter,
+    scope: Option<PipelineStageScope>,
+}
+
+// SAFETY: the guard never leaves the future borrowing this interpreter. The
+// interpreter is Send, and its borrowed address stays stable until guard drop.
+unsafe impl Send for PipelineStageGuard {}
+
+impl PipelineStageGuard {
+    fn new(interpreter: &mut Interpreter, scope: PipelineStageScope) -> Self {
+        Self {
+            interpreter,
+            scope: Some(scope),
+        }
+    }
+
+    fn complete(
+        mut self,
+        interpreter: &mut Interpreter,
+        result: Result<ExecResult>,
+    ) -> Result<ExecResult> {
+        debug_assert_eq!(self.interpreter, interpreter as *mut Interpreter);
+        interpreter.exit_pipeline_stage(self.scope.take().expect("active pipeline scope"), result)
+    }
+}
+
+impl Drop for PipelineStageGuard {
+    fn drop(&mut self) {
+        if let Some(scope) = self.scope.take() {
+            // SAFETY: awaited command futures (which borrow the interpreter)
+            // drop before this guard. No borrow remains during restoration.
+            let _ = unsafe { &mut *self.interpreter }
+                .exit_pipeline_stage(scope, Ok(ExecResult::default()));
+        }
+    }
+}
+
 struct SubshellSnapshot {
     scoped: ScopedState,
     env: Arc<HashMap<String, String>>,
@@ -1764,7 +1856,7 @@ pub struct Interpreter {
     http_client: Option<Arc<crate::network::HttpClient>>,
     /// Git client for git builtins
     #[cfg(feature = "git")]
-    git_client: Option<crate::builtins::git::GitClient>,
+    git_client: Option<Arc<crate::builtins::git::GitClient>>,
     /// SSH client for ssh/scp/sftp builtins
     #[cfg(feature = "ssh")]
     ssh_client: Option<Arc<crate::builtins::ssh::SshClient>>,
@@ -1905,6 +1997,10 @@ pub struct Interpreter {
     /// True while executing a trap handler. Suppresses recursive DEBUG trap
     /// invocation to prevent amplification attacks (TM-DOS-035).
     in_trap: bool,
+    /// Nesting level of `run_trap_command` entries (TM-DOS-020).
+    trap_nesting: usize,
+    /// First trap-nesting depth error, surfaced at the `exec` boundary.
+    trap_depth_error: Option<LimitExceeded>,
     /// The ERR trap is inherited for display only: a subshell, command
     /// substitution or pipeline stage without `set -E` keeps the parent's
     /// handler visible to `trap -p` but does not run it (bash). `trap`
@@ -2270,6 +2366,10 @@ impl Interpreter {
         builtins.insert("jq".to_string(), Arc::new(builtins::Jq));
         #[cfg(feature = "jq")]
         builtins.insert("yq".to_string(), Arc::new(builtins::Yq));
+        #[cfg(all(feature = "markkit", not(target_arch = "wasm32")))]
+        builtins.insert("markkit".to_string(), Arc::new(builtins::Markkit));
+        #[cfg(all(feature = "fetchkit", not(target_arch = "wasm32")))]
+        builtins.insert("fetchkit".to_string(), Arc::new(builtins::Fetchkit));
 
         // Custom-construction builtins that need parameters
 
@@ -2535,6 +2635,8 @@ impl Interpreter {
             cancelled: Arc::new(AtomicBool::new(false)),
             hooks: Arc::new(crate::hooks::Hooks::default()),
             in_trap: false,
+            trap_nesting: 0,
+            trap_depth_error: None,
             err_trap_dormant: false,
             debug_trap_dormant: false,
             err_trap_skip_stage: false,
@@ -2755,6 +2857,8 @@ impl Interpreter {
             cancelled: Arc::clone(&self.cancelled),
             hooks: Arc::clone(&self.hooks),
             in_trap: false,
+            trap_nesting: 0,
+            trap_depth_error: None,
             // A job or pipeline stage is a subshell: ERR stays dormant there
             // unless `set -E`.
             err_trap_dormant: self.err_trap_dormant || !self.flags.contains(BashFlags::ERRTRACE),
@@ -2881,7 +2985,7 @@ impl Interpreter {
         Arc::make_mut(&mut self.scoped.namerefs)
     }
 
-    /// Check if cancellation has been requested.
+    /// Check cancellation and resource failures recorded by read-only expansion.
     fn check_cancelled(&self) -> Result<()> {
         if let Some(error) = &self.memory_limit_error {
             return Err(crate::error::Error::ResourceLimit(error.clone()));
@@ -2889,7 +2993,7 @@ impl Interpreter {
         if self.cancelled.load(Ordering::Relaxed) {
             Err(crate::error::Error::Cancelled)
         } else {
-            Ok(())
+            self.execution_budget.check().map_err(Into::into)
         }
     }
 
@@ -3074,6 +3178,8 @@ impl Interpreter {
         // handler is awaited; clear the re-entrancy guard before each exec so
         // one cancelled script cannot suppress traps in the next script.
         self.in_trap = false;
+        self.trap_nesting = 0;
+        self.trap_depth_error = None;
         self.err_trap_dormant = false;
         self.debug_trap_dormant = false;
         self.err_trap_skip_stage = false;
@@ -3101,6 +3207,7 @@ impl Interpreter {
         }
         self.getopts_char_idx = 0;
         self.pipeline_stdin = None;
+        self.clear_pipeline_streams();
         self.regex_cache = RuntimeRegexCache::default();
         self.bash_source_stack.clear();
         self.arrays_mut().remove("BASH_SOURCE");
@@ -3109,6 +3216,15 @@ impl Interpreter {
     // Called after a host-backed deadline drops the in-flight execution future.
     pub(crate) fn clear_cancelled_execution_state(&mut self) {
         self.reconcile_cancelled_execution_state(0, 0, 0, None);
+        self.clear_pipeline_streams();
+    }
+
+    fn clear_pipeline_streams(&mut self) {
+        self.pipe_in = None;
+        self.pipe_out = None;
+        self.builtin_stdin_pipe = None;
+        self.builtin_stdout_pipe = None;
+        self.stream_stdout_command = None;
     }
 
     fn clear_pending_fd_redirect_state(&mut self) {
@@ -3147,15 +3263,21 @@ impl Interpreter {
     /// (`BASH_SOURCE[0]`, so a sourced file names itself), else `$0`. Mirrors
     /// bash's `get_name_for_error`.
     pub(crate) fn diag_name(&self) -> String {
-        if !self.interactive
+        // THREAT[TM-DOS-103]: bound attacker-controlled names before copying.
+        let name = if !self.interactive
             && let Some(src) = self.bash_source_stack.last().filter(|s| !s.file.is_empty())
         {
-            return src.file.to_string();
+            &src.file
+        } else if let Some(frame) = self.call_stack.iter().rev().find(|f| !f.keeps_arg0) {
+            frame.name.as_str()
+        } else {
+            Self::DEFAULT_ARG0
+        };
+        let mut end = name.len().min(1024);
+        while !name.is_char_boundary(end) {
+            end -= 1;
         }
-        if let Some(frame) = self.call_stack.iter().rev().find(|f| !f.keeps_arg0) {
-            return frame.name.clone();
-        }
-        Self::DEFAULT_ARG0.to_string()
+        name[..end].to_string()
     }
 
     /// Prefix of a shell diagnostic: `$0: line N: ` (non-interactive bash),
@@ -3780,67 +3902,100 @@ impl Interpreter {
     /// `emit_count_before` is the value of `output_emit_count` before the sub-call
     /// that produced this output. If the count advanced, sub-calls already emitted
     /// and we skip to avoid duplicates.
-    fn maybe_emit_output(
-        &mut self,
-        stdout: &crate::StreamData,
-        stderr: &crate::StreamData,
+    fn maybe_emit_output<'a>(
+        &'a mut self,
+        stdout: &'a crate::StreamData,
+        stderr: &'a crate::StreamData,
         emit_count_before: u64,
-    ) -> bool {
-        if self.output_callback.is_none() {
-            return false;
-        }
-        // Sub-calls already emitted — skip to avoid duplicates
-        if self.output_emit_count != emit_count_before {
-            return false;
-        }
-        // `exec >log` / `exec 2>/dev/null`: the shell's own output is routed
-        // at the top-level command (`route_exec_output`), not streamed. A
-        // pipeline stage's sink is a pipe, never the caller.
-        let (stdout, stderr) = if self.pipe_out.is_none() {
-            let empty = crate::StreamData::new();
-            (
-                if self.exec_fd_table.contains_key(&1) {
-                    empty.clone()
-                } else {
-                    stdout.clone()
-                },
-                if self.exec_fd_table.contains_key(&2) {
-                    empty
-                } else {
-                    stderr.clone()
-                },
-            )
-        } else {
-            (stdout.clone(), stderr.clone())
-        };
-        let (stdout, stderr) = (&stdout, &stderr);
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<bool>> + Send + 'a>> {
+        Box::pin(async move {
+            if self.output_callback.is_none() {
+                return Ok(false);
+            }
+            // Sub-calls already emitted — skip to avoid duplicates
+            if self.output_emit_count != emit_count_before {
+                return Ok(false);
+            }
+            // `exec >log` / `exec 2>/dev/null`: the shell's own output is routed
+            // at the top-level command (`route_exec_output`), not streamed. A
+            // pipeline stage's sink is a pipe, never the caller.
+            let (stdout, stderr) = if self.pipe_out.is_none() {
+                let empty = crate::StreamData::new();
+                (
+                    if self.exec_fd_table.contains_key(&1) {
+                        empty.clone()
+                    } else {
+                        stdout.clone()
+                    },
+                    if self.exec_fd_table.contains_key(&2) {
+                        empty
+                    } else {
+                        stderr.clone()
+                    },
+                )
+            } else {
+                (stdout.clone(), stderr.clone())
+            };
+            let (stdout, stderr) = (&stdout, &stderr);
 
-        let stdout_remaining = self
-            .limits
-            .max_stdout_bytes
-            .saturating_sub(self.output_stream_stdout_bytes);
-        let stderr_remaining = self
-            .limits
-            .max_stderr_bytes
-            .saturating_sub(self.output_stream_stderr_bytes);
-        // A stage's pipe is not caller-visible output: no stdout cap.
-        let stdout_chunk = if self.pipe_out.is_some() {
-            stdout.clone()
-        } else {
-            stdout.prefix(stdout_remaining)
-        };
-        let stderr_chunk = stderr.prefix(stderr_remaining);
-        if stdout_chunk.is_empty() && stderr_chunk.is_empty() {
-            return false;
-        }
+            let stdout_remaining = self
+                .limits
+                .max_stdout_bytes
+                .saturating_sub(self.output_stream_stdout_bytes);
+            let stderr_remaining = self
+                .limits
+                .max_stderr_bytes
+                .saturating_sub(self.output_stream_stderr_bytes);
+            // A stage's pipe is not caller-visible output: no stdout cap.
+            let output = self.execution_output().filter(|_| self.pipe_out.is_none());
+            let stdout_chunk = if self.pipe_out.is_some() || output.is_some() {
+                stdout.clone()
+            } else {
+                stdout.prefix(stdout_remaining)
+            };
+            let stderr_chunk = if output.is_some() {
+                stderr.clone()
+            } else {
+                stderr.prefix(stderr_remaining)
+            };
+            if stdout_chunk.is_empty() && stderr_chunk.is_empty() {
+                return Ok(false);
+            }
 
-        if let Some(ref mut cb) = self.output_callback {
-            cb(&stdout_chunk, &stderr_chunk);
-            self.output_emit_count += 1;
-            self.output_stream_stdout_bytes += stdout_chunk.len();
-            self.output_stream_stderr_bytes += stderr_chunk.len();
-        }
-        true
+            let delivery = async {
+                if let Some(output) = output {
+                    self.execution_budget
+                        .run(output.stdout.write_bounded(stdout_chunk.as_bytes()))
+                        .await??;
+                    self.execution_budget
+                        .run(output.stderr.write_bounded(stderr_chunk.as_bytes()))
+                        .await??;
+                } else if let Some(pipe) = &self.pipe_out {
+                    self.execution_budget
+                        .run(pipe.write_bounded(stdout_chunk.as_bytes()))
+                        .await??;
+                }
+                Ok::<_, crate::Error>(())
+            }
+            .await;
+            if let Err(error) = delivery {
+                if self.pipe_out.is_some()
+                    && matches!(&error, crate::Error::Io(e) if e.kind() == std::io::ErrorKind::BrokenPipe)
+                {
+                    return Ok(true);
+                }
+                return Err(error);
+            }
+            if let Some(ref mut cb) = self.output_callback {
+                if self.pipe_out.is_none() {
+                    cb(&stdout_chunk, &stderr_chunk);
+                }
+                self.output_emit_count += 1;
+                self.output_stream_stdout_bytes += stdout_chunk.len();
+                self.output_stream_stderr_bytes += stderr_chunk.len();
+            }
+            Ok(true)
+        })
     }
 
     /// Set the HTTP client for network builtins (curl, wget).
@@ -3862,7 +4017,7 @@ impl Interpreter {
     /// This is only available when the `git` feature is enabled.
     #[cfg(feature = "git")]
     pub fn set_git_client(&mut self, client: crate::builtins::git::GitClient) {
-        self.git_client = Some(client);
+        self.git_client = Some(Arc::new(client));
     }
 
     /// Set the SSH client for ssh/scp/sftp builtins.
@@ -3891,7 +4046,22 @@ impl Interpreter {
             self.close_coprocs();
             jobs.finish_all().await;
             let (out, err) = jobs.lock().take_finished_output();
-            if let Ok(r) = &mut result {
+            // Jobs completing after the last command boundary still owe their
+            // output to live sinks. Drain before closing the execution writers;
+            // keep cleanup unconditional when delivery fails.
+            let emission = if result.is_ok()
+                && self.output_callback.is_some()
+                && (!out.is_empty() || !err.is_empty())
+            {
+                self.maybe_emit_output(&out, &err, self.output_emit_count)
+                    .await
+                    .map(|_| ())
+            } else {
+                Ok(())
+            };
+            if self.retain_streamed_output()
+                && let Ok(r) = &mut result
+            {
                 r.stdout.append(&out);
                 r.stderr.append(&err);
             }
@@ -3899,7 +4069,7 @@ impl Interpreter {
             if let Some(error) = &self.memory_limit_error {
                 Err(crate::error::Error::ResourceLimit(error.clone()))
             } else {
-                result
+                emission.and(result)
             }
         };
 
@@ -4088,8 +4258,9 @@ impl Interpreter {
                 Self::merge_stderr_into_stdout(&mut result);
             }
             let emit_before = self.output_emit_count;
-            self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
-            self.flush_exec_passthrough(&mut result);
+            self.maybe_emit_output(&result.stdout, &result.stderr, emit_before)
+                .await?;
+            Box::pin(self.flush_exec_passthrough(&mut result)).await?;
             Ok(result)
         })
     }
@@ -4134,6 +4305,7 @@ impl Interpreter {
         let mut exit_code = 0;
         let mut stdout_truncated = false;
         let mut stderr_truncated = false;
+        let retain_output = self.retain_streamed_output();
         let max_stdout = self.limits.max_stdout_bytes;
         let max_stderr = self.limits.max_stderr_bytes;
 
@@ -4209,13 +4381,14 @@ impl Interpreter {
             if self.merge_stderr {
                 Self::merge_stderr_into_stdout(&mut result);
             }
-            self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
+            self.maybe_emit_output(&result.stdout, &result.stderr, emit_before)
+                .await?;
             if top_level {
-                self.flush_exec_passthrough(&mut result);
+                Box::pin(self.flush_exec_passthrough(&mut result)).await?;
             }
 
             // Accumulate stdout with truncation
-            if !stdout_truncated {
+            if retain_output && !stdout_truncated {
                 let remaining = max_stdout.saturating_sub(stdout.len());
                 if remaining == 0 {
                     if !result.stdout.is_empty() {
@@ -4230,7 +4403,7 @@ impl Interpreter {
             }
 
             // Accumulate stderr with truncation
-            if !stderr_truncated {
+            if retain_output && !stderr_truncated {
                 let remaining = max_stderr.saturating_sub(stderr.len());
                 if remaining == 0 {
                     if !result.stderr.is_empty() {
@@ -4242,6 +4415,9 @@ impl Interpreter {
                     stderr.append(&result.stderr.prefix(remaining));
                     stderr_truncated = true;
                 }
+            }
+            if !retain_output {
+                stdout_truncated |= result.stdout_truncated;
             }
             stderr_truncated |= result.stderr_truncated;
 
@@ -4354,7 +4530,8 @@ impl Interpreter {
         if !stopped && let Some(message) = &view.get().trailing_error {
             let emit_before = self.output_emit_count;
             let err = crate::StreamData::from(message.clone());
-            self.maybe_emit_output(&crate::StreamData::new(), &err, emit_before);
+            self.maybe_emit_output(&crate::StreamData::new(), &err, emit_before)
+                .await?;
             if !stderr_truncated {
                 stderr.append(&err);
             }
@@ -4376,7 +4553,8 @@ impl Interpreter {
                             &trap_result.stdout,
                             &trap_result.stderr,
                             emit_before,
-                        );
+                        )
+                        .await?;
                         stdout.append(&trap_result.stdout);
                         stderr.append(&trap_result.stderr);
                         // `exit N` in the handler is the shell's status.
@@ -4544,6 +4722,12 @@ impl Interpreter {
             // Whether ERR may fire after this command: bash decides before
             // running it, so a trap the command itself sets (`f` setting
             // ERR inside) does not fire for that same command.
+            if self.counters.commands > 0
+                && self.counters.commands.is_multiple_of(64)
+                && self.execution_output().is_some()
+            {
+                crate::execution::yield_once().await;
+            }
             let skip_stage = std::mem::take(&mut self.err_trap_skip_stage);
             let err_armed = !skip_stage && self.err_trap_armed() && Self::fires_err_trap(command);
             let emit_before = self.output_emit_count;
@@ -4782,7 +4966,9 @@ impl Interpreter {
     /// Run the ERR trap after a failing command, its output following the
     /// command's own (streamed first, so neither is dropped).
     async fn run_err_trap_after(&mut self, result: &mut ExecResult, emit_before: u64) {
-        self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
+        self.maybe_emit_output(&result.stdout, &result.stderr, emit_before)
+            .await
+            .ok();
         self.last_exit_code = result.exit_code;
         let mut stdout = crate::StreamData::new();
         let mut stderr = crate::StreamData::new();
@@ -4961,7 +5147,8 @@ impl Interpreter {
                                     &trap_result.stdout,
                                     &trap_result.stderr,
                                     emit_before,
-                                );
+                                )
+                                .await?;
                                 res.stdout.append(&trap_result.stdout);
                                 res.stderr.append(&trap_result.stderr);
                             }
@@ -5119,7 +5306,7 @@ impl Interpreter {
             ));
         }
 
-        let mut acc = state::LoopAccumulator::new();
+        let mut acc = state::LoopAccumulator::new(self.retain_streamed_output());
 
         // Get iteration values: expand fields, then apply brace/glob expansion
         let values: Vec<String> = if let Some(words) = &for_cmd.words {
@@ -5199,7 +5386,8 @@ impl Interpreter {
                 let emit_before = self.output_emit_count;
                 let result = self.execute_command_sequence(&for_cmd.body).await;
                 let result = DebugTrapOutput::prepend_opt(debug, result)?;
-                self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
+                self.maybe_emit_output(&result.stdout, &result.stderr, emit_before)
+                    .await?;
                 let should_errexit = self.errexit_active()
                     && result.exit_code != 0
                     && result.control_flow == ControlFlow::None
@@ -5404,9 +5592,12 @@ impl Interpreter {
                 // Execute body
                 let emit_before = self.output_emit_count;
                 let result = self.execute_command_sequence(&select_cmd.body).await?;
-                self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
-                stdout.append(&result.stdout);
-                stderr.append(&result.stderr);
+                self.maybe_emit_output(&result.stdout, &result.stderr, emit_before)
+                    .await?;
+                if self.retain_streamed_output() {
+                    stdout.append(&result.stdout);
+                    stderr.append(&result.stderr);
+                }
                 exit_code = result.exit_code;
 
                 // Check for break/continue
@@ -5486,7 +5677,7 @@ impl Interpreter {
         &mut self,
         arith_for: &ArithmeticForCommand,
     ) -> Result<ExecResult> {
-        let mut acc = state::LoopAccumulator::new();
+        let mut acc = state::LoopAccumulator::new(self.retain_streamed_output());
         // DEBUG output of the clauses (bash runs it before each one), put
         // ahead of the next body's output or the loop's result.
         let mut debug: Option<Box<DebugTrapOutput>> = None;
@@ -5532,7 +5723,8 @@ impl Interpreter {
                 let emit_before = self.output_emit_count;
                 let result = self.execute_command_sequence(&arith_for.body).await;
                 let result = DebugTrapOutput::prepend_opt(debug.take(), result)?;
-                self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
+                self.maybe_emit_output(&result.stdout, &result.stderr, emit_before)
+                    .await?;
                 let should_errexit = self.errexit_active()
                     && result.exit_code != 0
                     && result.control_flow == ControlFlow::None
@@ -6019,14 +6211,12 @@ impl Interpreter {
     fn cond_int_cmp(&mut self, left: &str, right: &str, cmp: fn(i64, i64) -> bool) -> bool {
         let mut values = [0i64; 2];
         for (slot, operand) in values.iter_mut().zip([left, right]) {
-            let mut ev = arithmetic::ArithEval::new(self);
-            let r = ev.eval_str(operand);
-            let writes = std::mem::take(&mut ev.writes);
+            let (r, writes) = self.arith_eval_unexpanded(operand);
             self.apply_arith_writes(writes);
             match r {
                 Ok(v) => *slot = v,
                 Err(msg) => {
-                    let msg = format!("{}: {msg}", operand.trim());
+                    let msg = format!("{}: {msg}", arithmetic::diag_echo(operand.trim()));
                     let diag = self.arith_diag("[[: ", &msg);
                     self.cond_stderr.push_str(&diag);
                     return false;
@@ -6142,7 +6332,7 @@ impl Interpreter {
         body: &[Command],
         break_on_zero: bool,
     ) -> Result<ExecResult> {
-        let mut acc = state::LoopAccumulator::new();
+        let mut acc = state::LoopAccumulator::new(self.retain_streamed_output());
 
         self.counters.enter_loop();
         let result = async {
@@ -6158,7 +6348,8 @@ impl Interpreter {
                     &condition_result.stdout,
                     &condition_result.stderr,
                     emit_before_cond,
-                );
+                )
+                .await?;
                 acc.stdout.append(&condition_result.stdout);
                 acc.stderr.append(&condition_result.stderr);
                 // `while break; do` leaves the loop from its condition.
@@ -6186,7 +6377,8 @@ impl Interpreter {
                 // Execute body
                 let emit_before = self.output_emit_count;
                 let result = self.execute_command_sequence(body).await?;
-                self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
+                self.maybe_emit_output(&result.stdout, &result.stderr, emit_before)
+                    .await?;
                 let should_errexit = self.errexit_active()
                     && result.exit_code != 0
                     && result.control_flow == ControlFlow::None
@@ -6330,7 +6522,8 @@ impl Interpreter {
         };
         // The report is streamed on its own below; stream the command's
         // output first, or the caller would take the report for all of it.
-        self.maybe_emit_output(&result.stdout, &result.stderr, emit_start);
+        self.maybe_emit_output(&result.stdout, &result.stderr, emit_start)
+            .await?;
         let mut elapsed = start.elapsed();
         // THREAT[TM-INF-033]: Hardened mode exposes only a 100ms lower-bound
         // bucket, preventing `time` from becoming a high-resolution oracle.
@@ -6360,7 +6553,8 @@ impl Interpreter {
                     self.append_time_stderr(
                         &mut result,
                         "time: formatted report exceeds output limit\n",
-                    );
+                    )
+                    .await;
                     result.exit_code = 1;
                     return Ok(result);
                 }
@@ -6391,7 +6585,8 @@ impl Interpreter {
 
         // THREAT[TM-DOS-099]: `-o` must not bypass the diagnostic output cap.
         if report.len() > self.limits.max_stderr_bytes {
-            self.append_time_stderr(&mut result, "time: formatted report exceeds output limit\n");
+            self.append_time_stderr(&mut result, "time: formatted report exceeds output limit\n")
+                .await;
             result.exit_code = 1;
             return Ok(result);
         }
@@ -6408,24 +6603,27 @@ impl Interpreter {
                         "time: cannot write output file '{}'\n",
                         sanitize_time_path(&path)
                     ),
-                );
+                )
+                .await;
                 result.exit_code = 1;
             }
         } else {
-            self.append_time_stderr(&mut result, &report);
+            self.append_time_stderr(&mut result, &report).await;
         }
 
         Ok(result)
     }
 
-    fn append_time_stderr(&mut self, result: &mut ExecResult, message: &str) {
+    async fn append_time_stderr(&mut self, result: &mut ExecResult, message: &str) {
         result.stderr.push_str(message);
         let emit_before = self.output_emit_count;
         self.maybe_emit_output(
             &crate::StreamData::new(),
             &crate::StreamData::from(message),
             emit_before,
-        );
+        )
+        .await
+        .ok();
     }
 
     async fn write_time_report(&self, path: &str, report: &[u8], append: bool) -> Result<()> {
@@ -6875,7 +7073,8 @@ impl Interpreter {
                 &crate::StreamData::new(),
                 &crate::StreamData::from(warning.clone()),
                 before,
-            );
+            )
+            .await?;
         }
 
         // Push call frame, apply options, execute, restore, pop
@@ -6923,6 +7122,9 @@ impl Interpreter {
         // A new shell is outside any loop, function or sourced file.
         let saved_loop_depth = std::mem::replace(&mut self.loop_depth, 0);
         let saved_return_depth = std::mem::replace(&mut self.return_depth, 0);
+        // ...and outside the caller's `if`/`||`/`!` context: a child process
+        // keeps its own `set -e` (`if bash test.sh` must see test.sh fail).
+        let saved_condition_depth = std::mem::replace(&mut self.condition_sequence_depth, 0);
         // The child reads its own input: script file or stdin, line by line
         // (`bash -c` strings are not recorded in the history).
         let saved_reader = self.line_reader.take();
@@ -6971,6 +7173,7 @@ impl Interpreter {
         self.line_reader = saved_reader;
         self.loop_depth = saved_loop_depth;
         self.return_depth = saved_return_depth;
+        self.condition_sequence_depth = saved_condition_depth;
 
         self.interactive = saved_interactive;
         self.c_string_depth = saved_c_string_depth;
@@ -7509,9 +7712,12 @@ impl Interpreter {
                 Self::merge_stderr_into_stdout(&mut result);
             }
             self.reap_coprocs();
-            self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
-            stdout.append(&result.stdout);
-            stderr.append(&result.stderr);
+            self.maybe_emit_output(&result.stdout, &result.stderr, emit_before)
+                .await?;
+            if self.retain_streamed_output() {
+                stdout.append(&result.stdout);
+                stderr.append(&result.stderr);
+            }
             exit_code = result.exit_code;
             self.last_exit_code = exit_code;
 
@@ -7559,84 +7765,100 @@ impl Interpreter {
     /// handing over complete output. From the first stage that runs shell
     /// code (a loop, group, function), the rest run concurrently over
     /// bounded pipes (`execute_streaming_stages`), unless concurrency is off.
-    async fn execute_pipeline(&mut self, pipeline: &Pipeline) -> Result<ExecResult> {
-        // Kept small: recursive pipelines (`f() { f | f; }`) nest this poll
-        // frame once per level, so bookkeeping lives in sync helpers.
-        let (stream_from, lastpipe) = self.plan_pipeline(pipeline);
-        let mut acc = PipelineAcc::default();
-        let mut stdin_data: Option<crate::StreamData> = None;
-        let count = pipeline.commands.len();
-        // bash runs DEBUG for each simple-command stage from the shell
-        // itself, ahead of the stages' output; never inside a stage.
-        let mut debug = if count > 1 && self.has_debug_trap() {
-            self.pipeline_debug_traps(pipeline).await
-        } else {
-            None
-        };
-        if let Some(r) = DebugTrapOutput::exit_result(&mut debug) {
-            return Ok(r);
-        }
-        let saved_dormant = self.debug_trap_dormant;
-        self.debug_trap_dormant |= count > 1;
-        acc.merge = self.merge_stderr;
-        self.merge_stderr &= count == 1;
+    // THREAT[TM-DOS-089]: keep pipeline state out of execute_command's poll
+    // frame, which repeats even for simple commands inside nested $(...).
+    // Cancellation guards make that state large enough to overflow instrumented
+    // test stacks when it is embedded in every command future.
+    fn execute_pipeline<'a>(
+        &'a mut self,
+        pipeline: &'a Pipeline,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ExecResult>> + Send + 'a>> {
+        Box::pin(async move {
+            // Kept small: recursive pipelines (`f() { f | f; }`) nest this poll
+            // frame once per level, so bookkeeping lives in sync helpers.
+            let (stream_from, lastpipe) = self.plan_pipeline(pipeline);
+            let mut acc = PipelineAcc::default();
+            let mut stdin_data: Option<crate::StreamData> = None;
+            let count = pipeline.commands.len();
+            // bash runs DEBUG for each simple-command stage from the shell
+            // itself, ahead of the stages' output; never inside a stage.
+            let mut debug = if count > 1 && self.has_debug_trap() {
+                self.pipeline_debug_traps(pipeline).await
+            } else {
+                None
+            };
+            if let Some(r) = DebugTrapOutput::exit_result(&mut debug) {
+                return Ok(r);
+            }
+            let saved_dormant = self.debug_trap_dormant;
+            self.debug_trap_dormant |= count > 1;
+            acc.merge = self.merge_stderr;
+            self.merge_stderr &= count == 1;
 
-        for (i, command) in pipeline.commands.iter().enumerate() {
-            if stream_from == Some(i) {
-                let stages = self
-                    .execute_streaming_group(&pipeline.commands[i..], stdin_data.take(), lastpipe)
-                    .await;
-                let stages = match stages {
-                    Ok(s) => s,
+            for (i, command) in pipeline.commands.iter().enumerate() {
+                if stream_from == Some(i) {
+                    let stages = self
+                        .execute_streaming_group(
+                            &pipeline.commands[i..],
+                            stdin_data.take(),
+                            lastpipe,
+                        )
+                        .await;
+                    let stages = match stages {
+                        Ok(s) => s,
+                        Err(e) => {
+                            self.debug_trap_dormant = saved_dormant;
+                            return Err(e);
+                        }
+                    };
+                    for result in stages {
+                        self.absorb_stage(&mut acc, result, true);
+                    }
+                    break;
+                }
+                let is_last = i == count - 1;
+                // Every stage of a multi-command pipeline runs in a subshell,
+                // except the last one under `shopt -s lastpipe` (bash, job
+                // control off).
+                let subshell = count > 1 && !(is_last && lastpipe);
+                // A non-last stage's stdout feeds the next stage, never the
+                // streaming observer.
+                let saved_callback = if is_last {
+                    None
+                } else {
+                    self.output_callback.take()
+                };
+                let result = match self.enter_pipeline_stage(command, stdin_data.take(), subshell) {
+                    Ok((scope, stdin)) => {
+                        let guard = PipelineStageGuard::new(self, scope);
+                        let result = match command {
+                            Command::Simple(simple) => {
+                                self.execute_simple_command(simple, stdin).await
+                            }
+                            _ => {
+                                self.err_trap_skip_stage = count > 1;
+                                self.execute_command(command).await
+                            }
+                        };
+                        guard.complete(self, result)
+                    }
+                    Err(e) => Err(e),
+                };
+                if let Some(cb) = saved_callback {
+                    self.output_callback = Some(cb);
+                }
+                let result = match result {
+                    Ok(r) => r,
                     Err(e) => {
                         self.debug_trap_dormant = saved_dormant;
                         return Err(e);
                     }
                 };
-                for result in stages {
-                    self.absorb_stage(&mut acc, result, true);
-                }
-                break;
+                stdin_data = self.absorb_stage(&mut acc, result, is_last);
             }
-            let is_last = i == count - 1;
-            // Every stage of a multi-command pipeline runs in a subshell,
-            // except the last one under `shopt -s lastpipe` (bash, job
-            // control off).
-            let subshell = count > 1 && !(is_last && lastpipe);
-            // A non-last stage's stdout feeds the next stage, never the
-            // streaming observer.
-            let saved_callback = if is_last {
-                None
-            } else {
-                self.output_callback.take()
-            };
-            let result = match self.enter_pipeline_stage(command, stdin_data.take(), subshell) {
-                Ok((scope, stdin)) => {
-                    let result = match command {
-                        Command::Simple(simple) => self.execute_simple_command(simple, stdin).await,
-                        _ => {
-                            self.err_trap_skip_stage = count > 1;
-                            self.execute_command(command).await
-                        }
-                    };
-                    self.exit_pipeline_stage(scope, result)
-                }
-                Err(e) => Err(e),
-            };
-            if let Some(cb) = saved_callback {
-                self.output_callback = Some(cb);
-            }
-            let result = match result {
-                Ok(r) => r,
-                Err(e) => {
-                    self.debug_trap_dormant = saved_dormant;
-                    return Err(e);
-                }
-            };
-            stdin_data = self.absorb_stage(&mut acc, result, is_last);
-        }
-        self.debug_trap_dormant = saved_dormant;
-        DebugTrapOutput::prepend_opt(debug, Ok(self.finish_pipeline(pipeline, acc)))
+            self.debug_trap_dormant = saved_dormant;
+            DebugTrapOutput::prepend_opt(debug, Ok(self.finish_pipeline(pipeline, acc)))
+        })
     }
 
     /// DEBUG before each simple-command stage of a pipeline, at its line.
@@ -7777,7 +7999,8 @@ impl Interpreter {
             [WordPart::Literal(name)] => name.as_str(),
             _ => return false,
         };
-        !matches!(name, "eval" | "source" | "." | "bash" | "sh")
+        !self.is_streaming_host_command(name)
+            && !matches!(name, "eval" | "source" | "." | "bash" | "sh")
             && !self.scoped.functions.contains_key(name)
             && !self.scoped.aliases.contains_key(name)
             && !Self::streams_stdout(simple)
@@ -7788,20 +8011,44 @@ impl Interpreter {
     /// large, so `yes | head -1` and `seq 1000000 | head -1` stop at the
     /// first line with SIGPIPE instead of running into the output caps.
     fn streams_stdout(simple: &SimpleCommand) -> bool {
-        simple.redirects.is_empty()
-            && matches!(
-                simple.name.parts.as_slice(),
-                [WordPart::Literal(name)]
-                    if matches!(name.as_str(), "yes" | "seq" | "cat" | "grep" | "tr")
-            )
+        matches!(
+            simple.name.parts.as_slice(),
+            [WordPart::Literal(name)]
+                if matches!(name.as_str(), "yes" | "seq" | "cat" | "grep" | "tr")
+        )
     }
 
     /// Streaming stages that also read their stdin pipe incrementally
     /// (`Context::stdin_stream`), so `loop | grep y | head -1` stops early.
-    /// They read the pipe to the end themselves when an option needs the
-    /// whole input (`grep -c`, `tr -s`).
+    /// They consume incrementally; options such as `tr -s` explicitly collect
+    /// budget-owned whole input. Grep summaries can delay output, while -q
+    /// still exits after its first matching record.
     fn streams_stdin(name: &str) -> bool {
         matches!(name, "cat" | "grep" | "tr")
+    }
+
+    fn execution_output(&self) -> Option<Arc<crate::execution::ExecutionOutput>> {
+        self.current_execution_extensions()
+            .get::<Arc<crate::execution::ExecutionOutput>>()?
+            .try_with(Arc::clone)
+            .ok()
+    }
+
+    /// Caller-delivered bytes belong to output pumps, not every list/loop.
+    fn retain_streamed_output(&self) -> bool {
+        self.output_callback.is_none()
+            || self.pipe_out.is_some()
+            || self.execution_output().is_none()
+            || !self.exec_fd_table.is_empty()
+            || self.pending_fd_capture_depth > 0
+    }
+
+    fn is_streaming_host_command(&self, name: &str) -> bool {
+        self.host_builtins
+            .as_ref()
+            .and_then(|r| r.lookup(name))
+            .or_else(|| self.builtins.get(name).cloned())
+            .is_some_and(|b| b.streams_io())
     }
 
     /// Run `commands` (the tail of a pipeline) concurrently: every stage but
@@ -7815,14 +8062,34 @@ impl Interpreter {
         stdin: Option<crate::StreamData>,
         lastpipe: bool,
     ) -> Result<Vec<ExecResult>> {
-        type StageFuture = std::pin::Pin<
-            Box<dyn std::future::Future<Output = Result<ExecResult>> + Send + 'static>,
-        >;
+        type StageFuture<'a> =
+            std::pin::Pin<Box<dyn std::future::Future<Output = Result<ExecResult>> + Send + 'a>>;
         let (last, producers) = commands.split_last().expect("pipeline tail");
+        // THREAT[TM-DOS-124]: width, fork storage and construction work are
+        // admitted before allocation. Every retained producer counts against
+        // the same cap as background jobs, including descendants.
+        self.execution_budget.check()?;
+        let _slots = self
+            .jobs
+            .try_claim_many(self.limits.max_background_jobs, producers.len())
+            .ok_or(LimitExceeded::MaxConcurrentJobs(
+                self.limits.max_background_jobs,
+            ))?;
         let mut input: Option<Arc<pipe::Pipe>> = None;
-        let mut stages: Vec<StageFuture> = Vec::with_capacity(producers.len());
+        let mut stages =
+            crate::limits::BudgetedVec::<(
+                StageFuture<'_>,
+                crate::limits::ExecutionBudgetLease,
+                crate::limits::ExecutionBudgetLease,
+            )>::try_with_capacity(Some(&self.execution_budget), producers.len())?;
         for (k, command) in producers.iter().enumerate() {
-            let pipe = pipe::Pipe::new();
+            let inherited_stdin = if k == 0 {
+                stdin.as_ref().or(self.pipeline_stdin.as_ref())
+            } else {
+                None
+            };
+            let fork_storage = self.pipeline_fork_storage(inherited_stdin)?;
+            let pipe = pipe::Pipe::new_admitted(&self.execution_budget)?;
             let mut child = self.fork_for_job();
             if k == 0 {
                 // First stage reads what this shell would read.
@@ -7843,7 +8110,6 @@ impl Interpreter {
             Arc::make_mut(&mut child.nofork).subshell_env = SUBSHELL_PIPE;
             let write_end = pipe::WriteEnd(Arc::clone(&pipe));
             let read_end = input.take().map(pipe::ReadEnd);
-            let command = command.clone();
             if matches!(
                 command,
                 Command::Simple(_) | Command::Compound(CompoundCommand::Subshell(_), _)
@@ -7852,15 +8118,17 @@ impl Interpreter {
                 // `( )` stage counts itself once.
                 child.bash_subshell = self.bash_subshell;
             }
-            stages.push(Box::pin(async move {
+            let command_handles_pipe = matches!(command, Command::Simple(c)
+                if matches!(c.name.parts.as_slice(), [WordPart::Literal(n)] if child.is_streaming_host_command(n)));
+            let future = async move {
                 let _read_end = read_end;
-                if let Command::Simple(simple) = &command
+                if let Command::Simple(simple) = command
                     && Self::streams_stdout(simple)
                 {
                     child.stream_stdout_command = Some(simple as *const SimpleCommand as usize);
                 }
                 let jobs = Arc::clone(&child.jobs);
-                let result = jobs::with_jobs(&jobs, child.execute_command(&command)).await;
+                let result = jobs::with_jobs(&jobs, child.execute_command(command)).await;
                 jobs.finish_all().await;
                 let (out, err) = jobs.lock().take_finished_output();
                 let mut r = result?;
@@ -7871,7 +8139,7 @@ impl Interpreter {
                 if r.stdout.len() > sent {
                     write_end.0.write(&r.stdout.as_bytes()[sent..]);
                 }
-                if write_end.0.is_broken() {
+                if write_end.0.is_broken() && !command_handles_pipe {
                     r.exit_code = 141;
                 } else if let ControlFlow::Exit(code) | ControlFlow::Return(code) = r.control_flow {
                     r.exit_code = code;
@@ -7879,20 +8147,31 @@ impl Interpreter {
                 r.control_flow = ControlFlow::None;
                 r.stdout = crate::StreamData::new();
                 Ok(r)
-            }));
+            };
+            let future_storage = self
+                .execution_budget
+                .lease_bytes(std::mem::size_of_val(&future))?;
+            stages.try_push((Box::pin(future), fork_storage, future_storage))?;
             input = Some(pipe);
         }
 
+        let mut done = crate::limits::BudgetedVec::try_with_capacity(
+            Some(&self.execution_budget),
+            stages.len(),
+        )?;
+        for _ in 0..stages.len() {
+            done.try_push(None)?;
+        }
         // The last stage reads the last pipe through `pipe_in`.
         let last_pipe = input.expect("at least one producer");
         let saved_pipe_in = self.pipe_in.replace(Arc::clone(&last_pipe));
         let saved_stdin = self.pipeline_stdin.take();
         let mut read_end = Some(pipe::ReadEnd(last_pipe));
-        let mut done: Vec<Option<Result<ExecResult>>> = (0..stages.len()).map(|_| None).collect();
         let mut last_done: Option<Result<ExecResult>> = None;
         {
             let mut last_fut = Box::pin(async {
                 let (scope, stdin) = self.enter_pipeline_stage(last, None, !lastpipe)?;
+                let guard = PipelineStageGuard::new(self, scope);
                 let result = match last {
                     Command::Simple(simple) => self.execute_simple_command(simple, stdin).await,
                     _ => {
@@ -7900,7 +8179,7 @@ impl Interpreter {
                         self.execute_command(last).await
                     }
                 };
-                self.exit_pipeline_stage(scope, result)
+                guard.complete(self, result)
             });
             // Readers first (last stage, then upstream), so each blocks on
             // its pipe before the writer feeding it runs.
@@ -7913,7 +8192,9 @@ impl Interpreter {
                     last_done = Some(r);
                     cx.waker().wake_by_ref();
                 }
-                for (stage, slot) in stages.iter_mut().zip(done.iter_mut()).rev() {
+                for ((stage, _fork_storage, _future_storage), slot) in
+                    stages.iter_mut().zip(done.iter_mut()).rev()
+                {
                     if slot.is_none()
                         && let std::task::Poll::Ready(r) = stage.as_mut().poll(cx)
                     {
@@ -7931,11 +8212,12 @@ impl Interpreter {
             .await;
         }
         drop(read_end);
-        drop(stages);
         self.pipe_in = saved_pipe_in;
         self.pipeline_stdin = saved_stdin;
+        drop(stages);
 
         let mut results = Vec::with_capacity(done.len() + 1);
+        let (done, _done_storage) = done.into_parts();
         for d in done {
             results.push(d.unwrap_or_else(|| Ok(ExecResult::ok(String::new())))?);
         }
@@ -8162,7 +8444,8 @@ impl Interpreter {
         };
 
         if let Some(result) = finished {
-            self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
+            self.maybe_emit_output(&result.stdout, &result.stderr, emit_before)
+                .await?;
             // Emit output immediately (background output goes to terminal in real bash)
             parent_stdout.append(&result.stdout);
             parent_stderr.append(&result.stderr);
@@ -8231,9 +8514,15 @@ impl Interpreter {
             if self.merge_stderr {
                 Self::merge_stderr_into_stdout(&mut result);
             }
-            self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
-            stdout.append(&result.stdout);
-            stderr.append(&result.stderr);
+            self.maybe_emit_output(&result.stdout, &result.stderr, emit_before)
+                .await?;
+            if route {
+                Box::pin(self.flush_exec_passthrough(&mut result)).await?;
+            }
+            if self.retain_streamed_output() {
+                stdout.append(&result.stdout);
+                stderr.append(&result.stderr);
+            }
             exit_code = result.exit_code;
             self.last_exit_code = exit_code;
             control_flow = result.control_flow;
@@ -8334,9 +8623,15 @@ impl Interpreter {
                     if self.merge_stderr {
                         Self::merge_stderr_into_stdout(&mut result);
                     }
-                    self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
-                    stdout.append(&result.stdout);
-                    stderr.append(&result.stderr);
+                    self.maybe_emit_output(&result.stdout, &result.stderr, emit_before)
+                        .await?;
+                    if route {
+                        Box::pin(self.flush_exec_passthrough(&mut result)).await?;
+                    }
+                    if self.retain_streamed_output() {
+                        stdout.append(&result.stdout);
+                        stderr.append(&result.stderr);
+                    }
                     exit_code = result.exit_code;
                     self.last_exit_code = exit_code;
                     control_flow = result.control_flow;
@@ -8415,7 +8710,7 @@ impl Interpreter {
                 }
                 match &assignment.value {
                     AssignmentValue::Scalar(word) => {
-                        let word = self.tilde_assignment_value(word);
+                        let (word, _tilde_leases) = self.tilde_assignment_value(word)?;
                         let value = self.expand_word(&word).await?;
                         if self.is_xtrace_enabled() {
                             // `+ v=x`, `+ a[1]='a b'`, `+ v+=y`
@@ -8761,7 +9056,9 @@ impl Interpreter {
             {
                 let pending = self.subst_stderr.clone();
                 let before = self.output_emit_count;
-                self.maybe_emit_output(&crate::StreamData::new(), &pending, before);
+                self.maybe_emit_output(&crate::StreamData::new(), &pending, before)
+                    .await
+                    .ok();
             }
         })
     }
@@ -9266,20 +9563,36 @@ impl Interpreter {
         stdin: Option<crate::StreamData>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ExecResult>> + Send + 'a>> {
         Box::pin(async move {
-            // The stage's own `yes`/`seq` writes straight into the pipe.
-            self.builtin_stdout_pipe = if self.stream_stdout_command
-                == Some(command as *const SimpleCommand as usize)
-                && command.redirects.is_empty()
-                && !self.scoped.functions.contains_key(name)
+            let streaming_host = self.is_streaming_host_command(name);
+            let output = self
+                .execution_output()
+                .filter(|_| self.output_callback.is_some());
+            let can_stream = !self.scoped.functions.contains_key(name);
+            self.builtin_stdout_pipe = if can_stream
+                && (self.stream_stdout_command == Some(command as *const SimpleCommand as usize)
+                    || (self.output_callback.is_some()
+                        && (streaming_host || Self::streams_stdout(command))))
             {
-                self.pipe_out.clone()
+                self.pipe_out
+                    .clone()
+                    .or_else(|| output.as_ref().map(|o| o.stdout.clone()))
             } else {
                 None
             };
-            // A streaming filter (`cat`) reads its input pipe as it goes
-            // instead of having it collected up front.
+            let explicit_input = command.redirects.iter().any(|r| {
+                r.fd.unwrap_or(0) == 0
+                    && matches!(
+                        r.kind,
+                        RedirectKind::Input
+                            | RedirectKind::HereDoc
+                            | RedirectKind::HereDocStrip
+                            | RedirectKind::HereString
+                            | RedirectKind::DupInput
+                            | RedirectKind::ReadWrite
+                    )
+            });
             self.builtin_stdin_pipe =
-                if self.builtin_stdout_pipe.is_some() && Self::streams_stdin(name) {
+                if !explicit_input && (streaming_host || Self::streams_stdin(name)) {
                     self.pipe_in.take()
                 } else {
                     None
@@ -9324,7 +9637,7 @@ impl Interpreter {
             }
 
             // Handle input redirections first
-            let stdin = match self
+            let stdin_setup = match self
                 .process_input_redirections(
                     stdin,
                     &command.redirects,
@@ -9339,6 +9652,10 @@ impl Interpreter {
                 }
                 Err(e) => return Err(e),
             };
+            // Keep the materialized stdin's byte/text storage admitted
+            // for as long as the command retains it.
+            let _stdin_storage = stdin_setup.stdin_lease;
+            let stdin = stdin_setup.stdin;
 
             // `read -u FD` on a readable fd (`exec 3<f`, a coproc): its
             // next line is stdin.
@@ -9558,10 +9875,22 @@ impl Interpreter {
 
     /// Hand output written to a saved original stdout/stderr (`>&3` after
     /// `exec 3>&1 >log`) to the caller, unrouted.
-    fn flush_exec_passthrough(&mut self, result: &mut ExecResult) {
+    async fn flush_exec_passthrough(&mut self, result: &mut ExecResult) -> Result<()> {
         let (out, err) = std::mem::take(&mut self.exec_passthrough);
         if out.is_empty() && err.is_empty() {
-            return;
+            return Ok(());
+        }
+        // Saved original descriptors bypass persistent redirects, but must
+        // still use the request's awaited, capped byte-output pumps.
+        if self.output_callback.is_some()
+            && let Some(output) = self.execution_output().filter(|_| self.pipe_out.is_none())
+        {
+            self.execution_budget
+                .run(output.stdout.write_bounded(out.as_bytes()))
+                .await??;
+            self.execution_budget
+                .run(output.stderr.write_bounded(err.as_bytes()))
+                .await??;
         }
         if let Some(cb) = self.output_callback.as_mut() {
             cb(&out, &err);
@@ -9571,6 +9900,7 @@ impl Interpreter {
         }
         result.stdout.append(&out);
         result.stderr.append(&err);
+        Ok(())
     }
 
     fn exec_fd_alias_target(&self, target_fd: i32) -> FdTarget {
@@ -9807,6 +10137,9 @@ impl Interpreter {
                     execution_extensions,
                     stdout_pipe: None,
                     stdin_pipe: None,
+                    stderr_pipe: None,
+                    command_routes: None,
+                    stdout_stream: None,
                     loop_depth: self.loop_depth,
                     return_depth: self.return_depth,
                     last_exit_code: self.last_exit_code,
@@ -9821,7 +10154,7 @@ impl Interpreter {
                     #[cfg(feature = "http_client")]
                     http_client: self.http_client.as_ref(),
                     #[cfg(feature = "git")]
-                    git_client: self.git_client.as_ref(),
+                    git_client: self.git_client.as_deref(),
                     #[cfg(feature = "ssh")]
                     ssh_client: self.ssh_client.as_deref(),
                     shell: Some(shell_ref),
@@ -9856,10 +10189,43 @@ impl Interpreter {
                 let (fs, capture) = crate::fs::StdStreamsFs::wrap(
                     fs,
                     stdin.map_or(&[][..], crate::StreamData::as_bytes),
-                );
+                    &self.execution_budget,
+                    &self.limits,
+                )?;
                 (fs, Some(capture))
             } else {
                 (fs, None)
+            };
+            let streaming_command = builtin.streams_io();
+            let streaming_utility = bundled
+                && matches!(name, "yes" | "seq" | "cat" | "grep" | "tr")
+                && self.builtin_stdout_pipe.is_some();
+            let routed_output = streaming_command || streaming_utility;
+            let command_routes = if routed_output {
+                self.builtin_stdout_pipe = self
+                    .pipe_out
+                    .clone()
+                    .filter(|_| self.output_callback.is_some())
+                    .or_else(|| {
+                        self.output_callback
+                            .as_ref()
+                            .and_then(|_| self.execution_output())
+                            .map(|o| o.stdout.clone())
+                    });
+                match self.live_command_routes(redirects, fs.clone()).await {
+                    Ok(routes) => Some(routes),
+                    Err(crate::Error::CommandFailure(message)) => {
+                        return Ok(ExecResult::err(message, 1));
+                    }
+                    Err(error) => return Err(error),
+                }
+            } else {
+                None
+            };
+            let stderr_pipe = if routed_output && self.output_callback.is_some() {
+                self.execution_output().map(|o| o.stderr.clone())
+            } else {
+                None
             };
             let shell_ref = ShellRef {
                 builtins: &self.builtins,
@@ -9882,11 +10248,14 @@ impl Interpreter {
                 execution_extensions,
                 stdout_pipe: self.builtin_stdout_pipe.take(),
                 stdin_pipe: self.builtin_stdin_pipe.take(),
+                stderr_pipe,
+                command_routes,
+                stdout_stream: None,
                 loop_depth: self.loop_depth,
                 return_depth: self.return_depth,
                 last_exit_code: self.last_exit_code,
             };
-            let ctx = builtins::Context {
+            let mut ctx = builtins::Context {
                 args,
                 env: &self.env,
                 variables: Arc::make_mut(&mut self.scoped.variables),
@@ -9896,10 +10265,18 @@ impl Interpreter {
                 #[cfg(feature = "http_client")]
                 http_client: self.http_client.as_ref(),
                 #[cfg(feature = "git")]
-                git_client: self.git_client.as_ref(),
+                git_client: self.git_client.as_deref(),
                 #[cfg(feature = "ssh")]
                 ssh_client: self.ssh_client.as_deref(),
                 shell: Some(shell_ref),
+            };
+
+            let utility_io = if streaming_utility {
+                let io = crate::command::CommandIo::new(&ctx)?;
+                ctx.shell.as_mut().expect("builtin shell").stdout_stream = Some(io.stdout.clone());
+                Some(io)
+            } else {
+                None
             };
 
             // THREAT[TM-INT-001]: Execute builtin with panic catching for security
@@ -9917,6 +10294,14 @@ impl Interpreter {
                 Ok(Err(crate::error::Error::Regex(e))) if bundled => {
                     builtin_usage_error(&format!("{name}: {e}"))
                 }
+                Ok(Err(crate::Error::Io(error))) if utility_io.is_some() => ExecResult {
+                    exit_code: utility_io
+                        .as_ref()
+                        .expect("routed utility")
+                        .write_error(name, error)
+                        .await?,
+                    ..Default::default()
+                },
                 Ok(Err(e)) => return Err(e),
                 Err(_panic) => ExecResult::err(
                     self.diag(format!("{name}: builtin failed unexpectedly\n")),
@@ -9925,26 +10310,32 @@ impl Interpreter {
             };
             // Before `/dev/stderr` operand data is appended and before any
             // redirect or streaming emission sees the text.
+            // Keep rewritten byte/text storage charged until redirects and
+            // result hooks finish consuming it, including discarded stderr.
+            let mut diagnostic_storage = None;
             if bundled
-                && let Some(stderr) =
-                    prefix_builtin_diagnostics(&result.stderr, name, &self.diag_prefix())
+                && !result.stderr.is_empty()
+                && let Some((stderr, storage)) = prefix_builtin_diagnostics(
+                    &result.stderr,
+                    name,
+                    &self.diag_prefix(),
+                    &self.execution_budget,
+                )?
             {
                 result.stderr = stderr;
+                diagnostic_storage = Some(storage);
             }
-            if let Some(capture) = std_capture {
-                let capture =
-                    std::mem::take(&mut *capture.lock().unwrap_or_else(|e| e.into_inner()));
-                if !capture.stdout.is_empty() {
-                    result
-                        .stdout
-                        .append(&crate::StreamData::from(capture.stdout));
-                }
-                if !capture.stderr.is_empty() {
-                    result
-                        .stderr
-                        .append(&crate::StreamData::from(capture.stderr));
-                }
-            }
+            // Retain both materialized representations through redirects and
+            // hooks. Collection must not replace admission with a late charge.
+            let std_storage = if let Some(capture) = std_capture {
+                Some(capture.lock().unwrap_or_else(|e| e.into_inner()).collect(
+                    &mut result,
+                    &self.execution_budget,
+                    &self.limits,
+                )?)
+            } else {
+                None
+            };
             self.execution_budget.consume_work(
                 u64::try_from(
                     result
@@ -9956,10 +10347,19 @@ impl Interpreter {
                 .unwrap_or(u64::MAX),
             )?;
 
-            self.apply_builtin_side_effects(&mut result).await;
+            self.apply_builtin_side_effects(&mut result).await?;
 
-            let result = self.apply_redirections(result, redirects).await?;
-            self.apply_after_tool(name, result)
+            let result = if let Some(io) = utility_io {
+                io.complete(name, result).await?
+            } else if streaming_command {
+                result
+            } else {
+                self.apply_redirections(result, redirects).await?
+            };
+            let result = self.apply_after_tool(name, result);
+            drop(diagnostic_storage);
+            drop(std_storage);
+            result
         })
     }
 
@@ -10541,6 +10941,20 @@ impl Interpreter {
         stdin: Option<crate::StreamData>,
         redirects: &[Redirect],
     ) -> Result<ExecResult> {
+        // `#!/usr/bin/env python3` (or `#!/usr/bin/python3`, `#!/usr/bin/awk -f`)
+        // names a registered non-shell builtin: run it on the script path, as
+        // the kernel would exec the interpreter. Shell or unknown interpreters
+        // fall through to running the content as bash.
+        if let Some((cmd, mut argv)) = shebang_interpreter(content)
+            && self.builtins.contains_key(cmd.as_str())
+            && !ENV_SHELL_ONLY_BUILTINS.contains(&cmd.as_str())
+        {
+            argv.push(name.to_string());
+            argv.extend(args.iter().cloned());
+            return self
+                .execute_registered_builtin(&cmd, &argv, stdin.as_ref(), redirects)
+                .await;
+        }
         // Strip shebang line if present
         let script_text = if content.starts_with("#!") {
             content
@@ -10842,12 +11256,18 @@ impl Interpreter {
         };
 
         // THREAT[TM-DOS-056]: Check source depth (uses function depth limit)
-        self.counters.push_function(&self.limits).map_err(|_| {
-            crate::error::Error::Execution(format!(
+        if let Err(depth_error) = self.counters.push_function(&self.limits) {
+            // THREAT[TM-DOS-020]: a depth trip inside a trap handler must
+            // still fail the execution instead of silently stopping the
+            // recursion (the `source` status mapping below would hide it).
+            if self.in_trap {
+                self.note_trap_depth_error(depth_error);
+            }
+            return Err(crate::error::Error::Execution(format!(
                 "source: {}: maximum source depth exceeded",
                 filename
-            ))
-        })?;
+            )));
+        }
 
         // Track source file for BASH_SOURCE
         self.bash_source_stack.push(SourceFrame {
@@ -10866,7 +11286,10 @@ impl Interpreter {
         self.xtrace_depth += 1;
         let tempenv_pushed = self.push_pending_tempenv(false);
         let region = self.enter_output_region(redirects);
-        let mut exec_result = self.execute_script_body(&script, false, true).await;
+        // THREAT[TM-DOS-020]: Box the sourced-body execution so a source /
+        // trap recursion cycle cannot grow the parent future with each
+        // nesting level; the shared depth charge above then trips first.
+        let mut exec_result = Box::pin(self.execute_script_body(&script, false, true)).await;
         self.leave_output_region(region);
         if tempenv_pushed {
             self.tempenv_frames.pop();
@@ -11461,18 +11884,13 @@ impl Interpreter {
         // THREAT[TM-DOS-114]: `unset arr` must return the array's entry
         // slots and bytes to the budget. Without this a set/unset cycle
         // drifts until a healthy script is refused.
-        let released = self
-            .arrays_mut()
-            .remove(name)
-            .map_or((0, 0), |arr| (arr.len(), Self::indexed_array_bytes(&arr)));
+        self.remove_indexed_array(name);
         let released_assoc = self
             .assoc_arrays_mut()
             .remove(name)
             .map_or((0, 0), |arr| (arr.len(), Self::assoc_array_bytes(&arr)));
-        self.memory_budget
-            .record_array_remove(released.0 + released_assoc.0);
-        self.memory_budget
-            .release_array_bytes(released.1 + released_assoc.1);
+        self.memory_budget.record_array_remove(released_assoc.0);
+        self.memory_budget.release_array_bytes(released_assoc.1);
         self.clear_var_attrs(name);
         self.remove_nameref(name);
     }
@@ -12115,7 +12533,8 @@ impl Interpreter {
                                 // A command that did not stream its own
                                 // output (`xargs -t echo`) streams it now,
                                 // after the driver's earlier `Emit`s.
-                                self.maybe_emit_output(&r.stdout, &r.stderr, emit_before);
+                                self.maybe_emit_output(&r.stdout, &r.stderr, emit_before)
+                                    .await?;
                             }
                             if let Some(dir) = saved_cwd {
                                 self.cwd = dir;
@@ -12128,7 +12547,7 @@ impl Interpreter {
                         }
                         builtins::PlanStep::Emit { stdout, stderr } => {
                             let before = self.output_emit_count;
-                            self.maybe_emit_output(&stdout, &stderr, before);
+                            self.maybe_emit_output(&stdout, &stderr, before).await?;
                         }
                         builtins::PlanStep::Done(result) => break Ok(result),
                     }
@@ -12311,7 +12730,7 @@ impl Interpreter {
     }
 
     /// Process structured side effects from builtin execution.
-    async fn apply_builtin_side_effects(&mut self, result: &mut ExecResult) {
+    async fn apply_builtin_side_effects(&mut self, result: &mut ExecResult) -> Result<()> {
         // Builtins that mutate SHOPT_* directly via `ctx.variables` (e.g. the
         // `set -e` / `set +u` paths in the `set` builtin) don't update the
         // cached `flags` bitfield. Resync once after every builtin so the
@@ -12337,10 +12756,14 @@ impl Interpreter {
                 builtins::BuiltinSideEffect::SetIndexedArray { name, entries } => {
                     // Merges into the existing array; mapfile sends RemoveArray
                     // first unless `-O` asked to keep the other elements.
-                    let mut arr = self.arrays_mut().remove(name).unwrap_or_default();
-                    arr.extend(entries.iter().cloned());
-                    if !arr.is_empty() {
-                        self.insert_array_checked(name.clone(), arr);
+                    // Keep retained storage visible to admission so overwrites
+                    // refund their old values and refused writes preserve them.
+                    if !entries.is_empty() && self.env.contains_key(name) {
+                        self.env_mut().remove(name);
+                    }
+                    for (idx, value) in entries {
+                        self.set_indexed_element_checked(name, *idx, value.clone());
+                        self.check_cancelled()?;
                     }
                 }
                 builtins::BuiltinSideEffect::SignalSelf(signal) => {
@@ -12350,7 +12773,7 @@ impl Interpreter {
                     self.builtin_discard = true;
                 }
                 builtins::BuiltinSideEffect::RemoveArray(name) => {
-                    self.arrays_mut().remove(name);
+                    self.remove_indexed_array(name);
                 }
                 builtins::BuiltinSideEffect::ShiftPositional(n) => {
                     // bash: a count above `$#` shifts nothing and fails.
@@ -12423,6 +12846,7 @@ impl Interpreter {
         if let Some(signal) = pending_self_signal {
             self.deliver_self_signal(signal, result).await;
         }
+        Ok(())
     }
 
     /// `kill -SIG $$`: bash runs that signal's trap if one is set, and
@@ -12430,11 +12854,12 @@ impl Interpreter {
     /// 128 + signal. Signals whose default is to be ignored do neither.
     async fn deliver_self_signal(&mut self, signal: i32, result: &mut ExecResult) {
         if let Some(trap_cmd) = self.signal_trap(signal) {
+            if trap_cmd.is_empty() {
+                return;
+            }
             let mut stdout = std::mem::take(&mut result.stdout);
             let mut stderr = std::mem::take(&mut result.stderr);
-            let flow = self
-                .run_trap_command(&trap_cmd, &mut stdout, &mut stderr)
-                .await;
+            let flow = Box::pin(self.run_trap_command(&trap_cmd, &mut stdout, &mut stderr)).await;
             result.stdout = stdout;
             result.stderr = stderr;
             // An `exit` inside the handler ends the script, as it does in bash.
@@ -12481,7 +12906,7 @@ impl Interpreter {
         }
 
         if is_input {
-            let mut stdout = String::new();
+            let mut stdout = crate::limits::BudgetedBytes::new(Some(&self.execution_budget))?;
             // The substituted list runs in a subshell: nothing it changes
             // (variables, cwd, options, `$?`) reaches the parent.
             let snapshot = Box::new(self.snapshot_subshell_state());
@@ -12490,11 +12915,21 @@ impl Interpreter {
             self.enter_subshell_pid();
             self.xtrace_depth += 1;
             self.enter_nofork_scope(commands, true, 0);
+            // Input substitutions still collect into /dev/fd. Live producer
+            // bytes must stay in that capture instead of reaching outer sinks.
+            let saved_callback = self.output_callback.take();
             let mut failed = None;
             for cmd in commands {
                 match self.execute_command(cmd).await {
                     Ok(cmd_result) => {
-                        stdout.push_str(&cmd_result.stdout.command_substitution_text());
+                        // Process substitution is byte transport, unlike $(...).
+                        // Admit capture growth without applying shell-word decoding.
+                        if let Err(error) =
+                            stdout.try_extend_from_slice(cmd_result.stdout.as_bytes())
+                        {
+                            failed = Some(error.into());
+                            break;
+                        }
                         if matches!(
                             cmd_result.control_flow,
                             ControlFlow::Exit(_) | ControlFlow::Abort
@@ -12508,6 +12943,7 @@ impl Interpreter {
                     }
                 }
             }
+            self.output_callback = saved_callback;
             self.restore_subshell_state(*snapshot);
             self.leave_nofork_scope();
             self.last_exit_code = last_exit_code;
@@ -12517,10 +12953,8 @@ impl Interpreter {
             // Allocated after the list ran: in bash the child closes its own
             // end, so a substitution nested inside sees the number free.
             let fd = self.allocate_proc_sub_fd()?;
-            self.proc_subs.open(
-                fd,
-                crate::fs::ProcSubData::Input(Arc::from(stdout.into_bytes())),
-            );
+            self.proc_subs
+                .open(fd, crate::fs::ProcSubData::Input(Arc::new(stdout)));
             Ok(format!("/dev/fd/{fd}"))
         } else {
             let fd = self.allocate_proc_sub_fd()?;
@@ -12777,7 +13211,7 @@ impl Interpreter {
             // WTF: a coproc fd as a compound's stdin (`while read l; do
             // ...; done <&${C[0]}`) is read to end of input up front, not
             // line by line as the loop runs.
-            let stdin = match self
+            let stdin_setup = match self
                 .process_input_redirections(None, redirects, StdinDemand::All, HighFdStdin::Any)
                 .await
             {
@@ -12787,6 +13221,9 @@ impl Interpreter {
                 }
                 Err(e) => return Err(e),
             };
+            // Keep stdin's byte/text storage admitted through the body.
+            let _stdin_storage = stdin_setup.stdin_lease;
+            let stdin = stdin_setup.stdin;
             let prev_pipeline_stdin = if stdin.is_some() {
                 let prev = self.pipeline_stdin.take();
                 self.pipeline_stdin = stdin;
@@ -12883,10 +13320,12 @@ impl Interpreter {
                     .await
                 };
                 match read {
-                    Ok(content) => {
-                        if let Some(content) = content {
-                            // Account for the VFS-owned input while it and the
-                            // decoded substitution text are simultaneously live.
+                    Ok(setup) => {
+                        // Retain admitted input storage through substitution.
+                        let _stdin_storage = setup.stdin_lease;
+                        if let Some(content) = setup.stdin {
+                            // Cover the temporary byte copy made by the
+                            // command-substitution text boundary.
                             let _content_lease =
                                 self.execution_budget.lease_bytes(content.len())?;
                             stdout.try_push_str(&content.command_substitution_text())?;
@@ -12990,6 +13429,14 @@ impl Interpreter {
     /// Maximum expanded arithmetic expression size accepted before fallback to 0.
     /// THREAT[TM-DOS-026]: Prevents attacker-controlled multi-megabyte arithmetic strings.
     const MAX_ARITHMETIC_EXPANSION_BYTES: usize = 64 * 1024;
+    /// Longest run of source text echoed into one arithmetic diagnostic.
+    /// THREAT[TM-INF-022]: an arithmetic error names both the whole expression
+    /// and the unparsed rest as the "error token". Both come from the script,
+    /// so an expression just under `MAX_ARITHMETIC_EXPANSION_BYTES` rendered a
+    /// diagnostic about twice that size. Capping each echoed fragment keeps the
+    /// line inside the 1 KiB diagnostic budget while leaving room for the fixed
+    /// text that says what actually went wrong. See L-ARITH-002.
+    const MAX_ARITHMETIC_DIAG_ECHO: usize = 256;
 
     /// Expand a string as a variable reference, or return as literal.
     /// Used for associative array keys which may be variable refs or literals.
@@ -13026,8 +13473,10 @@ impl Interpreter {
     /// [`Self::expand_key_text`]; `plain` reads only plain scalar values
     /// (no nameref, array or special-parameter resolution).
     fn expand_key_text_with(&self, s: &str, plain: bool) -> String {
-        let lookup = |name: &str| -> String {
-            if plain {
+        let lookup = |name: &str, braced: bool| {
+            Ok::<_, std::convert::Infallible>(if !plain && !braced {
+                self.expand_variable(name)
+            } else if plain {
                 self.scoped.variables.get(name).cloned().unwrap_or_default()
             } else if let Some(arr) = name
                 .strip_suffix("[@]")
@@ -13043,55 +13492,72 @@ impl Interpreter {
                 self.array_values(self.resolve_nameref(arr)).join(&sep)
             } else {
                 self.resolve_param_expansion_name(name).1
-            }
+            })
         };
         let mut out = String::new();
-        let mut chars = s.chars().peekable();
-        while let Some(c) = chars.next() {
+        Self::scan_key_text(s, lookup, |text| {
+            out.push_str(text);
+            Ok(())
+        })
+        .unwrap();
+        out
+    }
+
+    /// One quote/key scanner; callers own lookup semantics and recursion budgets.
+    fn scan_key_text<T: std::ops::Deref<Target = str>, E>(
+        s: &str,
+        mut lookup: impl FnMut(&str, bool) -> std::result::Result<T, E>,
+        mut append: impl FnMut(&str) -> std::result::Result<(), E>,
+    ) -> std::result::Result<(), E> {
+        // Borrow names from the source: scanners must not allocate an
+        // unmetered temporary before a fallible expansion callback runs.
+        let mut chars = s.char_indices().peekable();
+        while let Some((_, c)) = chars.next() {
             match c {
                 '"' => {}
                 '\'' => {
-                    for q in chars.by_ref() {
+                    for (_, q) in chars.by_ref() {
                         if q == '\'' {
                             break;
                         }
-                        out.push(q);
+                        append(q.encode_utf8(&mut [0; 4]))?;
                     }
                 }
-                '\\' => out.extend(chars.next()),
-                '$' if chars.peek() == Some(&'{') => {
-                    chars.next();
-                    let mut name = String::new();
-                    for n in chars.by_ref() {
+                '\\' => {
+                    if let Some((_, c)) = chars.next() {
+                        append(c.encode_utf8(&mut [0; 4]))?;
+                    }
+                }
+                '$' if chars.peek().is_some_and(|(_, c)| *c == '{') => {
+                    let (start, _) = chars.next().unwrap();
+                    let mut end = s.len();
+                    for (i, n) in chars.by_ref() {
                         if n == '}' {
+                            end = i;
                             break;
                         }
-                        name.push(n);
                     }
-                    out.push_str(&lookup(&name));
+                    append(&lookup(&s[start + 1..end], true)?)?;
                 }
                 '$' if chars
                     .peek()
-                    .is_some_and(|n| n.is_ascii_alphanumeric() || *n == '_') =>
+                    .is_some_and(|(_, n)| n.is_ascii_alphanumeric() || *n == '_') =>
                 {
-                    let mut name = String::new();
-                    while let Some(&n) = chars.peek() {
+                    let start = chars.peek().unwrap().0;
+                    let mut end = start;
+                    while let Some(&(i, n)) = chars.peek() {
                         if !(n.is_ascii_alphanumeric() || n == '_') {
                             break;
                         }
-                        name.push(n);
+                        end = i + n.len_utf8();
                         chars.next();
                     }
-                    out.push_str(&if plain {
-                        lookup(&name)
-                    } else {
-                        self.expand_variable(&name)
-                    });
+                    append(&lookup(&s[start..end], false)?)?;
                 }
-                _ => out.push(c),
+                _ => append(c.encode_utf8(&mut [0; 4]))?,
             }
         }
-        out
+        Ok(())
     }
 
     /// Fully expand an associative array key using standard word expansion.
@@ -13487,6 +13953,10 @@ impl Interpreter {
 
     fn resolve_indexed_array_subscript(&self, arr_name: &str, key: &str) -> usize {
         let raw_idx = self.evaluate_arithmetic(key);
+        self.normalize_indexed_array_subscript(arr_name, raw_idx)
+    }
+
+    fn normalize_indexed_array_subscript(&self, arr_name: &str, raw_idx: i64) -> usize {
         if raw_idx < 0 {
             let len = self
                 .scoped
@@ -13852,6 +14322,16 @@ impl Interpreter {
         }
     }
 
+    /// Removing retained storage must release both session budget charges.
+    /// Shared by unset and builtin replacement, including empty mapfile input.
+    fn remove_indexed_array(&mut self, name: &str) {
+        if let Some(arr) = self.arrays_mut().remove(name) {
+            self.memory_budget.record_array_remove(arr.len());
+            self.memory_budget
+                .release_array_bytes(Self::indexed_array_bytes(&arr));
+        }
+    }
+
     /// Bytes charged for an indexed array's contents. Indexed keys are machine
     /// integers already covered by the entry count, so only values are charged.
     fn indexed_array_bytes(arr: &HashMap<usize, String>) -> usize {
@@ -13867,22 +14347,20 @@ impl Interpreter {
     /// Charge an array write against the entry count and the shared
     /// retained-byte budget. Returns `false` when the write must be skipped.
     ///
-    /// THREAT[TM-DOS-114]: an over-budget *byte* write records the first
-    /// rejection so execution fails visibly rather than dropping the value.
-    /// Hitting `max_array_entries` keeps its established silent-skip behaviour —
-    /// that counter is a separate contract (TM-DOS-060) with its own tests, and
-    /// widening it here would change unrelated semantics.
+    /// THREAT[TM-DOS-060] THREAT[TM-DOS-114]: entry and byte refusals
+    /// record the first rejection so execution fails visibly rather than
+    /// silently dropping values and reporting success.
     fn admit_array_write(
         &mut self,
         new_entries: usize,
         added_bytes: usize,
         removed_bytes: usize,
     ) -> bool {
-        if self
+        if let Err(error) = self
             .memory_budget
             .check_array_entries(new_entries, &self.memory_limits)
-            .is_err()
         {
+            self.memory_limit_error.get_or_insert(error);
             return false;
         }
         if let Err(error) =
@@ -13914,12 +14392,11 @@ impl Interpreter {
             .map_or((0, 0), |a| (a.len(), Self::indexed_array_bytes(a)));
         let net = new_entries.saturating_sub(old_entries);
         let new_bytes = Self::indexed_array_bytes(&arr);
-        if net > 0
-            && self
-                .memory_budget
-                .check_array_entries(net, &self.memory_limits)
-                .is_err()
+        if let Err(error) = self
+            .memory_budget
+            .check_array_entries(net, &self.memory_limits)
         {
+            self.memory_limit_error.get_or_insert(error);
             return false;
         }
         if let Err(error) =
@@ -13948,12 +14425,11 @@ impl Interpreter {
             .map_or((0, 0), |a| (a.len(), Self::assoc_array_bytes(a)));
         let net = new_entries.saturating_sub(old_entries);
         let new_bytes = Self::assoc_array_bytes(&arr);
-        if net > 0
-            && self
-                .memory_budget
-                .check_array_entries(net, &self.memory_limits)
-                .is_err()
+        if let Err(error) = self
+            .memory_budget
+            .check_array_entries(net, &self.memory_limits)
         {
+            self.memory_limit_error.get_or_insert(error);
             return false;
         }
         if let Err(error) =
@@ -14094,22 +14570,31 @@ impl Interpreter {
     }
 
     fn lookup_regular_variable(&self, name: &str) -> Option<String> {
+        self.lookup_regular_variable_ref(name).map(str::to_owned)
+    }
+
+    fn lookup_regular_variable_ref(&self, name: &str) -> Option<&str> {
         if let Some(value) = self.scoped.variables.get(name) {
-            return Some(value.clone());
+            return Some(value.as_str());
         }
 
         // `$arr` on an array is `${arr[0]}` (indexed) or `${arr["0"]}` (assoc).
         if let Some(arr) = self.scoped.arrays.get(name) {
-            return arr.get(&0).cloned();
+            return arr.get(&0).map(String::as_str);
         }
         if let Some(arr) = self.scoped.assoc_arrays.get(name) {
-            return arr.get("0").cloned();
+            return arr.get("0").map(String::as_str);
         }
 
-        self.env.get(name).cloned()
+        self.env.get(name).map(String::as_str)
     }
 
     fn expand_variable(&self, name: &str) -> String {
+        self.expand_variable_cow(name).into_owned()
+    }
+
+    fn expand_variable_cow(&self, name: &str) -> std::borrow::Cow<'_, str> {
+        use std::borrow::Cow;
         // Resolve nameref before expansion
         let name = self.resolve_nameref(name);
 
@@ -14124,71 +14609,71 @@ impl Interpreter {
                 // Plain variable values only, so a reference cannot recurse.
                 if idx_str.contains(['$', '"', '\'', '\\']) {
                     let key = self.expand_key_text_with(idx_str, true);
-                    return arr.get(&key).cloned().unwrap_or_default();
+                    return Cow::Owned(arr.get(&key).cloned().unwrap_or_default());
                 }
-                return arr.get(idx_str).cloned().unwrap_or_default();
+                return Cow::Owned(arr.get(idx_str).cloned().unwrap_or_default());
             } else if let Some(arr) = self.scoped.arrays.get(arr_name) {
                 let idx: usize = self.evaluate_arithmetic(idx_str).try_into().unwrap_or(0);
-                return arr.get(&idx).cloned().unwrap_or_default();
+                return Cow::Owned(arr.get(&idx).cloned().unwrap_or_default());
             }
-            return String::new();
+            return Cow::Owned(String::new());
         }
 
         // Check for special parameters (POSIX required)
         match name {
-            "?" => return self.last_exit_code.to_string(),
+            "?" => return Cow::Owned(self.last_exit_code.to_string()),
             "#" => {
                 // Number of positional parameters
                 if let Some(frame) = self.call_stack.last() {
-                    return frame.positional.len().to_string();
+                    return Cow::Owned(frame.positional.len().to_string());
                 }
-                return "0".to_string();
+                return Cow::Owned("0".to_string());
             }
             "@" => {
                 // All positional parameters (space-separated as string)
                 if let Some(frame) = self.call_stack.last() {
-                    return frame.positional.join(" ");
+                    return Cow::Owned(frame.positional.join(" "));
                 }
-                return String::new();
+                return Cow::Owned(String::new());
             }
             "*" => {
                 // All positional parameters joined by IFS first char
                 if let Some(frame) = self.call_stack.last() {
                     let sep = self.get_ifs_separator();
-                    return frame.positional.join(&sep);
+                    return Cow::Owned(frame.positional.join(&sep));
                 }
-                return String::new();
+                return Cow::Owned(String::new());
             }
             // THREAT[TM-INF-014]: Return sandboxed PID, not real host PID.
             "$" => {
-                return "1".to_string();
+                return Cow::Owned("1".to_string());
             }
             // A subshell's own virtual pid (`$$` stays the shell's).
             "BASHPID" => {
-                return if self.bashpid == 0 {
+                return Cow::Owned(if self.bashpid == 0 {
                     "1".to_string()
                 } else {
                     self.bashpid.to_string()
-                };
+                });
             }
             "!" => {
                 // $! - PID of most recent background command
                 // In Bashkit's virtual environment, background jobs run synchronously
                 // Return empty string or last job ID placeholder
                 if let Some(last_bg_pid) = &self.last_bg_pid {
-                    return last_bg_pid.clone();
+                    return Cow::Owned(last_bg_pid.clone());
                 }
-                return String::new();
+                return Cow::Owned(String::new());
             }
             "-" => {
                 // $- - Current option flags, from the SHOPT_* variables.
                 let flags = builtins::dollar_dash(&self.scoped.variables);
                 if !self.interactive {
-                    return flags;
+                    return Cow::Owned(flags);
                 }
                 // `bash -i`: `i` follows `h` (`himBHc` order).
                 let at = flags.find('h').map_or(0, |i| i + 1);
-                return format!("{}i{}", &flags[..at], &flags[at..]);
+                return Cow::Owned(format!("{}i{}", &flags[..at], &flags[at..]));
             }
             "RANDOM" => {
                 // $RANDOM - LCG matching bash behavior, seeded per-instance.
@@ -14196,60 +14681,61 @@ impl Interpreter {
                 let prev = self.random_state.load(Ordering::Relaxed);
                 let next = prev.wrapping_mul(1103515245).wrapping_add(12345);
                 self.random_state.store(next, Ordering::Relaxed);
-                return ((next >> 16) & 0x7fff).to_string();
+                return Cow::Owned(((next >> 16) & 0x7fff).to_string());
             }
             "SRANDOM" => {
                 // $SRANDOM - 32 bits from the OS CSPRNG, not the LCG (bash 5.1).
                 let mut b = [0u8; 4];
                 if getrandom::fill(&mut b).is_err() {
-                    return String::new();
+                    return Cow::Owned(String::new());
                 }
-                return u32::from_le_bytes(b).to_string();
+                return Cow::Owned(u32::from_le_bytes(b).to_string());
             }
             // $LINENO - current line number from command span. A
             // `local LINENO` is an ordinary variable and `unset LINENO`
             // makes it ordinary (bash).
             "LINENO" if !self.lineno_unset && !self.is_local_anywhere("LINENO") => {
-                return self.current_line.to_string();
+                return Cow::Owned(self.current_line.to_string());
             }
             // `PWD=x` / `unset PWD` hold until the directory changes
             // (bash keeps PWD an ordinary variable that `cd` rewrites).
             "PWD" => {
                 if self.pwd_shadow.as_ref() == Some(&self.cwd) {
-                    return self
-                        .scoped
-                        .variables
-                        .get("PWD")
-                        .cloned()
-                        .unwrap_or_default();
+                    return Cow::Owned(
+                        self.scoped
+                            .variables
+                            .get("PWD")
+                            .cloned()
+                            .unwrap_or_default(),
+                    );
                 }
-                return self.cwd.to_string_lossy().to_string();
+                return Cow::Owned(self.cwd.to_string_lossy().to_string());
             }
             "OLDPWD" => {
                 if let Some(v) = self.scoped.variables.get("OLDPWD") {
-                    return v.clone();
+                    return Cow::Owned(v.clone());
                 }
-                return self.cwd.to_string_lossy().to_string();
+                return Cow::Owned(self.cwd.to_string_lossy().to_string());
             }
             "HOSTNAME" => {
                 if let Some(v) = self.scoped.variables.get("HOSTNAME") {
-                    return v.clone();
+                    return Cow::Owned(v.clone());
                 }
-                return "localhost".to_string();
+                return Cow::Owned("localhost".to_string());
             }
             "BASH_VERSION" => {
-                return COMPAT_BASH_VERSION.to_string();
+                return Cow::Owned(COMPAT_BASH_VERSION.to_string());
             }
             "BASH_SUBSHELL" => {
-                return self.bash_subshell.to_string();
+                return Cow::Owned(self.bash_subshell.to_string());
             }
             // The enabled `set -o` / `shopt` options, colon-separated.
-            "SHELLOPTS" => return builtins::shellopts_value(&self.scoped.variables),
-            "BASHOPTS" => return builtins::bashopts_value(&self.scoped.variables),
+            "SHELLOPTS" => return Cow::Owned(builtins::shellopts_value(&self.scoped.variables)),
+            "BASHOPTS" => return Cow::Owned(builtins::bashopts_value(&self.scoped.variables)),
             "SECONDS" => {
                 let (start, base) = self.seconds_base;
                 let elapsed = i64::try_from(start.elapsed().as_secs()).unwrap_or(i64::MAX);
-                return base.saturating_add(elapsed).to_string();
+                return Cow::Owned(base.saturating_add(elapsed).to_string());
             }
             _ => {}
         }
@@ -14260,21 +14746,23 @@ impl Interpreter {
                 // $0 is the script/shell name; functions and `source`
                 // do not change it.
                 if let Some(frame) = self.call_stack.iter().rev().find(|f| !f.keeps_arg0) {
-                    return frame.name.clone();
+                    return Cow::Owned(frame.name.clone());
                 }
-                return Self::DEFAULT_ARG0.to_string();
+                return Cow::Owned(Self::DEFAULT_ARG0.to_string());
             }
             // $1, $2, etc. (1-indexed)
             if let Some(frame) = self.call_stack.last()
                 && n > 0
                 && n <= frame.positional.len()
             {
-                return frame.positional[n - 1].clone();
+                return Cow::Owned(frame.positional[n - 1].clone());
             }
-            return String::new();
+            return Cow::Owned(String::new());
         }
 
-        self.lookup_regular_variable(name).unwrap_or_default()
+        self.lookup_regular_variable_ref(name)
+            .map(Cow::Borrowed)
+            .unwrap_or_default()
     }
 
     /// Check if a variable is set (for `set -u` / nounset).
@@ -14408,7 +14896,21 @@ impl Interpreter {
 
     /// Run a trap handler's command, merging its output into the result the
     /// caller is building.
-    /// Returns the handler's own control flow (an `exit` inside it), if any.
+    /// Returns the handler's control flow and status, or `None` when the
+    /// handler cannot run (unparsable command, exhausted depth budget, or a
+    /// failing handler): trap failures never disturb the interrupted command.
+    /// Record the first trap-nesting depth error for the `exec` boundary.
+    fn note_trap_depth_error(&mut self, error: LimitExceeded) {
+        if self.trap_depth_error.is_none() {
+            self.trap_depth_error = Some(error);
+        }
+    }
+
+    /// Take the recorded trap-nesting depth error, if any.
+    pub(crate) fn take_trap_depth_error(&mut self) -> Option<LimitExceeded> {
+        self.trap_depth_error.take()
+    }
+
     async fn run_trap_command(
         &mut self,
         trap_cmd: &str,
@@ -14419,6 +14921,26 @@ impl Interpreter {
         let Ok(trap_script) = self.parse_shell_text(trap_cmd) else {
             return None;
         };
+        // THREAT[TM-DOS-020]: Bound nested trap delivery with a dedicated
+        // hard cap that trips before native frames can exhaust small host
+        // stacks, independent of command fuel, per-handler AST depth, and
+        // the shared function/source budget (which is charged too, so a low
+        // `max_function_depth` still stops function/signal mixes early).
+        // Exhaustion skips the nested handler with a diagnostic; the first
+        // trip is surfaced as a resource-limit error at the `exec`
+        // boundary, and never disturbs the interrupted command.
+        if self.trap_nesting >= HARD_MAX_TRAP_NESTING {
+            self.note_trap_depth_error(LimitExceeded::MaxTrapDepth(HARD_MAX_TRAP_NESTING));
+            stderr.push_str("bashkit: maximum trap nesting depth exceeded\n");
+            return None;
+        }
+        self.trap_nesting += 1;
+        if let Err(depth_error) = self.counters.push_function(&self.limits) {
+            self.trap_nesting -= 1;
+            self.note_trap_depth_error(depth_error);
+            stderr.push_str("bashkit: maximum trap nesting depth exceeded\n");
+            return None;
+        }
         let was_in_trap = self.in_trap;
         self.in_trap = true;
         let saved_line_base = std::mem::replace(
@@ -14427,14 +14949,32 @@ impl Interpreter {
         );
         let emit_before = self.output_emit_count;
         self.xtrace_depth += 1;
-        let result = self.execute_command_sequence(&trap_script.commands).await;
+        // THREAT[TM-DOS-020]: Box the handler execution so a trap /
+        // source recursion cycle cannot grow the parent future with each
+        // nesting level; the shared depth charge above then trips first.
+        let result = Box::pin(self.execute_command_sequence(&trap_script.commands)).await;
         self.xtrace_depth -= 1;
         self.line_base = saved_line_base;
         self.in_trap = was_in_trap;
-        let Ok(trap_result) = result else {
-            return None;
+        self.trap_nesting -= 1;
+        self.counters.pop_function();
+        // THREAT[TM-DOS-030]: A failing handler must not disturb the
+        // interrupted command, so execution errors end the handler here.
+        // THREAT[TM-DOS-020]: resource exhaustion inside the handler
+        // (a nested function/source call tripping depth or fuel) is not a
+        // handler logic failure: record it so the `exec` boundary still
+        // fails instead of silently stopping the recursion.
+        let trap_result = match result {
+            Ok(trap_result) => trap_result,
+            Err(crate::error::Error::ResourceLimit(limit)) => {
+                self.note_trap_depth_error(limit);
+                return None;
+            }
+            Err(_) => return None,
         };
-        self.maybe_emit_output(&trap_result.stdout, &trap_result.stderr, emit_before);
+        self.maybe_emit_output(&trap_result.stdout, &trap_result.stderr, emit_before)
+            .await
+            .ok();
         stdout.append(&trap_result.stdout);
         stderr.append(&trap_result.stderr);
         Some((trap_result.control_flow, trap_result.exit_code))
@@ -14478,7 +15018,9 @@ impl Interpreter {
         let Some(trap_cmd) = self.scoped.traps.get("RETURN").cloned() else {
             return;
         };
-        self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
+        self.maybe_emit_output(&result.stdout, &result.stderr, emit_before)
+            .await
+            .ok();
         let saved_exit = self.last_exit_code;
         let flow = self
             .run_trap_command(&trap_cmd, &mut result.stdout, &mut result.stderr)
@@ -14518,7 +15060,7 @@ impl Interpreter {
             // The handler runs with `$?` of the trapping command and the
             // shell keeps that status afterwards (bash restores it).
             let saved_exit = self.last_exit_code;
-            let _ = self.run_trap_command(&trap_cmd, stdout, stderr).await;
+            let _ = Box::pin(self.run_trap_command(&trap_cmd, stdout, stderr)).await;
             self.last_exit_code = saved_exit;
         }
     }
@@ -14705,33 +15247,58 @@ fn prefix_builtin_diagnostics(
     stderr: &crate::StreamData,
     name: &str,
     prefix: &str,
-) -> Option<crate::StreamData> {
+    budget: &crate::limits::ExecutionBudget,
+) -> Result<Option<(crate::StreamData, crate::stream::StreamStorage)>> {
     let bytes = stderr.as_bytes();
     if bytes.is_empty() {
-        return None;
+        return Ok(None);
+    }
+    // THREAT[TM-DOS-103]: account before scanning or multiplying prefixes.
+    // Poll by input chunk even when a single diagnostic line is enormous.
+    for chunk in bytes.chunks(4096) {
+        budget.consume_work(chunk.len().div_ceil(1024) as u64)?;
     }
     let shell_builtin = BASH_SHELL_BUILTINS.contains(&name);
     let own = format!("{name}: ");
     let usage = format!("{name}: usage:");
-    let mut out = Vec::with_capacity(bytes.len() + prefix.len());
-    let mut changed = false;
+    let mut out = None;
+    let mut offset = 0;
     for line in bytes.split_inclusive(|b| *b == b'\n') {
-        if let Some(rest) = line.strip_prefix(b"bash: ".as_slice()) {
-            out.extend_from_slice(prefix.as_bytes());
-            out.extend_from_slice(rest);
-            changed = true;
-        } else if shell_builtin
-            && line.starts_with(own.as_bytes())
-            && !line.starts_with(usage.as_bytes())
-        {
-            out.extend_from_slice(prefix.as_bytes());
-            out.extend_from_slice(line);
-            changed = true;
+        let (add_prefix, rest) = if let Some(rest) = line.strip_prefix(b"bash: ".as_slice()) {
+            (true, rest)
         } else {
-            out.extend_from_slice(line);
+            (
+                shell_builtin
+                    && line.starts_with(own.as_bytes())
+                    && !line.starts_with(usage.as_bytes()),
+                line,
+            )
+        };
+        budget.consume_work(
+            1 + rest.len().div_ceil(1024) as u64
+                + if add_prefix {
+                    prefix.len().div_ceil(1024) as u64
+                } else {
+                    0
+                },
+        )?;
+        if add_prefix {
+            if out.is_none() {
+                let mut bytes_out = crate::limits::BudgetedBytes::new(Some(budget))?;
+                bytes_out.try_extend_from_slice(&bytes[..offset])?;
+                out = Some(bytes_out);
+            }
+            out.as_mut()
+                .unwrap()
+                .try_extend_from_slice(prefix.as_bytes())?;
         }
+        if let Some(out) = &mut out {
+            out.try_extend_from_slice(rest)?;
+        }
+        offset += line.len();
     }
-    changed.then(|| crate::StreamData::from(out))
+    out.map(|out| crate::StreamData::from_budgeted_bytes(out, budget).map_err(Into::into))
+        .transpose()
 }
 
 fn builtin_usage_error(msg: &str) -> ExecResult {
@@ -14754,6 +15321,132 @@ mod tests {
     use crate::fs::InMemoryFs;
     use crate::parser::Parser;
 
+    fn ordinary_pipeline_commands() -> Vec<Command> {
+        let parser = Parser::new("{ :; } | :");
+        let script = parser.parse().unwrap();
+        let Command::Pipeline(pipeline) = script.commands.into_iter().next().unwrap() else {
+            panic!("expected pipeline");
+        };
+        pipeline.commands
+    }
+
+    #[tokio::test]
+    async fn pipeline_admission_respects_occupied_shared_job_slot() {
+        let mut bash = Bash::new();
+        bash.interpreter.begin_execution_budget();
+        bash.interpreter.limits.max_background_jobs = 1;
+        let slot = bash.interpreter.jobs.try_claim(1).unwrap();
+        let result = bash
+            .interpreter
+            .execute_streaming_stages(&ordinary_pipeline_commands(), None, false)
+            .await;
+        assert!(matches!(
+            result,
+            Err(crate::Error::ResourceLimit(
+                LimitExceeded::MaxConcurrentJobs(1)
+            ))
+        ));
+        drop(slot);
+        assert!(bash.interpreter.jobs.try_claim(1).is_some());
+    }
+
+    #[tokio::test]
+    async fn pipeline_admission_reserves_storage_for_no_output_stage() {
+        let mut bash = Bash::new();
+        bash.interpreter.begin_execution_budget();
+        bash.interpreter.limits.max_live_intermediate_bytes = 0;
+        bash.interpreter.begin_execution_budget();
+        let result = bash
+            .interpreter
+            .execute_streaming_stages(&ordinary_pipeline_commands(), None, false)
+            .await;
+        assert!(matches!(
+            result,
+            Err(crate::Error::ResourceLimit(LimitExceeded::ExecutionBudget(
+                crate::limits::ExecutionBudgetExceeded::LiveBytes { .. }
+            )))
+        ));
+        assert_eq!(bash.interpreter.execution_budget.live_bytes_for_test(), 0);
+        assert!(bash.interpreter.jobs.try_claim(1).is_some());
+    }
+
+    #[tokio::test]
+    async fn pipeline_admission_releases_storage_and_slots_after_completion() {
+        let mut bash = Bash::new();
+        bash.interpreter.begin_execution_budget();
+        bash.interpreter.limits.max_background_jobs = 1;
+        let result = bash
+            .interpreter
+            .execute_streaming_stages(&ordinary_pipeline_commands(), None, false)
+            .await
+            .unwrap();
+        assert_eq!(result.len(), 2);
+        assert!(result.iter().all(|r| r.exit_code == 0));
+        assert!(bash.interpreter.jobs.try_claim(1).is_some());
+        assert_eq!(bash.interpreter.execution_budget.live_bytes_for_test(), 0);
+    }
+
+    #[tokio::test]
+    async fn pipeline_admission_checks_cancellation_before_construction() {
+        let mut bash = Bash::new();
+        bash.interpreter.begin_execution_budget();
+        bash.interpreter.cancelled.store(true, Ordering::Relaxed);
+        let result = bash
+            .interpreter
+            .execute_streaming_stages(&ordinary_pipeline_commands(), None, false)
+            .await;
+        assert!(matches!(result, Err(crate::Error::Cancelled)));
+        assert!(bash.interpreter.jobs.try_claim(1).is_some());
+        assert_eq!(bash.interpreter.execution_budget.live_bytes_for_test(), 0);
+    }
+
+    #[tokio::test]
+    async fn pipeline_admission_drop_pending_and_reconcile_releases_owners() {
+        use std::future::Future;
+        let mut bash = Bash::new();
+        bash.interpreter.limits.max_background_jobs = 1;
+        bash.interpreter.begin_execution_budget();
+        let script = Parser::new("{ sleep 1; } | cat").parse().unwrap();
+        let Command::Pipeline(commands) = &script.commands[0] else {
+            panic!("expected pipeline");
+        };
+        let budget = bash.interpreter.execution_budget.clone();
+        let jobs = Arc::clone(&bash.interpreter.jobs);
+        let mut future = Box::pin(bash.interpreter.execute_streaming_stages(
+            &commands.commands,
+            None,
+            false,
+        ));
+        let waker = futures_util::task::noop_waker();
+        let mut context = std::task::Context::from_waker(&waker);
+        assert!(future.as_mut().poll(&mut context).is_pending());
+        assert!(jobs.try_claim(1).is_none());
+        assert!(budget.live_bytes_for_test() > 0);
+        drop(future);
+        assert!(jobs.try_claim(1).is_some());
+        // Live final-stage dispatch owns its reader inside the command future.
+        // Dropping it restores the subshell and releases both endpoints at once;
+        // ordinary request reconciliation remains safe to repeat afterwards.
+        assert_eq!(budget.live_bytes_for_test(), 0);
+        bash.interpreter.clear_cancelled_execution_state();
+        assert!(bash.interpreter.pipe_in.is_none());
+        assert_eq!(budget.live_bytes_for_test(), 0);
+    }
+
+    #[test]
+    fn pipeline_admission_environment_is_shared_and_isolated() {
+        let mut bash = Bash::new();
+        bash.interpreter.begin_execution_budget();
+        bash.interpreter
+            .env_mut()
+            .insert("DEMO".into(), "parent".into());
+        let mut child = bash.interpreter.fork_for_job();
+        assert!(Arc::ptr_eq(&bash.interpreter.env, &child.env));
+        child.env_mut().insert("DEMO".into(), "child".into());
+        assert_eq!(bash.interpreter.env["DEMO"], "parent");
+        assert_eq!(child.env["DEMO"], "child");
+    }
+
     #[tokio::test]
     async fn function_metadata_shares_storage_and_drops_with_functions() {
         let mut bash = Bash::new();
@@ -14774,6 +15467,22 @@ mod tests {
         assert!(weak.upgrade().is_none());
         assert_eq!(bash.interpreter.memory_budget.function_body_bytes, 0);
         assert_eq!(bash.interpreter.memory_budget.function_count, 0);
+    }
+
+    #[test]
+    fn diagnostic_rewrite_checks_work_and_cancellation() {
+        for cancelled in [false, true] {
+            let limits = crate::limits::ExecutionLimits::new().max_work_units(2);
+            let budget = crate::limits::ExecutionBudget::new(
+                &limits,
+                Arc::new(std::sync::atomic::AtomicBool::new(cancelled)),
+            );
+            let stderr = crate::StreamData::from("bash: unalias: x: not found\n".repeat(10));
+            let error = prefix_builtin_diagnostics(&stderr, "unalias", "child: line 1: ", &budget)
+                .unwrap_err();
+            let expected = if cancelled { "cancel" } else { "work" };
+            assert!(error.to_string().contains(expected), "{error}");
+        }
     }
 
     /// TM-DOS-042: comma-list brace expansion must not recurse one frame per
@@ -17734,7 +18443,7 @@ cat /tmp/test_fd_exec_public.txt"#,
         // While open in `owner`, the fd exists only there.
         owner
             .proc_subs
-            .open(63, crate::fs::ProcSubData::Input(Arc::from(&b"secret"[..])));
+            .open(63, crate::fs::ProcSubData::test_input(b"secret"));
         assert_eq!(
             owner.fs.read_file(Path::new("/dev/fd/63")).await.unwrap(),
             b"secret"

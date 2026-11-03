@@ -36,9 +36,18 @@ pub(crate) type ProcSubBuffer = Arc<Mutex<Vec<u8>>>;
 #[derive(Clone)]
 pub(crate) enum ProcSubData {
     /// `<(cmd)`: the list's output, read by the command.
-    Input(Arc<[u8]>),
+    Input(Arc<crate::limits::BudgetedBytes>),
     /// `>(cmd)`: what the command writes, fed to the list afterwards.
     Output(ProcSubBuffer),
+}
+
+#[cfg(test)]
+impl ProcSubData {
+    pub(crate) fn test_input(data: &[u8]) -> Self {
+        let mut bytes = crate::limits::BudgetedBytes::new(None).unwrap();
+        bytes.try_extend_from_slice(data).unwrap();
+        Self::Input(Arc::new(bytes))
+    }
 }
 
 pub(crate) struct ProcSubFs {
@@ -90,6 +99,17 @@ impl ProcSubFs {
         })
     }
 
+    /// Fork metadata only: substitution byte payloads remain Arc-shared.
+    pub(crate) fn fork_storage_bytes(&self) -> usize {
+        std::mem::size_of::<Self>()
+            .saturating_add(2 * std::mem::size_of::<usize>())
+            .saturating_add(
+                self.table()
+                    .len()
+                    .saturating_mul(std::mem::size_of::<(i32, ProcSubData)>()),
+            )
+    }
+
     /// Same filesystem, a copy of the open fds (a forked job).
     pub(crate) fn fork(&self) -> Arc<Self> {
         Arc::new(Self {
@@ -108,6 +128,15 @@ impl ProcSubFs {
 
     pub(crate) fn is_open(&self, fd: i32) -> bool {
         self.table().iter().any(|(n, _)| *n == fd)
+    }
+
+    /// Buffered read size for admission; pipe stat keeps its POSIX zero size.
+    pub(crate) fn input_len(&self, path: &Path) -> Option<usize> {
+        match self.slot(path) {
+            Slot::Open(_, ProcSubData::Input(data)) => Some(data.len()),
+            Slot::Open(_, ProcSubData::Output(_)) => Some(0),
+            Slot::Vfs | Slot::Closed => None,
+        }
     }
 
     pub(crate) fn open(&self, fd: i32, data: ProcSubData) {
@@ -325,7 +354,7 @@ mod tests {
         let a = ProcSubFs::new(Arc::clone(&shared));
         let b = ProcSubFs::new(Arc::clone(&shared));
         let p = Path::new("/dev/fd/63");
-        a.open(63, ProcSubData::Input(Arc::from(&b"a-data"[..])));
+        a.open(63, ProcSubData::test_input(b"a-data"));
         assert_eq!(a.read_file(p).await.unwrap(), b"a-data");
         assert!(a.exists(p).await.unwrap());
         assert_eq!(a.stat(p).await.unwrap().file_type, FileType::Fifo);

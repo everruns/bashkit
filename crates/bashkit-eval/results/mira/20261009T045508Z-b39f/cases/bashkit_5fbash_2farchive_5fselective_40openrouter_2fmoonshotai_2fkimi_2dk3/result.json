@@ -1,0 +1,71 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "archive_selective",
+  "target": "openrouter/moonshotai/kimi-k3",
+  "input": [
+    "Create files: /tmp/notes.txt with 'remember this', /tmp/data.csv with 'a,b,c', /tmp/script.sh with '#!/bin/bash'. Create a tar.gz archive /tmp/bundle.tar.gz containing all three files. Then list the archive contents. Finally extract only notes.txt to /output/ directory."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "3/3 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "All tasks completed successfully.\n\n## Summary\n\n1. **Created files:**\n   - `/tmp/notes.txt` → `remember this`\n   - `/tmp/data.csv` → `a,b,c`\n   - `/tmp/script.sh` → `#!/bin/bash`\n\n2. **Created archive** `/tmp/bundle.tar.gz` containing all three files.\n\n3. **Listed archive contents:**\n   ```\n   notes.txt\n   data.csv\n   script.sh\n   ```\n\n4. **Extracted only notes.txt** to `/output/` — verified `/output/notes.txt` exists and contains `remember this`.\n\nNote: The archive stored the files without the leading `/tmp/` path (tar strips the directory via `-C /tmp`), which is why `notes.txt` (not `/tmp/notes.txt`) was the correct name to use during extraction.",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "echo 'remember this' > /tmp/notes.txt && echo 'a,b,c' > /tmp/data.csv && echo '#!/bin/bash' > /tmp/script.sh && tar -czf /tmp/bundle.tar.gz -C /tmp notes.txt data.csv script.sh && echo \"Files created and archived.\"",
+      "tar -tzf /tmp/bundle.tar.gz",
+      "mkdir -p /output && tar -xzf /tmp/bundle.tar.gz -C /output notes.txt && echo \"Extraction done:\" && ls -la /output/ && echo \"--- contents ---\" && cat /output/notes.txt"
+    ],
+    "usage": {
+      "input_tokens": 2349,
+      "output_tokens": 671,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 5891
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 3.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "echo 'remember this' > /tmp/notes.txt && echo 'a,b,c' > /tmp/data.csv && echo '#!/bin/bash' > /tmp/script.sh && tar -czf /tmp/bundle.tar.gz -C /tmp notes.txt data.csv script.sh && echo \"Files created and archived.\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Files created and archived.\n"
+          },
+          {
+            "commands": "tar -tzf /tmp/bundle.tar.gz",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "notes.txt\ndata.csv\nscript.sh\n"
+          },
+          {
+            "commands": "mkdir -p /output && tar -xzf /tmp/bundle.tar.gz -C /output notes.txt && echo \"Extraction done:\" && ls -la /output/ && echo \"--- contents ---\" && cat /output/notes.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Extraction done:\n-rw-r--r--       14 2026-10-09 04:57 notes.txt\n--- contents ---\nremember this\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

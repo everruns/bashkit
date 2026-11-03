@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "complex_release_notes",
+  "target": "anthropic/claude-opus-5-5",
+  "input": [
+    "Read /data/commits.log containing conventional commit messages (one per line, format: 'type(scope): message'). Parse each line, group by type, and generate /release/CHANGELOG.md with sections: '## Features' for 'feat' commits, '## Bug Fixes' for 'fix' commits, and '## Other' for all remaining types. Under each section list items as '- scope: message'. Print the generated changelog."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "8/8 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I parsed all 10 commits in `/data/commits.log` and wrote the changelog to `/release/CHANGELOG.md`. Here it is:\n\n```markdown\n# Changelog\n\n## Features\n- auth: add OAuth2 support\n- ui: dark mode toggle\n- api: add pagination support\n- db: add connection pooling\n\n## Bug Fixes\n- api: handle null response body\n- auth: token refresh race condition\n- ui: button alignment on mobile\n- api: correct status code for 404\n\n## Other\n- deps: update lodash to 4.17.21\n- readme: update install instructions\n```\n\n- **Counts:** 4 features, 4 bug fixes and 2 other commits (one `chore` and one `docs`).\n- **Order:** Commits are listed in the same order as in the log file.\n- **Extra heading:** I added a `# Changelog` title at the top, which you didn't ask for.\n- **Other formats:** The script also accepts commits with no scope (listed as just `- message`) and the `!` breaking-change marker. It skips lines that don't match the format and prints a warning for each, but this log had none.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cat -A /data/commits.log | head -50; wc -l /data/commits.log",
+      "mkdir -p /release\nfeat=(); fix=(); other=()\nre='^([a-zA-Z]+)(\\(([^)]*)\\))?!?:[[:space:]]*(.*)$'\nwhile IFS= read -r line || [[ -n $line ]]; do\n  line=${line%$'\\r'}\n  [[ -z ${line// } ]] && continue\n  if [[ $line =~ $re ]]; then\n    type=${BASH_REMATCH[1]}; scope=${BASH_REMATCH[3]}; msg=${BASH_REMATCH[4]}\n    item=\"- ${scope:+$scope: }$msg\"\n    case $type in feat) feat+=(\"$item\");; fix) fix+=(\"$item\");; *) other+=(\"$item\");; esac\n  else\n    echo \"Skipping unparseable line: $line\" >&2\n  fi\ndone < /data/commits.log\n{\n  echo \"# Changelog\"; echo\n  echo \"## Features\"; printf '%s\\n' \"${feat[@]}\"; echo\n  echo \"## Bug Fixes\"; printf '%s\\n' \"${fix[@]}\"; echo\n  echo \"## Other\"; printf '%s\\n' \"${other[@]}\"\n} > /release/CHANGELOG.md\ncat /release/CHANGELOG.md"
+    ],
+    "usage": {
+      "input_tokens": 3289,
+      "output_tokens": 943,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 8830
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat -A /data/commits.log | head -50; wc -l /data/commits.log",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "feat(auth): add OAuth2 support$\nfix(api): handle null response body$\nfeat(ui): dark mode toggle$\nchore(deps): update lodash to 4.17.21$\nfix(auth): token refresh race condition$\nfeat(api): add pagination support$\nfix(ui): button alignment on mobile$\ndocs(readme): update install instructions$\nfeat(db): add connection pooling$\nfix(api): correct status code for 404$\n10 /data/commits.log\n"
+          },
+          {
+            "commands": "mkdir -p /release\nfeat=(); fix=(); other=()\nre='^([a-zA-Z]+)(\\(([^)]*)\\))?!?:[[:space:]]*(.*)$'\nwhile IFS= read -r line || [[ -n $line ]]; do\n  line=${line%$'\\r'}\n  [[ -z ${line// } ]] && continue\n  if [[ $line =~ $re ]]; then\n    type=${BASH_REMATCH[1]}; scope=${BASH_REMATCH[3]}; msg=${BASH_REMATCH[4]}\n    item=\"- ${scope:+$scope: }$msg\"\n    case $type in feat) feat+=(\"$item\");; fix) fix+=(\"$item\");; *) other+=(\"$item\");; esac\n  else\n    echo \"Skipping unparseable line: $line\" >&2\n  fi\ndone < /data/commits.log\n{\n  echo \"# Changelog\"; echo\n  echo \"## Features\"; printf '%s\\n' \"${feat[@]}\"; echo\n  echo \"## Bug Fixes\"; printf '%s\\n' \"${fix[@]}\"; echo\n  echo \"## Other\"; printf '%s\\n' \"${other[@]}\"\n} > /release/CHANGELOG.md\ncat /release/CHANGELOG.md",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# Changelog\n\n## Features\n- auth: add OAuth2 support\n- ui: dark mode toggle\n- api: add pagination support\n- db: add connection pooling\n\n## Bug Fixes\n- api: handle null response body\n- auth: token refresh race condition\n- ui: button alignment on mobile\n- api: correct status code for 404\n\n## Other\n- deps: update lodash to 4.17.21\n- readme: update install instructions\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

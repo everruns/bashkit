@@ -1,0 +1,71 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "build_script_generator",
+  "target": "openrouter/moonshotai/kimi-k3",
+  "input": [
+    "Read /project/deps.txt which lists build targets and their dependencies (format: 'target: dep1 dep2'). Generate /project/build.sh that builds targets in correct dependency order (dependencies before dependents). Then run the build script, which should create each target as a file in /project/out/ containing 'built: <target>'. Print the build order."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Done. Here's a summary:\n\n**`/project/deps.txt` contents:**\n```\napp: lib utils\nlib: core\nutils: core\ncore:\n```\n\n**`/project/build.sh`** — a bash script that:\n1. Parses `deps.txt` into a target → dependencies map\n2. Performs a DFS-based topological sort (with cycle detection) so every dependency is built before its dependents\n3. Creates `/project/out/<target>` containing `built: <target>` for each target\n\n**Build order (as printed by running the script):**\n```\nbuilt core\nbuilt lib\nbuilt utils\nbuilt app\n```\n\n**Verification** — all four files were created in `/project/out/` with the correct contents:\n- `core` → `built: core`\n- `lib` → `built: lib`\n- `utils` → `built: utils`\n- `app` → `built: app`\n\n`core` builds first since it has no dependencies, then `lib` and `utils` (which both depend on `core`), and finally `app` (which depends on `lib` and `utils`).",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "cat /project/deps.txt; echo \"---\"; ls /project/ 2>/dev/null",
+      "cat > /project/build.sh << 'EOF'\n#!/usr/bin/env bash\n# Reads deps.txt (\"target: dep1 dep2\") and builds targets in dependency order.\nset -euo pipefail\n\nBASE_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nDEPS_FILE=\"$BASE_DIR/deps.txt\"\nOUT_DIR=\"$BASE_DIR/out\"\n\nmkdir -p \"$OUT_DIR\"\n\ndeclare -A deps=()\ndeclare -a targets=()\n\n# Parse deps.txt\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n    line=\"${line%$'\\r'}\"                       # strip CR if present\n    [[ -z \"${line//[[:space:]]/}\" ]] && continue  # skip blank lines\n    target=\"${line%%:*}\"\n    rest=\"${line#*:}\"\n    target=\"${target//[[:space:]]/}\"\n    deps[\"$target\"]=\"$rest\"\n    targets+=(\"$target\")\ndone < \"$DEPS_FILE\"\n\n# Topological sort via DFS\ndeclare -A state=()   # 1=visiting, 2=done\ndeclare -a order=()\n\nvisit() {\n    local node=\"$1\"\n    case \"${state[$node]:-0}\" in\n        2) return 0 ;;\n        1) echo \"error: dependency cycle detected at '$node'\" >&2; exit 1 ;;\n    esac\n    # Dependency with no rule in deps.txt: nothing to build\n    [[ -z \"${deps[$node]+x}\" ]] && return 0\n    state[\"$node\"]=1\n    local d\n    for d in ${deps[$node]}; do\n        visit \"$d\"\n    done\n    state[\"$node\"]=2\n    order+=(\"$node\")\n}\n\nfor t in \"${targets[@]}\"; do\n    visit \"$t\"\ndone\n\n# Build each target\nfor t in \"${order[@]}\"; do\n    echo \"built: $t\" > \"$OUT_DIR/$t\"\n    echo \"built $t\"\ndone\nEOF\nchmod +x /project/build.sh && cat /project/build.sh",
+      "bash /project/build.sh && echo \"--- out dir ---\" && ls /project/out/ && echo \"--- contents ---\" && for f in /project/out/*; do echo \"$f: $(cat \"$f\")\"; done"
+    ],
+    "usage": {
+      "input_tokens": 4706,
+      "output_tokens": 1636,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 11741
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 3.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat /project/deps.txt; echo \"---\"; ls /project/ 2>/dev/null",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "app: lib utils\nlib: core\nutils: core\ncore:\n---\ndeps.txt\nsrc\n"
+          },
+          {
+            "commands": "cat > /project/build.sh << 'EOF'\n#!/usr/bin/env bash\n# Reads deps.txt (\"target: dep1 dep2\") and builds targets in dependency order.\nset -euo pipefail\n\nBASE_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nDEPS_FILE=\"$BASE_DIR/deps.txt\"\nOUT_DIR=\"$BASE_DIR/out\"\n\nmkdir -p \"$OUT_DIR\"\n\ndeclare -A deps=()\ndeclare -a targets=()\n\n# Parse deps.txt\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n    line=\"${line%$'\\r'}\"                       # strip CR if present\n    [[ -z \"${line//[[:space:]]/}\" ]] && continue  # skip blank lines\n    target=\"${line%%:*}\"\n    rest=\"${line#*:}\"\n    target=\"${target//[[:space:]]/}\"\n    deps[\"$target\"]=\"$rest\"\n    targets+=(\"$target\")\ndone < \"$DEPS_FILE\"\n\n# Topological sort via DFS\ndeclare -A state=()   # 1=visiting, 2=done\ndeclare -a order=()\n\nvisit() {\n    local node=\"$1\"\n    case \"${state[$node]:-0}\" in\n        2) return 0 ;;\n        1) echo \"error: dependency cycle detected at '$node'\" >&2; exit 1 ;;\n    esac\n    # Dependency with no rule in deps.txt: nothing to build\n    [[ -z \"${deps[$node]+x}\" ]] && return 0\n    state[\"$node\"]=1\n    local d\n    for d in ${deps[$node]}; do\n        visit \"$d\"\n    done\n    state[\"$node\"]=2\n    order+=(\"$node\")\n}\n\nfor t in \"${targets[@]}\"; do\n    visit \"$t\"\ndone\n\n# Build each target\nfor t in \"${order[@]}\"; do\n    echo \"built: $t\" > \"$OUT_DIR/$t\"\n    echo \"built $t\"\ndone\nEOF\nchmod +x /project/build.sh && cat /project/build.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "#!/usr/bin/env bash\n# Reads deps.txt (\"target: dep1 dep2\") and builds targets in dependency order.\nset -euo pipefail\n\nBASE_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nDEPS_FILE=\"$BASE_DIR/deps.txt\"\nOUT_DIR=\"$BASE_DIR/out\"\n\nmkdir -p \"$OUT_DIR\"\n\ndeclare -A deps=()\ndeclare -a targets=()\n\n# Parse deps.txt\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n    line=\"${line%$'\\r'}\"                       # strip CR if present\n    [[ -z \"${line//[[:space:]]/}\" ]] && continue  # skip blank lines\n    target=\"${line%%:*}\"\n    rest=\"${line#*:}\"\n    target=\"${target//[[:space:]]/}\"\n    deps[\"$target\"]=\"$rest\"\n    targets+=(\"$target\")\ndone < \"$DEPS_FILE\"\n\n# Topological sort via DFS\ndeclare -A state=()   # 1=visiting, 2=done\ndeclare -a order=()\n\nvisit() {\n    local node=\"$1\"\n    case \"${state[$node]:-0}\" in\n        2) return 0 ;;\n        1) echo \"error: dependency cycle detected at '$node'\" >&2; exit 1 ;;\n    esac\n    # Dependency with no rule in deps.txt: nothing to build\n    [[ -z \"${deps[$node]+x}\" ]] && return 0\n    state[\"$node\"]=1\n    local d\n    for d in ${deps[$node]}; do\n        visit \"$d\"\n    done\n    state[\"$node\"]=2\n    order+=(\"$node\")\n}\n\nfor t in \"${targets[@]}\"; do\n    visit \"$t\"\ndone\n\n# Build each target\nfor t in \"${order[@]}\"; do\n    echo \"built: $t\" > \"$OUT_DIR/$t\"\n    echo \"built $t\"\ndone\n"
+          },
+          {
+            "commands": "bash /project/build.sh && echo \"--- out dir ---\" && ls /project/out/ && echo \"--- contents ---\" && for f in /project/out/*; do echo \"$f: $(cat \"$f\")\"; done",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "built core\nbuilt lib\nbuilt utils\nbuilt app\n--- out dir ---\napp\ncore\nlib\nutils\n--- contents ---\n/project/out/app: built: app\n/project/out/core: built: core\n/project/out/lib: built: lib\n/project/out/utils: built: utils\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

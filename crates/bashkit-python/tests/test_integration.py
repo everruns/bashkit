@@ -418,6 +418,15 @@ def test_bashtool_system_prompt_includes_username():
     assert "agent007" in sp
 
 
+def test_package_version_matches_native_and_distribution():
+    """Every public version surface identifies the installed release."""
+    from importlib.metadata import version
+
+    import bashkit
+
+    assert bashkit.__version__ == bashkit.get_version() == version("bashkit")
+
+
 def test_bashtool_version_format():
     """Version string looks like a semver."""
     tool = BashTool()

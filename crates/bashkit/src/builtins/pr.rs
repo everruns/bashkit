@@ -11,7 +11,11 @@
 //!   balanced, the first columns taking the extra lines.
 //! - Header date is the file's mtime (now for stdin and `-m`) in the
 //!   sandbox clock and `TZ`, so it is never host data.
-//! - Output is capped at `MAX_OUTPUT`: padding can multiply input size.
+//!   Inputs retain timestamps; long date formats are rendered one stream at
+//!   a time, so empty files do not retain duplicate date headers.
+//! - Every output/row append checks `MAX_OUTPUT` before growth. Owning
+//!   buffers lease capacity from the shared budget; cells borrow input text.
+//!   Pagination checks work/deadlines even for skipped pages (TM-DOS-137).
 //! - Not implemented (L-PR-001): `-e`/`-i` tab conversion options; `-c` and
 //!   `-v` are accepted and ignored (no control-character display).
 
@@ -20,6 +24,7 @@ use async_trait::async_trait;
 use super::{Builtin, Context, Date, resolve_path};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
+use crate::limits::{BudgetedString, BudgetedVec, ExecutionBudget, LimitExceeded};
 
 /// The pr builtin. Holds the sandbox clock for header dates.
 pub struct Pr {
@@ -48,7 +53,7 @@ const TAB: usize = 8;
 const MAX_OUTPUT: usize = 16 * 1024 * 1024;
 
 /// A column entry: line text and its line number (with `-n`).
-type Cell = Option<(String, Option<i64>)>;
+type Cell<'a> = Option<(&'a str, Option<i64>)>;
 
 struct Opts {
     columns: usize,
@@ -350,63 +355,106 @@ fn parse_args(args: &[String]) -> std::result::Result<(Opts, Vec<String>), ExecR
 }
 
 /// One input: its lines and the header title/date.
-struct Input {
-    lines: Vec<String>,
-    title: String,
-    date: String,
+struct Input<'a> {
+    lines: BudgetedVec<BudgetedString>,
+    title: &'a str,
+    // THREAT[TM-DOS-137]: Do not retain a long rendered -D header per file.
+    date: Option<i64>,
+}
+
+// THREAT[TM-DOS-137]: admit all pagination bytes, including headers, before
+// allocation. BudgetedString charges capacity and polls cancellation/deadlines.
+fn append(out: &mut BudgetedString, text: &str) -> Result<()> {
+    if out
+        .len()
+        .checked_add(text.len())
+        .is_none_or(|len| len > MAX_OUTPUT)
+    {
+        return Err(LimitExceeded::Memory(format!("pr: output exceeds {MAX_OUTPUT} bytes")).into());
+    }
+    out.try_push_str_with_limit(text, MAX_OUTPUT)?;
+    Ok(())
+}
+
+fn checked_rows_bytes(total: usize, line_len: usize) -> Result<usize> {
+    total
+        .checked_add(line_len)
+        .and_then(|len| len.checked_add(1))
+        .filter(|len| *len <= MAX_OUTPUT)
+        .ok_or_else(|| {
+            LimitExceeded::Memory(format!("pr: output exceeds {MAX_OUTPUT} bytes")).into()
+        })
+}
+
+fn push(out: &mut BudgetedString, ch: char) -> Result<()> {
+    append(out, ch.encode_utf8(&mut [0; 4]))
+}
+
+fn repeat(out: &mut BudgetedString, ch: char, count: usize) -> Result<()> {
+    for _ in 0..count {
+        push(out, ch)?;
+    }
+    Ok(())
+}
+
+fn work(budget: Option<&ExecutionBudget>, units: usize) -> Result<()> {
+    if let Some(budget) = budget {
+        budget.consume_work(units as u64)?;
+    }
+    Ok(())
 }
 
 /// Expand tabs to spaces, columns counted from `start`.
-fn expand_tabs(s: &str, start: usize) -> String {
-    let mut out = String::with_capacity(s.len());
+fn expand_tabs(s: &str, start: usize, budget: Option<&ExecutionBudget>) -> Result<BudgetedString> {
+    let mut out = BudgetedString::new(budget)?;
     let mut col = start;
     for ch in s.chars() {
         if ch == '\t' {
             let next = (col / TAB + 1) * TAB;
-            out.extend(std::iter::repeat_n(' ', next - col));
+            repeat(&mut out, ' ', next - col)?;
             col = next;
         } else {
-            out.push(ch);
+            push(&mut out, ch)?;
             col += 1;
         }
     }
-    out
+    Ok(out)
 }
 
 /// Line writer tracking the output column, writing blank runs as tabs
 /// where they reach a tab stop (GNU multi-column output).
 struct Row {
-    out: String,
+    out: BudgetedString,
     col: usize,
 }
 
 impl Row {
-    fn new(offset: usize) -> Self {
-        Row {
-            out: " ".repeat(offset),
-            col: offset,
-        }
+    fn new(offset: usize, budget: Option<&ExecutionBudget>) -> Result<Self> {
+        let mut out = BudgetedString::new(budget)?;
+        repeat(&mut out, ' ', offset)?;
+        Ok(Row { out, col: offset })
     }
 
     /// Blanks up to column `target`, as tabs then spaces.
-    fn pad_to(&mut self, target: usize) {
+    fn pad_to(&mut self, target: usize) -> Result<()> {
         while self.col < target {
             let next = (self.col / TAB + 1) * TAB;
             if next <= target {
                 // Even a single blank up to a tab stop is written as a tab.
-                self.out.push('\t');
+                push(&mut self.out, '\t')?;
                 self.col = next;
             } else {
-                self.out.push(' ');
+                push(&mut self.out, ' ')?;
                 self.col += 1;
             }
         }
+        Ok(())
     }
 
     /// A cell's text (tabs already expanded). Runs of two or more blanks
     /// become tabs where they reach a stop; a single blank stays a space;
     /// trailing blanks are left to the next padding run.
-    fn cell(&mut self, text: &str) {
+    fn cell(&mut self, text: &str) -> Result<()> {
         let mut run = 0;
         for ch in text.chars() {
             if ch == ' ' {
@@ -414,22 +462,24 @@ impl Row {
                 continue;
             }
             if run == 1 {
-                self.out.push(' ');
+                push(&mut self.out, ' ')?;
                 self.col += 1;
             } else if run > 1 {
                 let target = self.col + run;
-                self.pad_to(target);
+                self.pad_to(target)?;
             }
             run = 0;
-            self.out.push(ch);
+            push(&mut self.out, ch)?;
             self.col += 1;
         }
+        Ok(())
     }
 
     /// Text written as is (separators, single-column lines).
-    fn raw(&mut self, text: &str) {
-        self.out.push_str(text);
+    fn raw(&mut self, text: &str) -> Result<()> {
+        append(&mut self.out, text)?;
         self.col += text.chars().count();
+        Ok(())
     }
 }
 
@@ -437,49 +487,59 @@ struct Layout<'a> {
     o: &'a Opts,
     /// Per-column text width; None means no truncation and no padding.
     col_width: Option<usize>,
-    sep: String,
+    sep: &'a str,
     /// `-m -n`: width of the line number field ahead of the first column
     /// (a TAB separator counts up to the next tab stop).
     lead: usize,
 }
 
 impl Layout<'_> {
-    fn number(&self, n: i64) -> String {
-        match self.o.number {
-            Some((sep, digits)) => {
-                let s = n.to_string();
-                let s = if s.len() > digits {
-                    s[s.len() - digits..].to_string()
-                } else {
-                    format!("{s:>digits$}")
-                };
-                format!("{s}{sep}")
-            }
-            None => String::new(),
+    fn number(&self, n: i64, budget: Option<&ExecutionBudget>) -> Result<BudgetedString> {
+        let mut out = BudgetedString::new(budget)?;
+        if let Some((sep, digits)) = self.o.number {
+            let text = n.to_string();
+            let start = text.len().saturating_sub(digits);
+            repeat(&mut out, ' ', digits.saturating_sub(text.len()))?;
+            append(&mut out, &text[start..])?;
+            push(&mut out, sep)?;
         }
+        Ok(out)
     }
 
     /// Render one row of cells (None = absent cell, Some("") = empty cell).
-    fn render(&self, cells: &[Cell]) -> String {
+    fn render(
+        &self,
+        cells: &[Cell<'_>],
+        budget: Option<&ExecutionBudget>,
+    ) -> Result<BudgetedString> {
         let o = self.o;
-        let mut row = Row::new(o.offset);
+        work(
+            budget,
+            1 + cells
+                .iter()
+                .flatten()
+                .map(|(s, _)| s.len() / 1024)
+                .sum::<usize>(),
+        )?;
+        let mut row = Row::new(o.offset, budget)?;
         if o.columns <= 1 {
             if let Some(Some((text, n))) = cells.first() {
                 if let Some(n) = n {
-                    row.raw(&self.number(*n));
+                    row.raw(&self.number(*n, budget)?)?;
                 }
-                let mut line = text.clone();
+                let mut line = *text;
                 if let Some(w) = o.page_width {
                     let room = w.saturating_sub(row.col - o.offset);
-                    line = line.chars().take(room).collect();
+                    let end = line.char_indices().nth(room).map_or(line.len(), |(i, _)| i);
+                    line = &line[..end];
                 }
-                row.raw(&line);
+                row.raw(line)?;
             }
-            return row.out;
+            return Ok(row.out);
         }
         let last = cells.iter().rposition(Option::is_some);
         let Some(last) = last else {
-            return row.out;
+            return Ok(row.out);
         };
         for (i, cell) in cells.iter().enumerate().take(last + 1) {
             if i > 0 {
@@ -489,33 +549,41 @@ impl Layout<'_> {
                         // -S/-s string after padding to the column width.
                         let start = o.offset + self.col_offset(i);
                         if self.sep == " " {
-                            row.pad_to(start);
+                            row.pad_to(start)?;
                         } else {
-                            row.pad_to(start - self.sep_len());
-                            row.raw(&self.sep);
+                            row.pad_to(start - self.sep_len())?;
+                            row.raw(self.sep)?;
                         }
                     }
-                    None => row.raw(&self.sep),
+                    None => row.raw(self.sep)?,
                 }
             }
             let Some((text, n)) = cell else {
                 continue;
             };
             let col_start = row.col;
-            let mut content = String::new();
+            let mut content = BudgetedString::new(budget)?;
             if let Some(n) = n {
-                content.push_str(&self.number(*n));
+                // GNU expands the number separator within its own field,
+                // even when joined columns have no fixed text width.
+                let number = self.number(*n, budget)?;
+                append(&mut content, &expand_tabs(&number, 0, budget)?)?;
             }
-            content.push_str(text);
+            append(&mut content, text)?;
             let rel = col_start - o.offset - self.col_offset(i);
-            let mut expanded = expand_tabs(&content, rel);
-            if let Some(w) = self.col_width {
+            let expanded = expand_tabs(&content, rel, budget)?;
+            let end = if let Some(w) = self.col_width {
                 let w = if i == 0 { w + self.lead } else { w };
-                expanded = expanded.chars().take(w.saturating_sub(rel)).collect();
-            }
-            row.cell(&expanded);
+                expanded
+                    .char_indices()
+                    .nth(w.saturating_sub(rel))
+                    .map_or(expanded.len(), |(i, _)| i)
+            } else {
+                expanded.len()
+            };
+            row.cell(&expanded[..end])?;
         }
-        row.out
+        Ok(row.out)
     }
 
     fn sep_len(&self) -> usize {
@@ -533,7 +601,13 @@ impl Layout<'_> {
 }
 
 impl Pr {
-    fn header_line(o: &Opts, date: &str, title: &str, page: usize) -> String {
+    fn header_line(
+        o: &Opts,
+        date: &str,
+        title: &str,
+        page: usize,
+        out: &mut BudgetedString,
+    ) -> Result<()> {
         let width = o.page_width.or(o.width).unwrap_or(PAGE_WIDTH);
         let right = format!("Page {page}");
         let used = date.chars().count() + right.len();
@@ -545,70 +619,69 @@ impl Pr {
         } else {
             (1, 1)
         };
-        format!(
-            "{}{date}{}{title}{}{right}",
-            " ".repeat(o.offset),
-            " ".repeat(lpad),
-            " ".repeat(rpad)
-        )
+        repeat(out, ' ', o.offset)?;
+        append(out, date)?;
+        repeat(out, ' ', lpad)?;
+        append(out, title)?;
+        repeat(out, ' ', rpad)?;
+        append(out, &right)
     }
 }
 
 /// Write pages for one stream of rows.
 fn emit_pages(
     o: &Opts,
-    rows: Vec<String>,
+    rows: &[BudgetedString],
     rows_per_page: usize,
     title: &str,
     date: &str,
-    out: &mut String,
-) {
+    out: &mut BudgetedString,
+    budget: Option<&ExecutionBudget>,
+) -> Result<()> {
     let headers = !o.omit_header;
     let body_len = if headers {
         o.page_len - HEADER_LINES - TRAILER_LINES
     } else {
         o.page_len
     };
-    let pages: Vec<&[String]> = if rows.is_empty() {
-        Vec::new()
-    } else {
-        rows.chunks(rows_per_page.max(1)).collect()
-    };
-    for (idx, page_rows) in pages.iter().enumerate() {
+    for (idx, page_rows) in rows.chunks(rows_per_page.max(1)).enumerate() {
+        work(budget, 1)?;
         let page = idx + 1;
         if page < o.first_page || o.last_page.is_some_and(|l| page > l) {
             continue;
         }
         if headers {
-            out.push_str(&" ".repeat(o.offset));
-            out.push_str("\n\n");
-            out.push_str(&Pr::header_line(o, date, title, page));
-            out.push_str("\n\n\n");
+            work(budget, 1 + title.len() / 1024 + date.len() / 1024)?;
+            repeat(out, ' ', o.offset)?;
+            append(out, "\n\n")?;
+            Pr::header_line(o, date, title, page, out)?;
+            append(out, "\n\n\n")?;
         }
         let mut used = 0;
         for (k, r) in page_rows.iter().enumerate() {
-            out.push_str(r);
-            out.push('\n');
+            append(out, r)?;
+            push(out, '\n')?;
             used += 1;
             // Multi-column pages put no blank line after the last row.
             if o.double && (o.columns <= 1 || k + 1 < page_rows.len()) {
-                out.push('\n');
+                push(out, '\n')?;
                 used += 1;
             }
         }
         if headers {
             if o.form_feed {
-                out.push('\x0c');
+                push(out, '\x0c')?;
             } else {
                 for _ in used..body_len {
-                    out.push('\n');
+                    push(out, '\n')?;
                 }
                 for _ in 0..TRAILER_LINES {
-                    out.push('\n');
+                    push(out, '\n')?;
                 }
             }
         }
     }
+    Ok(())
 }
 
 fn layout_for(o: &Opts) -> Layout<'_> {
@@ -617,13 +690,16 @@ fn layout_for(o: &Opts) -> Layout<'_> {
     // `-s` without `-w`, or `-J`: no truncation, no padding.
     let unpadded = o.join || (o.sep_char.is_some() && o.width.is_none() && o.page_width.is_none());
     let sep = if let Some(s) = &o.sep_string {
-        s.clone()
+        s.as_str()
     } else if let Some(s) = &o.sep_char {
-        s.chars().next().map(String::from).unwrap_or_default()
+        s.chars()
+            .next()
+            .map(|c| &s[..c.len_utf8()])
+            .unwrap_or_default()
     } else if o.join {
-        "\t".to_string()
+        "\t"
     } else {
-        " ".to_string()
+        " "
     };
     let lead = match o.number {
         Some(('\t', digits)) if o.merge => (digits / TAB + 1) * TAB,
@@ -645,24 +721,33 @@ fn layout_for(o: &Opts) -> Layout<'_> {
 }
 
 /// Rows of cells for one file in down/across order, page by page.
-fn file_rows(o: &Opts, lines: &[String], rows_per_page: usize) -> Vec<Vec<Cell>> {
+fn file_rows<'a>(
+    o: &Opts,
+    lines: &'a [BudgetedString],
+    rows_per_page: usize,
+    budget: Option<&ExecutionBudget>,
+) -> Result<BudgetedVec<BudgetedVec<Cell<'a>>>> {
     let numbered = o.number.is_some();
-    let cell = |k: usize| -> Cell {
+    let cell = |k: usize| -> Cell<'a> {
         lines
             .get(k)
-            .map(|l| (l.clone(), numbered.then_some(o.first_number + k as i64)))
+            .map(|l| (l.as_ref(), numbered.then_some(o.first_number + k as i64)))
     };
     let cols = o.columns.max(1);
-    let mut rows = Vec::new();
+    let mut rows = BudgetedVec::new(budget)?;
     if cols == 1 {
         for k in 0..lines.len() {
-            rows.push(vec![cell(k)]);
+            work(budget, 1)?;
+            let mut row = BudgetedVec::new(budget)?;
+            row.try_push(cell(k))?;
+            rows.try_push(row)?;
         }
-        return rows;
+        return Ok(rows);
     }
     let per_page = rows_per_page.max(1) * cols;
     let mut start = 0;
     while start < lines.len() {
+        work(budget, 1)?;
         let n = (lines.len() - start).min(per_page);
         if o.across {
             let nrows = n.div_ceil(cols);
@@ -672,40 +757,37 @@ fn file_rows(o: &Opts, lines: &[String], rows_per_page: usize) -> Vec<Vec<Cell>>
                         let k = r * cols + c;
                         (k < n).then(|| cell(start + k)).flatten()
                     })
-                    .collect();
-                rows.push(row);
+                    .try_fold(BudgetedVec::new(budget)?, |mut row, cell| -> Result<_> {
+                        work(budget, 1)?;
+                        row.try_push(cell)?;
+                        Ok(row)
+                    })?;
+                rows.try_push(row)?;
             }
         } else {
             // Full page: each column holds rows_per_page lines. Last page:
             // balanced, the first columns take the extra lines.
-            let counts: Vec<usize> = if n == per_page {
-                vec![rows_per_page; cols]
-            } else {
-                let base = n / cols;
-                let rem = n % cols;
-                (0..cols).map(|c| base + usize::from(c < rem)).collect()
-            };
-            let nrows = counts.iter().copied().max().unwrap_or(0);
-            let mut col_start = Vec::with_capacity(cols);
-            let mut acc = 0;
-            for c in &counts {
-                col_start.push(acc);
-                acc += c;
-            }
+            let base = n / cols;
+            let rem = n % cols;
+            let nrows = base + usize::from(rem > 0);
             for r in 0..nrows {
                 let row = (0..cols)
                     .map(|c| {
-                        (r < counts[c])
-                            .then(|| cell(start + col_start[c] + r))
+                        (r < base + usize::from(c < rem))
+                            .then(|| cell(start + c * base + c.min(rem) + r))
                             .flatten()
                     })
-                    .collect();
-                rows.push(row);
+                    .try_fold(BudgetedVec::new(budget)?, |mut row, cell| -> Result<_> {
+                        work(budget, 1)?;
+                        row.try_push(cell)?;
+                        Ok(row)
+                    })?;
+                rows.try_push(row)?;
             }
         }
         start += n;
     }
-    rows
+    Ok(rows)
 }
 
 #[async_trait]
@@ -724,50 +806,88 @@ impl Builtin for Pr {
         if o.page_len <= HEADER_LINES + TRAILER_LINES {
             o.omit_header = true;
         }
+        let budget = ctx
+            .execution_budget()
+            .map(|budget| {
+                budget
+                    .try_with(Clone::clone)
+                    .map_err(|_| crate::Error::Cancelled)
+            })
+            .transpose()?;
+        let budget = budget.as_ref();
         let tz = ctx.env.get("TZ");
-        let now = self
-            .clock
-            .strftime(tz, None, &o.date_format)
-            .unwrap_or_default();
+        let now = if o.omit_header {
+            String::new()
+        } else {
+            self.clock
+                .strftime(tz, None, &o.date_format)
+                .unwrap_or_default()
+        };
 
         let mut stderr = String::new();
         let mut exit_code = 0;
-        let mut inputs = Vec::new();
+        let mut inputs = BudgetedVec::new(budget)?;
         for file in &files {
-            let (bytes, title, date) = if file == "-" {
-                let data = ctx.stdin_bytes().map(<[u8]>::to_vec).unwrap_or_default();
-                (data, String::new(), now.clone())
-            } else {
-                let path = resolve_path(ctx.cwd, file);
-                let data = match ctx.fs.read_file(&path).await {
-                    Ok(d) => d,
-                    Err(e) => {
-                        stderr.push_str(&format!(
-                            "pr: {file}: {}\n",
-                            crate::error::io_error_reason(&e)
-                        ));
-                        exit_code = 1;
-                        continue;
+            let mut _bytes_lease = None;
+            let mut _capacity_lease = None;
+            let mut reserved_size = 0;
+            let (bytes, title, date) =
+                if file == "-" {
+                    let data = std::borrow::Cow::Borrowed(ctx.stdin_bytes().unwrap_or_default());
+                    (data, "", None)
+                } else {
+                    let path = resolve_path(ctx.cwd, file);
+                    if let Ok(meta) = ctx.fs.stat(&path).await {
+                        let size = usize::try_from(meta.size)
+                            .map_err(|_| LimitExceeded::Memory("pr: input size overflow".into()))?;
+                        _bytes_lease = ctx.lease_budget_bytes(size)?;
+                        reserved_size = size;
                     }
+                    let data = match ctx.fs.read_file(&path).await {
+                        Ok(d) => d,
+                        Err(e) => {
+                            stderr.push_str(&format!(
+                                "pr: {file}: {}\n",
+                                crate::error::io_error_reason(&e)
+                            ));
+                            exit_code = 1;
+                            continue;
+                        }
+                    };
+                    let date =
+                        ctx.fs.stat(&path).await.ok().map(|meta| {
+                            crate::time_compat::to_chrono_utc(meta.modified).timestamp()
+                        });
+                    _capacity_lease =
+                        ctx.lease_budget_bytes(data.capacity().saturating_sub(reserved_size))?;
+                    (std::borrow::Cow::Owned(data), file.as_str(), date)
                 };
-                let date = match ctx.fs.stat(&path).await {
-                    Ok(meta) => {
-                        let secs = crate::time_compat::to_chrono_utc(meta.modified).timestamp();
-                        self.clock
-                            .strftime(tz, Some(secs), &o.date_format)
-                            .unwrap_or_default()
-                    }
-                    Err(_) => now.clone(),
-                };
-                (data, file.clone(), date)
-            };
+            ctx.consume_budget_input(bytes.len())?;
+
             ctx.consume_budget_work(1 + (bytes.len() / 1024) as u64)?;
+            // Lossy UTF-8 can require three bytes per invalid input byte.
+            let _decode_lease = if std::str::from_utf8(&bytes).is_err() {
+                ctx.lease_budget_bytes(
+                    bytes
+                        .len()
+                        .checked_mul(3)
+                        .ok_or_else(|| LimitExceeded::Memory("pr: input size overflow".into()))?,
+                )?
+            } else {
+                None
+            };
             let text = String::from_utf8_lossy(&bytes);
-            let mut lines: Vec<String> = text.split('\n').map(str::to_string).collect();
+            let mut lines = BudgetedVec::new(budget)?;
+            for line in text.split('\n') {
+                work(budget, 1)?;
+                let mut owned = BudgetedString::new(budget)?;
+                append(&mut owned, line)?;
+                lines.try_push(owned)?;
+            }
             if text.ends_with('\n') || text.is_empty() {
                 lines.pop();
             }
-            inputs.push(Input { lines, title, date });
+            inputs.try_push(Input { lines, title, date })?;
         }
 
         let headers = !o.omit_header;
@@ -783,60 +903,63 @@ impl Builtin for Pr {
         }
         .max(1);
         let layout = layout_for(&o);
-        let mut out = String::new();
+        let mut out = BudgetedString::new(budget)?;
 
         if o.merge {
-            let header = o.header.clone().unwrap_or_default();
+            let header = o.header.as_deref().unwrap_or_default();
             let longest = inputs.iter().map(|i| i.lines.len()).max().unwrap_or(0);
-            let mut rows = Vec::with_capacity(longest);
+            let mut rows = BudgetedVec::new(budget)?;
             let mut rows_bytes = 0;
             for k in 0..longest {
                 let number = o.number.is_some().then_some(o.first_number + k as i64);
-                let cells: Vec<Cell> = inputs
+                let cells = inputs
                     .iter()
                     .enumerate()
                     .map(|(c, inp)| {
-                        let text = inp.lines.get(k).cloned().unwrap_or_default();
+                        let text = inp.lines.get(k).map(|s| s.as_ref()).unwrap_or_default();
                         Some((text, if c == 0 { number } else { None }))
                     })
-                    .collect();
-                let line = layout.render(&cells);
-                rows_bytes += line.len() + 1;
-                rows.push(line);
-                if rows_bytes > MAX_OUTPUT {
-                    break;
-                }
+                    .try_fold(BudgetedVec::new(budget)?, |mut cells, cell| -> Result<_> {
+                        cells.try_push(cell)?;
+                        Ok(cells)
+                    })?;
+                let line = layout.render(&cells, budget)?;
+                rows_bytes = checked_rows_bytes(rows_bytes, line.len())?;
+                rows.try_push(line)?;
             }
-            emit_pages(&o, rows, rows_per_page, &header, &now, &mut out);
+            emit_pages(&o, &rows, rows_per_page, header, &now, &mut out, budget)?;
         } else {
-            for inp in &inputs {
-                let title = o.header.clone().unwrap_or_else(|| inp.title.clone());
-                let cells = file_rows(&o, &inp.lines, rows_per_page);
-                let mut rows = Vec::with_capacity(cells.len());
+            for inp in inputs.iter() {
+                let title = o.header.as_deref().unwrap_or(inp.title);
+                let cells = file_rows(&o, &inp.lines, rows_per_page, budget)?;
+                let mut rows = BudgetedVec::new(budget)?;
                 let mut rows_bytes = 0;
-                for c in &cells {
-                    let line = layout.render(c);
-                    rows_bytes += line.len() + 1;
-                    rows.push(line);
-                    if out.len() + rows_bytes > MAX_OUTPUT {
-                        break;
-                    }
+                for c in cells.iter() {
+                    let line = layout.render(c, budget)?;
+                    rows_bytes = checked_rows_bytes(rows_bytes, line.len())?;
+                    rows.try_push(line)?;
                 }
-                emit_pages(&o, rows, rows_per_page, &title, &inp.date, &mut out);
-                if out.len() > MAX_OUTPUT {
-                    break;
+                if rows.is_empty() {
+                    continue;
                 }
+                // At most one file's formatted date is live while emitting.
+                let date = if o.omit_header {
+                    std::borrow::Cow::Borrowed("")
+                } else if let Some(secs) = inp.date {
+                    std::borrow::Cow::Owned(
+                        self.clock
+                            .strftime(tz, Some(secs), &o.date_format)
+                            .unwrap_or_default(),
+                    )
+                } else {
+                    std::borrow::Cow::Borrowed(now.as_str())
+                };
+                emit_pages(&o, &rows, rows_per_page, title, &date, &mut out, budget)?;
             }
         }
 
-        if out.len() > MAX_OUTPUT {
-            return Ok(ExecResult::err(
-                format!("pr: output exceeds {MAX_OUTPUT} bytes\n"),
-                1,
-            ));
-        }
         ctx.consume_budget_work(1 + (out.len() / 1024) as u64)?;
-        let mut result = ExecResult::with_code(out, exit_code);
+        let mut result = ExecResult::with_code(out.into_inner(), exit_code);
         result.stderr = stderr.into();
         Ok(result)
     }
@@ -846,16 +969,28 @@ impl Builtin for Pr {
 mod tests {
     use super::*;
 
+    #[test]
+    fn joined_number_fields_use_local_tab_stops() {
+        assert_eq!(
+            rows(&["-2", "-J", "-n"], "a\nb\nc\nd\n"),
+            "    1\ta\t    3\t  c\n    2\tb\t    4\t  d\n"
+        );
+    }
+
     fn rows(args: &[&str], input: &str) -> String {
         let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
         let Ok((o, _)) = parse_args(&args) else {
             panic!("valid args");
         };
-        let lines: Vec<String> = input.lines().map(str::to_string).collect();
+        let lines: Vec<BudgetedString> = input
+            .lines()
+            .map(|s| BudgetedString::try_from_string(s.to_string(), None).unwrap())
+            .collect();
         let layout = layout_for(&o);
-        file_rows(&o, &lines, 66)
+        file_rows(&o, &lines, 66, None)
+            .unwrap()
             .iter()
-            .map(|c| layout.render(c) + "\n")
+            .map(|c| layout.render(c, None).unwrap().into_inner() + "\n")
             .collect()
     }
 
@@ -895,5 +1030,40 @@ mod tests {
         assert!(parse_args(&args(&["-w"])).is_err());
         assert!(parse_args(&args(&["-z"])).is_err());
         assert!(parse_args(&args(&["-l", "99999999"])).is_err());
+    }
+    #[test]
+    fn pagination_cap_is_checked_before_append_at_utf8_boundary() {
+        use std::sync::{Arc, atomic::AtomicBool};
+        let budget = ExecutionBudget::new(
+            &crate::ExecutionLimits::new().max_live_intermediate_bytes(MAX_OUTPUT as u64),
+            Arc::new(AtomicBool::new(false)),
+        );
+        let mut out = BudgetedString::new(Some(&budget)).unwrap();
+        append(&mut out, &"x".repeat(MAX_OUTPUT - 1)).unwrap();
+        assert!(append(&mut out, "é").is_err());
+        assert_eq!(out.len(), MAX_OUTPUT - 1);
+        push(&mut out, 'x').unwrap();
+        append(&mut out, "").unwrap();
+        assert_eq!(out.len(), MAX_OUTPUT);
+        assert!(push(&mut out, '\n').is_err());
+        assert_eq!(out.len(), MAX_OUTPUT);
+        assert!(checked_rows_bytes(usize::MAX, 1).is_err());
+    }
+
+    #[test]
+    fn pagination_checks_cancelled_budget_even_for_skipped_pages() {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        };
+        let cancel = Arc::new(AtomicBool::new(false));
+        let budget = ExecutionBudget::new(&crate::ExecutionLimits::new(), cancel.clone());
+        let args = vec!["+2".to_string()];
+        let (o, _) = parse_args(&args).unwrap();
+        let rows = vec![BudgetedString::new(None).unwrap()];
+        let mut out = BudgetedString::new(Some(&budget)).unwrap();
+        cancel.store(true, Ordering::Relaxed);
+        assert!(emit_pages(&o, &rows, 1, "title", "date", &mut out, Some(&budget)).is_err());
+        assert!(out.is_empty());
     }
 }

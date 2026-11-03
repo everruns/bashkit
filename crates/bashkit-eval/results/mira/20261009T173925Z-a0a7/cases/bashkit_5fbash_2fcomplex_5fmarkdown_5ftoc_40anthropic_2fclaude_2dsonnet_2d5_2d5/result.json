@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "complex_markdown_toc",
+  "target": "anthropic/claude-sonnet-5-5",
+  "input": [
+    "Read /doc/README.md and generate a table of contents from its headings (lines starting with # or ##). Insert the TOC after the first heading, formatted as a markdown list with '- [Heading Text](#anchor)' where anchor is the heading text lowercased with spaces replaced by hyphens. Write the result back to the file."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I added a table of contents to `/doc/README.md`, right after the first heading, \"Project Alpha\". I printed the file afterward and the result looks correct.\n\nThe TOC has five entries, in the `- [Heading Text](#anchor)` format you specified:\n\n- Project Alpha\n- Installation\n- Usage\n- API Reference\n- Contributing\n\nI included \"Project Alpha\" itself in the list because it's a `#` heading. If you'd rather the TOC list only the `##` sections, I can remove that entry.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cat -A /doc/README.md | head -100",
+      "cd /doc && python3 - <<'E'\nimport re\nL=open('README.md').read().split('\\n')\ntoc=[]\nfor l in L:\n    m=re.match(r'(#{1,2}) +(.*\\S)\\s*$',l)\n    if m:\n        t=m.group(2); toc.append(f\"- [{t}](#{t.lower().replace(' ','-')})\")\ni=next(k for k,l in enumerate(L) if re.match(r'#{1,2} ',l))\nL[i+1:i+1]=['']+toc\nopen('README.md','w').write('\\n'.join(L))\nE\ncat README.md"
+    ],
+    "usage": {
+      "input_tokens": 3906,
+      "output_tokens": 633,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 8964
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat -A /doc/README.md | head -100",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# Project Alpha$\n$\nIntroduction to the project.$\n$\n## Installation$\n$\nRun the installer.$\n$\n## Usage$\n$\nHow to use it.$\n$\n## API Reference$\n$\nEndpoint documentation.$\n$\n## Contributing$\n$\nPR guidelines.$\n"
+          },
+          {
+            "commands": "cd /doc && python3 - <<'E'\nimport re\nL=open('README.md').read().split('\\n')\ntoc=[]\nfor l in L:\n    m=re.match(r'(#{1,2}) +(.*\\S)\\s*$',l)\n    if m:\n        t=m.group(2); toc.append(f\"- [{t}](#{t.lower().replace(' ','-')})\")\ni=next(k for k,l in enumerate(L) if re.match(r'#{1,2} ',l))\nL[i+1:i+1]=['']+toc\nopen('README.md','w').write('\\n'.join(L))\nE\ncat README.md",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# Project Alpha\n\n- [Project Alpha](#project-alpha)\n- [Installation](#installation)\n- [Usage](#usage)\n- [API Reference](#api-reference)\n- [Contributing](#contributing)\n\nIntroduction to the project.\n\n## Installation\n\nRun the installer.\n\n## Usage\n\nHow to use it.\n\n## API Reference\n\nEndpoint documentation.\n\n## Contributing\n\nPR guidelines.\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

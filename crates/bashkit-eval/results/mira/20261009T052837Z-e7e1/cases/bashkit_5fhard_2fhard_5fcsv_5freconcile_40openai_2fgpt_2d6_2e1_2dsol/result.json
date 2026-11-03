@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_hard",
+  "sample": "hard_csv_reconcile",
+  "target": "openai/gpt-6.1-sol",
+  "input": [
+    "Reconcile two payment exports in /home/eval/recon: ledger.csv (our books) and bank.tsv (the bank). Write the report to /home/eval/recon/out/reconciliation.txt.\n\nInput rules:\n- ledger.csv is RFC 4180 CSV with a header: txn_id,date,payee,amount. Fields may be double-quoted; quoted fields can contain commas and doubled quotes (\"\"). Dates are YYYY-MM-DD. Amounts may contain thousands separators (e.g. \"1,045.50\").\n- bank.tsv is tab-separated with a header: ref, posted, description, amount. No quoting (a double quote is a literal character). posted is DD/MM/YYYY. ref may have surrounding spaces and any letter case; normalise it by trimming spaces and uppercasing, then it matches ledger txn_id. Amounts may have 0-3 decimal digits (e.g. 2000, 300.1, 89.990).\n- All amount comparisons and sums are exact to the cent (never compare floating-point values).\n- A bank row whose normalised (ref, date, amount) equals an earlier bank row is a duplicate: drop it and count it. After dropping duplicates every ref is unique.\n\nReport format (exact; ids sorted ascending; amounts with exactly two decimals; dates as YYYY-MM-DD; detail lines indented by two spaces; a section with count 0 has no detail lines):\nledger_rows: <number of ledger data rows>\nbank_rows: <number of bank rows after dropping duplicates>\nduplicate_bank_rows: <number of dropped duplicates>\nledger_total: <sum of ledger amounts>\nbank_total: <sum of bank amounts after dropping duplicates>\nmatched: <ids present in both files with equal amount AND equal date>\namount_mismatch: <count>\n  <id> ledger=<amount> bank=<amount>\ndate_mismatch: <count>\n  <id> ledger=<date> bank=<date>\nmissing_in_bank: <count>\n  <id>\nmissing_in_ledger: <count>\n  <id>\n\nAn id present in both files whose amount and date both differ appears in both mismatch sections. Use bash, awk, sed, sort or similar tools (no python)."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Report written to `/home/eval/recon/out/reconciliation.txt`.\n\nReconciled 12 ledger rows and 12 unique bank rows, dropping 2 duplicates. Found 7 matches, 3 amount mismatches, 2 date mismatches, and 1 missing ID on each side.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "ls -l /home/eval/recon; command -v awk; command -v ruby; command -v node; head -c 2500 /home/eval/recon/ledger.csv; printf '\\n---BANK---\\n'; head -c 2500 /home/eval/recon/bank.tsv",
+      "mkdir -p /home/eval/recon/out\ncat > /tmp/reconcile.awk <<'AWK'\n# Convert decimal text to integer cents before doing any arithmetic.\nfunction cents(s,    n,p,frac,sign) {\n    gsub(/,/, \"\", s)\n    sign = 1\n    if (substr(s,1,1) == \"-\") { sign = -1; s = substr(s,2) }\n    n = split(s,p,\".\")\n    frac = p[2]\n    if (length(frac) > 2 && substr(frac,3) !~ /^0*$/) {\n        print \"Amount is not an exact number of cents: \" s > \"/dev/stderr\"\n        exit 1\n    }\n    frac = substr(frac \"00\",1,2)\n    return sign * ((p[1] + 0) * 100 + (frac + 0))\n}\nfunction money(c,    sign) {\n    sign = c < 0 ? \"-\" : \"\"\n    if (c < 0) c = -c\n    return sign sprintf(\"%.0f.%02d\", int(c / 100), c % 100)\n}\nfunction addid(id) {\n    if (!(id in known)) { known[id] = 1; ids[++idcount] = id }\n}\nfunction ledger_record(    id) {\n    if (++ledger_records == 1) return\n    id = field[1]\n    ld[id] = field[2]\n    la[id] = cents(field[4])\n    ledger_total += la[id]\n    ledger_rows++\n    addid(id)\n}\nFILENAME == ARGV[1] {\n    line = $0\n    sub(/\\r$/, \"\", line)\n    for (i=1; i<=length(line); i++) {\n        ch = substr(line,i,1)\n        if (quoted) {\n            if (ch == \"\\\"\") {\n                if (substr(line,i+1,1) == \"\\\"\") { value = value \"\\\"\"; i++ }\n                else quoted = 0\n            } else value = value ch\n        } else if (ch == \"\\\"\") quoted = 1\n        else if (ch == \",\") { field[++nf] = value; value = \"\" }\n        else value = value ch\n    }\n    if (quoted) { value = value \"\\n\"; next }\n    field[++nf] = value\n    ledger_record()\n    for (j in field) delete field[j]\n    nf = 0; value = \"\"\n    next\n}\nFNR == 1 { next }\n{\n    line = $0\n    sub(/\\r$/, \"\", line)\n    split(line,b,\"\\t\")\n    id = b[1]\n    gsub(/^ +| +$/, \"\", id)\n    id = toupper(id)\n    split(b[2],d,\"/\")\n    date = d[3] \"-\" d[2] \"-\" d[1]\n    amount = cents(b[4])\n    key = id SUBSEP date SUBSEP amount\n    if (key in seen) { duplicates++; next }\n    seen[key] = 1\n    bd[id] = date; ba[id] = amount\n    bank_rows++; bank_total += amount\n    addid(id)\n}\nEND {\n    for (i=2; i<=idcount; i++) {\n        id = ids[i]; j = i-1\n        while (j >= 1 && ids[j] > id) { ids[j+1] = ids[j]; j-- }\n        ids[j+1] = id\n    }\n    for (i=1; i<=idcount; i++) {\n        id = ids[i]\n        if (!(id in la)) { missing_ledger++; ml = ml \"  \" id \"\\n\" }\n        else if (!(id in ba)) { missing_bank++; mb = mb \"  \" id \"\\n\" }\n        else {\n            if (la[id] == ba[id] && ld[id] == bd[id]) matched++\n            if (la[id] != ba[id]) {\n                amount_mismatch++\n                am = am \"  \" id \" ledger=\" money(la[id]) \" bank=\" money(ba[id]) \"\\n\"\n            }\n            if (ld[id] != bd[id]) {\n                date_mismatch++\n                dm = dm \"  \" id \" ledger=\" ld[id] \" bank=\" bd[id] \"\\n\"\n            }\n        }\n    }\n    printf \"ledger_rows: %d\\nbank_rows: %d\\nduplicate_bank_rows: %d\\n\", ledger_rows,bank_rows,duplicates\n    printf \"ledger_total: %s\\nbank_total: %s\\nmatched: %d\\n\", money(ledger_total),money(bank_total),matched\n    printf \"amount_mismatch: %d\\n%s\", amount_mismatch,am\n    printf \"date_mismatch: %d\\n%s\", date_mismatch,dm\n    printf \"missing_in_bank: %d\\n%s\", missing_bank,mb\n    printf \"missing_in_ledger: %d\\n%s\", missing_ledger,ml\n}\nAWK\nLC_ALL=C awk -f /tmp/reconcile.awk /home/eval/recon/ledger.csv /home/eval/recon/bank.tsv > /home/eval/recon/out/reconciliation.txt\ncat /home/eval/recon/out/reconciliation.txt"
+    ],
+    "usage": {
+      "input_tokens": 4730,
+      "output_tokens": 1646,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 30920
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -l /home/eval/recon; command -v awk; command -v ruby; command -v node; head -c 2500 /home/eval/recon/ledger.csv; printf '\\n---BANK---\\n'; head -c 2500 /home/eval/recon/bank.tsv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--      527 2026-10-09 05:30 bank.tsv\n-rw-r--r--      520 2026-10-09 05:30 ledger.csv\n/usr/bin/awk\ntxn_id,date,payee,amount\nTX-0001,2026-03-01,\"Acme, Inc.\",1200.00\nTX-0002,2026-03-02,Globex,\"1,045.50\"\nTX-0003,2026-03-03,\"Bob \"\"The Builder\"\" Ltd\",120.00\nTX-0004,2026-03-04,Initech,89.99\nTX-0005,2026-03-07,\"Umbrella, Corp\",450.00\nTX-0006,2026-03-09,Hooli,\"2,000.00\"\nTX-0007,2026-03-10,Stark Industries,15.00\nTX-0008,2026-03-11,\"Wayne, Bruce\",300.10\nTX-0009,2026-03-12,Soylent,77.70\nTX-0010,2026-03-15,\"Cyberdyne \"\"Systems\"\"\",999.00\nTX-0011,2026-03-16,Tyrell,64.20\nTX-0012,2026-03-18,\"Wonka, \"\"Chocolate\"\", Factory\",5.05\n\n---BANK---\nref\tposted\tdescription\tamount\ntx-0001\t01/03/2026\tACME, INC. PAYMENT\t1200.00\nTX-0002 \t02/03/2026\tGLOBEX\t1045.50\nTX-0003\t03/03/2026\tBOB \"THE BUILDER\"\t102.00\nTX-0004\t04/03/2026\tINITECH\t89.99\nTX-0005\t08/03/2026\tUMBRELLA\t450.00\nTX-0006\t09/03/2026\tHOOLI\t2000\nTX-0007\t10/03/2026\tSTARK\t15.00\nTX-0007\t10/03/2026\tSTARK IND\t15\nTX-0008\t11/03/2026\tWAYNE\t300.1\n TX-0010\t14/03/2026\tCYBERDYNE\t990.00\nTX-0011\t16/03/2026\tTYRELL\t64.02\nTX-0101\t17/03/2026\tUNKNOWN DEPOSIT\t42.00\ntx-0012\t18/03/2026\tWONKA\t5.05\nTX-0004\t04/03/2026\tINITECH (DUP)\t89.990\n"
+          },
+          {
+            "commands": "mkdir -p /home/eval/recon/out\ncat > /tmp/reconcile.awk <<'AWK'\n# Convert decimal text to integer cents before doing any arithmetic.\nfunction cents(s,    n,p,frac,sign) {\n    gsub(/,/, \"\", s)\n    sign = 1\n    if (substr(s,1,1) == \"-\") { sign = -1; s = substr(s,2) }\n    n = split(s,p,\".\")\n    frac = p[2]\n    if (length(frac) > 2 && substr(frac,3) !~ /^0*$/) {\n        print \"Amount is not an exact number of cents: \" s > \"/dev/stderr\"\n        exit 1\n    }\n    frac = substr(frac \"00\",1,2)\n    return sign * ((p[1] + 0) * 100 + (frac + 0))\n}\nfunction money(c,    sign) {\n    sign = c < 0 ? \"-\" : \"\"\n    if (c < 0) c = -c\n    return sign sprintf(\"%.0f.%02d\", int(c / 100), c % 100)\n}\nfunction addid(id) {\n    if (!(id in known)) { known[id] = 1; ids[++idcount] = id }\n}\nfunction ledger_record(    id) {\n    if (++ledger_records == 1) return\n    id = field[1]\n    ld[id] = field[2]\n    la[id] = cents(field[4])\n    ledger_total += la[id]\n    ledger_rows++\n    addid(id)\n}\nFILENAME == ARGV[1] {\n    line = $0\n    sub(/\\r$/, \"\", line)\n    for (i=1; i<=length(line); i++) {\n        ch = substr(line,i,1)\n        if (quoted) {\n            if (ch == \"\\\"\") {\n                if (substr(line,i+1,1) == \"\\\"\") { value = value \"\\\"\"; i++ }\n                else quoted = 0\n            } else value = value ch\n        } else if (ch == \"\\\"\") quoted = 1\n        else if (ch == \",\") { field[++nf] = value; value = \"\" }\n        else value = value ch\n    }\n    if (quoted) { value = value \"\\n\"; next }\n    field[++nf] = value\n    ledger_record()\n    for (j in field) delete field[j]\n    nf = 0; value = \"\"\n    next\n}\nFNR == 1 { next }\n{\n    line = $0\n    sub(/\\r$/, \"\", line)\n    split(line,b,\"\\t\")\n    id = b[1]\n    gsub(/^ +| +$/, \"\", id)\n    id = toupper(id)\n    split(b[2],d,\"/\")\n    date = d[3] \"-\" d[2] \"-\" d[1]\n    amount = cents(b[4])\n    key = id SUBSEP date SUBSEP amount\n    if (key in seen) { duplicates++; next }\n    seen[key] = 1\n    bd[id] = date; ba[id] = amount\n    bank_rows++; bank_total += amount\n    addid(id)\n}\nEND {\n    for (i=2; i<=idcount; i++) {\n        id = ids[i]; j = i-1\n        while (j >= 1 && ids[j] > id) { ids[j+1] = ids[j]; j-- }\n        ids[j+1] = id\n    }\n    for (i=1; i<=idcount; i++) {\n        id = ids[i]\n        if (!(id in la)) { missing_ledger++; ml = ml \"  \" id \"\\n\" }\n        else if (!(id in ba)) { missing_bank++; mb = mb \"  \" id \"\\n\" }\n        else {\n            if (la[id] == ba[id] && ld[id] == bd[id]) matched++\n            if (la[id] != ba[id]) {\n                amount_mismatch++\n                am = am \"  \" id \" ledger=\" money(la[id]) \" bank=\" money(ba[id]) \"\\n\"\n            }\n            if (ld[id] != bd[id]) {\n                date_mismatch++\n                dm = dm \"  \" id \" ledger=\" ld[id] \" bank=\" bd[id] \"\\n\"\n            }\n        }\n    }\n    printf \"ledger_rows: %d\\nbank_rows: %d\\nduplicate_bank_rows: %d\\n\", ledger_rows,bank_rows,duplicates\n    printf \"ledger_total: %s\\nbank_total: %s\\nmatched: %d\\n\", money(ledger_total),money(bank_total),matched\n    printf \"amount_mismatch: %d\\n%s\", amount_mismatch,am\n    printf \"date_mismatch: %d\\n%s\", date_mismatch,dm\n    printf \"missing_in_bank: %d\\n%s\", missing_bank,mb\n    printf \"missing_in_ledger: %d\\n%s\", missing_ledger,ml\n}\nAWK\nLC_ALL=C awk -f /tmp/reconcile.awk /home/eval/recon/ledger.csv /home/eval/recon/bank.tsv > /home/eval/recon/out/reconciliation.txt\ncat /home/eval/recon/out/reconciliation.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "ledger_rows: 12\nbank_rows: 12\nduplicate_bank_rows: 2\nledger_total: 6366.54\nbank_total: 6303.66\nmatched: 7\namount_mismatch: 3\n  TX-0003 ledger=120.00 bank=102.00\n  TX-0010 ledger=999.00 bank=990.00\n  TX-0011 ledger=64.20 bank=64.02\ndate_mismatch: 2\n  TX-0005 ledger=2026-03-07 bank=2026-03-08\n  TX-0010 ledger=2026-03-15 bank=2026-03-14\nmissing_in_bank: 1\n  TX-0009\nmissing_in_ledger: 1\n  TX-0101\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

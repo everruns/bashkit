@@ -1,0 +1,57 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "text_hostname_replace",
+  "target": "openai/gpt-6.1-sol",
+  "input": [
+    "In the file /etc/app.conf, replace all occurrences of 'localhost' with 'db.prod.internal'. Write the result back to the same file and verify the change."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "4/4 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Updated `/etc/app.conf`, replacing both occurrences of `localhost` with `db.prod.internal`. Verified the saved contents and confirmed no occurrences of `localhost` remain.",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "python3 - <<'PY'\nfrom pathlib import Path\np = Path('/etc/app.conf')\noriginal = p.read_bytes()\ncount = original.count(b'localhost')\nexpected = original.replace(b'localhost', b'db.prod.internal')\np.write_bytes(expected)\nactual = p.read_bytes()\nif actual != expected or b'localhost' in actual:\n    raise RuntimeError('Verification failed')\nprint(f'Updated {p}: replaced {count} occurrence(s). Verified file contents and absence of localhost.')\nPY"
+    ],
+    "usage": {
+      "input_tokens": 978,
+      "output_tokens": 176,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 6786
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "python3 - <<'PY'\nfrom pathlib import Path\np = Path('/etc/app.conf')\noriginal = p.read_bytes()\ncount = original.count(b'localhost')\nexpected = original.replace(b'localhost', b'db.prod.internal')\np.write_bytes(expected)\nactual = p.read_bytes()\nif actual != expected or b'localhost' in actual:\n    raise RuntimeError('Verification failed')\nprint(f'Updated {p}: replaced {count} occurrence(s). Verified file contents and absence of localhost.')\nPY",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Updated /etc/app.conf: replaced 2 occurrence(s). Verified file contents and absence of localhost.\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

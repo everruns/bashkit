@@ -1,0 +1,71 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "rt_py_sales_rollup",
+  "target": "openai/gpt-6-luna",
+  "input": [
+    "Roll up March 2026 revenue per region from /data/sales.csv (columns order_id,date,region,currency,amount,status; fields may be double-quoted) using the USD conversion rates in /data/rates.json (USD is 1).\n\nRules, applied in this order:\n1. Reject a data row if its amount is not digits with an optional 1-2 digit decimal part once ',' thousands separators are removed, if its currency (case-insensitive) is not USD or a key of rates.json, or if its date is not a real calendar date in YYYY-MM-DD or MM/DD/YYYY form. Rejected rows are otherwise ignored.\n2. When an order_id appears more than once among the remaining rows, only its last row counts.\n3. Count only rows with status paid (case-insensitive) dated in March 2026.\n4. Convert each order to USD and round it to cents (half up) before summing. Region names are trimmed and capitalized (first letter upper, rest lower).\n\nWrite /out/region_revenue.csv with header region,orders,revenue_usd, one row per region (revenue with exactly 2 decimals) sorted by revenue descending then region, followed by a final row TOTAL,<orders>,<revenue>.\nWrite /out/rejects.txt with one line <line_number>,<order_id> per rejected row in file order (the header is line 1)."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Created `/out/region_revenue.csv` and `/out/rejects.txt`.",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "ls -la /data /out 2>&1; cat /data/rates.json; echo; head -10 /data/sales.csv",
+      "cat /data/sales.csv; cat /data/rates.json;",
+      "mkdir -p /out\ncat > /tmp/roll.py <<'PY'\nimport csv,json,re,datetime\nfrom decimal import Decimal, ROUND_HALF_UP\n\nwith open('/data/rates.json') as f: rates={k.upper():Decimal(str(v)) for k,v in json.load(f).items()}\nrates['USD']=Decimal('1')\n\ndef date_ok(s):\n    try:\n        if re.fullmatch(r'\\d{4}-\\d{2}-\\d{2}',s):\n            d=datetime.date.fromisoformat(s)\n        elif re.fullmatch(r'\\d{2}/\\d{2}/\\d{4}',s):\n            d=datetime.datetime.strptime(s,'%m/%d/%Y').date()\n        else: return None\n        return d\n    except ValueError: return None\n\nlast={}\nrejected=[]\nwith open('/data/sales.csv',newline='') as f:\n    reader=csv.DictReader(f)\n    for line,row in enumerate(reader, start=2):\n        oid=row.get('order_id','')\n        # Validation: amount permits comma groups after separators removed, as specified.\n        amount=(row.get('amount') or '').replace(',','')\n        cur=(row.get('currency') or '').strip().upper()\n        dt=date_ok((row.get('date') or '').strip())\n        if not re.fullmatch(r'\\d+(?:\\.\\d{1,2})?',amount) or cur not in rates or dt is None:\n            rejected.append(f'{line},{oid}')\n            continue\n        last[oid]=(row,Decimal(amount),cur,dt)\n\nagg={}\nfor oid,(row,amount,cur,dt) in last.items():\n    if (row.get('status') or '').strip().lower()!='paid' or not (dt.year==2026 and dt.month==3):\n        continue\n    region=(row.get('region') or '').strip().capitalize()\n    usd=(amount*rates[cur]).quantize(Decimal('0.01'),rounding=ROUND_HALF_UP)\n    if region not in agg: agg[region]=[0,Decimal('0.00')]\n    agg[region][0]+=1\n    agg[region][1]+=usd\norders=sum(x[0] for x in agg.values())\ntotal=sum((x[1] for x in agg.values()),Decimal('0.00'))\nwith open('/out/region_revenue.csv','w',newline='') as f:\n    w=csv.writer(f,lineterminator='\\n')\n    w.writerow(['region','orders','revenue_usd'])\n    for region,(count,revenue) in sorted(agg.items(),key=lambda kv:(-kv[1][1],kv[0])):\n        w.writerow([region,count,f'{revenue:.2f}'])\n    w.writerow(['TOTAL',orders,f'{total:.2f}'])\nwith open('/out/rejects.txt','w') as f:\n    f.write('\\n'.join(rejected))\n    if rejected: f.write('\\n')\nPY\npython3 /tmp/roll.py\ncat /out/region_revenue.csv; echo REJECTS; cat /out/rejects.txt"
+    ],
+    "usage": {
+      "input_tokens": 5392,
+      "output_tokens": 1068,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 12739
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 3.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /data /out 2>&1; cat /data/rates.json; echo; head -10 /data/sales.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "ls: cannot access '/out': No such file or directory\n{\"EUR\": 1.0825, \"GBP\": 1.2710}\n\norder_id,date,region,currency,amount,status\n1001,2026-03-01,North,USD,\"1,250.00\",paid\n1002,03/02/2026, south ,usd,99.99,PAID\n1003,2026-03-02,North,EUR,200.00,paid\n1004,2026-02-28,North,USD,500.00,paid\n1005,2026-03-05,East,GBP,0.50,paid\n1006,2026-03-05,east,EUR,10.00,paid\n1007,2026-03-06,West,USD,75.25,refunded\n1008,03/07/2026,West,JPY,1000,paid\n1009,2026-03-08,South,USD,N/A,paid\n"
+          },
+          {
+            "commands": "cat /data/sales.csv; cat /data/rates.json;",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "order_id,date,region,currency,amount,status\n1001,2026-03-01,North,USD,\"1,250.00\",paid\n1002,03/02/2026, south ,usd,99.99,PAID\n1003,2026-03-02,North,EUR,200.00,paid\n1004,2026-02-28,North,USD,500.00,paid\n1005,2026-03-05,East,GBP,0.50,paid\n1006,2026-03-05,east,EUR,10.00,paid\n1007,2026-03-06,West,USD,75.25,refunded\n1008,03/07/2026,West,JPY,1000,paid\n1009,2026-03-08,South,USD,N/A,paid\n1010,2026-03-09,NORTH,EUR,30.00,paid\n1003,2026-03-10,North,EUR,200.00,refunded\n1007,2026-03-11,West,USD,\"2,000.10\",paid\n1011,2026-02-30,South,USD,10.00,paid\n1012,04/01/2026,East,USD,40.00,paid\n1013,2026-03-12,West,GBP,\"1,000\",paid\n1001,2026-03-13,North,USD,12.3.4,paid\n1014,2026-03-14,south,GBP,19.99,pending\n1015,2026-03-15,East,usd,0.01,Paid\n1016,03/31/2026,West,EUR,0.10,paid\n1017,2026-03-16,South,EUR,,paid\n1018,13/01/2026,North,USD,5.00,paid\n1019,2026-03-17,north,gbp,33.33,paid\n{\"EUR\": 1.0825, \"GBP\": 1.2710}\n"
+          },
+          {
+            "commands": "mkdir -p /out\ncat > /tmp/roll.py <<'PY'\nimport csv,json,re,datetime\nfrom decimal import Decimal, ROUND_HALF_UP\n\nwith open('/data/rates.json') as f: rates={k.upper():Decimal(str(v)) for k,v in json.load(f).items()}\nrates['USD']=Decimal('1')\n\ndef date_ok(s):\n    try:\n        if re.fullmatch(r'\\d{4}-\\d{2}-\\d{2}',s):\n            d=datetime.date.fromisoformat(s)\n        elif re.fullmatch(r'\\d{2}/\\d{2}/\\d{4}',s):\n            d=datetime.datetime.strptime(s,'%m/%d/%Y').date()\n        else: return None\n        return d\n    except ValueError: return None\n\nlast={}\nrejected=[]\nwith open('/data/sales.csv',newline='') as f:\n    reader=csv.DictReader(f)\n    for line,row in enumerate(reader, start=2):\n        oid=row.get('order_id','')\n        # Validation: amount permits comma groups after separators removed, as specified.\n        amount=(row.get('amount') or '').replace(',','')\n        cur=(row.get('currency') or '').strip().upper()\n        dt=date_ok((row.get('date') or '').strip())\n        if not re.fullmatch(r'\\d+(?:\\.\\d{1,2})?',amount) or cur not in rates or dt is None:\n            rejected.append(f'{line},{oid}')\n            continue\n        last[oid]=(row,Decimal(amount),cur,dt)\n\nagg={}\nfor oid,(row,amount,cur,dt) in last.items():\n    if (row.get('status') or '').strip().lower()!='paid' or not (dt.year==2026 and dt.month==3):\n        continue\n    region=(row.get('region') or '').strip().capitalize()\n    usd=(amount*rates[cur]).quantize(Decimal('0.01'),rounding=ROUND_HALF_UP)\n    if region not in agg: agg[region]=[0,Decimal('0.00')]\n    agg[region][0]+=1\n    agg[region][1]+=usd\norders=sum(x[0] for x in agg.values())\ntotal=sum((x[1] for x in agg.values()),Decimal('0.00'))\nwith open('/out/region_revenue.csv','w',newline='') as f:\n    w=csv.writer(f,lineterminator='\\n')\n    w.writerow(['region','orders','revenue_usd'])\n    for region,(count,revenue) in sorted(agg.items(),key=lambda kv:(-kv[1][1],kv[0])):\n        w.writerow([region,count,f'{revenue:.2f}'])\n    w.writerow(['TOTAL',orders,f'{total:.2f}'])\nwith open('/out/rejects.txt','w') as f:\n    f.write('\\n'.join(rejected))\n    if rejected: f.write('\\n')\nPY\npython3 /tmp/roll.py\ncat /out/region_revenue.csv; echo REJECTS; cat /out/rejects.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "region,orders,revenue_usd\nWest,3,3271.21\nNorth,3,1324.84\nSouth,1,99.99\nEast,3,11.48\nTOTAL,10,4707.52\nREJECTS\n9,1008\n10,1009\n14,1011\n17,1001\n21,1017\n22,1018\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

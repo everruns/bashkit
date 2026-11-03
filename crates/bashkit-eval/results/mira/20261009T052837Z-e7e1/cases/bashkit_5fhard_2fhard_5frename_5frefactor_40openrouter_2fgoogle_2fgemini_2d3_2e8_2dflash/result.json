@@ -1,0 +1,225 @@
+{
+  "eval": "bashkit_hard",
+  "sample": "hard_rename_refactor",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "In the git repository /home/eval/cfgtool, rename the shell function get_cfg to config_get everywhere it is used as code under lib/ and bin/: its definition, every call (including calls inside $(...) and inside double-quoted strings), and anywhere the name is used to refer to the function. Do not rename the different functions get_cfg_path, get_cfg_or and forget_cfg (keep their names; their bodies must call config_get). Text that is printed to users (echo/printf messages, usage text) is frozen because log parsers depend on it: keep it byte-for-byte, even where it mentions get_cfg. Do not edit docs/ or tests/; the tests already use the new name. Make `make test` pass, then commit with a message starting with `refactor:`."
+  ],
+  "passed": false,
+  "aggregate": 0.8333333333333334,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 0.8333333333333334,
+      "pass": false,
+      "reason": "15/17 checks passed (weighted rate 83%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "",
+    "iterations": 25,
+    "tool_calls_count": 25,
+    "tool_calls": [
+      "cd /home/eval/cfgtool && git status && ls -la",
+      "cd /home/eval/cfgtool && make test",
+      "cd /home/eval/cfgtool && cat Makefile && ls -la tests/",
+      "cat /home/eval/cfgtool/tests/test_config.sh",
+      "grep -rn \"get_cfg\" /home/eval/cfgtool/lib /home/eval/cfgtool/bin",
+      "find /home/eval/cfgtool/lib /home/eval/cfgtool/bin -type f -exec head -n 100 {} +",
+      "cd /home/eval/cfgtool && git status",
+      "cat << 'EOF' > /home/eval/cfgtool/lib/config.sh\n# config.sh: key=value config access\nCFG_FILE=${CFG_FILE:-etc/app.conf}\n\n# config_get KEY: print the value of KEY (exit 1 + message if missing)\nconfig_get() {\n  local line\n  line=$(grep -m1 \"^$1=\" \"$CFG_FILE\") || { echo \"get_cfg: missing key $1\" >&2; return 1; }\n  echo \"${line#*=}\"\n}\n\n# get_cfg_path KEY: like get_cfg, but resolves a relative value against the\n# directory of the config file\nget_cfg_path() {\n  local v\n  v=$(config_get \"$1\") || return 1\n  case $v in\n    /*) echo \"$v\" ;;\n    *) echo \"$(dirname \"$CFG_FILE\")/$v\" ;;\n  esac\n}\n\n# get_cfg_or KEY DEFAULT\nget_cfg_or() { config_get \"$1\" 2>/dev/null || echo \"$2\"; }\n\n# forget_cfg: drop the configured file name\nforget_cfg() { unset CFG_FILE; }\nEOF",
+      "cat << 'EOF' > /home/eval/cfgtool/lib/db.sh\n. lib/config.sh\ndb_dsn() {\n  local path\n  path=$(get_cfg_path db_file) || return 1\n  echo \"sqlite://$path?user=$(get_cfg_or db_user app)\"\n}\ndb_check() {\n  if ! config_get db_file >/dev/null; then\n    echo 'db: get_cfg failed for db_file' >&2\n    return 1\n  fi\n}\nEOF",
+      "cat << 'EOF' > /home/eval/cfgtool/lib/net.sh\n. lib/config.sh\nnet_port() { config_get port; }\nnet_url() { echo \"http://$(config_get host):$(config_get port)/\"; }\nEOF",
+      "cat << 'EOF' > /home/eval/cfgtool/bin/app\n#!/bin/bash\ncd \"$(dirname \"$0\")/..\" || exit 2\n. lib/net.sh\n. lib/db.sh\ndeclare -A handlers=([get]=config_get [path]=get_cfg_path [url]=net_url [dsn]=db_dsn [check]=db_check)\nusage() { echo \"usage: app get|path|url|dsn|check [KEY]  (get uses get_cfg)\" >&2; exit 2; }\n[ $# -gt 0 ] || usage\nh=${handlers[$1]:-}\n[ -n \"$h\" ] || usage\nshift\n\"$h\" \"$@\"\nEOF",
+      "cat << 'EOF' > /home/eval/cfgtool/bin/doctor\n#!/bin/bash\ncd \"$(dirname \"$0\")/..\" || exit 2\n. lib/config.sh\nfor k in host port db_file; do\n  printf '%-8s %s\\n' \"$k\" \"$(get_cfg_or \"$k\" '<unset>')\"\ndone\ncommand -v config_get >/dev/null && echo \"doctor: get_cfg available\"\nEOF",
+      "cd /home/eval/cfgtool && git diff",
+      "cd /home/eval/cfgtool && git diff lib bin",
+      "cd /home/eval/cfgtool && git status",
+      "cat /home/eval/cfgtool/lib/config.sh",
+      "cd /home/eval/cfgtool && git status -s",
+      "cd /home/eval/cfgtool && git log -n 1",
+      "cd /home/eval/cfgtool && git diff-index HEAD",
+      "which git && git --version",
+      "git --help",
+      "cat /usr/bin/git",
+      "git help",
+      "cd /home/eval/cfgtool && git add lib bin",
+      "cd /home/eval/cfgtool && git status"
+    ],
+    "usage": {
+      "input_tokens": 78360,
+      "output_tokens": 1388,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 55101
+    },
+    "metrics": {
+      "natural_stop": 0.0,
+      "tool_calls": 25.0,
+      "tool_calls_err": 5.0,
+      "tool_calls_ok": 20.0,
+      "turns": 25.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cd /home/eval/cfgtool && git status && ls -la",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "On branch master\n\nnothing to commit, working tree clean\ndrwxr-xr-x        0 2026-10-09 05:34 .git\n-rw-r--r--       65 2026-10-09 05:34 Makefile\ndrwxr-xr-x        0 2026-10-09 05:34 bin\ndrwxr-xr-x        0 2026-10-09 05:34 docs\ndrwxr-xr-x        0 2026-10-09 05:34 etc\ndrwxr-xr-x        0 2026-10-09 05:34 lib\ndrwxr-xr-x        0 2026-10-09 05:34 tests\n"
+          },
+          {
+            "commands": "cd /home/eval/cfgtool && make test",
+            "exit_code": 2,
+            "stderr": "make: *** [Makefile:3: test] Error 1\n",
+            "stdout": "get_cfg must no longer be defined\n"
+          },
+          {
+            "commands": "cd /home/eval/cfgtool && cat Makefile && ls -la tests/",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "test:\n\t@mkdir -p build\n\t@bash tests/test_config.sh\n\n.PHONY: test\n-rw-r--r--      182 2026-10-09 05:34 assert.sh\ndrwxr-xr-x        0 2026-10-09 05:34 fixtures\n-rw-r--r--     1447 2026-10-09 05:34 test_config.sh\n"
+          },
+          {
+            "commands": "cat /home/eval/cfgtool/tests/test_config.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "#!/bin/bash\n# The suite was updated for the get_cfg -> config_get rename.\ncd \"$(dirname \"$0\")/..\" || exit 2\n. tests/assert.sh\nexport CFG_FILE=tests/fixtures/app.conf\n(\n  . lib/config.sh\n  if declare -F get_cfg >/dev/null; then echo \"get_cfg must no longer be defined\"; exit 1; fi\n  assert_eq 8080 \"$(config_get port)\" 'config_get port'\n  assert_eq 'tests/fixtures/data/app.db' \"$(get_cfg_path db_file)\" 'get_cfg_path'\n  assert_eq fallback \"$(get_cfg_or nope fallback)\" 'get_cfg_or'\n  assert_eq 'get_cfg: missing key nope' \"$(config_get nope 2>&1)\" 'missing-key message'\n  forget_cfg\n  [ -z \"${CFG_FILE+x}\" ] || { echo 'forget_cfg must unset CFG_FILE'; exit 1; }\n) || exit 1\nassert_eq 8080 \"$(bash bin/app get port)\" 'app get'\nassert_eq 'tests/fixtures/data/app.db' \"$(bash bin/app path db_file)\" 'app path'\nassert_eq 'http://localhost:8080/' \"$(bash bin/app url)\" 'app url'\nassert_eq 'sqlite://tests/fixtures/data/app.db?user=app' \"$(bash bin/app dsn)\" 'app dsn'\nassert_eq 'usage: app get|path|url|dsn|check [KEY]  (get uses get_cfg)' \"$(bash bin/app 2>&1)\" 'usage text'\nassert_eq \"$(printf 'get_cfg: missing key db_file\\ndb: get_cfg failed for db_file')\" \"$(CFG_FILE=tests/fixtures/empty.conf bash bin/app check 2>&1)\" 'db_check messages'\nassert_eq \"$(printf 'host     localhost\\nport     8080\\ndb_file  <unset>\\ndoctor: get_cfg available')\" \"$(CFG_FILE=tests/fixtures/nodb.conf bash bin/doctor)\" 'doctor'\necho \"PASS\" | tee build/test-report.txt\n"
+          },
+          {
+            "commands": "grep -rn \"get_cfg\" /home/eval/cfgtool/lib /home/eval/cfgtool/bin",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/home/eval/cfgtool/lib/config.sh:4:# get_cfg KEY: print the value of KEY (exit 1 + message if missing)\n/home/eval/cfgtool/lib/config.sh:5:get_cfg() {\n/home/eval/cfgtool/lib/config.sh:7:  line=$(grep -m1 \"^$1=\" \"$CFG_FILE\") || { echo \"get_cfg: missing key $1\" >&2; return 1; }\n/home/eval/cfgtool/lib/config.sh:11:# get_cfg_path KEY: like get_cfg, but resolves a relative value against the\n/home/eval/cfgtool/lib/config.sh:13:get_cfg_path() {\n/home/eval/cfgtool/lib/config.sh:15:  v=$(get_cfg \"$1\") || return 1\n/home/eval/cfgtool/lib/config.sh:22:# get_cfg_or KEY DEFAULT\n/home/eval/cfgtool/lib/config.sh:23:get_cfg_or() { get_cfg \"$1\" 2>/dev/null || echo \"$2\"; }\n/home/eval/cfgtool/lib/config.sh:25:# forget_cfg: drop the configured file name\n/home/eval/cfgtool/lib/config.sh:26:forget_cfg() { unset CFG_FILE; }\n/home/eval/cfgtool/lib/db.sh:4:  path=$(get_cfg_path db_file) || return 1\n/home/eval/cfgtool/lib/db.sh:5:  echo \"sqlite://$path?user=$(get_cfg_or db_user app)\"\n/home/eval/cfgtool/lib/db.sh:8:  if ! get_cfg db_file >/dev/null; then\n/home/eval/cfgtool/lib/db.sh:9:    echo 'db: get_cfg failed for db_file' >&2\n/home/eval/cfgtool/lib/net.sh:2:net_port() { get_cfg port; }\n/home/eval/cfgtool/lib/net.sh:3:net_url() { echo \"http://$(get_cfg host):$(get_cfg port)/\"; }\n/home/eval/cfgtool/bin/app:5:declare -A handlers=([get]=get_cfg [path]=get_cfg_path [url]=net_url [dsn]=db_dsn [check]=db_check)\n/home/eval/cfgtool/bin/app:6:usage() { echo \"usage: app get|path|url|dsn|check [KEY]  (get uses get_cfg)\" >&2; exit 2; }\n/home/eval/cfgtool/bin/doctor:5:  printf '%-8s %s\\n' \"$k\" \"$(get_cfg_or \"$k\" '<unset>')\"\n/home/eval/cfgtool/bin/doctor:7:command -v get_cfg >/dev/null && echo \"doctor: get_cfg available\"\n"
+          },
+          {
+            "commands": "find /home/eval/cfgtool/lib /home/eval/cfgtool/bin -type f -exec head -n 100 {} +",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "==> /home/eval/cfgtool/lib/config.sh <==\n# config.sh: key=value config access\nCFG_FILE=${CFG_FILE:-etc/app.conf}\n\n# get_cfg KEY: print the value of KEY (exit 1 + message if missing)\nget_cfg() {\n  local line\n  line=$(grep -m1 \"^$1=\" \"$CFG_FILE\") || { echo \"get_cfg: missing key $1\" >&2; return 1; }\n  echo \"${line#*=}\"\n}\n\n# get_cfg_path KEY: like get_cfg, but resolves a relative value against the\n# directory of the config file\nget_cfg_path() {\n  local v\n  v=$(get_cfg \"$1\") || return 1\n  case $v in\n    /*) echo \"$v\" ;;\n    *) echo \"$(dirname \"$CFG_FILE\")/$v\" ;;\n  esac\n}\n\n# get_cfg_or KEY DEFAULT\nget_cfg_or() { get_cfg \"$1\" 2>/dev/null || echo \"$2\"; }\n\n# forget_cfg: drop the configured file name\nforget_cfg() { unset CFG_FILE; }\n\n==> /home/eval/cfgtool/lib/db.sh <==\n. lib/config.sh\ndb_dsn() {\n  local path\n  path=$(get_cfg_path db_file) || return 1\n  echo \"sqlite://$path?user=$(get_cfg_or db_user app)\"\n}\ndb_check() {\n  if ! get_cfg db_file >/dev/null; then\n    echo 'db: get_cfg failed for db_file' >&2\n    return 1\n  fi\n}\n\n==> /home/eval/cfgtool/lib/net.sh <==\n. lib/config.sh\nnet_port() { get_cfg port; }\nnet_url() { echo \"http://$(get_cfg host):$(get_cfg port)/\"; }\n\n==> /home/eval/cfgtool/bin/app <==\n#!/bin/bash\ncd \"$(dirname \"$0\")/..\" || exit 2\n. lib/net.sh\n. lib/db.sh\ndeclare -A handlers=([get]=get_cfg [path]=get_cfg_path [url]=net_url [dsn]=db_dsn [check]=db_check)\nusage() { echo \"usage: app get|path|url|dsn|check [KEY]  (get uses get_cfg)\" >&2; exit 2; }\n[ $# -gt 0 ] || usage\nh=${handlers[$1]:-}\n[ -n \"$h\" ] || usage\nshift\n\"$h\" \"$@\"\n\n==> /home/eval/cfgtool/bin/doctor <==\n#!/bin/bash\ncd \"$(dirname \"$0\")/..\" || exit 2\n. lib/config.sh\nfor k in host port db_file; do\n  printf '%-8s %s\\n' \"$k\" \"$(get_cfg_or \"$k\" '<unset>')\"\ndone\ncommand -v get_cfg >/dev/null && echo \"doctor: get_cfg available\"\n"
+          },
+          {
+            "commands": "cd /home/eval/cfgtool && git status",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "On branch master\n\nnothing to commit, working tree clean\n"
+          },
+          {
+            "commands": "cat << 'EOF' > /home/eval/cfgtool/lib/config.sh\n# config.sh: key=value config access\nCFG_FILE=${CFG_FILE:-etc/app.conf}\n\n# config_get KEY: print the value of KEY (exit 1 + message if missing)\nconfig_get() {\n  local line\n  line=$(grep -m1 \"^$1=\" \"$CFG_FILE\") || { echo \"get_cfg: missing key $1\" >&2; return 1; }\n  echo \"${line#*=}\"\n}\n\n# get_cfg_path KEY: like get_cfg, but resolves a relative value against the\n# directory of the config file\nget_cfg_path() {\n  local v\n  v=$(config_get \"$1\") || return 1\n  case $v in\n    /*) echo \"$v\" ;;\n    *) echo \"$(dirname \"$CFG_FILE\")/$v\" ;;\n  esac\n}\n\n# get_cfg_or KEY DEFAULT\nget_cfg_or() { config_get \"$1\" 2>/dev/null || echo \"$2\"; }\n\n# forget_cfg: drop the configured file name\nforget_cfg() { unset CFG_FILE; }\nEOF",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "cat << 'EOF' > /home/eval/cfgtool/lib/db.sh\n. lib/config.sh\ndb_dsn() {\n  local path\n  path=$(get_cfg_path db_file) || return 1\n  echo \"sqlite://$path?user=$(get_cfg_or db_user app)\"\n}\ndb_check() {\n  if ! config_get db_file >/dev/null; then\n    echo 'db: get_cfg failed for db_file' >&2\n    return 1\n  fi\n}\nEOF",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "cat << 'EOF' > /home/eval/cfgtool/lib/net.sh\n. lib/config.sh\nnet_port() { config_get port; }\nnet_url() { echo \"http://$(config_get host):$(config_get port)/\"; }\nEOF",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "cat << 'EOF' > /home/eval/cfgtool/bin/app\n#!/bin/bash\ncd \"$(dirname \"$0\")/..\" || exit 2\n. lib/net.sh\n. lib/db.sh\ndeclare -A handlers=([get]=config_get [path]=get_cfg_path [url]=net_url [dsn]=db_dsn [check]=db_check)\nusage() { echo \"usage: app get|path|url|dsn|check [KEY]  (get uses get_cfg)\" >&2; exit 2; }\n[ $# -gt 0 ] || usage\nh=${handlers[$1]:-}\n[ -n \"$h\" ] || usage\nshift\n\"$h\" \"$@\"\nEOF",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "cat << 'EOF' > /home/eval/cfgtool/bin/doctor\n#!/bin/bash\ncd \"$(dirname \"$0\")/..\" || exit 2\n. lib/config.sh\nfor k in host port db_file; do\n  printf '%-8s %s\\n' \"$k\" \"$(get_cfg_or \"$k\" '<unset>')\"\ndone\ncommand -v config_get >/dev/null && echo \"doctor: get_cfg available\"\nEOF",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "cd /home/eval/cfgtool && git diff",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# Diff output (simplified in virtual mode)\n"
+          },
+          {
+            "commands": "cd /home/eval/cfgtool && git diff lib bin",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# Diff output (simplified in virtual mode)\n"
+          },
+          {
+            "commands": "cd /home/eval/cfgtool && git status",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "On branch master\n\nnothing to commit, working tree clean\n"
+          },
+          {
+            "commands": "cat /home/eval/cfgtool/lib/config.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# config.sh: key=value config access\nCFG_FILE=${CFG_FILE:-etc/app.conf}\n\n# config_get KEY: print the value of KEY (exit 1 + message if missing)\nconfig_get() {\n  local line\n  line=$(grep -m1 \"^$1=\" \"$CFG_FILE\") || { echo \"get_cfg: missing key $1\" >&2; return 1; }\n  echo \"${line#*=}\"\n}\n\n# get_cfg_path KEY: like get_cfg, but resolves a relative value against the\n# directory of the config file\nget_cfg_path() {\n  local v\n  v=$(config_get \"$1\") || return 1\n  case $v in\n    /*) echo \"$v\" ;;\n    *) echo \"$(dirname \"$CFG_FILE\")/$v\" ;;\n  esac\n}\n\n# get_cfg_or KEY DEFAULT\nget_cfg_or() { config_get \"$1\" 2>/dev/null || echo \"$2\"; }\n\n# forget_cfg: drop the configured file name\nforget_cfg() { unset CFG_FILE; }\n"
+          },
+          {
+            "commands": "cd /home/eval/cfgtool && git status -s",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "On branch master\n\nnothing to commit, working tree clean\n"
+          },
+          {
+            "commands": "cd /home/eval/cfgtool && git log -n 1",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "commit b465c215\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 05:34:50 2026 +0000\n\n    initial import\n\n"
+          },
+          {
+            "commands": "cd /home/eval/cfgtool && git diff-index HEAD",
+            "exit_code": 1,
+            "stderr": "git: 'diff-index' is not a git command. See 'git --help'.\n",
+            "stdout": ""
+          },
+          {
+            "commands": "which git && git --version",
+            "exit_code": 1,
+            "stderr": "git: '--version' is not a git command. See 'git --help'.\n",
+            "stdout": "/usr/bin/git\n"
+          },
+          {
+            "commands": "git --help",
+            "exit_code": 1,
+            "stderr": "git: '--help' is not a git command. See 'git --help'.\n",
+            "stdout": ""
+          },
+          {
+            "commands": "cat /usr/bin/git",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "#!/bin/sh\n# bashkit builtin: git\nexec git \"$@\"\n"
+          },
+          {
+            "commands": "git help",
+            "exit_code": 1,
+            "stderr": "git: 'help' is not a git command. See 'git --help'.\n",
+            "stdout": ""
+          },
+          {
+            "commands": "cd /home/eval/cfgtool && git add lib bin",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "cd /home/eval/cfgtool && git status",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "On branch master\n\nChanges to be committed:\n  (use \"git restore --staged <file>...\" to unstage)\n\tnew file:   bin\n\tnew file:   lib\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

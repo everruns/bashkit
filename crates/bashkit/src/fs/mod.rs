@@ -648,7 +648,7 @@ pub async fn verify_filesystem_requirements(fs: &dyn FileSystem) -> Result<()> {
     Ok(())
 }
 
-/// Resolve every symlink in `path` (realpath), with an ELOOP hop cap.
+/// Resolve every symlink to a POSIX VFS path on every host, with an ELOOP hop cap.
 pub(crate) async fn canonicalize(fs: &dyn FileSystem, path: &Path) -> crate::Result<PathBuf> {
     let mut rest: std::collections::VecDeque<String> = path
         .components()
@@ -665,7 +665,7 @@ pub(crate) async fn canonicalize(fs: &dyn FileSystem, path: &Path) -> crate::Res
             out.pop();
             continue;
         }
-        let candidate = out.join(&comp);
+        let candidate = vfs_join(&out, &comp);
         match fs.lstat(&candidate).await {
             Ok(m) if m.file_type.is_symlink() => {
                 hops += 1;
@@ -673,7 +673,7 @@ pub(crate) async fn canonicalize(fs: &dyn FileSystem, path: &Path) -> crate::Res
                     return Err(std::io::Error::other("Too many levels of symbolic links").into());
                 }
                 let target = fs.read_link(&candidate).await?;
-                if target.is_absolute() {
+                if target.has_root() {
                     out = PathBuf::from("/");
                 }
                 let mut parts: Vec<String> = target

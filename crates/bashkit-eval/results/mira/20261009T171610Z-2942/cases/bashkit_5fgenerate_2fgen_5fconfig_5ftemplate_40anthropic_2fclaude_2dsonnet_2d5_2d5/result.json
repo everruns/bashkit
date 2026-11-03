@@ -1,0 +1,63 @@
+{
+  "eval": "bashkit_generate",
+  "sample": "gen_config_template",
+  "target": "anthropic/claude-sonnet-5-5",
+  "input": [
+    "Write a bash script that renders a config template.\n\nStarting files:\n--- /home/eval/app/app.conf.tmpl ---\n# generated for ${APP_ENV}\n[db]\nhost = ${DB_HOST}\nport = ${DB_PORT}\nurl = postgres://${DB_USER}@${DB_HOST}:${DB_PORT}/app\n[runtime]\nhome = ${RUNTIME_HOME}\ngreeting = Hello, ${USER_NAME}!\nprice = $5 per unit\n--- end ---\n--- /home/eval/app/prod.env ---\n# production settings\nAPP_ENV=prod/eu\nDB_HOST=db.internal\nDB_PORT=5432\n\nDB_USER=app_rw\nUNUSED_KEY=x\n--- end ---\n\nRender /home/eval/app/app.conf.tmpl into /home/eval/app/app.conf:\n- `prod.env` holds `KEY=VALUE` lines; blank lines and lines starting with `#` are ignored. Values are taken literally (they may contain `/`).\n- Every `${NAME}` placeholder whose NAME is defined in prod.env is replaced by its value.\n- Placeholders whose NAME is not defined in prod.env stay exactly as written, even if a variable of that name exists in the shell environment.\n- Everything else (including `$5`) is copied unchanged.\n\nThen print one line to stdout: `unresolved: ` followed by the names of the placeholders left unresolved, sorted, unique, space-separated (here: `unresolved: RUNTIME_HOME USER_NAME`). Exit 0."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "3/3 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I'll do the substitution in awk, using literal string matching so values containing `/` or `&` are not interpreted.\n\nApproach: load the env file into an array in awk. Then for each template line, scan for `${`, extract the name up to `}`, and check that it is a valid identifier. If the name is defined, output its value; otherwise output the placeholder unchanged and record the name as unresolved. Scanning left to right means substituted values are never rescanned.\n\nDetails:\n- Env parsing: skip blank lines and lines starting with `#`. Split at the first `=`. Strip a trailing CR for safety. Keys are taken as-is, with surrounding whitespace trimmed from the key only.\n- Unresolved names are written to a temp file, then sorted and de-duplicated by the shell. Alternatively awk can print them at the END, which is simpler: collect them in an array and emit them to stdout. I'll have awk write the rendered output directly to the file, and print the unresolved names to stdout through a pipe into `sort -u`.\n\nFor the awk output, I'll write the rendered lines to the output file with `print > out` and send the unresolved names to a separate temp file via `print name > unres`.\n\n```bash\n#!/bin/bash\ntmpl=/home/eval/app/app.conf.tmpl\nenv=/home/eval/app/prod.env\nout=/home/eval/app/app.conf\nunres=$(mktemp)\n\nawk -v envf=\"$env\" -v out=\"$out\" -v unres=\"$unres\" '\nBEGIN {\n  while ((getline line < envf) > 0) {\n    sub(/\\r$/, \"\", line)\n    if (line ~ /^[ \\t]*$/) continue\n    if (line ~ /^#/) continue\n    i = index(line, \"=\")\n    if (i == 0) continue\n    k = substr(line, 1, i-1)\n    gsub(/^[ \\t]+|[ \\t]+$/, \"\", k)\n    v = substr(line, i+1)\n    vals[k] = v\n    has[k] = 1\n  }\n  close(envf)\n  printf \"\" > out\n}\n{\n  rest = $0\n  res = \"\"\n  while (1) {\n    p = index(rest, \"${\")\n    if (p == 0) { res = res rest; break }\n    res = res substr(rest, 1, p-1)\n    after = substr(rest, p+2)\n    q = index(after, \"}\")\n    if (q == 0) { res = res substr(rest, p); break }\n    name = substr(after, 1, q-1)\n    if (name ~ /^[A-Za-z_][A-Za-z0-9_]*$/) {\n      if (name in has) {\n        res = res vals[name]\n      } else {\n        res = res \"${\" name \"}\"\n        print name >> unres\n      }\n      rest = substr(after, q+1)\n    } else {\n      res = res \"${\"\n      rest = after\n    }\n  }\n  print res >> out\n}\n' \"$tmpl\"\n\nnames=$(sort -u \"$unres\" | tr '\\n' ' ')\nnames=${names% }\nrm -f \"$unres\"\necho \"unresolved: $names\"\nexit 0\n```",
+    "iterations": 1,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "#!/bin/bash\ntmpl=/home/eval/app/app.conf.tmpl\nenv=/home/eval/app/prod.env\nout=/home/eval/app/app.conf\nunres=$(mktemp)\n\nawk -v envf=\"$env\" -v out=\"$out\" -v unres=\"$unres\" '\nBEGIN {\n  while ((getline line < envf) > 0) {\n    sub(/\\r$/, \"\", line)\n    if (line ~ /^[ \\t]*$/) continue\n    if (line ~ /^#/) continue\n    i = index(line, \"=\")\n    if (i == 0) continue\n    k = substr(line, 1, i-1)\n    gsub(/^[ \\t]+|[ \\t]+$/, \"\", k)\n    v = substr(line, i+1)\n    vals[k] = v\n    has[k] = 1\n  }\n  close(envf)\n  printf \"\" > out\n}\n{\n  rest = $0\n  res = \"\"\n  while (1) {\n    p = index(rest, \"${\")\n    if (p == 0) { res = res rest; break }\n    res = res substr(rest, 1, p-1)\n    after = substr(rest, p+2)\n    q = index(after, \"}\")\n    if (q == 0) { res = res substr(rest, p); break }\n    name = substr(after, 1, q-1)\n    if (name ~ /^[A-Za-z_][A-Za-z0-9_]*$/) {\n      if (name in has) {\n        res = res vals[name]\n      } else {\n        res = res \"${\" name \"}\"\n        print name >> unres\n      }\n      rest = substr(after, q+1)\n    } else {\n      res = res \"${\"\n      rest = after\n    }\n  }\n  print res >> out\n}\n' \"$tmpl\"\n\nnames=$(sort -u \"$unres\" | tr '\\n' ' ')\nnames=${names% }\nrm -f \"$unres\"\necho \"unresolved: $names\"\nexit 0\n"
+    ],
+    "usage": {
+      "input_tokens": 978,
+      "output_tokens": 1014,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 7082
+    },
+    "metrics": {
+      "exec_ms": 10.0,
+      "exit_code": 0.0,
+      "extracted": 1.0,
+      "generate_ms": 7072.0,
+      "script_bytes": 1216.0,
+      "script_found": 1.0,
+      "timed_out": 0.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "#!/bin/bash\ntmpl=/home/eval/app/app.conf.tmpl\nenv=/home/eval/app/prod.env\nout=/home/eval/app/app.conf\nunres=$(mktemp)\n\nawk -v envf=\"$env\" -v out=\"$out\" -v unres=\"$unres\" '\nBEGIN {\n  while ((getline line < envf) > 0) {\n    sub(/\\r$/, \"\", line)\n    if (line ~ /^[ \\t]*$/) continue\n    if (line ~ /^#/) continue\n    i = index(line, \"=\")\n    if (i == 0) continue\n    k = substr(line, 1, i-1)\n    gsub(/^[ \\t]+|[ \\t]+$/, \"\", k)\n    v = substr(line, i+1)\n    vals[k] = v\n    has[k] = 1\n  }\n  close(envf)\n  printf \"\" > out\n}\n{\n  rest = $0\n  res = \"\"\n  while (1) {\n    p = index(rest, \"${\")\n    if (p == 0) { res = res rest; break }\n    res = res substr(rest, 1, p-1)\n    after = substr(rest, p+2)\n    q = index(after, \"}\")\n    if (q == 0) { res = res substr(rest, p); break }\n    name = substr(after, 1, q-1)\n    if (name ~ /^[A-Za-z_][A-Za-z0-9_]*$/) {\n      if (name in has) {\n        res = res vals[name]\n      } else {\n        res = res \"${\" name \"}\"\n        print name >> unres\n      }\n      rest = substr(after, q+1)\n    } else {\n      res = res \"${\"\n      rest = after\n    }\n  }\n  print res >> out\n}\n' \"$tmpl\"\n\nnames=$(sort -u \"$unres\" | tr '\\n' ' ')\nnames=${names% }\nrm -f \"$unres\"\necho \"unresolved: $names\"\nexit 0\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "unresolved: RUNTIME_HOME USER_NAME\n"
+          }
+        ]
+      },
+      "generate": {
+        "extraction": "fenced",
+        "timed_out": false
+      }
+    }
+  },
+  "skipped": false
+}

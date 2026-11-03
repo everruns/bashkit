@@ -1,0 +1,71 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "script_function_lib",
+  "target": "openrouter/moonshotai/kimi-k3",
+  "input": [
+    "Create a file /lib/utils.sh with these bash functions: 'to_upper' that reads stdin and converts to uppercase, 'count_lines' that takes a filename argument and prints the line count, 'file_size' that takes a filename and prints byte count. Then source /lib/utils.sh and demonstrate each function: use to_upper on the string 'hello world', count_lines on /data/sample.txt, and file_size on /data/sample.txt."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "4/4 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Done. Here's a summary of what was accomplished:\n\n**Created `/lib/utils.sh`** (had to create the `/lib` directory first since it didn't exist in this environment) with three functions:\n\n1. **`to_upper`** — uses `tr '[:lower:]' '[:upper:]'` to convert stdin to uppercase\n2. **`count_lines`** — uses `wc -l < \"$1\"` to print the line count of a file\n3. **`file_size`** — uses `wc -c < \"$1\"` to print the byte count of a file\n\n**Demonstration results after sourcing:**\n\n| Function | Input | Output |\n|----------|-------|--------|\n| `to_upper` | `hello world` | `HELLO WORLD` |\n| `count_lines` | `/data/sample.txt` | `5` |\n| `file_size` | `/data/sample.txt` | `49` |\n\nThe results check out: `/data/sample.txt` contains 5 lines (\"line one\" through \"line five\"), and 5 lines × 9 characters + 5 newline characters = 49 bytes. ✓",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "ls -ld /lib /data 2>&1; echo \"---\"; ls -l /data/sample.txt 2>&1",
+      "mkdir -p /lib && cat > /lib/utils.sh <<'EOF'\n#!/usr/bin/env bash\n# Utility functions\n\n# Reads stdin and converts to uppercase\nto_upper() {\n    tr '[:lower:]' '[:upper:]'\n}\n\n# Takes a filename argument and prints the line count\ncount_lines() {\n    wc -l < \"$1\"\n}\n\n# Takes a filename and prints byte count\nfile_size() {\n    wc -c < \"$1\"\n}\nEOF\necho \"File created:\" && cat /lib/utils.sh",
+      "source /lib/utils.sh\n\necho \"=== to_upper on 'hello world' ===\"\necho 'hello world' | to_upper\n\necho\necho \"=== count_lines on /data/sample.txt ===\"\ncount_lines /data/sample.txt\n\necho\necho \"=== file_size on /data/sample.txt ===\"\nfile_size /data/sample.txt\n\necho\necho \"=== Reference: contents of /data/sample.txt ===\"\ncat /data/sample.txt"
+    ],
+    "usage": {
+      "input_tokens": 2861,
+      "output_tokens": 885,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 7791
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 3.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -ld /lib /data 2>&1; echo \"---\"; ls -l /data/sample.txt 2>&1",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "ls: cannot access '/lib': No such file or directory\n---\n-rw-r--r--       49 2026-10-09 04:56 /data/sample.txt\n"
+          },
+          {
+            "commands": "mkdir -p /lib && cat > /lib/utils.sh <<'EOF'\n#!/usr/bin/env bash\n# Utility functions\n\n# Reads stdin and converts to uppercase\nto_upper() {\n    tr '[:lower:]' '[:upper:]'\n}\n\n# Takes a filename argument and prints the line count\ncount_lines() {\n    wc -l < \"$1\"\n}\n\n# Takes a filename and prints byte count\nfile_size() {\n    wc -c < \"$1\"\n}\nEOF\necho \"File created:\" && cat /lib/utils.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "File created:\n#!/usr/bin/env bash\n# Utility functions\n\n# Reads stdin and converts to uppercase\nto_upper() {\n    tr '[:lower:]' '[:upper:]'\n}\n\n# Takes a filename argument and prints the line count\ncount_lines() {\n    wc -l < \"$1\"\n}\n\n# Takes a filename and prints byte count\nfile_size() {\n    wc -c < \"$1\"\n}\n"
+          },
+          {
+            "commands": "source /lib/utils.sh\n\necho \"=== to_upper on 'hello world' ===\"\necho 'hello world' | to_upper\n\necho\necho \"=== count_lines on /data/sample.txt ===\"\ncount_lines /data/sample.txt\n\necho\necho \"=== file_size on /data/sample.txt ===\"\nfile_size /data/sample.txt\n\necho\necho \"=== Reference: contents of /data/sample.txt ===\"\ncat /data/sample.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "=== to_upper on 'hello world' ===\nHELLO WORLD\n\n=== count_lines on /data/sample.txt ===\n5\n\n=== file_size on /data/sample.txt ===\n49\n\n=== Reference: contents of /data/sample.txt ===\nline one\nline two\nline three\nline four\nline five\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

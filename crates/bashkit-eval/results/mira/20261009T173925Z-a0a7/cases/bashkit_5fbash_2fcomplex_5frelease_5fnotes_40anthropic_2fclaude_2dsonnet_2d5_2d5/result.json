@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "complex_release_notes",
+  "target": "anthropic/claude-sonnet-5-5",
+  "input": [
+    "Read /data/commits.log containing conventional commit messages (one per line, format: 'type(scope): message'). Parse each line, group by type, and generate /release/CHANGELOG.md with sections: '## Features' for 'feat' commits, '## Bug Fixes' for 'fix' commits, and '## Other' for all remaining types. Under each section list items as '- scope: message'. Print the generated changelog."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "8/8 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I read all 10 commits from `/data/commits.log` and wrote the changelog to `/release/CHANGELOG.md`. Every line matched the `type(scope): message` format, so none were skipped. Here is the file:\n\n```\n## Features\n\n- auth: add OAuth2 support\n- ui: dark mode toggle\n- api: add pagination support\n- db: add connection pooling\n\n## Bug Fixes\n\n- api: handle null response body\n- auth: token refresh race condition\n- ui: button alignment on mobile\n- api: correct status code for 404\n\n## Other\n\n- deps: update lodash to 4.17.21\n- readme: update install instructions\n```\n\nThe `chore` and `docs` commits went under Other. Items appear in the same order as in the log.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cat -A /data/commits.log | head -50; wc -l /data/commits.log",
+      "mkdir -p /release && python3 - <<'E'\nimport re\ng={'feat':[],'fix':[],'other':[]}\nfor l in open('/data/commits.log'):\n    l=l.strip()\n    if not l: continue\n    m=re.match(r'^(\\w+)(?:\\(([^)]*)\\))?!?:\\s*(.*)$',l)\n    if not m: print(\"skip\",l); continue\n    t,s,msg=m.groups()\n    item=f\"- {s}: {msg}\" if s else f\"- {msg}\"\n    g[t if t in g else 'other'].append(item)\nout=[]\nfor k,h in (('feat','Features'),('fix','Bug Fixes'),('other','Other')):\n    if g[k]: out.append(f\"## {h}\\n\\n\"+\"\\n\".join(g[k])+\"\\n\")\nopen('/release/CHANGELOG.md','w').write(\"\\n\".join(out))\nE\ncat /release/CHANGELOG.md"
+    ],
+    "usage": {
+      "input_tokens": 4241,
+      "output_tokens": 675,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 6711
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat -A /data/commits.log | head -50; wc -l /data/commits.log",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "feat(auth): add OAuth2 support$\nfix(api): handle null response body$\nfeat(ui): dark mode toggle$\nchore(deps): update lodash to 4.17.21$\nfix(auth): token refresh race condition$\nfeat(api): add pagination support$\nfix(ui): button alignment on mobile$\ndocs(readme): update install instructions$\nfeat(db): add connection pooling$\nfix(api): correct status code for 404$\n10 /data/commits.log\n"
+          },
+          {
+            "commands": "mkdir -p /release && python3 - <<'E'\nimport re\ng={'feat':[],'fix':[],'other':[]}\nfor l in open('/data/commits.log'):\n    l=l.strip()\n    if not l: continue\n    m=re.match(r'^(\\w+)(?:\\(([^)]*)\\))?!?:\\s*(.*)$',l)\n    if not m: print(\"skip\",l); continue\n    t,s,msg=m.groups()\n    item=f\"- {s}: {msg}\" if s else f\"- {msg}\"\n    g[t if t in g else 'other'].append(item)\nout=[]\nfor k,h in (('feat','Features'),('fix','Bug Fixes'),('other','Other')):\n    if g[k]: out.append(f\"## {h}\\n\\n\"+\"\\n\".join(g[k])+\"\\n\")\nopen('/release/CHANGELOG.md','w').write(\"\\n\".join(out))\nE\ncat /release/CHANGELOG.md",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "## Features\n\n- auth: add OAuth2 support\n- ui: dark mode toggle\n- api: add pagination support\n- db: add connection pooling\n\n## Bug Fixes\n\n- api: handle null response body\n- auth: token refresh race condition\n- ui: button alignment on mobile\n- api: correct status code for 404\n\n## Other\n\n- deps: update lodash to 4.17.21\n- readme: update install instructions\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

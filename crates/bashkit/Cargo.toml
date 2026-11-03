@@ -30,7 +30,7 @@ anyhow = { workspace = true }
 # Serialization
 serde = { workspace = true }
 serde_json = { workspace = true }
-serde_yaml_ng = { workspace = true, optional = true }
+serde_norway = { workspace = true, optional = true }
 
 # Regex
 regex = { workspace = true }
@@ -143,10 +143,10 @@ monty = { version = "=0.0.19", optional = true }
 
 # Real CPython 3.14 as a WASI guest, precompiled to Pulley (cpython feature).
 # See knowledge/runtimes/cpython-wasm.md.
-bashkit-cpython-wasm = { path = "../bashkit-cpython-wasm", version = "0.18.2", optional = true }
+bashkit-cpython-wasm = { path = "../bashkit-cpython-wasm", version = "0.20.2", optional = true }
 # uutils coreutils as a WASI guest, precompiled to Pulley (wasm-coreutils
 # feature). See knowledge/runtimes/wasm-coreutils.md.
-bashkit-coreutils-wasm = { path = "../bashkit-coreutils-wasm", version = "0.18.2", optional = true }
+bashkit-coreutils-wasm = { path = "../bashkit-coreutils-wasm", version = "0.20.2", optional = true }
 wasmtime = { workspace = true, optional = true, features = ["pooling-allocator"] }
 monty-types = { version = "=0.0.19", optional = true }
 # Monty's ruff AST uses compact_str 0.9; get-size2 >=0.10.2 only implements
@@ -159,7 +159,6 @@ monty-types = { version = "=0.0.19", optional = true }
 get-size2 = { version = "=0.10.1", optional = true }
 
 # Embedded TypeScript interpreter (optional)
-zapcode-core = { version = "1.5.1", optional = true }
 
 # Embedded SQLite engine via Turso (optional, BETA upstream).
 # Pulls a multi-MB transitive dep tree only when the `sqlite` feature is active.
@@ -229,7 +228,7 @@ jq = [
     "dep:num-bigint",
     "dep:ryu",
     "dep:self_cell",
-    "dep:serde_yaml_ng",
+    "dep:serde_norway",
 ]
 # HTTP client (curl/wget) over rustls. Does NOT imply a crypto backend: pick
 # `ring` (on by default) or `aws-lc-rs`. Enabling neither is a compile error.
@@ -271,7 +270,7 @@ python = ["dep:monty", "dep:monty-types", "dep:get-size2"]
 cpython = ["dep:bashkit-cpython-wasm", "dep:wasmtime"]
 # Opt-in: CPython compiled to native machine code at build time instead of
 # Pulley bytecode. ~2x faster calls; needs executable memory, and the first
-# load in a process copies the module (call CPython::warm_up at startup).
+# load in a process copies the module (call bashkit::warm_up() at startup).
 # Usage: cargo build --features cpython-native
 cpython-native = ["cpython", "bashkit-cpython-wasm/native"]
 # Real uutils/coreutils programs as sandboxed WebAssembly guests: fills
@@ -280,7 +279,7 @@ cpython-native = ["cpython", "bashkit-cpython-wasm/native"]
 wasm-coreutils = ["dep:bashkit-coreutils-wasm", "dep:wasmtime"]
 # Enable ts/node/deno/bun builtins via embedded ZapCode TypeScript interpreter
 # Usage: cargo build --features typescript
-typescript = ["dep:zapcode-core"]
+typescript = ["dep:zapcode-core", "dep:oxc_parser", "dep:oxc_ast", "dep:oxc_allocator", "dep:oxc_span", "dep:oxc_syntax", "dep:postcard", "dep:indexmap", "indexmap/serde", "serde/rc"]
 # Enable sqlite/sqlite3 builtins backed by Turso (pure-Rust SQLite-compatible
 # engine). Phase 1 uses turso's `MemoryIO` with a load/flush against the VFS
 # at command boundaries; Phase 2 plugs the bashkit VFS in via a custom `IO`
@@ -292,6 +291,23 @@ typescript = ["dep:zapcode-core"]
 # back to the async VFS via `block_in_place`.
 # Usage: cargo build --features sqlite
 sqlite = ["dep:turso_core", "dep:branches", "tokio/rt-multi-thread"]
+# `markkit` builtin: the markkit CLI (document -> Markdown), identical
+# interface, reading the VFS. URL sources go through `http_client` when that
+# feature and a network allowlist are configured. Off by default.
+#
+# Important decision: depend on `markkit-cli`'s library (`markkit_cli::run`)
+# rather than re-declaring its flags, so the interface cannot drift. markkit is
+# built without `http_client` (no second HTTP/TLS stack) and without OCR (host
+# Tesseract / model files). See knowledge/runtimes/markkit-fetchkit-builtins.md.
+# Usage: cargo build --features markkit
+markkit = ["dep:markkit", "dep:markkit-cli"]
+# `fetchkit` builtin: the fetchkit CLI (URL -> Markdown with frontmatter),
+# identical interface. Every request goes through the `http_client` sandbox
+# client (allowlist, credentials, signing, host transport). Off by default.
+# Same library-reuse decision as `markkit`; see
+# knowledge/runtimes/markkit-fetchkit-builtins.md.
+# Usage: cargo build --features fetchkit
+fetchkit = ["http_client", "dep:fetchkit", "dep:fetchkit-cli", "dep:bytes"]
 # Enable RealFs backend for accessing host filesystem directories
 # WARNING: This intentionally breaks the sandbox boundary.
 # Usage: cargo build --features realfs
@@ -435,9 +451,20 @@ required-features = ["sqlite"]
 name = "sqlite_workflow"
 required-features = ["sqlite"]
 
+[[example]]
+name = "markkit_fetchkit"
+required-features = ["markkit", "fetchkit"]
+
 # Additional tokio features needed only on native (not WASM)
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "fs"] }
+# markkit builtin (native only: markkit-cli needs tokio's multi-thread rt).
+markkit-cli = { version = "0.3", default-features = false, features = ["all_formats"], optional = true }
+markkit = { version = "0.3", default-features = false, features = ["all_formats"], optional = true }
+# fetchkit builtin (native only). No `reqwest-tls`: all traffic goes through
+# bashkit's HttpClient, so fetchkit adds no TLS stack.
+fetchkit-cli = { version = "0.7", default-features = false, features = ["docs-pdf", "docs-markkit"], optional = true }
+fetchkit = { version = "0.7", default-features = false, features = ["docs-pdf", "docs-markkit"], optional = true }
 
 # std::time::{Instant,SystemTime} panic on wasm32-unknown-unknown; see
 # time_compat/mod.rs. Only pulled in for wasm32 — everywhere else time_compat
@@ -451,6 +478,14 @@ tokio = { version = "1", features = ["rt-multi-thread", "fs"] }
 web-time = { workspace = true, optional = true }
 
 [target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+# Vendored browser ZapCode uses the same parser/codec versions as upstream.
+oxc_parser = { version = "0.117.0", optional = true }
+oxc_ast = { version = "0.117.0", optional = true }
+oxc_allocator = { version = "0.117.0", optional = true }
+oxc_span = { version = "0.117.0", optional = true }
+oxc_syntax = { version = "0.117.0", optional = true }
+postcard = { version = "1.1.3", features = ["alloc"], optional = true }
+
 gloo-timers = { version = "0.4", features = ["futures"], optional = true }
 send_wrapper = { version = "0.6", features = ["futures"], optional = true }
 # Task spawner for the host-call execution driver (see host_call.rs). JS-backed
@@ -466,3 +501,11 @@ wasm-bindgen-futures = { version = "0.4", optional = true }
 # not flag the vendored code. See knowledge/runtimes/coreutils-args-port.md.
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("i18n-decimal"))'] }
+
+# The process feature is native test infrastructure only; keep WASM builds
+# on the workspace Tokio feature set without changing versions or the lock.
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+tokio = { workspace = true, features = ["process"] }
+
+[target.'cfg(not(all(target_arch = "wasm32", target_os = "unknown")))'.dependencies]
+zapcode-core = { version = "1.5.1", optional = true }

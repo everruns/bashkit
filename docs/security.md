@@ -13,10 +13,57 @@ individual threat IDs and mitigation status, see the
 | Boundary | What it does |
 |----------|-------------|
 | **Virtual filesystem** | Scripts run against an in-memory VFS. No real filesystem access by default. Path traversal (`../../../etc/passwd`) is normalised away. Symlinks are followed inside the VFS only: a target is always a VFS path, so a link can never reach the host. |
-| **No process execution** | `exec` is excluded entirely. `bash -c` re-invokes the virtual interpreter instead of spawning a real process. Background jobs (`&`) parse but run synchronously. |
+| **No process execution** | `bash -c` and virtual `exec` execute inside the interpreter. Background jobs (`&`) run concurrently under the shared job cap. |
 | **Network allowlist** | HTTP/HTTPS only, pre-validated against an explicit host allowlist. No DNS resolution, no auto-redirect, no auto-decompression. |
 | **Resource limits** | Configurable caps on commands, loop iterations, recursion depth, AST depth, timeouts, and parser operations prevent denial-of-service from malicious scripts. |
 | **Filesystem limits** | Total bytes, per-file size, file count, path depth, and filename length are all capped to prevent storage exhaustion (zip bombs, tar bombs, recursive copies). |
+
+Concurrent pipeline producers share `ExecutionLimits::max_background_jobs`
+with background jobs, including nested work. All producer slots are admitted
+before constructing the pipeline, and remain reserved until its producers
+are released. Owned fork storage and producer futures count against
+`max_live_intermediate_bytes` before allocation; construction also checks the
+shared work budget, cancellation and deadline. The final stage needs no extra
+job slot. Exceeding a limit returns a resource-limit error. Pipelines within
+these budgets keep their streaming, isolation and `PIPESTATUS` behavior;
+`concurrent_jobs(false)` uses sequential stages without producer slots.
+
+Builtin file operands for `/dev/stdout`, `/dev/stderr`, `/dev/fd/1` and
+`/dev/fd/2` share the request's `max_live_intermediate_bytes` budget.
+Capture reserves capacity before each write or append and obeys
+`max_stdout_bytes` / `max_stderr_bytes` before growth and combined collection.
+Cached text and stdin copies are also admitted; collection retains its storage
+charges through redirects and hooks. Every write checks work, cancellation
+and deadlines. Refused admission returns a resource-limit error even when
+output would be discarded by a redirect. Ordinary aliases and append/copy
+semantics remain unchanged within the configured budgets.
+
+Command-local file-input redirections reserve reported file sizes before
+opening or reading, and admit cached text and descriptor copies before growth.
+Both representations count toward `max_live_intermediate_bytes` and aggregate
+input consumption. Storage charges survive with stdin; replacing a numbered
+descriptor releases its old storage without resetting aggregate consumption.
+Admission uses the original backend path for stat/open/read, preserving mounted
+namespaces, symlink policy, and read-only diagnostics; auxiliary device-path
+canonicalization does not require synthetic mount-parent entries.
+Budget and cancellation errors abort the request, while ordinary missing-file
+errors remain shell command failures. Custom filesystems must report reliable
+read sizes; backend-internal allocations are still the backend's responsibility.
+
+`dd conv=sync` checks its padded block length against the 64 MiB copy cap
+before allocating or zero-filling. Copied payload capacity also counts against
+`max_live_intermediate_bytes` until output handling completes, including when
+output is discarded. Stdout cached text is admitted under the same budget.
+Exceeding either limit returns a resource-limit error.
+
+`pr` checks its 16 MiB output cap before appending headers, rows, margins,
+newlines or form feeds. Repeated long headers cannot grow the output buffer past that cap.
+Input dates are retained as timestamps, so long date formats are not copied
+for every input, including empty files.
+Input, row and output storage also share `max_live_intermediate_bytes`; work,
+aggregate input, cancellation and deadline checks apply during pagination.
+Exceeding a limit returns a resource-limit error. A subsequent host execution
+can reuse the session with a fresh execution budget.
 
 `od -w` / `od --width` accepts at most 65,536 bytes per row. Larger widths
 fail before rendering, even with empty input. Numeric fields use at most eight
@@ -24,10 +71,58 @@ bytes of stack padding; output capacity is admitted against
 `ExecutionLimits::max_live_intermediate_bytes` before fallible allocation.
 This memory budget applies to pipelines and redirected output too.
 
+Shell diagnostic names (`$0` or the current source file) show at most 1,024
+UTF-8 bytes; the actual `$0` value is unchanged. Repeating a prefix across
+builtin errors uses the shared live-memory and work budget before allocation,
+including the cached text representation. A refused reservation aborts the
+request before capture, streaming, or redirection; the next host execution
+can reuse the shell with a fresh budget. Capture limits remain downstream so
+command-local redirected diagnostics keep their full content when they fit
+the memory budget. An outer redirect on a child-shell invocation receives
+that child's already capped capture.
+
+`fmt` reserves output capacity against `max_live_intermediate_bytes` before
+allocation, including repeated indentation and prefixes. Generated bytes and
+optimal-fit searches consume the shared work budget and check cancellation and
+deadlines. Exceeding a budget returns a resource-limit error. Output within the
+budget preserves its formatting through pipelines and file redirects, even
+when it exceeds the stdout capture limit.
+
+`join` preserves matching-row Cartesian products within the execution budget.
+Input rows, keys and generated output reserve live-memory capacity before
+allocation. Parsing, key grouping and every emitted field consume shared work
+and check cancellation and deadlines. Budget failures abort the request with a
+resource-limit error; a later host execution starts with a fresh budget. Stdout
+capture limits remain downstream, so pipelines and redirects receive complete
+join output when it fits the execution budget.
+
+Make's `$(subst)` checks its exact replacement length against the remaining
+4 MiB expansion allowance before constructing the result. Its generated
+arguments, output and parent expansion buffers reserve capacity against
+`max_live_intermediate_bytes` before growth. Expanded variable values retain
+their storage leases until replacement or the end of the Make run; shared
+parser views share the same storage. Matching and copying consume the request's
+work budget and check cancellation and deadlines. Empty patterns and ordinary
+Unicode substitution keep their existing behavior.
+
 `cd` searches `CDPATH` one candidate at a time. Temporary path and
 normalization storage is reserved against `max_live_intermediate_bytes`
 before allocation. Searches also consume the shared work budget and check
 cancellation and deadlines, including when every candidate is missing.
+
+Arrays share the retained-variable byte budget and the session array-entry
+limit. Replacing or clearing `mapfile` arrays releases their old charges, so
+repeated reads do not consume capacity cumulatively. Entry or byte exhaustion
+returns a resource-limit error; earlier admitted records may remain. A later
+execution can recover by unsetting arrays to free capacity. `mapfile` rejects
+interpreter-owned debug-stack arrays as destinations. `FUNCNAME` remains reserved
+even after unset; Bash allows it to become an ordinary array in that case.
+
+Indexed compound-array assignments expand values before evaluating subscripts.
+Pending keys, values, fields and container capacity count against
+`max_live_intermediate_bytes`, including repeated writes to the same index.
+Exceeding that budget returns a resource-limit error even when the final array
+would fit the retained-variable budget.
 
 Command hash entries (`hash -p FILE NAME...` and automatic PATH lookups) charge
 each retained name and pathname against the same live-byte budget before copying.
@@ -53,7 +148,26 @@ execution work and deadline budget; file contents are admitted against aggregate
 input and live intermediate limits and scanned one file at a time. `-q` stops
 at the first match, before further traversal.
 
+Tilde expansion (`~`, `~+`, `~-`, including repeated assignment prefixes after
+`:`) checks `ExecutionLimits::max_live_intermediate_bytes` before growing its
+output and charges copied bytes to `max_work_units`. Large directory values
+cannot bypass these limits by expanding before variable insertion. A refused
+expansion returns a resource-limit error; the next host execution receives a
+fresh execution budget.
+Syntax-error reports are limited to 1 KiB during construction, including an
+explicit `[diagnostic truncated]` marker when text is omitted. This prevents
+multiline unexpected tokens and long `bash -c` shell names from multiplying
+host-memory usage before stderr capture. Ordinary short reports retain Bash's
+text, line numbers, and exit status.
+
 ## Threat model
+
+Prompt expansion (`${x@P}` and interactive prompts) shares the execution work,
+aggregate-input, cancellation and deadline budgets. Recursive prompt reparses
+stop at `min(max_ast_depth, 8)` with a resource-limit error, including cycles
+through command substitutions. Raising the AST limit cannot remove this host
+stack protection. Finite prompt expansion and `shopt -u promptvars` retain their
+normal behavior within these limits.
 
 Bashkit maintains a living threat model in [`knowledge/security/threat-model.md`](../knowledge/security/threat-model.md)
 with stable threat IDs across these categories:
@@ -82,7 +196,7 @@ Bashkit intentionally deviates from POSIX where compliance would compromise
 the sandbox. Key exclusions:
 
 - **`exec`**: would break sandbox containment (`TM-ESC-005`)
-- **`trap`**: conflicts with the stateless execution model
+- **`trap`**: handles shell events and self-sent virtual signals. Nested handlers share the function/source/child-shell depth budget (hard ceiling 16) plus a dedicated trap-nesting cap of 3 that trips first on small stacks; recursive signal delivery past either limit is skipped with a diagnostic and the first trip fails the exec with a resource-limit error
 - **Real process spawning**: all subprocess commands stay within the virtual interpreter (`TM-ESC-015`)
 
 These decisions are documented in [`knowledge/operations/limitations.md`](../knowledge/operations/limitations.md).
@@ -114,6 +228,17 @@ behaviour on malformed input.
 **Differential tests**: Compare Bashkit output against real Bash to ensure
 behaviour parity where expected, and confirm intentional divergences where
 security requires it.
+
+Arithmetic limits cover textual dollar expansion inside expressions.
+Nested array subscripts share the enclosing expression's recursion and work
+limits, including quoted arguments to `let`. Exceeding either limit returns
+an arithmetic error; subsequent executions can reuse the session.
+Expanded arithmetic expressions and associative-array keys are capped at 64 KiB.
+Their buffers reserve capacity against `max_live_intermediate_bytes` before
+allocation, including temporary copies of variable values. Each append charges
+`max_work_units` and checks cancellation and the execution deadline. Shared-budget
+exhaustion returns a resource-limit error rather than continuing the script;
+subsequent executions start with a fresh request budget.
 
 ## Panic safety
 

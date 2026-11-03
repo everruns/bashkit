@@ -37,7 +37,7 @@ oversized byte view before dereferencing it or validating UTF-8. This preserves
 the core input resource limit at the untrusted native boundary.
 
 Execution is synchronous in v1. Each handle owns a current-thread Tokio runtime
-and mutex-protected `Bash`; same-handle calls serialize, while distinct handles
+and mutex-protected `Bash`; ordinary same-handle calls serialize, while distinct handles
 can execute concurrently. Callers own lifetime synchronization and cannot race
 destruction with use.
 
@@ -73,11 +73,67 @@ and defaults to deny on credential paths.
   incompatibly.
 - Opaque layouts may change at any time.
 - Additive functions and status values are allowed.
+- Windows import libraries are generated from `include/bashkit.def`. Every public header function and Rust C entry point must be listed there; `scripts/tests/test_capi_exports.py` enforces the complete inventory, including runtime callback APIs.
 - Breaking changes require a parallel ABI major.
+
+## Embedded runtime host functions
+
+Config schema v1 adds explicit `python`/`typescript` flags and
+`external_functions`/`typescript_external_functions` lists. Runtimes remain off
+by default, and callback registration preserves the selected profile's VM limits. Names require `bashkit_create_with_runtime_handler_v1`, whose single
+dispatcher receives JSON language/name/args/kwargs requests. Boundary values use
+the shared bounded core codec (depth 64, signed i64, finite numbers, string-key
+objects, arrays and scalars); request/response JSON is capped at 10 MB.
+
+Each callback runs on the buffered or streaming execution caller's thread and receives ownership
+of a `BashkitRuntimeCall`. It can reply immediately or transfer the call to an I/O
+worker and return promptly. Responses copy JSON into library-owned storage. One
+response is accepted; invalid JSON leaves it unanswered, freeing without a
+response fails the script, and a revoked response returns `BASHKIT_CANCELLED`.
+Host workers poll `bashkit_runtime_call_cancelled` and must free every call,
+including cancelled calls. Revocable execution leases prevent a late reply from
+reaching another execution or extending its deadline.
+
+Callback-enabled handles reject concurrent blocking calls with `BASHKIT_BUSY`.
+All blocking C APIs also reject calls on the callback's thread, even to another
+handle, because a nested current-thread Tokio runtime is invalid. Cancellation
+and call response/query/free remain available. Ordinary v1 handles retain their
+existing serialization. Callers may move an idle handle between threads, and
+distinct handles execute concurrently.
+
+The host owns handler/user_data lifetime through handle lifetime and all active
+executions. Foreign callbacks must not unwind, longjmp, or block indefinitely;
+Bashkit cannot preempt arbitrary C code. Freeing a handle during execution is
+forbidden. Never unload the shared library until every handle, result, error,
+buffer and runtime call is freed. Runtime call access may be concurrent, but
+must never race its destructor. Host service authorization and I/O limits remain
+the application's responsibility.
+
+`tests/runtime_functions.rs` exercises immediate and cross-thread replies,
+parallel instances, caller affinity, reentry, deadlines, cancellation/reuse,
+invalid values, abandonment and host failure. `examples/runtime_functions.c`
+compiles against the public header with warnings denied and runs against the
+actual shared library.
+
+## Streaming output callbacks
+
+`bashkit_execute_streaming` is additive in ABI v1 (`streaming-output`
+capability). It runs the shared execution builder with per-stream capture and
+synchronous, borrowed byte callbacks. Return nonzero to fail the sink. Runtime
+host functions remain available through the same execution lease. Both execution
+entry points use the host-function admission guard. A thread-local callback scope
+rejects blocking APIs on any handle from output or runtime callbacks, before
+locking state or nesting a current-thread Tokio runtime. Lock-free cancellation
+is allowed. Lifetime synchronization and
+no unload/free during callbacks remain caller obligations. Native callback code
+cannot be preempted by an engine timeout. The compiled C example verifies the
+header and capture/delivery contract; ABI tests add reentry and failure recovery.
+The combined runtime test covers immediate/cross-thread replies, live sinks,
+capture/discard/truncation, caller affinity and recursive streaming entry.
 
 ## Deferred surface
 
-Callbacks, custom builtins, streaming, async cancellation,
+Custom builtins, asynchronous shell execution,
 transport hooks, snapshots, scripted tools, and external filesystem providers
 remain outside v1. They need explicit reentrancy, callback lifetime, and dynamic
 library unload rules before becoming permanent ABI.
@@ -90,7 +146,7 @@ rejection. Mount tests cover the read-only round trip, live mount/unmount with
 shell state preserved, allowlist containment at config time and runtime, and
 the sensitive-path rule (refused under a broad allowlist entry, allowed when
 the entry names the root exactly). The C example runner compiles the public
-header under C11 with warnings denied and executes two programs against the
+header under C11 with warnings denied and executes four programs against the
 built shared library.
 
 ## See also

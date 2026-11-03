@@ -1,0 +1,63 @@
+{
+  "eval": "bashkit_generate",
+  "sample": "gen_heredoc_site",
+  "target": "anthropic/claude-opus-5-5",
+  "input": [
+    "Write a bash script that generates an HTML page from settings.\n\nStarting files:\n--- /home/eval/site.env ---\nTITLE=Release Notes\nVERSION=2.4.1\n--- end ---\n\nNote the values are not shell-quoted (TITLE contains a space).\n\nCreate /home/eval/site/index.html (the directory does not exist) whose content is exactly the following, where `Release Notes` and `2.4.1` come from TITLE and VERSION in site.env, and the two lines inside `<pre>` appear literally, character for character (no expansion):\n```\n<html>\n<head><title>Release Notes 2.4.1</title></head>\n<body>\n<h1>Release Notes</h1>\n<p>Version 2.4.1</p>\n<pre>\nexport PATH=\"$HOME/bin:$PATH\"\necho \"built: $(date +%F)\"\n</pre>\n</body>\n</html>\n```\nExit 0."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Read the env file line by line (no sourcing, since the values aren't quoted). Write the page with printf for the expanded parts and a quoted here-doc for the literal `<pre>` lines.\n\n```bash\n#!/bin/bash\nTITLE=\"\"\nVERSION=\"\"\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  line=\"${line%$'\\r'}\"\n  case \"$line\" in\n    TITLE=*) TITLE=\"${line#TITLE=}\" ;;\n    VERSION=*) VERSION=\"${line#VERSION=}\" ;;\n  esac\ndone < /home/eval/site.env\n\nmkdir -p /home/eval/site\nout=/home/eval/site/index.html\n{\n  printf '<html>\\n'\n  printf '<head><title>%s %s</title></head>\\n' \"$TITLE\" \"$VERSION\"\n  printf '<body>\\n'\n  printf '<h1>%s</h1>\\n' \"$TITLE\"\n  printf '<p>Version %s</p>\\n' \"$VERSION\"\n  cat <<'EOF'\n<pre>\nexport PATH=\"$HOME/bin:$PATH\"\necho \"built: $(date +%F)\"\n</pre>\n</body>\n</html>\nEOF\n} > \"$out\"\nexit 0\n```",
+    "iterations": 1,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "#!/bin/bash\nTITLE=\"\"\nVERSION=\"\"\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  line=\"${line%$'\\r'}\"\n  case \"$line\" in\n    TITLE=*) TITLE=\"${line#TITLE=}\" ;;\n    VERSION=*) VERSION=\"${line#VERSION=}\" ;;\n  esac\ndone < /home/eval/site.env\n\nmkdir -p /home/eval/site\nout=/home/eval/site/index.html\n{\n  printf '<html>\\n'\n  printf '<head><title>%s %s</title></head>\\n' \"$TITLE\" \"$VERSION\"\n  printf '<body>\\n'\n  printf '<h1>%s</h1>\\n' \"$TITLE\"\n  printf '<p>Version %s</p>\\n' \"$VERSION\"\n  cat <<'EOF'\n<pre>\nexport PATH=\"$HOME/bin:$PATH\"\necho \"built: $(date +%F)\"\n</pre>\n</body>\n</html>\nEOF\n} > \"$out\"\nexit 0\n"
+    ],
+    "usage": {
+      "input_tokens": 747,
+      "output_tokens": 425,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 4060
+    },
+    "metrics": {
+      "exec_ms": 7.0,
+      "exit_code": 0.0,
+      "extracted": 1.0,
+      "generate_ms": 4053.0,
+      "script_bytes": 602.0,
+      "script_found": 1.0,
+      "timed_out": 0.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "#!/bin/bash\nTITLE=\"\"\nVERSION=\"\"\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  line=\"${line%$'\\r'}\"\n  case \"$line\" in\n    TITLE=*) TITLE=\"${line#TITLE=}\" ;;\n    VERSION=*) VERSION=\"${line#VERSION=}\" ;;\n  esac\ndone < /home/eval/site.env\n\nmkdir -p /home/eval/site\nout=/home/eval/site/index.html\n{\n  printf '<html>\\n'\n  printf '<head><title>%s %s</title></head>\\n' \"$TITLE\" \"$VERSION\"\n  printf '<body>\\n'\n  printf '<h1>%s</h1>\\n' \"$TITLE\"\n  printf '<p>Version %s</p>\\n' \"$VERSION\"\n  cat <<'EOF'\n<pre>\nexport PATH=\"$HOME/bin:$PATH\"\necho \"built: $(date +%F)\"\n</pre>\n</body>\n</html>\nEOF\n} > \"$out\"\nexit 0\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          }
+        ]
+      },
+      "generate": {
+        "extraction": "fenced",
+        "timed_out": false
+      }
+    }
+  },
+  "skipped": false
+}

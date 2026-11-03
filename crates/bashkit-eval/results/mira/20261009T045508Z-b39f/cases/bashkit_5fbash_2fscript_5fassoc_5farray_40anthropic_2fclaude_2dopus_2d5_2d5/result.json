@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "script_assoc_array",
+  "target": "anthropic/claude-opus-5-5",
+  "input": [
+    "Use a bash associative array (declare -A) to build a country-code lookup. Map: US='United States', GB='United Kingdom', DE='Germany', JP='Japan', FR='France'. Then read /data/visitors.csv (columns: name,country_code) and for each row, look up the full country name and print 'name visited from FULL_COUNTRY_NAME'. At the end, print a count per country sorted by count descending as 'FULL_NAME: N visitors'."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I wrote the script at `/home/eval/visitors.sh` and ran it on `/data/visitors.csv`. It printed one line per visitor and then the counts:\n\n```\nAlice visited from United States\nBob visited from United Kingdom\nCarol visited from United States\nDave visited from Japan\nEve visited from Germany\nFrank visited from United States\nGrace visited from United Kingdom\n\nUnited States: 3 visitors\nUnited Kingdom: 2 visitors\nGermany: 1 visitors\nJapan: 1 visitors\n```\n\nHow it works:\n- **Lookup:** `declare -A countries=([US]='United States' ...)` maps each code to its full country name.\n- **Reading the file:** `tail -n +2` skips the header row, and `IFS=, read -r name code` splits each line into a name and a code. The script also removes Windows line endings and still reads the last line if the file doesn't end with a newline.\n- **Counting:** a second associative array, `counts`, adds one for a country each time it appears.\n- **Sorting:** the counts are printed as `count<TAB>name` and sorted by count, highest first. Ties are sorted alphabetically, which is why Germany comes before Japan.\n- **Unknown codes:** a code that isn't in the map shows as `Unknown (XX)` instead of a blank name.\n\nFrance has no visitors in the data, so it isn't in the counts. The output says \"1 visitors\" because that's the exact format you asked for.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cat -A /data/visitors.csv | head -50; wc -l /data/visitors.csv",
+      "cat > /home/eval/visitors.sh <<'EOF'\n#!/usr/bin/env bash\ndeclare -A countries=(\n  [US]='United States'\n  [GB]='United Kingdom'\n  [DE]='Germany'\n  [JP]='Japan'\n  [FR]='France'\n)\ndeclare -A counts=()\n\nwhile IFS=, read -r name code || [[ -n $name ]]; do\n  code=${code%$'\\r'}\n  [[ -z $name ]] && continue\n  full=${countries[$code]:-Unknown ($code)}\n  echo \"$name visited from $full\"\n  counts[$full]=$(( ${counts[$full]:-0} + 1 ))\ndone < <(tail -n +2 /data/visitors.csv)\n\necho\nfor c in \"${!counts[@]}\"; do\n  printf '%s\\t%s\\n' \"${counts[$c]}\" \"$c\"\ndone | sort -t$'\\t' -k1,1nr -k2,2 | while IFS=$'\\t' read -r n c; do\n  echo \"$c: $n visitors\"\ndone\nEOF\nbash /home/eval/visitors.sh"
+    ],
+    "usage": {
+      "input_tokens": 3131,
+      "output_tokens": 1025,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 9301
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat -A /data/visitors.csv | head -50; wc -l /data/visitors.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "name,country_code$\nAlice,US$\nBob,GB$\nCarol,US$\nDave,JP$\nEve,DE$\nFrank,US$\nGrace,GB$\n8 /data/visitors.csv\n"
+          },
+          {
+            "commands": "cat > /home/eval/visitors.sh <<'EOF'\n#!/usr/bin/env bash\ndeclare -A countries=(\n  [US]='United States'\n  [GB]='United Kingdom'\n  [DE]='Germany'\n  [JP]='Japan'\n  [FR]='France'\n)\ndeclare -A counts=()\n\nwhile IFS=, read -r name code || [[ -n $name ]]; do\n  code=${code%$'\\r'}\n  [[ -z $name ]] && continue\n  full=${countries[$code]:-Unknown ($code)}\n  echo \"$name visited from $full\"\n  counts[$full]=$(( ${counts[$full]:-0} + 1 ))\ndone < <(tail -n +2 /data/visitors.csv)\n\necho\nfor c in \"${!counts[@]}\"; do\n  printf '%s\\t%s\\n' \"${counts[$c]}\" \"$c\"\ndone | sort -t$'\\t' -k1,1nr -k2,2 | while IFS=$'\\t' read -r n c; do\n  echo \"$c: $n visitors\"\ndone\nEOF\nbash /home/eval/visitors.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Alice visited from United States\nBob visited from United Kingdom\nCarol visited from United States\nDave visited from Japan\nEve visited from Germany\nFrank visited from United States\nGrace visited from United Kingdom\n\nUnited States: 3 visitors\nUnited Kingdom: 2 visitors\nGermany: 1 visitors\nJapan: 1 visitors\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

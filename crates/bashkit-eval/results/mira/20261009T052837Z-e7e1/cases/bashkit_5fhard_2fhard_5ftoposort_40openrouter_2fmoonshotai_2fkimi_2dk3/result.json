@@ -1,0 +1,148 @@
+{
+  "eval": "bashkit_hard",
+  "sample": "hard_toposort",
+  "target": "openrouter/moonshotai/kimi-k3",
+  "input": [
+    "In /home/eval/pkgs there are dependency lists deps.txt, deps-big.txt and deps-cycle.txt. Each non-comment line has the form `package: dep1 dep2 ...` (deps are separated by spaces or tabs; there may be extra whitespace around names and the colon). `#` starts a comment that runs to the end of the line, blank lines are ignored, a package may appear on several lines (its deps accumulate), and a name that only ever appears as a dependency is still a package.\n\nWrite an executable script /home/eval/pkgs/bin/order (bash; awk/sort/etc. are fine, no python) that takes one such file and prints a build order, one package per line, where every package comes after all of its dependencies. The order must be deterministic: repeatedly emit the smallest package (byte order) whose dependencies have all been emitted. If some packages can never be emitted because of a cycle, print the order for the ones that can, then print `cycle: ` followed by all remaining packages sorted (byte order) and separated by single spaces to stderr, and exit 1; otherwise exit 0.\n\nThen from /home/eval/pkgs run it on each file and save: stdout of deps.txt to build/order.txt, stdout of deps-big.txt to build/big-order.txt, stdout of deps-cycle.txt to build/cycle-order.txt, its stderr to build/cycle.txt and its exit status (just the number) to build/cycle.rc."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "6/6 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Everything is complete and verified.\n\n## Summary\n\n**Script: `/home/eval/pkgs/bin/order`** (executable bash + awk)\n\nThe awk program parses each dependency file by:\n1. **Parsing**: stripping `#` comments (including inline), skipping blank lines, splitting at the first colon, trimming whitespace around the package name, and splitting deps on whitespace runs (handles tabs and extra spaces)\n2. **Accumulating**: storing each dependency only once per package via a `hasdep[pkg,dep]` set (so repeated lines/deps across entries don't inflate counts), while registering every name — including dep-only names like `mock` in deps.txt — as a package\n3. **Ordering** (Kahn's algorithm): repeatedly emitting the byte-smallest ready package (ready = depcount 0). With `LC_ALL=C` exported by the script, awk's string `<` comparison is byte order, making the greedy choice deterministic\n4. **Cycles**: any unemitted packages are collected, sorted by repeated min-selection in byte order, printed as `cycle: <names>` to stderr, with exit 1; otherwise exit 0\n\n**Results saved in `/home/eval/pkgs/build/`:**\n- `order.txt` — deps.txt order (10 pkgs, rc=0): `docs, log, mock, net, db, http, web, app, cli, test`\n- `big-order.txt` — deps-big.txt order (30 pkgs, rc=0)\n- `cycle-order.txt` — `e`, `f` (the only emittable ones, in byte order)\n- `cycle.txt` — `cycle: a b c d g` (a,b,c form the cycle; d depends on a, g depends on both — so they're unemittable too)\n- `cycle.rc` — `1`\n\n**Verification**: an independent checker confirmed every dependency precedes its dependent, every emitted package was the smallest available at its step, and no package is duplicated or dropped (emitted + cycle names = full package set). Repeated runs produce identical output, and edge cases (multiple cycles, comment-only files, self-loops) behave correctly.",
+    "iterations": 9,
+    "tool_calls_count": 14,
+    "tool_calls": [
+      "ls -la /home/eval/pkgs/ && echo \"---DEPS---\" && cat /home/eval/pkgs/deps.txt",
+      "echo \"---DEPS-CYCLE---\" && cat /home/eval/pkgs/deps-cycle.txt",
+      "echo \"---DEPS-BIG---\" && cat /home/eval/pkgs/deps-big.txt",
+      "cat -A /home/eval/pkgs/deps-cycle.txt | head -20; echo \"===\"; cat -A /home/eval/pkgs/deps.txt | head -20",
+      "mkdir -p /home/eval/pkgs/bin /home/eval/pkgs/build && command -v awk sort && cat > /home/eval/pkgs/bin/order <<'EOF'\n#!/bin/bash\n# order FILE -- print a deterministic topological build order.\n# Repeatedly emit the smallest (byte order) package whose deps are all emitted.\n# On cycles, emit what can be built, then print \"cycle: <remaining>\" to stderr, exit 1.\nexport LC_ALL=C\n\nif [ \"$#\" -ne 1 ]; then\n    echo \"usage: order FILE\" >&2\n    exit 2\nfi\n\nawk '\n{\n    sub(/#.*/, \"\")                          # strip comments\n    if ($0 ~ /^[[:space:]]*$/) next         # skip blank lines\n    c = index($0, \":\")\n    if (c == 0) next\n    pkg  = substr($0, 1, c - 1)\n    rest = substr($0, c + 1)\n    gsub(/^[[:space:]]+/, \"\", pkg)          # trim whitespace around name\n    gsub(/[[:space:]]+$/, \"\", pkg)\n    if (pkg == \"\") next\n    if (!(pkg in seen)) { seen[pkg] = 1; packages[n++] = pkg; depcount[pkg] = 0 }\n    m = split(rest, f, /[[:space:]]+/)\n    for (i = 1; i <= m; i++) {\n        d = f[i]\n        if (d == \"\") continue\n        if (!(d in seen)) { seen[d] = 1; packages[n++] = d; depcount[d] = 0 }\n        if (!((pkg, d) in hasdep)) {        # accumulate unique deps only\n            hasdep[pkg, d] = 1\n            depcount[pkg]++\n            dep_list[d, ++ndeps[d]] = pkg   # reverse edge: d -> pkg\n        }\n    }\n}\nEND {\n    for (i = 0; i < n; i++)\n        if (depcount[packages[i]] == 0) ready[packages[i]] = 1\n\n    emitted = 0\n    while (1) {\n        min = \"\"\n        for (p in ready) if (min == \"\" || p < min) min = p\n        if (min == \"\") break\n        delete ready[min]\n        print min\n        emittedflag[min] = 1\n        emitted++\n        for (j = 1; j <= ndeps[min]; j++) {\n            q = dep_list[min, j]\n            if (--depcount[q] == 0) ready[q] = 1\n        }\n    }\n\n    if (emitted < n) {                      # unemittable packages remain (cycle)\n        for (i = 0; i < n; i++)\n            if (!(packages[i] in emittedflag)) rem[packages[i]] = 1\n        line = \"cycle:\"\n        while (1) {                         # selection-sort remaining in byte order\n            min = \"\"\n            for (p in rem) if (min == \"\" || p < min) min = p\n            if (min == \"\") break\n            delete rem[min]\n            line = line \" \" min\n        }\n        print line > \"/dev/stderr\"\n        exit 1\n    }\n}\n' \"$1\"\nEOF\nchmod +x /home/eval/pkgs/bin/order && ls -la /home/eval/pkgs/bin/",
+      "echo \"=== deps.txt ===\" && /home/eval/pkgs/bin/order /home/eval/pkgs/deps.txt; echo \"rc=$?\"",
+      "echo \"=== deps-cycle.txt ===\" && /home/eval/pkgs/bin/order /home/eval/pkgs/deps-cycle.txt; echo \"rc=$?\"",
+      "echo \"=== deps-big.txt ===\" && /home/eval/pkgs/bin/order /home/eval/pkgs/deps-big.txt; echo \"rc=$?\"",
+      "cd /home/eval/pkgs && ./bin/order deps.txt > build/order.txt; echo \"deps rc=$?\" && ./bin/order deps-big.txt > build/big-order.txt; echo \"big rc=$?\" && ./bin/order deps-cycle.txt > build/cycle-order.txt 2> build/cycle.txt; printf '%s\\n' \"$?\" > build/cycle.rc && ls -la build/",
+      "cd /home/eval/pkgs/build && echo \"--- order.txt ---\" && cat order.txt && echo \"--- cycle-order.txt ---\" && cat cycle-order.txt && echo \"--- cycle.txt ---\" && cat cycle.txt && echo \"--- cycle.rc ---\" && cat cycle.rc && echo \"--- big-order.txt ---\" && cat big-order.txt",
+      "cd /home/eval/pkgs && export LC_ALL=C && cat > /tmp/verify.awk <<'EOF'\n# verify.awk <depsfile> <orderfile>: checks order validity + determinism rule\nNR == FNR {\n    line = $0; sub(/#.*/, \"\", line)\n    if (line ~ /^[[:space:]]*$/) next\n    c = index(line, \":\")\n    pkg = substr(line, 1, c-1); rest = substr(line, c+1)\n    gsub(/^[[:space:]]+|[[:space:]]+$/, \"\", pkg)\n    if (pkg == \"\") next\n    allpkgs[pkg] = 1\n    m = split(rest, f, /[[:space:]]+/)\n    for (i=1;i<=m;i++) if (f[i] != \"\") { allpkgs[f[i]] = 1; isdep[pkg, f[i]] = 1 }\n    next\n}\n{ ord[++k] = $1; pos[$1] = k }\nEND {\n    # 1) every ordered package emitted exactly once\n    for (p in pos) cnt[p]++\n    for (p in pos) if (cnt[p] != 1) print \"ERROR dup: \" p\n    # 2) deps emitted earlier\n    bad = 0\n    for (pd in isdep) {\n        split(pd, x, SUBSEP)\n        if (pos[x[1]] <= pos[x[2]]) { print \"ERROR order: \" x[2] \" must precede \" x[1]; bad = 1 }\n    }\n    # 3) each emitted package was the smallest available at its step\n    for (p in allpkgs) done[p] = 0\n    for (step = 1; step <= k; step++) {\n        got = ord[step]; avail_min = \"\"\n        for (p in allpkgs) {\n            if (done[p]) continue\n            ok = 1\n            for (pd in isdep) { split(pd, x, SUBSEP); if (x[1] == p && !done[x[2]]) { ok = 0; break } }\n            if (ok && (avail_min == \"\" || p < avail_min)) avail_min = p\n        }\n        if (got != avail_min) { print \"ERROR step \" step \": got \" got \" want \" avail_min; bad = 1 }\n        done[got] = 1\n    }\n    # 4) report packages never emitted\n    for (p in allpkgs) if (!done[p]) print \"UNEMITTED: \" p\n    if (!bad) print \"VERIFY OK\"\n}\nEOF\nawk -f /tmp/verify.awk deps.txt build/order.txt && echo \"===\" && awk -f /tmp/verify.awk deps-big.txt build/big-order.txt",
+      "cd /home/eval/pkgs && export LC_ALL=C && for i in 1 2 3 4 5; do ./bin/order deps-big.txt | md5sum; done && for i in 1 2 3 4 5; do ./bin/order deps-cycle.txt 2>&1 | md5sum; done && for i in 1 2 3; do ./bin/order deps.txt | md5sum; done && echo \"--- all pkgs covered (cycle) ---\" && { ./bin/order deps-cycle.txt 2>/dev/null; awk '{sub(/#.*/,\"\"); gsub(/[[:space:]]+/,\" \"); print}' deps-cycle.txt | tr ' :' '\\n\\n' | grep -v '^$' | sort -u; } | sort | uniq -c | awk '$1!=2'",
+      "cd /tmp && printf 'z: a\\na:\\nb: z\\nq: r\\nr: s\\ns: q\\nw:\\n' > t1.txt && printf 'x: y # trailing comment\\n\\n\\n   \\ny:\\n# full comment\\nz :  x   \\n' > t2.txt && printf '# only comments\\n\\n' > t3.txt && printf 'a: a\\nb:\\n' > t4.txt && echo \"--- t1 (two cycles + free pkg) ---\" && /home/eval/pkgs/bin/order t1.txt; echo \"rc=$?\" && echo \"--- t2 (comments/blank) ---\" && /home/eval/pkgs/bin/order t2.txt; echo \"rc=$?\" && echo \"--- t3 (empty) ---\" && /home/eval/pkgs/bin/order t3.txt; echo \"rc=$?\" && echo \"--- t4 (self-loop) ---\" && /home/eval/pkgs/bin/order t4.txt; echo \"rc=$?\"",
+      "cd /home/eval/pkgs && ls -la bin/order build/ && file bin/order && head -1 bin/order && echo \"--- cycle files ---\" && cat build/cycle-order.txt build/cycle.txt build/cycle.rc"
+    ],
+    "usage": {
+      "input_tokens": 26576,
+      "output_tokens": 13431,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 205350
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 14.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 14.0,
+      "turns": 9.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /home/eval/pkgs/ && echo \"---DEPS---\" && cat /home/eval/pkgs/deps.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--      551 2026-10-09 05:39 deps-big.txt\n-rw-r--r--       41 2026-10-09 05:39 deps-cycle.txt\n-rw-r--r--      217 2026-10-09 05:39 deps.txt\n---DEPS---\n# package: dependencies (each must be built before the package)\napp: web  db   log\nweb: http log\nhttp: net\ndb: net log\nlog:\ncli: app\nnet:\ndocs:\n\n# repeated entries are allowed; deps accumulate\nweb: log\ntest: app mock\n"
+          },
+          {
+            "commands": "echo \"---DEPS-CYCLE---\" && cat /home/eval/pkgs/deps-cycle.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "---DEPS-CYCLE---\na: b\nb: c\nc: a\nd: a\ne:\nf: e\n  g :  f   d\n"
+          },
+          {
+            "commands": "echo \"---DEPS-BIG---\" && cat /home/eval/pkgs/deps-big.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "---DEPS-BIG---\nlog:\tzlib-9\nutil-0:  tls  net-9  math\nyaml-1: tls term\nsig-9: csv\nnet-9: log\ncore:  zlib-9  log\n\nsig-9:\tcsv\tnet-9\ncli-1:\nfmt: json-8\nmock:\tbench\nbench: net-9\ncsv:  log\ncolor:\tcsv\nfmt: json-8 bench zlib-9\nproc:  docs  json-8  util-0\ncache-3: core auth\n# --\ntest-0: csv math\nfs:  zlib-9  core\nuuid-2: core\nzlib-9:\nauth:  zlib-9  log  math\ntime-2:  math\njson-8:  zlib-9\nregex:\ndocs:\tcore\tutil-0\ntls:\tcore\tmath\tlog\nhttp: io-8\nxml:\tfmt\tmock\nio-8: csv\nio-8: csv test-0 uuid-2\nnet-9:  log  zlib-9\nmath:\nterm: docs\ndb-9:\tauth\tterm\n# generated dependency list\n"
+          },
+          {
+            "commands": "cat -A /home/eval/pkgs/deps-cycle.txt | head -20; echo \"===\"; cat -A /home/eval/pkgs/deps.txt | head -20",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "a: b$\nb: c$\nc: a$\nd: a$\ne:$\nf: e$\n  g :  f   d$\n===\n# package: dependencies (each must be built before the package)$\napp: web  db   log$\nweb: http log$\nhttp: net$\ndb: net log$\nlog:$\ncli: app$\nnet:$\ndocs:$\n$\n# repeated entries are allowed; deps accumulate$\nweb: log$\ntest: app mock$\n"
+          },
+          {
+            "commands": "mkdir -p /home/eval/pkgs/bin /home/eval/pkgs/build && command -v awk sort && cat > /home/eval/pkgs/bin/order <<'EOF'\n#!/bin/bash\n# order FILE -- print a deterministic topological build order.\n# Repeatedly emit the smallest (byte order) package whose deps are all emitted.\n# On cycles, emit what can be built, then print \"cycle: <remaining>\" to stderr, exit 1.\nexport LC_ALL=C\n\nif [ \"$#\" -ne 1 ]; then\n    echo \"usage: order FILE\" >&2\n    exit 2\nfi\n\nawk '\n{\n    sub(/#.*/, \"\")                          # strip comments\n    if ($0 ~ /^[[:space:]]*$/) next         # skip blank lines\n    c = index($0, \":\")\n    if (c == 0) next\n    pkg  = substr($0, 1, c - 1)\n    rest = substr($0, c + 1)\n    gsub(/^[[:space:]]+/, \"\", pkg)          # trim whitespace around name\n    gsub(/[[:space:]]+$/, \"\", pkg)\n    if (pkg == \"\") next\n    if (!(pkg in seen)) { seen[pkg] = 1; packages[n++] = pkg; depcount[pkg] = 0 }\n    m = split(rest, f, /[[:space:]]+/)\n    for (i = 1; i <= m; i++) {\n        d = f[i]\n        if (d == \"\") continue\n        if (!(d in seen)) { seen[d] = 1; packages[n++] = d; depcount[d] = 0 }\n        if (!((pkg, d) in hasdep)) {        # accumulate unique deps only\n            hasdep[pkg, d] = 1\n            depcount[pkg]++\n            dep_list[d, ++ndeps[d]] = pkg   # reverse edge: d -> pkg\n        }\n    }\n}\nEND {\n    for (i = 0; i < n; i++)\n        if (depcount[packages[i]] == 0) ready[packages[i]] = 1\n\n    emitted = 0\n    while (1) {\n        min = \"\"\n        for (p in ready) if (min == \"\" || p < min) min = p\n        if (min == \"\") break\n        delete ready[min]\n        print min\n        emittedflag[min] = 1\n        emitted++\n        for (j = 1; j <= ndeps[min]; j++) {\n            q = dep_list[min, j]\n            if (--depcount[q] == 0) ready[q] = 1\n        }\n    }\n\n    if (emitted < n) {                      # unemittable packages remain (cycle)\n        for (i = 0; i < n; i++)\n            if (!(packages[i] in emittedflag)) rem[packages[i]] = 1\n        line = \"cycle:\"\n        while (1) {                         # selection-sort remaining in byte order\n            min = \"\"\n            for (p in rem) if (min == \"\" || p < min) min = p\n            if (min == \"\") break\n            delete rem[min]\n            line = line \" \" min\n        }\n        print line > \"/dev/stderr\"\n        exit 1\n    }\n}\n' \"$1\"\nEOF\nchmod +x /home/eval/pkgs/bin/order && ls -la /home/eval/pkgs/bin/",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/usr/bin/awk\n/usr/bin/sort\n-rwxr-xr-x     2209 2026-10-09 05:41 order\n"
+          },
+          {
+            "commands": "echo \"=== deps.txt ===\" && /home/eval/pkgs/bin/order /home/eval/pkgs/deps.txt; echo \"rc=$?\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "=== deps.txt ===\ndocs\nlog\nmock\nnet\ndb\nhttp\nweb\napp\ncli\ntest\nrc=0\n"
+          },
+          {
+            "commands": "echo \"=== deps-cycle.txt ===\" && /home/eval/pkgs/bin/order /home/eval/pkgs/deps-cycle.txt; echo \"rc=$?\"",
+            "exit_code": 0,
+            "stderr": "cycle: a b c d g\n",
+            "stdout": "=== deps-cycle.txt ===\ne\nf\nrc=1\n"
+          },
+          {
+            "commands": "echo \"=== deps-big.txt ===\" && /home/eval/pkgs/bin/order /home/eval/pkgs/deps-big.txt; echo \"rc=$?\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "=== deps-big.txt ===\ncli-1\nmath\nregex\ntime-2\nzlib-9\njson-8\nlog\nauth\ncore\ncache-3\ncsv\ncolor\nfs\nnet-9\nbench\nfmt\nmock\nsig-9\ntest-0\ntls\nutil-0\ndocs\nproc\nterm\ndb-9\nuuid-2\nio-8\nhttp\nxml\nyaml-1\nrc=0\n"
+          },
+          {
+            "commands": "cd /home/eval/pkgs && ./bin/order deps.txt > build/order.txt; echo \"deps rc=$?\" && ./bin/order deps-big.txt > build/big-order.txt; echo \"big rc=$?\" && ./bin/order deps-cycle.txt > build/cycle-order.txt 2> build/cycle.txt; printf '%s\\n' \"$?\" > build/cycle.rc && ls -la build/",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "deps rc=0\nbig rc=0\n-rw-r--r--      166 2026-10-09 05:41 big-order.txt\n-rw-r--r--        4 2026-10-09 05:41 cycle-order.txt\n-rw-r--r--        2 2026-10-09 05:41 cycle.rc\n-rw-r--r--       17 2026-10-09 05:41 cycle.txt\n-rw-r--r--       43 2026-10-09 05:41 order.txt\n"
+          },
+          {
+            "commands": "cd /home/eval/pkgs/build && echo \"--- order.txt ---\" && cat order.txt && echo \"--- cycle-order.txt ---\" && cat cycle-order.txt && echo \"--- cycle.txt ---\" && cat cycle.txt && echo \"--- cycle.rc ---\" && cat cycle.rc && echo \"--- big-order.txt ---\" && cat big-order.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "--- order.txt ---\ndocs\nlog\nmock\nnet\ndb\nhttp\nweb\napp\ncli\ntest\n--- cycle-order.txt ---\ne\nf\n--- cycle.txt ---\ncycle: a b c d g\n--- cycle.rc ---\n1\n--- big-order.txt ---\ncli-1\nmath\nregex\ntime-2\nzlib-9\njson-8\nlog\nauth\ncore\ncache-3\ncsv\ncolor\nfs\nnet-9\nbench\nfmt\nmock\nsig-9\ntest-0\ntls\nutil-0\ndocs\nproc\nterm\ndb-9\nuuid-2\nio-8\nhttp\nxml\nyaml-1\n"
+          },
+          {
+            "commands": "cd /home/eval/pkgs && export LC_ALL=C && cat > /tmp/verify.awk <<'EOF'\n# verify.awk <depsfile> <orderfile>: checks order validity + determinism rule\nNR == FNR {\n    line = $0; sub(/#.*/, \"\", line)\n    if (line ~ /^[[:space:]]*$/) next\n    c = index(line, \":\")\n    pkg = substr(line, 1, c-1); rest = substr(line, c+1)\n    gsub(/^[[:space:]]+|[[:space:]]+$/, \"\", pkg)\n    if (pkg == \"\") next\n    allpkgs[pkg] = 1\n    m = split(rest, f, /[[:space:]]+/)\n    for (i=1;i<=m;i++) if (f[i] != \"\") { allpkgs[f[i]] = 1; isdep[pkg, f[i]] = 1 }\n    next\n}\n{ ord[++k] = $1; pos[$1] = k }\nEND {\n    # 1) every ordered package emitted exactly once\n    for (p in pos) cnt[p]++\n    for (p in pos) if (cnt[p] != 1) print \"ERROR dup: \" p\n    # 2) deps emitted earlier\n    bad = 0\n    for (pd in isdep) {\n        split(pd, x, SUBSEP)\n        if (pos[x[1]] <= pos[x[2]]) { print \"ERROR order: \" x[2] \" must precede \" x[1]; bad = 1 }\n    }\n    # 3) each emitted package was the smallest available at its step\n    for (p in allpkgs) done[p] = 0\n    for (step = 1; step <= k; step++) {\n        got = ord[step]; avail_min = \"\"\n        for (p in allpkgs) {\n            if (done[p]) continue\n            ok = 1\n            for (pd in isdep) { split(pd, x, SUBSEP); if (x[1] == p && !done[x[2]]) { ok = 0; break } }\n            if (ok && (avail_min == \"\" || p < avail_min)) avail_min = p\n        }\n        if (got != avail_min) { print \"ERROR step \" step \": got \" got \" want \" avail_min; bad = 1 }\n        done[got] = 1\n    }\n    # 4) report packages never emitted\n    for (p in allpkgs) if (!done[p]) print \"UNEMITTED: \" p\n    if (!bad) print \"VERIFY OK\"\n}\nEOF\nawk -f /tmp/verify.awk deps.txt build/order.txt && echo \"===\" && awk -f /tmp/verify.awk deps-big.txt build/big-order.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "VERIFY OK\n===\nVERIFY OK\n"
+          },
+          {
+            "commands": "cd /home/eval/pkgs && export LC_ALL=C && for i in 1 2 3 4 5; do ./bin/order deps-big.txt | md5sum; done && for i in 1 2 3 4 5; do ./bin/order deps-cycle.txt 2>&1 | md5sum; done && for i in 1 2 3; do ./bin/order deps.txt | md5sum; done && echo \"--- all pkgs covered (cycle) ---\" && { ./bin/order deps-cycle.txt 2>/dev/null; awk '{sub(/#.*/,\"\"); gsub(/[[:space:]]+/,\" \"); print}' deps-cycle.txt | tr ' :' '\\n\\n' | grep -v '^$' | sort -u; } | sort | uniq -c | awk '$1!=2'",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "db60fdbdb0459cb916b586f2c96b58ab  -\ndb60fdbdb0459cb916b586f2c96b58ab  -\ndb60fdbdb0459cb916b586f2c96b58ab  -\ndb60fdbdb0459cb916b586f2c96b58ab  -\ndb60fdbdb0459cb916b586f2c96b58ab  -\na8bc10d2e362f5a3d80a07d35c85165f  -\na8bc10d2e362f5a3d80a07d35c85165f  -\na8bc10d2e362f5a3d80a07d35c85165f  -\na8bc10d2e362f5a3d80a07d35c85165f  -\na8bc10d2e362f5a3d80a07d35c85165f  -\n331f8328ca8aad34039c1d1cad7fdeae  -\n331f8328ca8aad34039c1d1cad7fdeae  -\n331f8328ca8aad34039c1d1cad7fdeae  -\n--- all pkgs covered (cycle) ---\n      1 a\n      1 b\n      1 c\n      1 d\n      1 g\n"
+          },
+          {
+            "commands": "cd /tmp && printf 'z: a\\na:\\nb: z\\nq: r\\nr: s\\ns: q\\nw:\\n' > t1.txt && printf 'x: y # trailing comment\\n\\n\\n   \\ny:\\n# full comment\\nz :  x   \\n' > t2.txt && printf '# only comments\\n\\n' > t3.txt && printf 'a: a\\nb:\\n' > t4.txt && echo \"--- t1 (two cycles + free pkg) ---\" && /home/eval/pkgs/bin/order t1.txt; echo \"rc=$?\" && echo \"--- t2 (comments/blank) ---\" && /home/eval/pkgs/bin/order t2.txt; echo \"rc=$?\" && echo \"--- t3 (empty) ---\" && /home/eval/pkgs/bin/order t3.txt; echo \"rc=$?\" && echo \"--- t4 (self-loop) ---\" && /home/eval/pkgs/bin/order t4.txt; echo \"rc=$?\"",
+            "exit_code": 0,
+            "stderr": "cycle: q r s\ncycle: a\n",
+            "stdout": "--- t1 (two cycles + free pkg) ---\na\nw\nz\nb\nrc=1\n--- t2 (comments/blank) ---\ny\nx\nz\nrc=0\n--- t3 (empty) ---\nrc=0\n--- t4 (self-loop) ---\nb\nrc=1\n"
+          },
+          {
+            "commands": "cd /home/eval/pkgs && ls -la bin/order build/ && file bin/order && head -1 bin/order && echo \"--- cycle files ---\" && cat build/cycle-order.txt build/cycle.txt build/cycle.rc",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rwxr-xr-x     2209 2026-10-09 05:41 bin/order\n\nbuild/:\n-rw-r--r--      166 2026-10-09 05:41 big-order.txt\n-rw-r--r--        4 2026-10-09 05:41 cycle-order.txt\n-rw-r--r--        2 2026-10-09 05:41 cycle.rc\n-rw-r--r--       17 2026-10-09 05:41 cycle.txt\n-rw-r--r--       43 2026-10-09 05:41 order.txt\nbin/order: Bourne-Again shell script\n#!/bin/bash\n--- cycle files ---\ne\nf\ncycle: a b c d g\n1\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

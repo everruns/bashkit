@@ -323,7 +323,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! bashkit = { version = "0.18.2", features = ["git"] }
+//! bashkit = { version = "0.20.2", features = ["git"] }
 //! ```
 //!
 //! ```rust,ignore
@@ -354,7 +354,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! bashkit = { version = "0.18.2", features = ["python"] }
+//! bashkit = { version = "0.20.2", features = ["python"] }
 //! ```
 //!
 //! ```rust,ignore
@@ -437,9 +437,11 @@ compile_error!(
 /// Static, pre-execution introspection of a script.
 pub mod analysis;
 mod builtins;
+mod command;
 #[cfg(feature = "http_client")]
 mod credential;
 mod error;
+mod execution;
 mod execution_capability;
 mod fs;
 /// Interceptor hooks for the execution pipeline.
@@ -457,6 +459,8 @@ pub mod parser;
 mod profile;
 #[cfg(any(feature = "python", feature = "typescript"))]
 mod runtime_call;
+#[cfg(any(feature = "python", feature = "typescript"))]
+pub mod runtime_value;
 mod snapshot;
 mod stream;
 #[cfg(feature = "terminal")]
@@ -484,10 +488,12 @@ mod time_compat;
 pub mod tool;
 /// Structured execution trace events.
 pub mod trace;
+pub use command::{Command, CommandContext, CommandInput, CommandOutput, CommandStatus};
+pub use execution::Execution;
 pub use stream::StreamData;
 
 pub use analysis::{
-    AnalyzedCommand, AnalyzedRedirect, CommandContext, RedirectMode, ScriptAnalysis,
+    AnalyzedCommand, AnalyzedRedirect, CommandPlacement, RedirectMode, ScriptAnalysis,
 };
 pub use async_trait::async_trait;
 pub use builtins::git::GitConfig;
@@ -596,7 +602,12 @@ pub use builtins::{
     TypeScriptLimits,
 };
 // Re-export zapcode-core types needed by external handler consumers.
-#[cfg(feature = "typescript")]
+#[cfg(all(feature = "typescript", target_arch = "wasm32", target_os = "unknown"))]
+pub use zapcode_browser::Value as ZapcodeValue;
+#[cfg(all(
+    feature = "typescript",
+    not(all(target_arch = "wasm32", target_os = "unknown"))
+))]
 pub use zapcode_core::Value as ZapcodeValue;
 
 /// Logging utilities module
@@ -695,6 +706,8 @@ pub struct ExecOptions {
     arg0: Option<String>,
     positional: Option<Vec<String>>,
     stdin: Option<StreamData>,
+    stream_output: Option<std::sync::Arc<execution::ExecutionOutput>>,
+    timeout: Option<std::time::Duration>,
 }
 
 impl ExecOptions {
@@ -774,6 +787,33 @@ impl ExecOptions {
         self.stdin = Some(stdin.into());
         self
     }
+
+    /// Cap this execution's wall-clock time at `timeout`.
+    ///
+    /// The cap can only tighten the configured
+    /// [`ExecutionLimits::timeout`](crate::ExecutionLimits::timeout), never
+    /// extend it: the effective budget is the smaller of the two, so an
+    /// untrusted caller (for example an LLM picking a per-command timeout)
+    /// cannot raise the sandbox's limit. Expiry fails the call with the same
+    /// [`LimitExceeded::Timeout`] error as the
+    /// configured limit and leaves the session usable.
+    ///
+    /// ```no_run
+    /// # use bashkit::{Bash, ExecOptions};
+    /// # use std::time::Duration;
+    /// # async fn run() -> bashkit::Result<()> {
+    /// let mut bash = Bash::new();
+    /// let result = bash
+    ///     .exec_with_options("sleep 5", ExecOptions::new().timeout(Duration::from_millis(100)))
+    ///     .await;
+    /// assert!(result.is_err());
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.timeout = Some(timeout);
+        self
+    }
 }
 
 /// Per-invocation interpreter state carried from [`ExecOptions`] to the point
@@ -794,6 +834,20 @@ impl Invocation {
     fn is_empty(&self) -> bool {
         self.arg0.is_none() && self.positional.is_none() && self.stdin.is_none()
     }
+}
+
+/// Load embedded runtimes now instead of on the first call.
+///
+/// Feature-gated warm-up: loads the embedded CPython interpreter (`cpython`,
+/// [`CPython::warm_up`]) and the wasm coreutils module (`wasm-coreutils`,
+/// [`WasmCoreutil::warm_up`]); with neither enabled, a no-op returning `Ok`.
+/// Idempotent and process-wide.
+pub fn warm_up() -> std::result::Result<(), String> {
+    #[cfg(feature = "cpython")]
+    CPython::warm_up()?;
+    #[cfg(feature = "wasm-coreutils")]
+    WasmCoreutil::warm_up()?;
+    Ok(())
 }
 
 /// Main entry point for Bashkit.
@@ -870,6 +924,11 @@ fn inmem_fs_with_home(username: &str, limits: FsLimits) -> InMemoryFs {
 }
 
 impl Bash {
+    /// Execute with explicit capture and async byte sinks. Output is not
+    /// retained unless `.capture(max_bytes)` is selected on the builder.
+    pub fn execute<'a>(&'a mut self, script: &'a str) -> Execution<'a> {
+        Execution::new(self, script)
+    }
     /// Create a new Bash instance with default settings.
     pub fn new() -> Self {
         Self::builder().build()
@@ -939,6 +998,8 @@ impl Bash {
             arg0,
             positional,
             stdin,
+            stream_output,
+            timeout,
         } = options;
         let invocation = Invocation {
             arg0,
@@ -948,11 +1009,27 @@ impl Bash {
         self.interpreter.begin_execution_budget();
         // THREAT[TM-ISO-027]: close every request-owned boundary on all exits,
         // including timeout/cancellation and unwinding teardown paths.
-        let _budget_completion = self.interpreter.execution_budget().completion_guard();
+        let _budget_completion = if stream_output.is_none() {
+            Some(self.interpreter.execution_budget().completion_guard())
+        } else {
+            None
+        };
+        if let Some(output) = stream_output {
+            output.install(
+                self.interpreter.execution_budget(),
+                self.interpreter.limits(),
+            )?;
+        }
         self.interpreter.bind_command_hash_budget()?;
         // Expose active execution limits and deadline to builtins that need to
         // honor per-execution sandbox settings inside synchronous VM sections.
-        let active_limits = self.interpreter.limits().clone();
+        // Per-call timeout only tightens the configured limit (see
+        // `ExecOptions::timeout`).
+        let execution_timeout = timeout.map_or(self.interpreter.limits().timeout, |t| {
+            t.min(self.interpreter.limits().timeout)
+        });
+        let mut active_limits = self.interpreter.limits().clone();
+        active_limits.timeout = execution_timeout;
         let _ = extensions.insert(active_limits.clone());
         let _ = extensions.insert(self.interpreter.execution_budget().clone());
         let _ = extensions.insert(builtins::ExecutionDeadline::new(active_limits.timeout));
@@ -969,15 +1046,30 @@ impl Bash {
         let _stream_guard =
             output_callback.map(|cb| OutputCallbackGuard::install(&mut self.interpreter, cb));
         let extensions_guard = self.interpreter.scoped_execution_extensions(extensions);
-        let mut result = self.exec_impl(script, invocation).await;
+        let mut result = self.exec_impl(script, invocation, execution_timeout).await;
         let cleanup = extensions_guard.finish();
         if let Ok(exec_result) = &mut result {
             exec_result.capability_cleanup = cleanup;
         }
+        // THREAT[TM-DOS-020]: trap-nesting exhaustion skips the nested
+        // handler without disturbing the interrupted command, but resource
+        // exhaustion still fails the execution, like command fuel.
+        if let Some(depth_error) = self
+            .interpreter
+            .take_trap_depth_error()
+            .filter(|_| result.is_ok())
+        {
+            result = Err(Error::ResourceLimit(depth_error));
+        }
         result
     }
 
-    async fn exec_impl(&mut self, script: &str, invocation: Invocation) -> Result<ExecResult> {
+    async fn exec_impl(
+        &mut self,
+        script: &str,
+        invocation: Invocation,
+        execution_timeout: std::time::Duration,
+    ) -> Result<ExecResult> {
         // THREAT[TM-ISO-005/006/007]: Reset transient state between exec() calls
         self.interpreter.reset_transient_state();
         #[cfg(feature = "terminal")]
@@ -1210,7 +1302,6 @@ impl Bash {
         let exec_start = crate::time_compat::Instant::now();
         // THREAT[TM-DOS-057]: Wrap execution with a host-backed timeout to
         // prevent sleep and pending async callbacks from bypassing the budget.
-        let execution_timeout = self.interpreter.limits().timeout;
         #[cfg(feature = "terminal")]
         let timed = {
             let clock = self.input_wait_clock.clone();
@@ -2557,7 +2648,7 @@ impl BashBuilder {
     /// both features are enabled and this method is called after
     /// [`BashBuilder::python`].
     ///
-    /// The interpreter loads on the first call; call [`CPython::warm_up`] at
+    /// The interpreter loads on the first call; call [`warm_up`] at
     /// process start to move that cost out of the first request.
     ///
     /// # Example
@@ -2878,6 +2969,19 @@ impl BashBuilder {
     /// ```
     pub fn builtin(mut self, name: impl Into<String>, builtin: Box<dyn Builtin>) -> Self {
         self.custom_builtins.insert(name.into(), builtin);
+        self
+    }
+
+    /// Register a streaming host command. Completion is separate from byte I/O.
+    pub fn command(mut self, name: impl Into<String>, command: impl Command + 'static) -> Self {
+        let name = name.into();
+        self.custom_builtins.insert(
+            name.clone(),
+            Box::new(command::CommandAdapter {
+                name,
+                command: std::sync::Arc::new(command),
+            }),
+        );
         self
     }
 
@@ -4170,6 +4274,10 @@ pub mod script_analysis_guide {}
 #[doc = include_str!("../docs/custom_builtins.md")]
 pub mod custom_builtins_guide {}
 
+/// Live byte commands, output sinks, capture and runtime support.
+#[doc = include_str!("../docs/streaming.md")]
+pub mod streaming_guide {}
+
 /// Public guide for clap-backed custom builtins.
 ///
 /// This guide covers:
@@ -4287,6 +4395,22 @@ pub mod wasm_coreutils_guide {}
 #[cfg(feature = "sqlite")]
 #[doc = include_str!("../docs/sqlite.md")]
 pub mod sqlite_guide {}
+
+/// Guide for the `markkit` and `fetchkit` builtins (features `markkit`, `fetchkit`).
+///
+/// Topics covered:
+/// - Same CLI as the standalone tools (`markkit extract`, `fetchkit fetch`)
+/// - VFS files, pipeline stdin, and the network allowlist
+/// - Limits that can only be lowered
+/// - Flags refused in the sandbox (`mcp`, `--ocr`, `--render-rakers`, ...)
+///
+/// **Related:** `BashBuilder::network`, `NetworkAllowlist`, [`threat_model`]
+#[cfg(all(
+    any(feature = "markkit", feature = "fetchkit"),
+    not(target_arch = "wasm32")
+))]
+#[doc = include_str!("../docs/markkit-fetchkit.md")]
+pub mod markkit_fetchkit_guide {}
 
 /// Guide for embedded TypeScript execution via the ZapCode interpreter.
 ///
@@ -8681,3 +8805,10 @@ echo missing fi"#,
         // server, but the hook is wired and the build succeeded.
     }
 }
+
+// Browser-only upstream source retains VM limits; native builds keep the
+// external crate and its public value types. See runtimes/zapcode-runtime.md.
+#[cfg(all(feature = "typescript", target_arch = "wasm32", target_os = "unknown"))]
+#[rustfmt::skip]
+#[allow(dead_code, unused_imports, clippy::all, clippy::unwrap_used)]
+mod zapcode_browser;

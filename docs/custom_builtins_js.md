@@ -12,6 +12,9 @@ exposes the same capability via `BashBuilder::builtin_registry`; see the
 for the Rust API and `crates/bashkit/tests/builtin_registry_tests.rs` for
 worked examples.
 
+For live byte handlers with awaited writes, explicit capture and async sinks,
+see [streaming commands](streaming.md).
+
 ## Quick start
 
 ```typescript

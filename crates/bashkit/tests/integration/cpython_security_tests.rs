@@ -29,6 +29,32 @@ async fn run(script: &str) -> bashkit::ExecResult {
     r
 }
 
+/// Budget for a crash-containment case, far above what the work costs.
+///
+/// These tests assert that a guest trap is *contained*, not that it arrives
+/// quickly, and reaching a trap can be genuinely slow: exhausting the guest's
+/// 4 MiB wasm stack (`MAX_WASM_STACK`) through CPython's C recursion costs
+/// ~16 s of interpreted guest execution natively, and several times that under
+/// AddressSanitizer. Against the default 30 s limit the shell's own wall clock
+/// won the race and the call ended 124 instead of reaching the trap, which is
+/// what reddened nightly run 250 (ASAN) and any sufficiently contended
+/// parallel run. A trap that stops working still fails these tests, through a
+/// host crash or the stdout/stderr assertions, so the wider budget costs no
+/// coverage.
+const CONTAINMENT_BUDGET: Duration = Duration::from_secs(300);
+
+/// [`run`], with budgets an instrumented or contended build cannot exhaust
+/// before the guest traps.
+async fn run_contained(script: &str) -> bashkit::ExecResult {
+    let mut bash = Bash::builder()
+        .limits(ExecutionLimits::new().timeout(CONTAINMENT_BUDGET))
+        .cpython_with_limits(CPythonLimits::default().max_duration(CONTAINMENT_BUDGET))
+        .build();
+    let r = bash.exec(script).await.expect("exec");
+    assert_no_leak(&r, script, &[]);
+    r
+}
+
 fn stderr(r: &bashkit::ExecResult) -> String {
     r.stderr.to_string()
 }
@@ -438,10 +464,17 @@ except OSError as e:
 
 #[tokio::test]
 async fn deep_c_recursion_is_contained() {
-    let r = run("python3 -c '
+    // The nesting depth is load-bearing, not arbitrary: at 20,000 `repr`
+    // simply succeeds and nothing traps, so the property would go untested.
+    // Every depth from 22,000 up costs the same 12.5-16 s (the time is spent
+    // exhausting the stack, not building the list), so a smaller depth buys
+    // no speed and only moves the case toward that cliff.
+    let r = run_contained(
+        "python3 -c '
 l = []
 for _ in range(200000): l = [l]
-print(repr(l))'; echo \"after $?\"")
+print(repr(l))'; echo \"after $?\"",
+    )
     .await;
     assert!(r.stdout.to_string().ends_with("after 1\n"), "{}", r.stdout);
     assert!(

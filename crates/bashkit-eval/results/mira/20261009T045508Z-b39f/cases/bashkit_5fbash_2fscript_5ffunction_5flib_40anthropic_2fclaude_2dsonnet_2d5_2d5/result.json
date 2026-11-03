@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "script_function_lib",
+  "target": "anthropic/claude-sonnet-5-5",
+  "input": [
+    "Create a file /lib/utils.sh with these bash functions: 'to_upper' that reads stdin and converts to uppercase, 'count_lines' that takes a filename argument and prints the line count, 'file_size' that takes a filename and prints byte count. Then source /lib/utils.sh and demonstrate each function: use to_upper on the string 'hello world', count_lines on /data/sample.txt, and file_size on /data/sample.txt."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "4/4 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I created `/lib/utils.sh` with the three functions, sourced it, and ran each one. `/data/sample.txt` already existed, so I used it as it was.\n\n- **`to_upper`** reads stdin and uppercases it with `tr`. Piping in `hello world` printed `HELLO WORLD`.\n- **`count_lines`** takes a filename and prints the line count using `wc -l`. It printed `5` for `/data/sample.txt`.\n- **`file_size`** takes a filename and prints the byte count using `wc -c`. It printed `49` for `/data/sample.txt`, which matches the size `ls -l` showed.\n\n`count_lines` and `file_size` also print an error to stderr and return 1 if the file doesn't exist.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "mkdir -p /lib /data\ncat > /lib/utils.sh <<'EOF'\n#!/usr/bin/env bash\n\n# Read stdin, convert to uppercase\nto_upper() {\n    tr '[:lower:]' '[:upper:]'\n}\n\n# Print line count of a file\ncount_lines() {\n    local f=\"$1\"\n    [[ -f \"$f\" ]] || { echo \"count_lines: $f: no such file\" >&2; return 1; }\n    wc -l < \"$f\" | tr -d ' '\n}\n\n# Print byte count of a file\nfile_size() {\n    local f=\"$1\"\n    [[ -f \"$f\" ]] || { echo \"file_size: $f: no such file\" >&2; return 1; }\n    wc -c < \"$f\" | tr -d ' '\n}\nEOF\nls -l /data/sample.txt",
+      "source /lib/utils.sh\necho 'hello world' | to_upper\ncount_lines /data/sample.txt\nfile_size /data/sample.txt"
+    ],
+    "usage": {
+      "input_tokens": 3084,
+      "output_tokens": 680,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 5836
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "mkdir -p /lib /data\ncat > /lib/utils.sh <<'EOF'\n#!/usr/bin/env bash\n\n# Read stdin, convert to uppercase\nto_upper() {\n    tr '[:lower:]' '[:upper:]'\n}\n\n# Print line count of a file\ncount_lines() {\n    local f=\"$1\"\n    [[ -f \"$f\" ]] || { echo \"count_lines: $f: no such file\" >&2; return 1; }\n    wc -l < \"$f\" | tr -d ' '\n}\n\n# Print byte count of a file\nfile_size() {\n    local f=\"$1\"\n    [[ -f \"$f\" ]] || { echo \"file_size: $f: no such file\" >&2; return 1; }\n    wc -c < \"$f\" | tr -d ' '\n}\nEOF\nls -l /data/sample.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       49 2026-10-09 04:55 /data/sample.txt\n"
+          },
+          {
+            "commands": "source /lib/utils.sh\necho 'hello world' | to_upper\ncount_lines /data/sample.txt\nfile_size /data/sample.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "HELLO WORLD\n5\n49\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

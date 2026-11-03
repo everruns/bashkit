@@ -1,0 +1,63 @@
+{
+  "eval": "bashkit_generate",
+  "sample": "gen_config_template",
+  "target": "openrouter/moonshotai/kimi-k3",
+  "input": [
+    "Write a bash script that renders a config template.\n\nStarting files:\n--- /home/eval/app/app.conf.tmpl ---\n# generated for ${APP_ENV}\n[db]\nhost = ${DB_HOST}\nport = ${DB_PORT}\nurl = postgres://${DB_USER}@${DB_HOST}:${DB_PORT}/app\n[runtime]\nhome = ${RUNTIME_HOME}\ngreeting = Hello, ${USER_NAME}!\nprice = $5 per unit\n--- end ---\n--- /home/eval/app/prod.env ---\n# production settings\nAPP_ENV=prod/eu\nDB_HOST=db.internal\nDB_PORT=5432\n\nDB_USER=app_rw\nUNUSED_KEY=x\n--- end ---\n\nRender /home/eval/app/app.conf.tmpl into /home/eval/app/app.conf:\n- `prod.env` holds `KEY=VALUE` lines; blank lines and lines starting with `#` are ignored. Values are taken literally (they may contain `/`).\n- Every `${NAME}` placeholder whose NAME is defined in prod.env is replaced by its value.\n- Placeholders whose NAME is not defined in prod.env stay exactly as written, even if a variable of that name exists in the shell environment.\n- Everything else (including `$5`) is copied unchanged.\n\nThen print one line to stdout: `unresolved: ` followed by the names of the placeholders left unresolved, sorted, unique, space-separated (here: `unresolved: RUNTIME_HOME USER_NAME`). Exit 0."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "3/3 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "```bash\n#!/usr/bin/env bash\nset -euo pipefail\n\nTMPL=/home/eval/app/app.conf.tmpl\nENVFILE=/home/eval/app/prod.env\nOUT=/home/eval/app/app.conf\n\n# Parse KEY=VALUE lines, skipping blanks and comments.\ndeclare -A env=()\nwhile IFS= read -r line || [[ -n $line ]]; do\n    [[ -z $line ]] && continue\n    [[ $line == '#'* ]] && continue\n    [[ $line == *=* ]] || continue\n    key=${line%%=*}\n    val=${line#*=}\n    env[$key]=$val\ndone < \"$ENVFILE\"\n\n# Read the template, preserving any trailing newline.\ncontent=$(cat \"$TMPL\"; printf x)\ncontent=${content%x}\n\n# Replace ${NAME} only when NAME is defined in prod.env.\ndeclare -A unres=()\nre='\\$\\{([A-Za-z_][A-Za-z0-9_]*)\\}'\nout=\nrest=$content\nwhile [[ $rest =~ $re ]]; do\n    m=${BASH_REMATCH[0]}\n    name=${BASH_REMATCH[1]}\n    out+=${rest%%\"$m\"*}\n    if [[ ${env[$name]+set} ]]; then\n        out+=${env[$name]}\n    else\n        out+=$m\n        unres[$name]=1\n    fi\n    rest=${rest#*\"$m\"}\ndone\nout+=$rest\n\nprintf '%s' \"$out\" > \"$OUT\"\n\n# Report unresolved placeholder names, sorted and unique.\nprintf 'unresolved:'\nif ((${#unres[@]})); then\n    mapfile -t sorted < <(printf '%s\\n' \"${!unres[@]}\" | LC_ALL=C sort)\n    for n in \"${sorted[@]}\"; do\n        printf ' %s' \"$n\"\n    done\nfi\nprintf '\\n'\n\nexit 0\n```",
+    "iterations": 1,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "#!/usr/bin/env bash\nset -euo pipefail\n\nTMPL=/home/eval/app/app.conf.tmpl\nENVFILE=/home/eval/app/prod.env\nOUT=/home/eval/app/app.conf\n\n# Parse KEY=VALUE lines, skipping blanks and comments.\ndeclare -A env=()\nwhile IFS= read -r line || [[ -n $line ]]; do\n    [[ -z $line ]] && continue\n    [[ $line == '#'* ]] && continue\n    [[ $line == *=* ]] || continue\n    key=${line%%=*}\n    val=${line#*=}\n    env[$key]=$val\ndone < \"$ENVFILE\"\n\n# Read the template, preserving any trailing newline.\ncontent=$(cat \"$TMPL\"; printf x)\ncontent=${content%x}\n\n# Replace ${NAME} only when NAME is defined in prod.env.\ndeclare -A unres=()\nre='\\$\\{([A-Za-z_][A-Za-z0-9_]*)\\}'\nout=\nrest=$content\nwhile [[ $rest =~ $re ]]; do\n    m=${BASH_REMATCH[0]}\n    name=${BASH_REMATCH[1]}\n    out+=${rest%%\"$m\"*}\n    if [[ ${env[$name]+set} ]]; then\n        out+=${env[$name]}\n    else\n        out+=$m\n        unres[$name]=1\n    fi\n    rest=${rest#*\"$m\"}\ndone\nout+=$rest\n\nprintf '%s' \"$out\" > \"$OUT\"\n\n# Report unresolved placeholder names, sorted and unique.\nprintf 'unresolved:'\nif ((${#unres[@]})); then\n    mapfile -t sorted < <(printf '%s\\n' \"${!unres[@]}\" | LC_ALL=C sort)\n    for n in \"${sorted[@]}\"; do\n        printf ' %s' \"$n\"\n    done\nfi\nprintf '\\n'\n\nexit 0\n"
+    ],
+    "usage": {
+      "input_tokens": 713,
+      "output_tokens": 3560,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 79575
+    },
+    "metrics": {
+      "exec_ms": 13.0,
+      "exit_code": 0.0,
+      "extracted": 1.0,
+      "generate_ms": 79562.0,
+      "script_bytes": 1234.0,
+      "script_found": 1.0,
+      "timed_out": 0.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "#!/usr/bin/env bash\nset -euo pipefail\n\nTMPL=/home/eval/app/app.conf.tmpl\nENVFILE=/home/eval/app/prod.env\nOUT=/home/eval/app/app.conf\n\n# Parse KEY=VALUE lines, skipping blanks and comments.\ndeclare -A env=()\nwhile IFS= read -r line || [[ -n $line ]]; do\n    [[ -z $line ]] && continue\n    [[ $line == '#'* ]] && continue\n    [[ $line == *=* ]] || continue\n    key=${line%%=*}\n    val=${line#*=}\n    env[$key]=$val\ndone < \"$ENVFILE\"\n\n# Read the template, preserving any trailing newline.\ncontent=$(cat \"$TMPL\"; printf x)\ncontent=${content%x}\n\n# Replace ${NAME} only when NAME is defined in prod.env.\ndeclare -A unres=()\nre='\\$\\{([A-Za-z_][A-Za-z0-9_]*)\\}'\nout=\nrest=$content\nwhile [[ $rest =~ $re ]]; do\n    m=${BASH_REMATCH[0]}\n    name=${BASH_REMATCH[1]}\n    out+=${rest%%\"$m\"*}\n    if [[ ${env[$name]+set} ]]; then\n        out+=${env[$name]}\n    else\n        out+=$m\n        unres[$name]=1\n    fi\n    rest=${rest#*\"$m\"}\ndone\nout+=$rest\n\nprintf '%s' \"$out\" > \"$OUT\"\n\n# Report unresolved placeholder names, sorted and unique.\nprintf 'unresolved:'\nif ((${#unres[@]})); then\n    mapfile -t sorted < <(printf '%s\\n' \"${!unres[@]}\" | LC_ALL=C sort)\n    for n in \"${sorted[@]}\"; do\n        printf ' %s' \"$n\"\n    done\nfi\nprintf '\\n'\n\nexit 0\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "unresolved: RUNTIME_HOME USER_NAME\n"
+          }
+        ]
+      },
+      "generate": {
+        "extraction": "fenced",
+        "timed_out": false
+      }
+    }
+  },
+  "skipped": false
+}

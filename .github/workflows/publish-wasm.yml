@@ -3,8 +3,11 @@
 # publishes to npm. Triggered alongside publish.yml on GitHub Release.
 #
 # Prerequisites:
-#   - NPM_TOKEN secret with publish access
-#   - id-token: write permission for npm provenance (OIDC attestation)
+#   - npm trusted publishing (GitHub OIDC), no NPM_TOKEN secret:
+#     npmjs.com @everruns/bashkit-wasm > Settings > Trusted publisher:
+#     GitHub Actions, everruns/bashkit, workflow publish-wasm.yml, no environment
+#   - id-token: write on publish-wasm; npm >= 11.5.1 (OIDC token exchange +
+#     automatic provenance)
 #
 # Derive the bindgen CLI from Cargo.lock; never duplicate its schema version.
 
@@ -14,6 +17,11 @@ on:
   release:
     types: [published]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Re-publish an existing release tag (e.g. v0.20.1) as npm latest; empty builds the selected ref'
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -22,22 +30,24 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # A `tag` input re-publishes that release tag's exact commit; see the script.
   verify-source:
     name: Verify publish source
     runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.source.outputs.sha }}
+      dist_tag: ${{ steps.source.outputs.dist_tag }}
+      version: ${{ steps.source.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - name: Verify publish source is reachable from main
-        run: |
-          git fetch --no-tags origin main:refs/remotes/origin/main
-          SOURCE_SHA=$(git rev-parse HEAD)
-          if ! git merge-base --is-ancestor "$SOURCE_SHA" origin/main; then
-            echo "Error: publish source $SOURCE_SHA is not reachable from origin/main"
-            exit 1
-          fi
-          echo "Publish source verified on origin/main: $SOURCE_SHA"
+          persist-credentials: false
+      - name: Resolve publish source
+        id: source
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: bash scripts/resolve_publish_source.sh
 
   build-wasm:
     name: Build web bundle
@@ -49,6 +59,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.verify-source.outputs.sha }}
           persist-credentials: false
 
       - name: Install Rust
@@ -56,7 +67,7 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
 
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
 
       - name: Install wasm-bindgen-cli
         run: bash scripts/install-wasm-bindgen.sh
@@ -72,8 +83,33 @@ jobs:
       - name: Integration tests (headless Node)
         run: node --test "crates/bashkit-wasm/__test__/*.test.mjs"
 
+      - name: Browser streaming (main thread and worker)
+        run: |
+          npm install --prefix "$RUNNER_TEMP/bashkit-browser-test" --no-save playwright@1.62.1
+          export PLAYWRIGHT_MODULE="$RUNNER_TEMP/bashkit-browser-test/node_modules/playwright/index.mjs"
+          node "$RUNNER_TEMP/bashkit-browser-test/node_modules/playwright/cli.js" install --with-deps chromium
+          export CHROME_EXECUTABLE=$(node --input-type=module -e 'const {chromium} = await import(process.env.PLAYWRIGHT_MODULE); console.log(chromium.executablePath())')
+          node crates/bashkit-wasm/scripts/test-streaming-browser.mjs
+
+      - name: Build optional runtime bundle
+        run: BASHKIT_WASM_VARIANT=runtimes BASHKIT_WASM_FEATURES=terminal,python,typescript bash crates/bashkit-wasm/scripts/build.sh release
+
+      - name: Embedded runtime callback tests
+        run: BASHKIT_WASM_VARIANT=runtimes node --test crates/bashkit-wasm/__test__/runtime-functions.test.mjs
+
+      - name: Browser runtime callbacks (Chromium and module workers)
+        run: |
+          export PLAYWRIGHT_MODULE="$RUNNER_TEMP/bashkit-browser-test/node_modules/playwright/index.mjs"
+          export CHROME_EXECUTABLE=$(node --input-type=module -e 'const {chromium} = await import(process.env.PLAYWRIGHT_MODULE); console.log(chromium.executablePath())')
+          node crates/bashkit-wasm/scripts/test-runtime-browser.mjs
+
+      - name: Browser compatibility and transfer-size gates
+        run: |
+          node crates/bashkit-wasm/bench/compat.mjs
+          node crates/bashkit-wasm/bench/artifact.mjs crates/bashkit-wasm/pkg --check
+
       - name: Upload pkg
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: web-pkg
           path: crates/bashkit-wasm/pkg
@@ -81,33 +117,41 @@ jobs:
 
   publish-wasm:
     name: Publish to npm
-    needs: build-wasm
+    needs: [verify-source, build-wasm]
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write # npm provenance
+      id-token: write # npm trusted publishing + provenance
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0
+          ref: ${{ needs.verify-source.outputs.sha }}
+          persist-credentials: false
 
-      - name: Verify publish source is reachable from main
-        run: |
-          git fetch --no-tags origin main:refs/remotes/origin/main
-          SOURCE_SHA=$(git rev-parse HEAD)
-          if ! git merge-base --is-ancestor "$SOURCE_SHA" origin/main; then
-            echo "Error: publish source $SOURCE_SHA is not reachable from origin/main"
-            exit 1
-          fi
+      - name: Confirm checkout is the verified publish source
+        env:
+          SOURCE_SHA: ${{ needs.verify-source.outputs.sha }}
+        run: test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
 
       - name: Setup node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
         with:
-          node-version: 24
-          registry-url: "https://registry.npmjs.org"
+          node-version: "24.22.1"
+
+      - name: Require npm with trusted publishing (>= 11.5.1)
+        # npm trusted publishing (GitHub OIDC -> short-lived publish token)
+        # landed in npm 11.5.1. Upgrade to a pinned release if the bundled
+        # npm is older, then assert.
+        run: |
+          npm_ok() {
+            node -e 'const [a,b,c]=process.argv[1].split(".").map(Number);process.exit(a>11||(a==11&&(b>5||(b==5&&c>=1)))?0:1)' "$(npm --version)"
+          }
+          npm_ok || npm install -g npm@11.6.2
+          npm_ok || { echo "::error::npm $(npm --version) lacks trusted publishing"; exit 1; }
+          echo "npm $(npm --version)"
 
       - name: Download pkg
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: web-pkg
           path: pkg
@@ -115,30 +159,22 @@ jobs:
       - name: Determine npm dist-tag
         id: dist-tag
         working-directory: pkg
+        env:
+          DIST_TAG: ${{ needs.verify-source.outputs.dist_tag }}
+          TAG_VERSION: ${{ needs.verify-source.outputs.version }}
         run: |
           PKG_VERSION=$(node -p "require('./package.json').version")
           echo "version=$PKG_VERSION"
           # Only verified release tags publish as npm latest.
-          if [[ "$GITHUB_REF" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            TAG_VERSION="${GITHUB_REF#refs/tags/v}"
-            if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
-              echo "Error: Tag version ($TAG_VERSION) does not match package.json version ($PKG_VERSION)"
-              exit 1
-            fi
-            echo "tag=latest" >> "$GITHUB_OUTPUT"
-          else
-            echo "tag=next" >> "$GITHUB_OUTPUT"
+          if [ "$DIST_TAG" = latest ] && [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "Error: Tag version ($TAG_VERSION) does not match package.json version ($PKG_VERSION)"
+            exit 1
           fi
+          echo "tag=$DIST_TAG" >> "$GITHUB_OUTPUT"
 
       - name: Publish
         working-directory: pkg
         run: |
           TAG="${{ steps.dist-tag.outputs.tag }}"
           echo "Publishing @everruns/bashkit-wasm with dist-tag: $TAG"
-          if [ "$TAG" = "latest" ]; then
-            npm publish --provenance --access public
-          else
-            npm publish --provenance --tag "$TAG" --access public
-          fi
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          python3 "$GITHUB_WORKSPACE/scripts/publish_npm.py" --tag "$TAG"

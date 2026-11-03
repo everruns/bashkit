@@ -1,0 +1,57 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "complex_release_notes",
+  "target": "openai/gpt-6.1-sol",
+  "input": [
+    "Read /data/commits.log containing conventional commit messages (one per line, format: 'type(scope): message'). Parse each line, group by type, and generate /release/CHANGELOG.md with sections: '## Features' for 'feat' commits, '## Bug Fixes' for 'fix' commits, and '## Other' for all remaining types. Under each section list items as '- scope: message'. Print the generated changelog."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "8/8 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Created `/release/CHANGELOG.md`:\n\n```markdown\n## Features\n- auth: add OAuth2 support\n- ui: dark mode toggle\n- api: add pagination support\n- db: add connection pooling\n\n## Bug Fixes\n- api: handle null response body\n- auth: token refresh race condition\n- ui: button alignment on mobile\n- api: correct status code for 404\n\n## Other\n- deps: update lodash to 4.17.21\n- readme: update install instructions\n```",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "mkdir -p /release\nawk '\n{\n    p = index($0, \"(\")\n    q = index($0, \"):\")\n    if (p == 0 || q <= p) next\n    type = substr($0, 1, p - 1)\n    scope = substr($0, p + 1, q - p - 1)\n    message = substr($0, q + 2)\n    sub(/^[[:space:]]*/, \"\", message)\n    sub(/\\r$/, \"\", message)\n    item = \"- \" scope \": \" message \"\\n\"\n    if (type == \"feat\") features = features item\n    else if (type == \"fix\") fixes = fixes item\n    else other = other item\n}\nEND {\n    printf \"## Features\\n%s\\n## Bug Fixes\\n%s\\n## Other\\n%s\", features, fixes, other\n}\n' /data/commits.log > /release/CHANGELOG.md && cat /release/CHANGELOG.md"
+    ],
+    "usage": {
+      "input_tokens": 877,
+      "output_tokens": 369,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 7869
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "mkdir -p /release\nawk '\n{\n    p = index($0, \"(\")\n    q = index($0, \"):\")\n    if (p == 0 || q <= p) next\n    type = substr($0, 1, p - 1)\n    scope = substr($0, p + 1, q - p - 1)\n    message = substr($0, q + 2)\n    sub(/^[[:space:]]*/, \"\", message)\n    sub(/\\r$/, \"\", message)\n    item = \"- \" scope \": \" message \"\\n\"\n    if (type == \"feat\") features = features item\n    else if (type == \"fix\") fixes = fixes item\n    else other = other item\n}\nEND {\n    printf \"## Features\\n%s\\n## Bug Fixes\\n%s\\n## Other\\n%s\", features, fixes, other\n}\n' /data/commits.log > /release/CHANGELOG.md && cat /release/CHANGELOG.md",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "## Features\n- auth: add OAuth2 support\n- ui: dark mode toggle\n- api: add pagination support\n- db: add connection pooling\n\n## Bug Fixes\n- api: handle null response body\n- auth: token refresh race condition\n- ui: button alignment on mobile\n- api: correct status code for 404\n\n## Other\n- deps: update lodash to 4.17.21\n- readme: update install instructions\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

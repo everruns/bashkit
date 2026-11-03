@@ -1154,18 +1154,24 @@ impl<'a> Parser<'a> {
                 Ok(Expr::IncDec(Box::new(lv), delta, true))
             }
             Tok::Minus => {
+                let saved = self.enter()?;
                 self.advance()?;
                 let e = self.parse_field_operand()?;
+                self.leave(saved);
                 Ok(Expr::Neg(Box::new(e)))
             }
             Tok::Plus => {
+                let saved = self.enter()?;
                 self.advance()?;
                 let e = self.parse_field_operand()?;
+                self.leave(saved);
                 Ok(Expr::Plus(Box::new(e)))
             }
             Tok::Not => {
+                let saved = self.enter()?;
                 self.advance()?;
                 let e = self.parse_field_operand()?;
+                self.leave(saved);
                 Ok(Expr::Not(Box::new(e)))
             }
             _ => self.parse_primary(),

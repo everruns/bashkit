@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "rt_sqlite_migration",
+  "target": "anthropic/claude-sonnet-5-5",
+  "input": [
+    "/app/app.db is a schema version 1 SQLite database created from /app/schema_v1.sql. Write the migration /app/migrations/002_users_v2.sql and apply it to /app/app.db with `sqlite3 /app/app.db < /app/migrations/002_users_v2.sql`. The file must be plain SQL that upgrades ANY version 1 database (it will also be run against other v1 databases with different rows).\n\nVersion 2:\n- users has exactly the columns (id INTEGER PRIMARY KEY, first_name TEXT NOT NULL, last_name TEXT NOT NULL, email TEXT NOT NULL UNIQUE, signup_date TEXT NOT NULL), in that order, keeping user ids.\n- From full_name with surrounding spaces trimmed: first_name is the text before the first space, last_name the rest with surrounding spaces trimmed ('' when there is no space).\n- email is trimmed and lowercased. Users whose emails are equal after that are merged: keep only the lowest id, and orders of the removed users now belong to the kept user.\n- signup (MM/DD/YYYY) becomes signup_date YYYY-MM-DD.\n- meta schema_version is '2'.\norders keeps its columns and rows (only user_id may change)."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I wrote `/app/migrations/002_users_v2.sql` and applied it to `/app/app.db`. I checked the results by querying the tables afterwards. I didn't run it against any other v1 database.\n\n- **Users:** four rows remain. Ada's duplicate (id 4) was merged into id 1, because `ADA@example.com` lowercases to the same email as `ada@example.com`.\n  - 1: Ada | Lovelace | ada@example.com | 2023-12-10\n  - 2: Grace | Brewster Hopper | grace@navy.mil | 2024-01-05\n  - 3: Linus | '' | linus@kernel.org | 2024-07-04\n  - 5: Alan | Turing | alan@bletchley.uk | 2024-06-23\n- **Orders:** all five rows are kept. Orders 101 and 104 moved from user 4 to user 1.\n- **Meta:** `schema_version` is now '2'.\n\nThe migration is plain SQL inside one transaction. It repoints orders to the lowest id for each email, builds the new `users` table and copies the cleaned rows into it. It then drops the old table, renames the new one and updates the version.\n\nI did not confirm the new table's column definitions with `.schema`. That command failed because I ran it through the SQL argument, where dot-commands aren't accepted, so the check is only the query output above.\n\nTrimming only removes spaces, as you specified, so tabs or other whitespace in a name or email would not be stripped.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cd /app; cat schema_v1.sql; ls migrations; sqlite3 app.db \"select * from users limit 20; select * from meta; select count(*) from orders;\"",
+      "mkdir -p /app/migrations; cd /app; cat > migrations/002_users_v2.sql <<'EOF'\nBEGIN;\n\nUPDATE orders SET user_id = (\n  SELECT MIN(u2.id) FROM users u2\n  WHERE lower(trim(u2.email)) = (SELECT lower(trim(u1.email)) FROM users u1 WHERE u1.id = orders.user_id)\n)\nWHERE user_id IN (SELECT id FROM users);\n\nCREATE TABLE users_new(\n  id INTEGER PRIMARY KEY,\n  first_name TEXT NOT NULL,\n  last_name TEXT NOT NULL,\n  email TEXT NOT NULL UNIQUE,\n  signup_date TEXT NOT NULL\n);\n\nINSERT INTO users_new(id, first_name, last_name, email, signup_date)\nSELECT id,\n  CASE WHEN instr(trim(full_name), ' ') = 0 THEN trim(full_name)\n       ELSE substr(trim(full_name), 1, instr(trim(full_name), ' ') - 1) END,\n  CASE WHEN instr(trim(full_name), ' ') = 0 THEN ''\n       ELSE trim(substr(trim(full_name), instr(trim(full_name), ' ') + 1)) END,\n  lower(trim(email)),\n  substr(trim(signup), 7, 4) || '-' || substr(trim(signup), 1, 2) || '-' || substr(trim(signup), 4, 2)\nFROM users u\nWHERE id = (SELECT MIN(id) FROM users u2 WHERE lower(trim(u2.email)) = lower(trim(u.email)));\n\nDROP TABLE users;\nALTER TABLE users_new RENAME TO users;\n\nUPDATE meta SET value = '2' WHERE key = 'schema_version';\n\nCOMMIT;\nEOF\nsqlite3 app.db < migrations/002_users_v2.sql; sqlite3 app.db \"select * from users; select * from orders; select * from meta; .schema users\""
+    ],
+    "usage": {
+      "input_tokens": 6679,
+      "output_tokens": 1705,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 12663
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 1.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 1,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cd /app; cat schema_v1.sql; ls migrations; sqlite3 app.db \"select * from users limit 20; select * from meta; select count(*) from orders;\"",
+            "exit_code": 0,
+            "stderr": "ls: cannot access 'migrations': No such file or directory\n",
+            "stdout": "CREATE TABLE users(id INTEGER PRIMARY KEY, full_name TEXT NOT NULL, email TEXT NOT NULL, signup TEXT NOT NULL);\nCREATE TABLE orders(id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, total_cents INTEGER NOT NULL);\nCREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);\nINSERT INTO meta VALUES ('schema_version', '1');\nINSERT INTO users VALUES (1, 'Ada Lovelace', 'ada@example.com', '12/10/2023');\nINSERT INTO users VALUES (2, ' Grace  Brewster Hopper', 'Grace@Navy.mil ', '01/05/2024');\nINSERT INTO users VALUES (3, 'Linus', 'linus@kernel.org', '07/04/2024');\nINSERT INTO users VALUES (4, 'Ada L.', 'ADA@example.com', '02/29/2024');\nINSERT INTO users VALUES (5, 'Alan Turing', 'alan@bletchley.uk', '06/23/2024');\nINSERT INTO orders VALUES (100, 1, 1500);\nINSERT INTO orders VALUES (101, 4, 2500);\nINSERT INTO orders VALUES (102, 2, 999);\nINSERT INTO orders VALUES (103, 5, 120);\nINSERT INTO orders VALUES (104, 4, 1);\n1|Ada Lovelace|ada@example.com|12/10/2023\n2| Grace  Brewster Hopper|Grace@Navy.mil |01/05/2024\n3|Linus|linus@kernel.org|07/04/2024\n4|Ada L.|ADA@example.com|02/29/2024\n5|Alan Turing|alan@bletchley.uk|06/23/2024\nschema_version|1\n5\n"
+          },
+          {
+            "commands": "mkdir -p /app/migrations; cd /app; cat > migrations/002_users_v2.sql <<'EOF'\nBEGIN;\n\nUPDATE orders SET user_id = (\n  SELECT MIN(u2.id) FROM users u2\n  WHERE lower(trim(u2.email)) = (SELECT lower(trim(u1.email)) FROM users u1 WHERE u1.id = orders.user_id)\n)\nWHERE user_id IN (SELECT id FROM users);\n\nCREATE TABLE users_new(\n  id INTEGER PRIMARY KEY,\n  first_name TEXT NOT NULL,\n  last_name TEXT NOT NULL,\n  email TEXT NOT NULL UNIQUE,\n  signup_date TEXT NOT NULL\n);\n\nINSERT INTO users_new(id, first_name, last_name, email, signup_date)\nSELECT id,\n  CASE WHEN instr(trim(full_name), ' ') = 0 THEN trim(full_name)\n       ELSE substr(trim(full_name), 1, instr(trim(full_name), ' ') - 1) END,\n  CASE WHEN instr(trim(full_name), ' ') = 0 THEN ''\n       ELSE trim(substr(trim(full_name), instr(trim(full_name), ' ') + 1)) END,\n  lower(trim(email)),\n  substr(trim(signup), 7, 4) || '-' || substr(trim(signup), 1, 2) || '-' || substr(trim(signup), 4, 2)\nFROM users u\nWHERE id = (SELECT MIN(id) FROM users u2 WHERE lower(trim(u2.email)) = lower(trim(u.email)));\n\nDROP TABLE users;\nALTER TABLE users_new RENAME TO users;\n\nUPDATE meta SET value = '2' WHERE key = 'schema_version';\n\nCOMMIT;\nEOF\nsqlite3 app.db < migrations/002_users_v2.sql; sqlite3 app.db \"select * from users; select * from orders; select * from meta; .schema users\"",
+            "exit_code": 1,
+            "stderr": "sqlite: near \".\": syntax error\n",
+            "stdout": "1|Ada|Lovelace|ada@example.com|2023-12-10\n2|Grace|Brewster Hopper|grace@navy.mil|2024-01-05\n3|Linus||linus@kernel.org|2024-07-04\n5|Alan|Turing|alan@bletchley.uk|2024-06-23\n100|1|1500\n101|1|2500\n102|2|999\n103|5|120\n104|1|1\nschema_version|2\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

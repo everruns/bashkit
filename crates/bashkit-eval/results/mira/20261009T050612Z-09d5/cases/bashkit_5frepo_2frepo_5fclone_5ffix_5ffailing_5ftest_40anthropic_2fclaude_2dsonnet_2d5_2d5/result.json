@@ -1,0 +1,78 @@
+{
+  "eval": "bashkit_repo",
+  "sample": "repo_clone_fix_failing_test",
+  "target": "anthropic/claude-sonnet-5-5",
+  "input": [
+    "A git repository lives at /srv/git/calc. Clone it into /home/eval/work/calc, run its test suite with `make test`, find and fix the bug in the library code that makes a test fail (do not edit the tests), re-run `make test` until it passes, and commit the fix in the clone with a commit message that starts with `fix:`. Leave /srv/git/calc unchanged."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "6/6 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I fixed the bug and `make test` now passes (2/2). The fix is committed in `/home/eval/work/calc` as `fix: mul should multiply instead of add`.\n\nThe bug was in `lib/calc.sh`, where `mul` computed `$1 + $2` instead of `$1 * $2`. The failing test was `test_mul_div`, which got 9 for `mul 4 5`. I changed the one line and left the tests alone.\n\nThe test run creates a `build/` directory with logs and a report, and the repo has no `.gitignore`. I left those files untracked and committed only `lib/calc.sh`. I didn't touch `/srv/git/calc`.",
+    "iterations": 5,
+    "tool_calls_count": 4,
+    "tool_calls": [
+      "mkdir -p /home/eval/work && cd /home/eval/work && git clone /srv/git/calc calc 2>&1 | tail -2; cd calc && ls -la && cat Makefile && git log --oneline | head; make test 2>&1 | tail -30",
+      "cd /home/eval/work/calc && ls lib tests && cat lib/*; cat tests/run.sh",
+      "cd /home/eval/work/calc && sed -i 's/^mul() .*/mul() { echo $(( $1 * $2 )); }/' lib/calc.sh && make test; git status --short; cat .gitignore",
+      "cd /home/eval/work/calc && git add lib/calc.sh && git commit -qm \"fix: mul should multiply instead of add\" && git log --oneline | head -3; git status --short"
+    ],
+    "usage": {
+      "input_tokens": 7874,
+      "output_tokens": 675,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 8067
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 4.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 3.0,
+      "turns": 5.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "mkdir -p /home/eval/work && cd /home/eval/work && git clone /srv/git/calc calc 2>&1 | tail -2; cd calc && ls -la && cat Makefile && git log --oneline | head; make test 2>&1 | tail -30",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Cloning into 'calc'...\ndone.\ndrwxr-xr-x        0 2026-10-09 05:06 .git\n-rw-r--r--       26 2026-10-09 05:06 Makefile\n-rw-r--r--       55 2026-10-09 05:06 README.md\ndrwxr-xr-x        0 2026-10-09 05:06 lib\ndrwxr-xr-x        0 2026-10-09 05:06 tests\ntest:\n\t@bash tests/run.sh\ncommit b465c8ab\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 05:06:12 2026 +0000\n\n    initial import\n\nok   test_add_sub\nFAIL test_mul_div\n    assertion failed: mul 4 5: expected '20', got '9'\nFAIL 1/2\nmake: *** [Makefile:2: test] Error 1\n"
+          },
+          {
+            "commands": "cd /home/eval/work/calc && ls lib tests && cat lib/*; cat tests/run.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "lib:\ncalc.sh\n\ntests:\nassert.sh\nrun.sh\ntest_add_sub.sh\ntest_mul_div.sh\n# calc: integer helpers\nadd() { echo $(( $1 + $2 )); }\nsub() { echo $(( $1 - $2 )); }\nmul() { echo $(( $1 + $2 )); }\ndiv() {\n  if [ \"$2\" -eq 0 ]; then echo 'calc: division by zero' >&2; return 1; fi\n  echo $(( $1 / $2 ))\n}\n#!/bin/bash\n# Test runner: runs every tests/test_*.sh, writes build/test-report.txt.\ncd \"$(dirname \"$0\")/..\" || exit 2\nmkdir -p build\npass=0; fail=0; total=0\nfor t in tests/test_*.sh; do\n  name=$(basename \"$t\" .sh)\n  total=$((total + 1))\n  if bash \"$t\" > \"build/$name.log\" 2>&1; then\n    pass=$((pass + 1)); echo \"ok   $name\"\n  else\n    fail=$((fail + 1)); echo \"FAIL $name\"; sed 's/^/    /' \"build/$name.log\"\n  fi\ndone\nif [ \"$fail\" -eq 0 ]; then\n  echo \"PASS $pass/$total\" | tee build/test-report.txt\nelse\n  echo \"FAIL $fail/$total\" | tee build/test-report.txt\n  exit 1\nfi\n"
+          },
+          {
+            "commands": "cd /home/eval/work/calc && sed -i 's/^mul() .*/mul() { echo $(( $1 * $2 )); }/' lib/calc.sh && make test; git status --short; cat .gitignore",
+            "exit_code": 1,
+            "stderr": "cat: .gitignore: No such file or directory\n",
+            "stdout": "ok   test_add_sub\nok   test_mul_div\nPASS 2/2\nOn branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/test-report.txt\n\tbuild/test_add_sub.log\n\tbuild/test_mul_div.log\n"
+          },
+          {
+            "commands": "cd /home/eval/work/calc && git add lib/calc.sh && git commit -qm \"fix: mul should multiply instead of add\" && git log --oneline | head -3; git status --short",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "[master b465c8a] fix: mul should multiply instead of add\ncommit b465c8a5\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 05:06:18 2026 +0000\nOn branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/test-report.txt\n\tbuild/test_add_sub.log\n\tbuild/test_mul_div.log\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

@@ -1,0 +1,85 @@
+{
+  "eval": "bashkit_repo",
+  "sample": "repo_release_branch_bump",
+  "target": "openai/gpt-6.1-sol",
+  "input": [
+    "Cut release 1.0.0 of the git repo /home/eval/lib: create and switch to a branch named `release-1.0.0`, set the version to 1.0.0 everywhere it appears (VERSION, package.json, and turn the `## Unreleased` heading in CHANGELOG.md into `## 1.0.0`), run `make test`, and commit with the message `release: 1.0.0`."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "8/8 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Created and switched to `release-1.0.0`, updated `VERSION` and `package.json` to `1.0.0`, and changed `## Unreleased` to `## 1.0.0` in `CHANGELOG.md`.\n\n`make test` passed. Committed as `b465c834` with message `release: 1.0.0`.\n\nNote: the test generated an untracked file, `build/version-check.txt`, which was left uncommitted.",
+    "iterations": 6,
+    "tool_calls_count": 5,
+    "tool_calls": [
+      "cd /home/eval/lib && git status --short && git branch --show-current && cat VERSION && cat package.json && cat CHANGELOG.md && cat Makefile",
+      "cd /home/eval/lib && cat VERSION && cat package.json && cat CHANGELOG.md && cat Makefile",
+      "cd /home/eval/lib && git checkout -b release-1.0.0 && printf '1.0.0\\n' > VERSION && sed -i 's/\"version\": \"0\\.9\\.3\"/\"version\": \"1.0.0\"/' package.json && sed -i 's/^## Unreleased$/## 1.0.0/' CHANGELOG.md && make test",
+      "cd /home/eval/lib && git add VERSION package.json CHANGELOG.md && git commit -m 'release: 1.0.0' && git status --short",
+      "cd /home/eval/lib && git log -1 --oneline && git diff HEAD -- VERSION package.json CHANGELOG.md && cat build/version-check.txt"
+    ],
+    "usage": {
+      "input_tokens": 3441,
+      "output_tokens": 449,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 17268
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 5.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 4.0,
+      "turns": 6.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cd /home/eval/lib && git status --short && git branch --show-current && cat VERSION && cat package.json && cat CHANGELOG.md && cat Makefile",
+            "exit_code": 128,
+            "stderr": "internal error: fatal: '--show-current' is not a valid branch name (starts with dash)\n",
+            "stdout": "On branch master\n\nnothing to commit, working tree clean\n"
+          },
+          {
+            "commands": "cd /home/eval/lib && cat VERSION && cat package.json && cat CHANGELOG.md && cat Makefile",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "0.9.3\n{\n  \"name\": \"@acme/lib\",\n  \"version\": \"0.9.3\",\n  \"private\": true\n}\n# Changelog\n\n## Unreleased\n\n- Add retry helper\n- Drop Node 16\n\n## 0.9.3\n\n- Fix timeout parsing\ntest:\n\t@bash scripts/check-version.sh\n"
+          },
+          {
+            "commands": "cd /home/eval/lib && git checkout -b release-1.0.0 && printf '1.0.0\\n' > VERSION && sed -i 's/\"version\": \"0\\.9\\.3\"/\"version\": \"1.0.0\"/' package.json && sed -i 's/^## Unreleased$/## 1.0.0/' CHANGELOG.md && make test",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Switched to branch 'release-1.0.0'\nversion 1.0.0 consistent\n"
+          },
+          {
+            "commands": "cd /home/eval/lib && git add VERSION package.json CHANGELOG.md && git commit -m 'release: 1.0.0' && git status --short",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "[master b465c83] release: 1.0.0\nOn branch release-1.0.0\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/version-check.txt\n"
+          },
+          {
+            "commands": "cd /home/eval/lib && git log -1 --oneline && git diff HEAD -- VERSION package.json CHANGELOG.md && cat build/version-check.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "commit b465c834\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 05:08:43 2026 +0000\n\n    release: 1.0.0\n\n# Diff output (simplified in virtual mode)\nversion 1.0.0 consistent\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

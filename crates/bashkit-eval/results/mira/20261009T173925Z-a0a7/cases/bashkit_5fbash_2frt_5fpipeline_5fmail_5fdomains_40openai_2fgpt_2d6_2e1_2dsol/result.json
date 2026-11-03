@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "rt_pipeline_mail_domains",
+  "target": "openai/gpt-6.1-sol",
+  "input": [
+    "Write a bash script /home/eval/report.sh used as `bash /home/eval/report.sh INBOX_DIR OUT_FILE` (it will be run again later on other directories). INBOX_DIR holds message files `*.json` (names may contain spaces; ignore other files). Each is a JSON object whose optional \"to\" and \"cc\" fields are email address-list header strings like `\"Doe, John\" <john@example.com>, ann@x.org` (display names may be quoted and contain commas). Count every recipient address in to and cc by its domain (the part after '@', lowercased).\nFiles that are not valid JSON are skipped and reported on stderr as `skip: <file name>` (base name), in file name order. OUT_FILE gets one line `COUNT DOMAIN` per domain, sorted by count descending then domain. Exit 0.\nRun it on /data/inbox writing /out/domains.txt."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Created `/home/eval/report.sh` and ran it successfully on `/data/inbox`.\n\n`/out/domains.txt` contains:\n```text\n4 x.org\n2 corp.io\n2 example.com\n1 sub.x.org\n```\n\nReported on stderr:\n```text\nskip: broken.json\n```",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "ls -la /home/eval; ls -la /data/inbox; ls -ld /out",
+      "cat > /home/eval/report.sh <<'EOF'\n#!/usr/bin/env bash\n# Parse headers with Python's email parser so quoted display-name commas\n# are not mistaken for recipient separators.\npython3 - \"$@\" <<'PY'\nimport json\nimport sys\nfrom collections import Counter\nfrom email.utils import getaddresses\nfrom pathlib import Path\n\ninbox, output = map(Path, sys.argv[1:])\ncounts = Counter()\n\ndef invalid_constant(value):\n    raise ValueError('Invalid JSON constant: ' + value)\n\nfor path in sorted(inbox.iterdir(), key=lambda p: p.name):\n    if not path.name.endswith('.json') or not path.is_file():\n        continue\n    try:\n        message = json.loads(path.read_text(encoding='utf-8'),\n                             parse_constant=invalid_constant)\n    except (ValueError, UnicodeError):\n        print(f'skip: {path.name}', file=sys.stderr)\n        continue\n    if not isinstance(message, dict):\n        continue\n    for field in ('to', 'cc'):\n        header = message.get(field)\n        if not isinstance(header, str):\n            continue\n        for _, address in getaddresses([header], strict=False):\n            local, separator, domain = address.rpartition('@')\n            if separator and local and domain:\n                counts[domain.lower()] += 1\n\nwith output.open('w', encoding='utf-8', newline='\\n') as stream:\n    for domain, count in sorted(counts.items(), key=lambda item: (-item[1], item[0])):\n        stream.write(f'{count} {domain}\\n')\nPY\nEOF\nchmod +x /home/eval/report.sh\nmkdir -p /out\nbash /home/eval/report.sh /data/inbox /out/domains.txt\ncat /out/domains.txt"
+    ],
+    "usage": {
+      "input_tokens": 2604,
+      "output_tokens": 668,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 14331
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 1.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /home/eval; ls -la /data/inbox; ls -ld /out",
+            "exit_code": 2,
+            "stderr": "ls: cannot access '/out': No such file or directory\n",
+            "stdout": "-rw-r--r--       87 2026-10-12 18:58 001.json\n-rw-r--r--       95 2026-10-12 18:58 002 reply.json\n-rw-r--r--       37 2026-10-12 18:58 003.json\n-rw-r--r--       99 2026-10-12 18:58 004 fwd fwd.json\n-rw-r--r--       25 2026-10-12 18:58 broken.json\n-rw-r--r--        9 2026-10-12 18:58 notes.txt\n"
+          },
+          {
+            "commands": "cat > /home/eval/report.sh <<'EOF'\n#!/usr/bin/env bash\n# Parse headers with Python's email parser so quoted display-name commas\n# are not mistaken for recipient separators.\npython3 - \"$@\" <<'PY'\nimport json\nimport sys\nfrom collections import Counter\nfrom email.utils import getaddresses\nfrom pathlib import Path\n\ninbox, output = map(Path, sys.argv[1:])\ncounts = Counter()\n\ndef invalid_constant(value):\n    raise ValueError('Invalid JSON constant: ' + value)\n\nfor path in sorted(inbox.iterdir(), key=lambda p: p.name):\n    if not path.name.endswith('.json') or not path.is_file():\n        continue\n    try:\n        message = json.loads(path.read_text(encoding='utf-8'),\n                             parse_constant=invalid_constant)\n    except (ValueError, UnicodeError):\n        print(f'skip: {path.name}', file=sys.stderr)\n        continue\n    if not isinstance(message, dict):\n        continue\n    for field in ('to', 'cc'):\n        header = message.get(field)\n        if not isinstance(header, str):\n            continue\n        for _, address in getaddresses([header], strict=False):\n            local, separator, domain = address.rpartition('@')\n            if separator and local and domain:\n                counts[domain.lower()] += 1\n\nwith output.open('w', encoding='utf-8', newline='\\n') as stream:\n    for domain, count in sorted(counts.items(), key=lambda item: (-item[1], item[0])):\n        stream.write(f'{count} {domain}\\n')\nPY\nEOF\nchmod +x /home/eval/report.sh\nmkdir -p /out\nbash /home/eval/report.sh /data/inbox /out/domains.txt\ncat /out/domains.txt",
+            "exit_code": 0,
+            "stderr": "skip: broken.json\n",
+            "stdout": "4 x.org\n2 corp.io\n2 example.com\n1 sub.x.org\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

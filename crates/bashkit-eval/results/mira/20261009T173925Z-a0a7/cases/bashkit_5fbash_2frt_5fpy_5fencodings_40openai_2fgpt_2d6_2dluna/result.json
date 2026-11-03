@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "rt_py_encodings",
+  "target": "openai/gpt-6-luna",
+  "input": [
+    "/data/legacy holds text files in mixed encodings. For every file whose name ends in `.txt` (case-sensitive), write a normalised copy with the same name to /out/clean/: UTF-8 without BOM, line endings \\r\\n and lone \\r converted to \\n, and ending with exactly one added \\n if the text did not already end with \\n.\nDetect each file's encoding in this order: starts with a UTF-16 BOM (FF FE or FE FF) -> utf-16; starts with the UTF-8 BOM -> utf-8-sig; decodes as UTF-8 -> utf-8 (plain ASCII included); otherwise latin-1.\nWrite /out/manifest.tsv (tab-separated, header name, encoding, lines, chars) with one row per file sorted by name, where lines is the number of \\n and chars the number of Unicode characters in the normalised text (newlines included, BOM excluded)."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "8/8 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Created normalized UTF-8 copies for all six case-sensitive `.txt` files in `/out/clean/` and wrote the sorted `/out/manifest.tsv`.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "find /data/legacy -type f -print 2>/dev/null | sort; ls -la /data /out 2>/dev/null || true",
+      "python3 - <<'PY'\nfrom pathlib import Path\nimport csv\nsrc = Path('/data/legacy')\nout = Path('/out')\nclean = out / 'clean'\nclean.mkdir(parents=True, exist_ok=True)\nrows = []\nfor path in sorted((p for p in src.iterdir() if p.is_file() and p.name.endswith('.txt')), key=lambda p: p.name):\n    data = path.read_bytes()\n    if data.startswith((b'\\xff\\xfe', b'\\xfe\\xff')):\n        encoding = 'utf-16'\n        text = data.decode('utf-16')\n    elif data.startswith(b'\\xef\\xbb\\xbf'):\n        encoding = 'utf-8-sig'\n        text = data.decode('utf-8-sig')\n    else:\n        try:\n            text = data.decode('utf-8')\n            encoding = 'utf-8'\n        except UnicodeDecodeError:\n            text = data.decode('latin-1')\n            encoding = 'latin-1'\n    text = text.replace('\\r\\n', '\\n').replace('\\r', '\\n')\n    if not text.endswith('\\n'):\n        text += '\\n'\n    (clean / path.name).write_bytes(text.encode('utf-8'))\n    rows.append((path.name, encoding, text.count('\\n'), len(text)))\nwith (out / 'manifest.tsv').open('w', encoding='utf-8', newline='') as f:\n    writer = csv.writer(f, delimiter='\\t', lineterminator='\\n')\n    writer.writerow(('name', 'encoding', 'lines', 'chars'))\n    writer.writerows(rows)\nPY\nls -la /out /out/clean; cat /out/manifest.tsv"
+    ],
+    "usage": {
+      "input_tokens": 2620,
+      "output_tokens": 725,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 9074
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "find /data/legacy -type f -print 2>/dev/null | sort; ls -la /data /out 2>/dev/null || true",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/data/legacy/a.txt\n/data/legacy/b.txt\n/data/legacy/c.txt\n/data/legacy/d.txt\n/data/legacy/e.txt\n/data/legacy/f.txt\n/data/legacy/g.TXT\n"
+          },
+          {
+            "commands": "python3 - <<'PY'\nfrom pathlib import Path\nimport csv\nsrc = Path('/data/legacy')\nout = Path('/out')\nclean = out / 'clean'\nclean.mkdir(parents=True, exist_ok=True)\nrows = []\nfor path in sorted((p for p in src.iterdir() if p.is_file() and p.name.endswith('.txt')), key=lambda p: p.name):\n    data = path.read_bytes()\n    if data.startswith((b'\\xff\\xfe', b'\\xfe\\xff')):\n        encoding = 'utf-16'\n        text = data.decode('utf-16')\n    elif data.startswith(b'\\xef\\xbb\\xbf'):\n        encoding = 'utf-8-sig'\n        text = data.decode('utf-8-sig')\n    else:\n        try:\n            text = data.decode('utf-8')\n            encoding = 'utf-8'\n        except UnicodeDecodeError:\n            text = data.decode('latin-1')\n            encoding = 'latin-1'\n    text = text.replace('\\r\\n', '\\n').replace('\\r', '\\n')\n    if not text.endswith('\\n'):\n        text += '\\n'\n    (clean / path.name).write_bytes(text.encode('utf-8'))\n    rows.append((path.name, encoding, text.count('\\n'), len(text)))\nwith (out / 'manifest.tsv').open('w', encoding='utf-8', newline='') as f:\n    writer = csv.writer(f, delimiter='\\t', lineterminator='\\n')\n    writer.writerow(('name', 'encoding', 'lines', 'chars'))\n    writer.writerows(rows)\nPY\nls -la /out /out/clean; cat /out/manifest.tsv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/out:\ndrwxr-xr-x        0 2026-10-12 18:59 clean\n-rw-r--r--      137 2026-10-12 18:59 manifest.tsv\n\n/out/clean:\n-rw-r--r--       29 2026-10-12 18:59 a.txt\n-rw-r--r--       27 2026-10-12 18:59 b.txt\n-rw-r--r--       27 2026-10-12 18:59 c.txt\n-rw-r--r--       22 2026-10-12 18:59 d.txt\n-rw-r--r--       30 2026-10-12 18:59 e.txt\n-rw-r--r--       18 2026-10-12 18:59 f.txt\nname\tencoding\tlines\tchars\na.txt\tutf-8\t2\t24\nb.txt\tutf-8-sig\t2\t26\nc.txt\tlatin-1\t2\t23\nd.txt\tutf-16\t3\t16\ne.txt\tutf-8\t2\t30\nf.txt\tlatin-1\t3\t17\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

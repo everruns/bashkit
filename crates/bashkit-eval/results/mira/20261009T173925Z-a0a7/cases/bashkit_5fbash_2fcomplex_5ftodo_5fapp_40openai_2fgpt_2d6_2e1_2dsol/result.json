@@ -1,0 +1,57 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "complex_todo_app",
+  "target": "openai/gpt-6.1-sol",
+  "input": [
+    "Build a command-line TODO app. Create /app/todo.sh that supports these subcommands: 'add <task>' appends a task to /app/tasks.txt, 'list' prints all tasks with line numbers, 'done <number>' removes that line from the file. Then demonstrate: add 'Buy groceries', add 'Write tests', add 'Deploy app', list all tasks, mark task 1 as done, list again to show remaining tasks."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Created executable `/app/todo.sh` supporting:\n- `add <task>`\n- `list`\n- `done <number>`\n\nRan the requested demonstration:\n\n```console\n$ /app/todo.sh add 'Buy groceries'\n$ /app/todo.sh add 'Write tests'\n$ /app/todo.sh add 'Deploy app'\n$ /app/todo.sh list\n1. Buy groceries\n2. Write tests\n3. Deploy app\n\n$ /app/todo.sh done 1\n$ /app/todo.sh list\n1. Write tests\n2. Deploy app\n```\n\nThe remaining tasks are saved in `/app/tasks.txt`.",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "mkdir -p /app\ncat > /app/todo.sh <<'EOF'\n#!/usr/bin/env bash\nset -euo pipefail\n\nTASK_FILE=/app/tasks.txt\nusage() {\n  echo \"Usage: $0 {add <task>|list|done <number>}\" >&2\n  exit 1\n}\n\n[[ $# -ge 1 ]] || usage\ncommand=$1\nshift\ncase \"$command\" in\n  add)\n    [[ $# -ge 1 ]] || usage\n    task=\"$*\"\n    [[ -n \"$task\" && \"$task\" != *$'\\n'* ]] || { echo 'Task must be nonempty and on one line.' >&2; exit 1; }\n    printf '%s\\n' \"$task\" >> \"$TASK_FILE\"\n    ;;\n  list)\n    [[ $# -eq 0 ]] || usage\n    if [[ -f \"$TASK_FILE\" ]]; then\n      awk '{printf \"%d. %s\\n\", NR, $0}' \"$TASK_FILE\"\n    fi\n    ;;\n  done)\n    [[ $# -eq 1 ]] || usage\n    [[ \"$1\" =~ ^[1-9][0-9]*$ ]] || { echo 'Task number must be a positive integer.' >&2; exit 1; }\n    [[ -f \"$TASK_FILE\" ]] || { echo 'No tasks found.' >&2; exit 1; }\n    awk -v number=\"$1\" 'END {exit !(number <= NR)}' \"$TASK_FILE\" || { echo 'Task number out of range.' >&2; exit 1; }\n    temp=$(mktemp /app/tasks.txt.XXXXXX)\n    trap 'rm -f \"$temp\"' EXIT\n    awk -v number=\"$1\" 'NR != number' \"$TASK_FILE\" > \"$temp\"\n    mv \"$temp\" \"$TASK_FILE\"\n    ;;\n  *) usage ;;\nesac\nEOF\nchmod +x /app/todo.sh\n/app/todo.sh add 'Buy groceries'\n/app/todo.sh add 'Write tests'\n/app/todo.sh add 'Deploy app'\nprintf 'All tasks:\\n'\n/app/todo.sh list\nprintf '\\nMarking task 1 as done...\\n'\n/app/todo.sh done 1\nprintf '\\nRemaining tasks:\\n'\n/app/todo.sh list\ncat /app/tasks.txt"
+    ],
+    "usage": {
+      "input_tokens": 1525,
+      "output_tokens": 681,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 11936
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "mkdir -p /app\ncat > /app/todo.sh <<'EOF'\n#!/usr/bin/env bash\nset -euo pipefail\n\nTASK_FILE=/app/tasks.txt\nusage() {\n  echo \"Usage: $0 {add <task>|list|done <number>}\" >&2\n  exit 1\n}\n\n[[ $# -ge 1 ]] || usage\ncommand=$1\nshift\ncase \"$command\" in\n  add)\n    [[ $# -ge 1 ]] || usage\n    task=\"$*\"\n    [[ -n \"$task\" && \"$task\" != *$'\\n'* ]] || { echo 'Task must be nonempty and on one line.' >&2; exit 1; }\n    printf '%s\\n' \"$task\" >> \"$TASK_FILE\"\n    ;;\n  list)\n    [[ $# -eq 0 ]] || usage\n    if [[ -f \"$TASK_FILE\" ]]; then\n      awk '{printf \"%d. %s\\n\", NR, $0}' \"$TASK_FILE\"\n    fi\n    ;;\n  done)\n    [[ $# -eq 1 ]] || usage\n    [[ \"$1\" =~ ^[1-9][0-9]*$ ]] || { echo 'Task number must be a positive integer.' >&2; exit 1; }\n    [[ -f \"$TASK_FILE\" ]] || { echo 'No tasks found.' >&2; exit 1; }\n    awk -v number=\"$1\" 'END {exit !(number <= NR)}' \"$TASK_FILE\" || { echo 'Task number out of range.' >&2; exit 1; }\n    temp=$(mktemp /app/tasks.txt.XXXXXX)\n    trap 'rm -f \"$temp\"' EXIT\n    awk -v number=\"$1\" 'NR != number' \"$TASK_FILE\" > \"$temp\"\n    mv \"$temp\" \"$TASK_FILE\"\n    ;;\n  *) usage ;;\nesac\nEOF\nchmod +x /app/todo.sh\n/app/todo.sh add 'Buy groceries'\n/app/todo.sh add 'Write tests'\n/app/todo.sh add 'Deploy app'\nprintf 'All tasks:\\n'\n/app/todo.sh list\nprintf '\\nMarking task 1 as done...\\n'\n/app/todo.sh done 1\nprintf '\\nRemaining tasks:\\n'\n/app/todo.sh list\ncat /app/tasks.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "All tasks:\n1. Buy groceries\n2. Write tests\n3. Deploy app\n\nMarking task 1 as done...\n\nRemaining tasks:\n1. Write tests\n2. Deploy app\nWrite tests\nDeploy app\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

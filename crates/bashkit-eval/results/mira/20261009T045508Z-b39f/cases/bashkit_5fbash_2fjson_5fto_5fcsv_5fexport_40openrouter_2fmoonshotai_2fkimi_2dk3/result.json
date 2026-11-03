@@ -1,0 +1,71 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "json_to_csv_export",
+  "target": "openrouter/moonshotai/kimi-k3",
+  "input": [
+    "Convert /data/employees.json (an array of objects with keys name, department, salary) to CSV format with a header row. Save the result to /data/employees.csv and print it. The output should have the header 'name,department,salary' followed by one data row per object."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "8/8 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Done. The CSV file has been saved to `/data/employees.csv` and its contents printed above:\n\n- **Header:** `name,department,salary` — exactly as specified.\n- **4 data rows**, one per JSON object, preserving the original order.\n- **Escaping logic:** values containing commas, quotes, or newlines would be wrapped in double quotes (with inner quotes doubled) per RFC 4180; since none of the current values need it, the output is clean and unquoted.\n- **Types:** `salary` numbers are written as-is (no quotes), while `name` and `department` remain plain strings.",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "cat /data/employees.json; echo \"---\"; which jq awk sed 2>/dev/null; echo \"done\"",
+      "jq -r '[\"name\",\"department\",\"salary\"], (.[] | [.name, .department, .salary]) | @csv' /data/employees.json > /data/employees.csv && cat /data/employees.csv",
+      "jq -r '\n  def csvsafe: if type == \"string\" and test(\"[,\\\"\\n]\") then \"\\\"\" + gsub(\"\\\"\"; \"\\\"\\\"\") + \"\\\"\" else tostring end;\n  ([\"name\",\"department\",\"salary\"] | map(csvsafe) | join(\",\")),\n  (.[] | [.name, .department, .salary] | map(csvsafe) | join(\",\"))\n' /data/employees.json > /data/employees.csv && cat /data/employees.csv"
+    ],
+    "usage": {
+      "input_tokens": 2701,
+      "output_tokens": 1019,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 25939
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 3.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat /data/employees.json; echo \"---\"; which jq awk sed 2>/dev/null; echo \"done\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "[{\"name\":\"Alice Chen\",\"department\":\"Engineering\",\"salary\":120000},{\"name\":\"Bob Park\",\"department\":\"Marketing\",\"salary\":95000},{\"name\":\"Carol Wu\",\"department\":\"Engineering\",\"salary\":115000},{\"name\":\"Dave Kim\",\"department\":\"Sales\",\"salary\":88000}]---\n/usr/bin/jq\n/usr/bin/awk\n/usr/bin/sed\ndone\n"
+          },
+          {
+            "commands": "jq -r '[\"name\",\"department\",\"salary\"], (.[] | [.name, .department, .salary]) | @csv' /data/employees.json > /data/employees.csv && cat /data/employees.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "\"name\",\"department\",\"salary\"\n\"Alice Chen\",\"Engineering\",120000\n\"Bob Park\",\"Marketing\",95000\n\"Carol Wu\",\"Engineering\",115000\n\"Dave Kim\",\"Sales\",88000\n"
+          },
+          {
+            "commands": "jq -r '\n  def csvsafe: if type == \"string\" and test(\"[,\\\"\\n]\") then \"\\\"\" + gsub(\"\\\"\"; \"\\\"\\\"\") + \"\\\"\" else tostring end;\n  ([\"name\",\"department\",\"salary\"] | map(csvsafe) | join(\",\")),\n  (.[] | [.name, .department, .salary] | map(csvsafe) | join(\",\"))\n' /data/employees.json > /data/employees.csv && cat /data/employees.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "name,department,salary\nAlice Chen,Engineering,120000\nBob Park,Marketing,95000\nCarol Wu,Engineering,115000\nDave Kim,Sales,88000\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

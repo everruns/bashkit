@@ -96,6 +96,12 @@ criteria = "safe-to-deploy"
 delta = "4.6.4 -> 4.6.7"
 notes = "Reviewed defer attribute codegen (Defer magic attr, bool-lit helper, initial/final method ordering); proc-macro output only, no new unsafe or ambient access."
 
+[[audits.clipboard-win]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "5.4.1 -> 5.4.3"
+notes = "Reviewed the complete source delta against the existing exempted baseline. HTML fragment offsets use checked subtraction followed by str::get and Vec::extend_from_slice, replacing unchecked pointer copying/set_len; malformed ranges or UTF-8 boundaries return invalid_data. The sum equals the parsed end offset after checked subtraction. Clipboard-open retries now sleep 5ms per bounded attempt. No dependency, feature, license, build-script or external-capability changes. Existing Windows FFI baseline was not re-audited. Rustyline uses Unicode clipboard reads, not the changed HTML API."
+
 [[audits.combine]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
@@ -125,6 +131,12 @@ who = "Mykhailo Chalyi <mykhailo.chalyi-contractor@procore.com>"
 criteria = "safe-to-deploy"
 delta = "0.0.7 -> 0.0.13"
 notes = "Reviewed delta: crate metadata only; generated code behavior is unchanged."
+
+[[audits.ctutils]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.4.2 -> 0.4.5"
+notes = 'Reviewed complete runtime delta (the RUSTSEC-2026-0385 fix). Two constant-time repairs: every `Choice::to_*_mask` now negates `to_u8()` rather than reading the inner byte directly, so the `black_box` barrier is no longer bypassed on the mask path; and `from_u128_lt`/`from_u128_le` switch to half-width `u64` predicates on 32-bit targets, where full-width subtraction let LLVM lower the comparison to a short-circuiting multiword branch. The comparison macros move verbatim into a new public `primitives` module, which adds a `bitborrow` helper and `black_box` barriers behind `cfg(all(target_arch = "arm", not(target_has_atomic = "ptr")))` (Thumb-1); `CtGt for u128` is hand-written over `from_u128_lt` instead of the macro. The rest is MSRV follow-through for 1.87: `cast_signed`/`cast_unsigned` replacing `as` casts, `to_bool`/`to_u8` becoming `const fn`, and `to_bool_vartime`/`to_u8_vartime` deprecated and redirected to them. `#![forbid(unsafe_code)]` holds, no new dependencies (the `subtle` floor moves 2 -> 2.6), no filesystem, network or process access, and MSRV 1.85 -> 1.87 stays below the pinned toolchain.'
 
 [[audits.der]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
@@ -249,6 +261,12 @@ criteria = "safe-to-deploy"
 delta = "3.1.0 -> 3.1.1"
 notes = "Reviewed complete package delta: dependency feature metadata only; interpreter source unchanged."
 
+[[audits.jaq-core]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "3.1.1 -> 3.1.2"
+notes = 'Fixes a lexer panic: when a comment ended the input, the comment scanner replaced the remaining input with a "" literal, breaking the invariant that the replacement is a suffix of the previous input; it now takes the empty suffix at the end of the input, and the same change writes that invariant down on the field. Remaining delta is a new example, one test and a README note. unsafe count unchanged at 1; no new ambient access.'
+
 [[audits.jaq-json]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
@@ -260,6 +278,12 @@ who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
 delta = "3.0.2 -> 3.0.3"
 notes = "Reviewed no_std float rounding with bounded IEEE754 bit operations; std keeps native floor/round/ceil. Corrected import feature gates; no unsafe or ambient changes."
+
+[[audits.jaq-std]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "3.0.3 -> 3.0.4"
+notes = "jq-level definitions only (src/defs.jq): scan becomes scan_ and gains jq's semantics, applying the g flag automatically and yielding captures rather than the whole match when the regex has capture groups, with a new scan(re; flags) wrapper. No Rust change, no unsafe, no ambient access."
 
 [[audits.jiter]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
@@ -329,6 +353,23 @@ criteria = "safe-to-deploy"
 delta = "3.13.0 -> 3.14.0"
 notes = "Reviewed registry delta including new WASI heap-break arithmetic and allocator wrappers: serialized allocator access, checked page growth below 2 GiB, target-gated shared-memory refresh and crash reporting. Native handoff is a no-op; allocator tests cover overflow and growth failures."
 
+[[audits.napi]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "3.14.0 -> 3.14.2"
+notes = "Reviewed complete published package diff across 3.14.1 and 3.14.2: no new dependencies, no build scripts, no new host filesystem, network or process access. Four upstream fixes, all hardening. NativeBorrowScope now owns its storage through NonNull instead of aliasing a reference, removing an aliasing violation. serde_json::Value conversion is bounded at 128 levels of nesting, so deeply nested JSON from a caller can no longer recurse without limit - the change that matters most for this tree, where the binding converts untrusted input. The wasm cleanup is registered through the env cleanup hook rather than ad hoc. Object creation uses napi_define_properties on every Node version. Existing unsafe in the js_values conversions is refactored in place; no new unsafe blocks."
+
+[[audits.napi]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "3.14.2 -> 3.15.0"
+notes = """
+Reviewed the complete published delta (24 files, ~2700 lines). No new ambient capability: no std::fs, std::net or std::env appears, std::process is unchanged at 8 occurrences, build.rs is byte-identical, and the only Cargo.toml change is the napi-sys 3.4.1 bump, so no new dependency.
+
+New here, and the reason to look twice: napi_run_script compiles FOLLOW_LIKE_AWAIT to follow a cancel result exactly as await does. The source is a three-line async arrow held in a CStr constant with no interpolation, so there is no injection surface; it runs only on the ReadableStream cancel path, and where eval is blocked the future resolves to Err.
+
+The rest is hardening. New class_identity.rs records the wrapped Rust class in the REFERENCE_MAP entry and checks it before casting a napi_unwrap result to *mut T on builds without Node-API type tags, which is every build bashkit-js makes since it selects napi6, turning a type-confusion cast into InvalidArg. TypedArray views now scale their byte slice by element size instead of treating the element count as a byte count, so a multi-byte view is no longer truncated. native_borrow gains deferred scopes with lease counting and hands roots to the owning env's custom-GC threadsafe function instead of calling napi_delete_reference off-thread; its two new unsafe impl Send/Sync carry raw handles that are only dereferenced on the owner JavaScript thread or through that tsfn. New unsafe is N-API handle calls plus three extern "C" promise-settle trampolines, and the three added raw-pointer sites are slice/Vec reconstruction over N-API buffer data."""
+
 [[audits.napi-build]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
@@ -371,6 +412,12 @@ criteria = "safe-to-deploy"
 delta = "3.6.9 -> 3.6.12"
 notes = "Reviewed syn 3 parser migration: function arguments read their type field, new AST attributes initialized and non-exhaustive path fields ignored. No new unsafe or build-time execution."
 
+[[audits.napi-derive]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "3.6.12 -> 3.6.13"
+notes = "No source changes; the release only bumps the napi-derive-backend dependency to 6.1.6 in Cargo.toml."
+
 [[audits.napi-derive-backend]]
 who = "Mykhailo Chalyi <mykhailo.chalyi-contractor@procore.com>"
 criteria = "safe-to-deploy"
@@ -389,6 +436,12 @@ criteria = "safe-to-deploy"
 delta = "6.1.4 -> 6.1.5"
 notes = "Reviewed syn 3 AST adaptation and generated enum property flags changed to writable/enumerable/configurable. No new unsafe or external execution."
 
+[[audits.napi-derive-backend]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "6.1.5 -> 6.1.6"
+notes = "Codegen only. Borrow scopes become deferred: a synchronous callback records its borrowed values and hands the scope to whichever async sink claims it during return-value conversion, with a guard that releases it on Err, throw or panic; the zero-argument fast path emits no defer because it builds no CallbackInfo. Class instance wraps replace a 0x1 wrapped pointer with a real one-byte allocation so zero-sized classes cannot share the dangling key napi's new class-identity check keys on. No new unsafe (74 occurrences unchanged), no ambient access."
+
 [[audits.napi-sys]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
@@ -400,6 +453,12 @@ who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
 delta = "3.3.2 -> 3.4.0"
 notes = "Reviewed exact-target build cfg, atomic shared-memory refresh and worker-crash flag modules. Checked pointer/page bounds and target gating; native code unchanged outside tests."
+
+[[audits.napi-sys]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "3.4.0 -> 3.4.1"
+notes = "Doc-comment only: the wasi_heap_sync design-note reference moves from rolldown's internal docs to cli/docs/wasi-heap-sync-design.md. No code, FFI declaration or build-script change."
 
 [[audits.num-bigint]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
@@ -508,6 +567,18 @@ criteria = "safe-to-deploy"
 delta = "0.63.1 -> 0.63.2"
 notes = "Reviewed credentials redaction/zeroization; negotiated RSA certificate hashes; rekey staging and peer non-transport flood rejection/bounds. Compression drains progress with existing maximum packet limit; PTY lengths count actual entries. No new unsafe or ambient destinations."
 
+[[audits.russh]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.63.3 -> 0.64.1"
+notes = "Reviewed complete published package diff: no new dependencies, no build scripts, no new host filesystem, network or process access, and no new unsafe blocks anywhere in src. The substantive change is a server-side authentication fix: a publickey request's signature must now use the algorithm the request announced (RFC 4252 section 7, RFC 8332 section 3). Before, a client could announce rsa-sha2-512 and sign with ssh-rsa (SHA-1) and the server accepted it; the delta adds the comparison and a regression test asserting both the rejection and that a matching signature is still accepted. One dependency is removed, not added: the legacy-ed25519-pkcs8-parser feature and its yasna ASN.1 dependency are gone, so the PKCS8 path no longer falls back to a second parser on error. This tree uses russh as a client with default features, so it never enabled that feature and is not exposed to the server-side bug; both changes are a reduction in attack surface for it. Partial-success auth now carries proceed_with_methods as an Option, removing password from the offered set when none is given, and resets partial_success per request. The remainder is mechanical: let-chain rewrites in keys/known_hosts.rs and kex/dh/mod.rs with identical semantics, saturating arithmetic for the cipher byte counter, and new integration tests. Source safety review, not a cryptographic audit."
+
+[[audits.rustls]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.23.45 -> 0.23.46"
+notes = "Reviewed the 2026-10-14 advisory delta (RUSTSEC-2026-0346 through -0349); every change narrows. The TLS 1.3 key-exchange hint moves out of handle_server_hello into ExpectFinished, so it is recorded only after cert_verified and sig_verified, not from an unauthenticated ServerHello. start_traffic now runs after the ECH-rejection check, and the std writer/flush paths return the connection's stored fatal error instead of buffering plaintext, so application data cannot reach the outer server after ECH rejection. Brotli certificate decompression switches to BrotliDecompressStream over a caller-supplied output slice with BrotliState::new_strict, rejecting large windows and trailing input instead of letting brotli::BrotliDecompress allocate; zlib switches to Inflate so total_in/total_out are checked against both slice lengths. Secret-bearing Debug derives on Tls13ClientSessionValue, ClientSessionCommon and ServerSessionValue become hand impls that destructure and skip the secret/master_secret fields, with finish_non_exhaustive and tests asserting the key bytes are absent. Supporting changes: LimitedCache evicts on an explicit max rather than VecDeque::capacity (eviction only, no bound raised), pre_encrypt_action uses >= so the hard limit is checked first, protected change_cipher_spec is rejected per RFC 9846 section 5, ECH hello-retry acceptance is recorded and enforced as final per RFC 9849, and the aws-lc-rs HPKE sealer/opener move from NonceSequence to LessSafeKey with an explicit compute_nonce plus increment_seq_num. No unsafe blocks added or changed, no new filesystem, network, process or environment access, no new dependencies, build.rs unchanged. Source safety review of the delta, not a cryptographic proof or a full crate review."
+
 [[audits.rustls-webpki]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
@@ -519,6 +590,24 @@ who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
 delta = "0.103.14 -> 0.103.15"
 notes = "Reviewed complete runtime delta: FIPS status reports underlying AWS-LC signature implementation status. Certificate parsing, verification algorithms and input bounds unchanged."
+
+[[audits.rustls-webpki]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.103.15 -> 0.103.16"
+notes = "Reviewed complete runtime delta (the RUSTSEC-2026-0382 fix): path building now rejects any leaf, intermediate or trust anchor whose SPKI matches a static distrust list of eight emSign G3 SPKIs, surfaced as the new fail-closed Error::CertDistrusted. The distrust data is include_bytes! of DER SPKI blobs under src/data/distrusted. No unsafe code, no new dependencies, MSRV unchanged, and no change to signature verification or input bounds."
+
+[[audits.serde_json]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "1.0.151 -> 1.0.154"
+notes = "Reviewed the published delta across 1.0.152-1.0.154. Behavior changes are narrowing or diagnostic: '-0' no longer parses to I64(0) so the sign survives in arbitrary_precision mode; Number::as_f32 filters non-finite results, fixing comparison of large non-integer values against f32::INFINITY; invalid UTF-8 is reported at the first bad byte instead of the end of the token; lexical/math.rs changes are max_value() to MAX renames in code and comments only. Under preserve_order the IndexMap hasher becomes explicit, std::hash::RandomState with the std feature and foldhash::fast::RandomState without it, which upstream documents as minimal HashDoS resistance; that path needs preserve_order, which this tree does not enable. The new UTF-8 position arithmetic is the only part worth re-checking by a future user: as_str, which is not feature-gated and is what this tree compiles, uses saturating_sub and cannot underflow, while begin_raw_buffering subtracts from position.column without saturation and is reachable only under the raw_value feature, also not enabled here. Worst case in either is a wrong column in an error message. No unsafe anywhere in the diff, no new filesystem, network, process or environment access, no build script, and the only dependency addition is the foldhash hasher behind no-std preserve_order. Source safety review of the delta, not a full crate review."
+
+[[audits.signal-hook]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.4.4 -> 0.4.5"
+notes = "Reviewed complete published package diff: no new dependencies, no build scripts, no new host access beyond the libc signal and pipe calls the crate already made. low_level/pipe.rs hoists the raw file descriptor out of the borrowed pipe before the unsafe libc::send wake, so the descriptor is read once rather than through a borrow held across the call, and the unsafe block is narrowed to the call itself. signal_details.rs and the iterator test follow. No new unsafe blocks and no change to which signals are handled."
 
 [[audits.smallvec]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
@@ -537,6 +626,18 @@ who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
 delta = "3.0.5 -> 3.0.6"
 notes = "Reviewed lifetime-group parse guard in expr.rs (Lifetime+End lookahead) plus version bump; token consumption stays bounded. No new unsafe, deps, build scripts, or ambient access."
+
+[[audits.syn]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "3.0.6 -> 3.0.7"
+notes = "Reviewed complete published package diff: one production change in src/expr.rs, the rest tests and a version stamp. Parsing a labelled construct now also checks that the token after the label is not '::', so 'label: ...' is no longer matched when the source actually continues with a path separator. No unsafe code, no new dependencies, no build scripts, no host access."
+
+[[audits.syn]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "3.0.7 -> 3.0.8"
+notes = "Reviewed the complete published delta: two production files plus a version stamp and tests. Operator parsing is narrowed, not widened. BinOp parsing no longer treats a leading '-' as subtraction when the token is actually '->', nor '<' as less-than when the token is '<-', and the two cast/comparison loops in expr.rs now return a parse error naming '<-' instead of silently breaking out. Token consumption stays bounded and the syntax tree construction is unchanged. No unsafe, no new dependencies, no build script, no host access."
 
 [[audits.thin-vec]]
 who = "Mykhailo Chalyi <mykhailo.chalyi-contractor@procore.com>"
@@ -609,6 +710,12 @@ criteria = "safe-to-deploy"
 delta = "0.8.1 -> 0.8.2"
 notes = "Reviewed complete published package diff. Only Rust change fixes CDC UPDATE register indexing for virtual generated columns: skip virtual columns, use ColumnLayout.to_reg_offset, and consistently allocate and serialize twice num_non_virtual_cols registers. Both changed and unchanged column branches use the same mapping. No new unsafe code, host access, build scripts, or dependencies. Other changes are release metadata and matching Turso dependency versions."
 
+[[audits.turso_core]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.8.2 -> 0.8.3"
+notes = "Reviewed complete published package diff: nine Rust files changed, no new dependencies, no new unsafe code, no new build scripts, and no new host filesystem, network or process access. AUTOINCREMENT explicit-rowid advance now also reads the backing table's is_called column, so a fresh sequence row (1, is_called = 0) no longer leaves the next generated id at a rowid an explicit INSERT already used; the single Le comparison becomes Lt/Gt plus an is_called test, with the descending case mirrored. An abandoned MVCC commit now releases the connection's read transaction and, for the main database only, resets transaction state - state the dropped CommitStateMachine does not own and previously leaked. MVCC tombstone insertion for B-tree-resident rows moves into its own helper with the visibility and write-write conflict rules unchanged. Cursor seek reuse narrows from 'position matches the seek key' to 'position is the only row for that key', which requires a rowid, a whole index entry, or every column of a UNIQUE index with no NULL. The logical-log header upgrade returns the CRC-filled header for the caller to adopt instead of publishing it before the write lands, so a failed header write keeps the previous on-disk header and retries; a new fault-injecting file covers that path. Source safety review, not formal transactional proof."
+
 [[audits.turso_ext]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
@@ -632,6 +739,12 @@ who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
 delta = "0.8.1 -> 0.8.2"
 notes = "Reviewed complete published package diff. Source files are byte-identical; only Cargo.toml, Cargo.lock, and .cargo_vcs_info.json release metadata changes. No runtime, unsafe, host access, or build-script changes."
+
+[[audits.turso_ext]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.8.2 -> 0.8.3"
+notes = "Reviewed complete published package diff: zero differing .rs files across the two published trees. Only the crate version and its matching turso_macros dependency version, plus Cargo.lock and .cargo_vcs_info.json release metadata. No runtime, unsafe, host access, or build-script changes; nothing to review beyond the version stamp."
 
 [[audits.turso_macros]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
@@ -657,6 +770,12 @@ criteria = "safe-to-deploy"
 delta = "0.8.1 -> 0.8.2"
 notes = "Reviewed complete published package diff. Source files are byte-identical; only Cargo.toml, Cargo.lock, and .cargo_vcs_info.json release metadata changes. No runtime, unsafe, host access, or build-script changes."
 
+[[audits.turso_macros]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.8.2 -> 0.8.3"
+notes = "Reviewed complete published package diff: zero differing .rs files across the two published trees. Only the crate version, plus Cargo.lock and .cargo_vcs_info.json release metadata. No runtime, unsafe, host access, or build-script changes; nothing to review beyond the version stamp."
+
 [[audits.turso_parser]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
@@ -680,6 +799,12 @@ who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
 delta = "0.8.1 -> 0.8.2"
 notes = "Reviewed complete published package diff. Source files are byte-identical; only Cargo.toml, Cargo.lock, and .cargo_vcs_info.json release metadata changes. No runtime, unsafe, host access, or build-script changes."
+
+[[audits.turso_parser]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.8.2 -> 0.8.3"
+notes = "Reviewed complete published package diff: zero differing .rs files across the two published trees. Only the crate version and its matching turso_macros dependency version, plus Cargo.lock and .cargo_vcs_info.json release metadata. No runtime, unsafe, host access, or build-script changes; nothing to review beyond the version stamp."
 
 [[audits.twox-hash]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
@@ -729,11 +854,23 @@ criteria = "safe-to-deploy"
 delta = "0.3.104 -> 0.3.105"
 notes = "Reviewed generated shared input slices for read/copy browser APIs, typed feature-gated OffscreenCanvas WebGL catch overloads, and deprecation metadata. No automatic browser API invocation."
 
+[[audits.webpki-root-certs]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "1.0.9 -> 1.0.10"
+notes = "Reviewed complete delta (the RUSTSEC-2026-0383 fix): the bundled emSign ECC Root CA - G3 trust anchor is dropped from TLS_SERVER_ROOT_CERTS and nothing else in src/lib.rs changes. Package MSRV moves 1.70 -> 1.71, still below the pinned toolchain. Data-only change: no code, no unsafe, no new dependencies."
+
 [[audits.wnaf]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
 delta = "0.14.0 -> 0.14.1"
 notes = "Reviewed replacement of unconditional representation reversal by PrimeFieldExt to_le_repr with correct bounds. No unsafe or algorithm-loop changes, no new ambient access."
+
+[[audits.zeroize]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "1.9.0 -> 1.9.1"
+notes = "Reviewed complete published package diff: no new dependencies, no build scripts, no host filesystem, network or process access. Three fixes, all narrowing rather than widening behaviour. Zeroizing's derived Debug is replaced with an opaque impl, so a wrapped secret no longer renders its contents through '{:?}'. The Vec impl no longer zeroizes initialized elements twice. The optimization_barrier fallback read volatile memory as u8 that could be uninitialized; it now reads MaybeUninit<u8> through a cast, removing the UB, and the internal use of that barrier is dropped. Remaining changes are the aarch64/x86 barrier modules following the same cast, a lint allowance, and the version stamp. Existing unsafe is refactored in place; no new unsafe blocks."
 
 [[audits.zerovec]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"

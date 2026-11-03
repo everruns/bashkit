@@ -1,0 +1,47 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "file_path_organizer",
+  "target": "openai/gpt-6.1-sol",
+  "input": [
+    "Under /uploads there are files with various extensions. Write a script that: 1) For each file, determines its extension and moves it into a subdirectory named after that extension (e.g., .txt files go to /uploads/txt/, .csv files go to /uploads/csv/). Create the subdirectories as needed. 2) Print each move as 'moved: FILENAME -> EXTENSION_DIR/'. 3) After all moves, print a summary of how many files per extension as 'EXT: N files'. Handle the case where a file has no extension by putting it in /uploads/other/."
+  ],
+  "passed": false,
+  "aggregate": 0.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": -0.0,
+      "pass": false,
+      "reason": "0/8 checks passed (weighted rate -0%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Save this as `organize_uploads.py` and run it with `python3 organize_uploads.py`:\n\n```python\nfrom pathlib import Path\nfrom collections import Counter\nimport shutil\n\nuploads = Path(\"/uploads\")\ncounts = Counter()\n\n# Snapshot only top-level files; do not process subdirectories.\nfiles = sorted(\n    (path for path in uploads.iterdir() if path.is_file()),\n    key=lambda path: path.name,\n)\n\nfor file in files:\n    extension = file.suffix[1:] or \"other\"\n    destination_dir = uploads / extension\n    destination_dir.mkdir(exist_ok=True)\n    destination = destination_dir / file.name\n\n    # Avoid overwriting an existing file.\n    if destination.exists() or destination.is_symlink():\n        raise FileExistsError(f\"Destination already exists: {destination}\")\n\n    shutil.move(str(file), str(destination))\n    counts[extension] += 1\n    print(f\"moved: {file.name} -> {extension}/\")\n\nfor extension, count in sorted(counts.items()):\n    print(f\"{extension}: {count} files\")\n```\n\nThis uses the final extension (for example, `archive.tar.gz` goes into `gz/`). Files without an extension, including dotfiles such as `.env`, go into `other/`.",
+    "iterations": 1,
+    "tool_calls_count": 0,
+    "usage": {
+      "input_tokens": 497,
+      "output_tokens": 424,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 8830
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 0.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 0.0,
+      "turns": 1.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": null,
+        "links": {},
+        "tool_outputs": []
+      }
+    }
+  },
+  "skipped": false
+}

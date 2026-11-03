@@ -1,3 +1,20 @@
+import {
+  assertRuntimeAccess,
+  captureRuntimeSession,
+  configureRuntimeFunctions,
+  executeNativeRuntime,
+  validateRuntimeFunctions,
+} from "./runtime-functions.js";
+import type {
+  RuntimeFunctionOptions,
+  RuntimeSession,
+} from "./runtime-functions.js";
+export type {
+  ExternalHandler,
+  TypeScriptExternalHandler,
+  HostFunctionContext,
+  RuntimeValue,
+} from "./runtime-functions.js";
 import { AsyncResource } from "node:async_hooks";
 import type {
   Bash as NativeBashType,
@@ -44,6 +61,12 @@ const NativeBash: typeof NativeBashType = native.Bash;
 const NativeBashTool: typeof NativeBashToolType = native.BashTool;
 const NativeTerminal: typeof NativeTerminalType = native.Terminal;
 const nativeGetVersion: () => string = native.getVersion;
+const nativeCommandReadChunk: (input: unknown) => Promise<Uint8Array | null> =
+  native.__commandReadChunk;
+const nativeCommandWrite: (
+  output: unknown,
+  bytes: Uint8Array,
+) => Promise<void> = native.__commandWrite;
 const nativeCreateFileSystem: () => any = native.__createFileSystem;
 const nativeRealFileSystem: (
   hostPath: string,
@@ -175,7 +198,7 @@ export type BuiltinCallback = (ctx: BuiltinContext) => string | Promise<string>;
 /**
  * Options for creating a Bash or BashTool instance.
  */
-export interface BashOptions {
+export interface BashOptions extends RuntimeFunctionOptions {
   /** Named resource-policy baseline. Individual limit options override it. */
   profile?: ExecutionProfileName;
   username?: string;
@@ -351,6 +374,7 @@ export interface BashOptions {
    * ```
    */
   customBuiltins?: Record<string, BuiltinCallback>;
+  commands?: Record<string, CommandCallback>;
 }
 
 export interface SnapshotOptions {
@@ -372,7 +396,30 @@ export interface OutputChunk {
 
 export type OnOutput = (chunk: OutputChunk) => void;
 
+/** Request-scoped byte I/O for a live shell command. */
+export interface CommandContext {
+  name: string;
+  argv: string[];
+  env: Record<string, string>;
+  cwd: string;
+  fs: FileSystem;
+  stdin: AsyncIterable<Uint8Array> & {
+    readChunk(): Promise<Uint8Array | null>;
+  };
+  stdout: { write(bytes: Uint8Array): Promise<void> };
+  stderr: { write(bytes: Uint8Array): Promise<void> };
+}
+export type CommandCallback = (
+  ctx: CommandContext,
+) => Promise<number | { exitCode: number }>;
+
 export interface ExecuteOptions {
+  /** Capture this many bytes per stream in addition to optional live sinks. */
+  capture?: number;
+  /** Awaited byte sinks apply backpressure. Omitted capture retains no output. */
+  stdout?: (bytes: Uint8Array) => void | Promise<void>;
+  stderr?: (bytes: Uint8Array) => void | Promise<void>;
+
   signal?: AbortSignal;
   /**
    * Live chunk callback. Must be synchronous.
@@ -508,6 +555,7 @@ function toNativeOptions(
   options?: BashOptions,
   resolvedFiles?: Record<string, string>,
 ): NativeBashOptions | undefined {
+  validateRuntimeFunctions(options);
   if (!options && !resolvedFiles) return undefined;
   return {
     username: options?.username,
@@ -530,6 +578,8 @@ function toNativeOptions(
     allowedMountPaths: options?.allowedMountPaths,
     python: options?.python,
     externalFunctions: options?.externalFunctions,
+    typescript: options?.typescript,
+    typescriptExternalFunctions: options?.typescriptExternalFunctions,
     sqlite: options?.sqlite,
     network: options?.network,
   };
@@ -569,16 +619,25 @@ export interface FileSystemRealOptions {
 }
 
 export class FileSystem {
-  private native: any;
+  private nativeValue: any;
+  private owner?: object;
+  private get native(): any {
+    if (this.owner) assertRuntimeAccess(this.owner);
+    return this.nativeValue;
+  }
+  private set native(value: any) {
+    this.nativeValue = value;
+  }
   private external?: unknown;
 
   constructor() {
     this.native = nativeCreateFileSystem();
   }
 
-  static fromNative(nativeFs: any): FileSystem {
+  static fromNative(nativeFs: any, owner?: object): FileSystem {
     const fs = Object.create(FileSystem.prototype) as FileSystem;
     fs.native = nativeFs;
+    fs.owner = owner;
     fs.external = undefined;
     return fs;
   }
@@ -685,6 +744,145 @@ export class FileSystem {
   }
 }
 
+function streamingError(error: unknown): Error {
+  const raw = error instanceof Error ? error.message : String(error);
+  return new Error(
+    raw
+      .replace(/file:\/\/[^\s]*/g, "<path>")
+      .replace(/(?<!\w)\/[^\s]*/g, "<path>")
+      .slice(0, 256) || "host callback failed",
+  );
+}
+
+function makeCommandDispatcher(
+  callback: CommandCallback,
+  ownerRef: WeakRef<object>,
+) {
+  return async ([payload, fs, input, stdout, stderr]: [
+    string,
+    unknown,
+    unknown,
+    unknown,
+    unknown,
+  ]): Promise<number> => {
+    const readChunk = () => nativeCommandReadChunk(input);
+    const stdin: CommandContext["stdin"] = {
+      readChunk,
+      async *[Symbol.asyncIterator]() {
+        for (;;) {
+          const bytes = await readChunk();
+          if (bytes == null) return;
+          yield bytes;
+        }
+      },
+    };
+    const owner = ownerRef.deref();
+    const release = owner ? enterLiveOwner(owner) : () => {};
+    try {
+      const status = await callback({
+        ...JSON.parse(payload),
+        fs: FileSystem.fromNative(fs),
+        stdin,
+        stdout: { write: (bytes) => nativeCommandWrite(stdout, bytes) },
+        stderr: { write: (bytes) => nativeCommandWrite(stderr, bytes) },
+      });
+      const code = typeof status === "number" ? status : status?.exitCode;
+      if (!Number.isInteger(code) || code < -0x80000000 || code > 0x7fffffff)
+        throw new TypeError("command must return a 32-bit integer exit status");
+      return code;
+    } catch (error) {
+      throw streamingError(error);
+    } finally {
+      release();
+    }
+  };
+}
+
+function registerCommands(
+  native: NativeBashType | NativeBashToolType,
+  commands?: Record<string, CommandCallback>,
+) {
+  for (const [name, callback] of Object.entries(commands ?? {}))
+    native.addCommand(
+      name,
+      makeCommandDispatcher(callback, new WeakRef(native)),
+    );
+}
+
+const liveSinkOwners = new WeakMap<object, Set<symbol>>();
+function enterLiveOwner(owner: object): () => void {
+  const active = liveSinkOwners.get(owner) ?? new Set<symbol>();
+  const token = Symbol();
+  active.add(token);
+  liveSinkOwners.set(owner, active);
+  return () => {
+    active.delete(token);
+    if (active.size === 0 && liveSinkOwners.get(owner) === active)
+      liveSinkOwners.delete(owner);
+  };
+}
+function hasLiveOptions(options?: ExecuteOptions): boolean {
+  return (
+    options?.capture !== undefined ||
+    options?.stdout !== undefined ||
+    options?.stderr !== undefined
+  );
+}
+function validateLiveOptions(options?: ExecuteOptions): void {
+  if (!hasLiveOptions(options)) return;
+  if (options?.onOutput)
+    throw new TypeError(
+      "use stdout/stderr byte sinks instead of onOutput with streaming options",
+    );
+  if (
+    options?.capture !== undefined &&
+    (!Number.isInteger(options.capture) ||
+      options.capture < 0 ||
+      options.capture > 0xffffffff)
+  ) {
+    throw new TypeError("capture must be a non-negative 32-bit byte limit");
+  }
+  for (const sink of [options?.stdout, options?.stderr])
+    if (sink !== undefined && typeof sink !== "function")
+      throw new TypeError("output sinks must be callable");
+}
+function executeNative(
+  native: NativeBashType | NativeBashToolType,
+  commands: string,
+  options?: ExecuteOptions,
+  runtimeSession?: RuntimeSession,
+): Promise<ExecResult> {
+  if (!hasLiveOptions(options))
+    return executeNativeRuntime(
+      native,
+      commands,
+      toNativeOnOutput(options?.onOutput),
+      runtimeSession,
+    ).finally(() => liveSinkOwners.delete(native));
+  const wrap = (sink?: (bytes: Uint8Array) => void | Promise<void>) =>
+    sink === undefined
+      ? undefined
+      : AsyncResource.bind(async ([bytes]: [Uint8Array]) => {
+          const release = enterLiveOwner(native);
+          try {
+            await sink(bytes);
+          } catch (error) {
+            throw streamingError(error);
+          } finally {
+            release();
+          }
+        });
+  return native
+    .executeLive(
+      commands,
+      options?.capture,
+      wrap(options?.stdout),
+      wrap(options?.stderr),
+      runtimeSession?.dispatch,
+    )
+    .finally(() => liveSinkOwners.delete(native));
+}
+
 /**
  * Wrap a {@link BuiltinCallback} for the native `addBuiltin` ABI.
  *
@@ -760,7 +958,9 @@ export class Bash {
     const resolved = resolveFilesSync(options?.files);
     this.native = new NativeBash(toNativeOptions(options, resolved));
     this.maxInputBytes = options?.maxInputBytes ?? DEFAULT_MAX_INPUT_BYTES;
+    this.native = configureRuntimeFunctions(this.native, options);
     registerCustomBuiltins(this.native, options?.customBuiltins);
+    registerCommands(this.native, options?.commands);
   }
 
   /**
@@ -782,8 +982,18 @@ export class Bash {
     const instance = Object.create(Bash.prototype) as Bash;
     instance.native = new NativeBash(toNativeOptions(options, resolved));
     instance.maxInputBytes = options?.maxInputBytes ?? DEFAULT_MAX_INPUT_BYTES;
+    instance.native = configureRuntimeFunctions(instance.native, options);
     registerCustomBuiltins(instance.native, options?.customBuiltins);
+    registerCommands(instance.native, options?.commands);
     return instance;
+  }
+
+  /** Register a live command with async byte I/O and separate exit status. */
+  addCommand(name: string, callback: CommandCallback): void {
+    this.native.addCommand(
+      name,
+      makeCommandDispatcher(callback, new WeakRef(this.native)),
+    );
   }
 
   /**
@@ -840,6 +1050,8 @@ export class Bash {
    * same instance from `onOutput` via `execute*`, `readFile`, `fs()`, etc.
    */
   executeSync(commands: string, options?: ExecuteOptions): ExecResult {
+    if (hasLiveOptions(options))
+      throw new TypeError("streaming I/O requires async execute()");
     const inputLimitResult = inputTooLargeExecResult(
       commands,
       this.maxInputBytes,
@@ -886,7 +1098,10 @@ export class Bash {
     commands: string,
     options?: ExecuteOptions,
   ): Promise<ExecResult> {
-    const nativeOnOutput = toNativeOnOutput(options?.onOutput);
+    if (liveSinkOwners.has(this.native))
+      throw new Error("host callbacks cannot re-enter the same Bash instance");
+    validateLiveOptions(options);
+    const runtimeSession = captureRuntimeSession(this.native);
     const signal = options?.signal;
     if (signal?.aborted) {
       return cancelledExecResult();
@@ -910,13 +1125,12 @@ export class Bash {
         };
         signal.addEventListener("abort", onAbort, { once: true });
         try {
-          if (nativeOnOutput) {
-            return await this.native.executeWithOutput(
-              commands,
-              nativeOnOutput,
-            );
-          }
-          return await this.native.execute(commands);
+          return await executeNative(
+            this.native,
+            commands,
+            options,
+            runtimeSession,
+          );
         } finally {
           signal.removeEventListener("abort", onAbort);
           if (signalTriggered) {
@@ -924,11 +1138,8 @@ export class Bash {
           }
         }
       }
-      if (nativeOnOutput) {
-        return this.native.executeWithOutput(commands, nativeOnOutput);
-      }
-      return this.native.execute(commands);
-    });
+      return executeNative(this.native, commands, options, runtimeSession);
+    }).finally(() => runtimeSession?.finish());
   }
 
   /**
@@ -1127,25 +1338,42 @@ export class Bash {
    * const restored = Bash.fromSnapshot(snapshot);
    * ```
    */
-  static fromSnapshot(data: Uint8Array, options?: SnapshotOptions): Bash {
-    const instance = new Bash();
+  static fromSnapshot(
+    data: Uint8Array,
+    snapshotOptions?: SnapshotOptions,
+    options?: BashOptions,
+  ): Bash {
+    const instance = Object.create(Bash.prototype) as Bash;
+    const resolved = resolveFilesSync(options?.files);
     instance.native = NativeBash.fromSnapshot(
       Buffer.from(data),
-      undefined,
-      toNativeSnapshotOptions(options),
+      toNativeOptions(options, resolved),
+      toNativeSnapshotOptions(snapshotOptions),
     );
+    instance.native = configureRuntimeFunctions(instance.native, options);
+    registerCustomBuiltins(instance.native, options?.customBuiltins);
+    instance.maxInputBytes = options?.maxInputBytes ?? DEFAULT_MAX_INPUT_BYTES;
     return instance;
   }
 
   /**
    * Create a new Bash instance from a HMAC-protected snapshot.
    */
-  static fromSnapshotKeyed(data: Uint8Array, key: Uint8Array): Bash {
-    const instance = new Bash();
+  static fromSnapshotKeyed(
+    data: Uint8Array,
+    key: Uint8Array,
+    options?: BashOptions,
+  ): Bash {
+    const instance = Object.create(Bash.prototype) as Bash;
+    const resolved = resolveFilesSync(options?.files);
     instance.native = NativeBash.fromSnapshotKeyed(
       Buffer.from(data),
       Buffer.from(key),
+      toNativeOptions(options, resolved),
     );
+    instance.native = configureRuntimeFunctions(instance.native, options);
+    registerCustomBuiltins(instance.native, options?.customBuiltins);
+    instance.maxInputBytes = options?.maxInputBytes ?? DEFAULT_MAX_INPUT_BYTES;
     return instance;
   }
 
@@ -1234,7 +1462,7 @@ export class Bash {
 
   /** Get a FileSystem handle for direct VFS operations. */
   fs(): FileSystem {
-    return FileSystem.fromNative(this.native.fs());
+    return FileSystem.fromNative(this.native.fs(), this.native);
   }
 
   mount(vfsPath: string, fs: FileSystem, readOnly?: boolean): void;
@@ -1337,7 +1565,9 @@ export class BashTool {
     const resolved = resolveFilesSync(options?.files);
     this.native = new NativeBashTool(toNativeOptions(options, resolved));
     this.maxInputBytes = options?.maxInputBytes ?? DEFAULT_MAX_INPUT_BYTES;
+    this.native = configureRuntimeFunctions(this.native, options);
     registerCustomBuiltins(this.native, options?.customBuiltins);
+    registerCommands(this.native, options?.commands);
   }
 
   /**
@@ -1348,8 +1578,18 @@ export class BashTool {
     const instance = Object.create(BashTool.prototype) as BashTool;
     instance.native = new NativeBashTool(toNativeOptions(options, resolved));
     instance.maxInputBytes = options?.maxInputBytes ?? DEFAULT_MAX_INPUT_BYTES;
+    instance.native = configureRuntimeFunctions(instance.native, options);
     registerCustomBuiltins(instance.native, options?.customBuiltins);
+    registerCommands(instance.native, options?.commands);
     return instance;
+  }
+
+  /** Register a live command with async byte I/O and separate exit status. */
+  addCommand(name: string, callback: CommandCallback): void {
+    this.native.addCommand(
+      name,
+      makeCommandDispatcher(callback, new WeakRef(this.native)),
+    );
   }
 
   /** Register a JS callback as a custom builtin. See {@link Bash.addBuiltin}. */
@@ -1375,6 +1615,8 @@ export class BashTool {
    * via `execute*`, `readFile`, `fs()`, etc.
    */
   executeSync(commands: string, options?: ExecuteOptions): ExecResult {
+    if (hasLiveOptions(options))
+      throw new TypeError("streaming I/O requires async execute()");
     const inputLimitResult = inputTooLargeExecResult(
       commands,
       this.maxInputBytes,
@@ -1413,7 +1655,10 @@ export class BashTool {
     commands: string,
     options?: ExecuteOptions,
   ): Promise<ExecResult> {
-    const nativeOnOutput = toNativeOnOutput(options?.onOutput);
+    if (liveSinkOwners.has(this.native))
+      throw new Error("host callbacks cannot re-enter the same Bash instance");
+    validateLiveOptions(options);
+    const runtimeSession = captureRuntimeSession(this.native);
     const signal = options?.signal;
     if (signal?.aborted) {
       return cancelledExecResult();
@@ -1437,13 +1682,12 @@ export class BashTool {
         };
         signal.addEventListener("abort", onAbort, { once: true });
         try {
-          if (nativeOnOutput) {
-            return await this.native.executeWithOutput(
-              commands,
-              nativeOnOutput,
-            );
-          }
-          return await this.native.execute(commands);
+          return await executeNative(
+            this.native,
+            commands,
+            options,
+            runtimeSession,
+          );
         } finally {
           signal.removeEventListener("abort", onAbort);
           if (signalTriggered) {
@@ -1451,11 +1695,8 @@ export class BashTool {
           }
         }
       }
-      if (nativeOnOutput) {
-        return this.native.executeWithOutput(commands, nativeOnOutput);
-      }
-      return this.native.execute(commands);
-    });
+      return executeNative(this.native, commands, options, runtimeSession);
+    }).finally(() => runtimeSession?.finish());
   }
 
   /**
@@ -1595,7 +1836,9 @@ export class BashTool {
       toNativeOptions(options, resolved),
       toNativeSnapshotOptions(snapshotOptions),
     );
+    instance.native = configureRuntimeFunctions(instance.native, options);
     registerCustomBuiltins(instance.native, options?.customBuiltins);
+    registerCommands(instance.native, options?.commands);
     instance.maxInputBytes = options?.maxInputBytes ?? DEFAULT_MAX_INPUT_BYTES;
     return instance;
   }
@@ -1615,7 +1858,9 @@ export class BashTool {
       Buffer.from(key),
       toNativeOptions(options, resolved),
     );
+    instance.native = configureRuntimeFunctions(instance.native, options);
     registerCustomBuiltins(instance.native, options?.customBuiltins);
+    registerCommands(instance.native, options?.commands);
     instance.maxInputBytes = options?.maxInputBytes ?? DEFAULT_MAX_INPUT_BYTES;
     return instance;
   }
@@ -1729,7 +1974,7 @@ export class BashTool {
 
   /** Get a FileSystem handle for direct VFS operations. */
   fs(): FileSystem {
-    return FileSystem.fromNative(this.native.fs());
+    return FileSystem.fromNative(this.native.fs(), this.native);
   }
 
   mount(vfsPath: string, fs: FileSystem, readOnly?: boolean): void;

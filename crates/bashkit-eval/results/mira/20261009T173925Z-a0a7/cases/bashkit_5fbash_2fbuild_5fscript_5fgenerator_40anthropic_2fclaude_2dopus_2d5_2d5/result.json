@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "build_script_generator",
+  "target": "anthropic/claude-opus-5-5",
+  "input": [
+    "Read /project/deps.txt which lists build targets and their dependencies (format: 'target: dep1 dep2'). Generate /project/build.sh that builds targets in correct dependency order (dependencies before dependents). Then run the build script, which should create each target as a file in /project/out/ containing 'built: <target>'. Print the build order."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I created `/project/build.sh` and ran it. Every target was built after its dependencies, and each file in `/project/out/` contains `built: <target>`.\n\n**Build order:**\n1. `core` (no dependencies)\n2. `lib` (needs `core`)\n3. `utils` (needs `core`)\n4. `app` (needs `lib` and `utils`)\n\n`lib` and `utils` both depend only on `core`, so either could go first. A short Python step read `deps.txt`, worked out the order and wrote the script. It would also stop with an error if the dependencies ever looped back on each other. The order is fixed in `build.sh`, so if `deps.txt` changes, the script needs to be generated again.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cat /project/deps.txt; ls /project",
+      "cd /project && python3 - <<'EOF'\ndeps={}\norder=[]\nfor line in open('deps.txt'):\n    line=line.strip()\n    if not line or line.startswith('#'): continue\n    t,_,d=line.partition(':')\n    deps[t.strip()]=d.split()\nfor ds in list(deps.values()):\n    for d in ds: deps.setdefault(d,[])\nstate={}\ndef visit(n,stack):\n    if state.get(n)==2: return\n    if state.get(n)==1: raise SystemExit(\"cycle: \"+\" -> \".join(stack+[n]))\n    state[n]=1\n    for d in deps[n]: visit(d,stack+[n])\n    state[n]=2; order.append(n)\nfor t in deps: visit(t,[])\nwith open('build.sh','w') as f:\n    f.write('#!/bin/bash\\nset -euo pipefail\\ncd \"$(dirname \"$0\")\"\\nmkdir -p out\\n')\n    for t in order:\n        f.write(f'echo \"Building {t}\"\\necho \"built: {t}\" > \"out/{t}\"\\n')\nEOF\nchmod +x build.sh; cat build.sh; echo ---; bash build.sh; echo ---; for f in out/*; do echo \"$f: $(cat $f)\"; done"
+    ],
+    "usage": {
+      "input_tokens": 4060,
+      "output_tokens": 804,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 9618
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat /project/deps.txt; ls /project",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "app: lib utils\nlib: core\nutils: core\ncore:\ndeps.txt\nsrc\n"
+          },
+          {
+            "commands": "cd /project && python3 - <<'EOF'\ndeps={}\norder=[]\nfor line in open('deps.txt'):\n    line=line.strip()\n    if not line or line.startswith('#'): continue\n    t,_,d=line.partition(':')\n    deps[t.strip()]=d.split()\nfor ds in list(deps.values()):\n    for d in ds: deps.setdefault(d,[])\nstate={}\ndef visit(n,stack):\n    if state.get(n)==2: return\n    if state.get(n)==1: raise SystemExit(\"cycle: \"+\" -> \".join(stack+[n]))\n    state[n]=1\n    for d in deps[n]: visit(d,stack+[n])\n    state[n]=2; order.append(n)\nfor t in deps: visit(t,[])\nwith open('build.sh','w') as f:\n    f.write('#!/bin/bash\\nset -euo pipefail\\ncd \"$(dirname \"$0\")\"\\nmkdir -p out\\n')\n    for t in order:\n        f.write(f'echo \"Building {t}\"\\necho \"built: {t}\" > \"out/{t}\"\\n')\nEOF\nchmod +x build.sh; cat build.sh; echo ---; bash build.sh; echo ---; for f in out/*; do echo \"$f: $(cat $f)\"; done",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "#!/bin/bash\nset -euo pipefail\ncd \"$(dirname \"$0\")\"\nmkdir -p out\necho \"Building core\"\necho \"built: core\" > \"out/core\"\necho \"Building lib\"\necho \"built: lib\" > \"out/lib\"\necho \"Building utils\"\necho \"built: utils\" > \"out/utils\"\necho \"Building app\"\necho \"built: app\" > \"out/app\"\n---\nBuilding core\nBuilding lib\nBuilding utils\nBuilding app\n---\nout/app: built: app\nout/core: built: core\nout/lib: built: lib\nout/utils: built: utils\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

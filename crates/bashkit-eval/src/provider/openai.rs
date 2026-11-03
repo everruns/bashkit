@@ -1,6 +1,12 @@
 // OpenAI Chat Completions API provider
 // POST https://api.openai.com/v1/chat/completions
 // Tool use: tool_calls array + role "tool" messages
+//
+// Decision: OpenRouter speaks the same Chat Completions wire format, so it is
+// a second endpoint + key on this provider, not a separate provider. It lets
+// the eval run OpenAI and Gemini models when the direct OpenAI key has no
+// credit (and Gemini's own host is unreachable). OpenRouter model ids carry
+// the vendor prefix (`openai/gpt-5.6-sol`, `google/gemini-3.8-flash`).
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
@@ -10,20 +16,49 @@ use super::{
     ensure_rustls_crypto_provider, is_retryable_error,
 };
 
+const OPENAI_CHAT_URL: &str = "https://api.openai.com/v1/chat/completions";
+const OPENROUTER_CHAT_URL: &str = "https://openrouter.ai/api/v1/chat/completions";
+
 pub struct OpenAiProvider {
     client: reqwest::Client,
     api_key: String,
     model: String,
+    endpoint: &'static str,
+    /// Display name for errors/retry logs ("OpenAI" / "OpenRouter").
+    name: &'static str,
 }
 
 impl OpenAiProvider {
     pub fn new(model: &str) -> Result<Self> {
+        Self::with_endpoint(model, OPENAI_CHAT_URL, "OPENAI_API_KEY", "OpenAI")
+    }
+
+    /// OpenRouter's OpenAI-compatible endpoint; `model` is a vendor-prefixed
+    /// OpenRouter id such as `openai/gpt-5.6-sol`.
+    pub fn openrouter(model: &str) -> Result<Self> {
+        Self::with_endpoint(
+            model,
+            OPENROUTER_CHAT_URL,
+            "OPENROUTER_API_KEY",
+            "OpenRouter",
+        )
+    }
+
+    fn with_endpoint(
+        model: &str,
+        endpoint: &'static str,
+        key_env: &str,
+        name: &'static str,
+    ) -> Result<Self> {
         ensure_rustls_crypto_provider()?;
-        let api_key = std::env::var("OPENAI_API_KEY").context("OPENAI_API_KEY env var not set")?;
+        let api_key =
+            std::env::var(key_env).with_context(|| format!("{key_env} env var not set"))?;
         Ok(Self {
             client: build_http_client()?,
             api_key,
             model: model.to_string(),
+            endpoint,
+            name,
         })
     }
 
@@ -118,11 +153,15 @@ impl OpenAiProvider {
             })
             .collect();
 
-        serde_json::json!({
+        let mut body = serde_json::json!({
             "model": self.model,
             "messages": api_messages,
-            "tools": api_tools
-        })
+        });
+        // Chat Completions rejects `tools: []`; omit it when none are offered.
+        if !api_tools.is_empty() {
+            body["tools"] = serde_json::Value::Array(api_tools);
+        }
+        body
     }
 
     fn parse_response(&self, body: serde_json::Value) -> Result<ProviderResponse> {
@@ -189,19 +228,19 @@ impl Provider for OpenAiProvider {
         for attempt in 0..=delays.len() {
             let resp = self
                 .client
-                .post("https://api.openai.com/v1/chat/completions")
+                .post(self.endpoint)
                 .header("Authorization", format!("Bearer {}", self.api_key))
                 .header("content-type", "application/json")
                 .json(&body)
                 .send()
                 .await
-                .context("failed to send request to OpenAI API")?;
+                .with_context(|| format!("failed to send request to {} API", self.name))?;
 
             let status = resp.status();
             let resp_body: serde_json::Value = resp
                 .json()
                 .await
-                .context("failed to parse OpenAI API response")?;
+                .with_context(|| format!("failed to parse {} API response", self.name))?;
 
             if status.is_success() {
                 return self.parse_response(resp_body);
@@ -216,7 +255,8 @@ impl Provider for OpenAiProvider {
             let retryable = is_retryable_error(status, &resp_body);
             if retryable && let Some(&delay) = delays.get(attempt) {
                 eprintln!(
-                    "  [retry] OpenAI {} — waiting {}s (attempt {}/{})",
+                    "  [retry] {} {} — waiting {}s (attempt {}/{})",
+                    self.name,
                     status,
                     delay,
                     attempt + 1,
@@ -226,7 +266,7 @@ impl Provider for OpenAiProvider {
                 continue;
             }
 
-            anyhow::bail!("OpenAI API error ({}): {}", status, error_msg);
+            anyhow::bail!("{} API error ({}): {}", self.name, status, error_msg);
         }
 
         unreachable!()
@@ -238,5 +278,26 @@ impl Provider for OpenAiProvider {
 
     fn model(&self) -> &str {
         &self.model
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_tools_are_omitted() {
+        let p = OpenAiProvider {
+            client: {
+                ensure_rustls_crypto_provider().unwrap();
+                build_http_client().unwrap()
+            },
+            api_key: String::new(),
+            model: "m".to_string(),
+            endpoint: OPENAI_CHAT_URL,
+            name: "OpenAI",
+        };
+        let body = p.build_request_body(&[], &[], "sys");
+        assert!(body.get("tools").is_none());
     }
 }

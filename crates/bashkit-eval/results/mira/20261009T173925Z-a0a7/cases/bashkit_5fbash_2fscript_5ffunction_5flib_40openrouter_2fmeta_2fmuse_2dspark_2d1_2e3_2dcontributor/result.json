@@ -1,0 +1,85 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "script_function_lib",
+  "target": "openrouter/meta/muse-spark-1.3-contributor",
+  "input": [
+    "Create a file /lib/utils.sh with these bash functions: 'to_upper' that reads stdin and converts to uppercase, 'count_lines' that takes a filename argument and prints the line count, 'file_size' that takes a filename and prints byte count. Then source /lib/utils.sh and demonstrate each function: use to_upper on the string 'hello world', count_lines on /data/sample.txt, and file_size on /data/sample.txt."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "4/4 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Created `/lib/utils.sh` and demonstrated all 3 functions:\n\n**File `/lib/utils.sh`:**\n```bash\n#!/bin/bash\nto_upper() {\n  tr '[:lower:]' '[:upper:]'\n}\ncount_lines() {\n  wc -l < \"$1\" | awk '{print $1}'\n}\nfile_size() {\n  wc -c < \"$1\" | awk '{print $1}'\n}\n```\n\n**Demonstration (after `source /lib/utils.sh`):**\n- `echo 'hello world' | to_upper` → `HELLO WORLD`\n- `count_lines /data/sample.txt` → `5`\n- `file_size /data/sample.txt` → `49`\n\nVerified against `wc -l`/`wc -c` (5 lines, 49 bytes for 5-line sample file).\n",
+    "iterations": 6,
+    "tool_calls_count": 5,
+    "tool_calls": [
+      "ls -R /lib 2>&1; echo \"---\"; ls -R /data 2>&1; echo \"---\"; cat /data/sample.txt 2>&1; pwd; whoami; id",
+      "mkdir -p /lib && cat > /lib/utils.sh <<'EOS'\n#!/bin/bash\nto_upper() {\n  tr '[:lower:]' '[:upper:]'\n}\ncount_lines() {\n  wc -l < \"$1\" | tr -d '[:space:]'\n}\nfile_size() {\n  wc -c < \"$1\" | tr -d '[:space:]'\n}\nEOS\ncat /lib/utils.sh\nls -l /lib/utils.sh",
+      "source /lib/utils.sh\necho \"=== to_upper demo ===\"\necho 'hello world' | to_upper\necho \"=== count_lines demo ===\"\ncount_lines /data/sample.txt\necho \"=== file_size demo ===\"\nfile_size /data/sample.txt\necho \"=== types ===\"\ntype to_upper\ntype count_lines\ntype file_size",
+      "cat /lib/utils.sh && echo \"---DEMO---\" && source /lib/utils.sh && echo 'hello world' | to_upper && count_lines /data/sample.txt && file_size /data/sample.txt",
+      "cat > /lib/utils.sh <<'EOS'\n#!/bin/bash\nto_upper() {\n  tr '[:lower:]' '[:upper:]'\n}\ncount_lines() {\n  wc -l < \"$1\" | awk '{print $1}'\n}\nfile_size() {\n  wc -c < \"$1\" | awk '{print $1}'\n}\nEOS\ncat /lib/utils.sh\necho \"--- verify ---\"\nsource /lib/utils.sh\necho 'hello world' | to_upper\ncount_lines /data/sample.txt\nfile_size /data/sample.txt\n# cross-check\nwc -l /data/sample.txt; wc -c /data/sample.txt; cat /data/sample.txt"
+    ],
+    "usage": {
+      "input_tokens": 9329,
+      "output_tokens": 3383,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 30872
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 5.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 5.0,
+      "turns": 6.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -R /lib 2>&1; echo \"---\"; ls -R /data 2>&1; echo \"---\"; cat /data/sample.txt 2>&1; pwd; whoami; id",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "ls: cannot access '/lib': No such file or directory\n---\n/data:\nsample.txt\n---\nline one\nline two\nline three\nline four\nline five\n/home/user\neval\nuid=1000(eval) gid=1000(eval) groups=1000(eval)\n"
+          },
+          {
+            "commands": "mkdir -p /lib && cat > /lib/utils.sh <<'EOS'\n#!/bin/bash\nto_upper() {\n  tr '[:lower:]' '[:upper:]'\n}\ncount_lines() {\n  wc -l < \"$1\" | tr -d '[:space:]'\n}\nfile_size() {\n  wc -c < \"$1\" | tr -d '[:space:]'\n}\nEOS\ncat /lib/utils.sh\nls -l /lib/utils.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "#!/bin/bash\nto_upper() {\n  tr '[:lower:]' '[:upper:]'\n}\ncount_lines() {\n  wc -l < \"$1\" | tr -d '[:space:]'\n}\nfile_size() {\n  wc -c < \"$1\" | tr -d '[:space:]'\n}\n-rw-r--r--      160 2026-10-09 17:40 /lib/utils.sh\n"
+          },
+          {
+            "commands": "source /lib/utils.sh\necho \"=== to_upper demo ===\"\necho 'hello world' | to_upper\necho \"=== count_lines demo ===\"\ncount_lines /data/sample.txt\necho \"=== file_size demo ===\"\nfile_size /data/sample.txt\necho \"=== types ===\"\ntype to_upper\ntype count_lines\ntype file_size",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "=== to_upper demo ===\nHELLO WORLD\n=== count_lines demo ===\n5=== file_size demo ===\n49=== types ===\nto_upper is a function\nto_upper () \n{ \n    tr '[:lower:]' '[:upper:]'\n}\ncount_lines is a function\ncount_lines () \n{ \n    wc -l < \"$1\" | tr -d '[:space:]'\n}\nfile_size is a function\nfile_size () \n{ \n    wc -c < \"$1\" | tr -d '[:space:]'\n}\n"
+          },
+          {
+            "commands": "cat /lib/utils.sh && echo \"---DEMO---\" && source /lib/utils.sh && echo 'hello world' | to_upper && count_lines /data/sample.txt && file_size /data/sample.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "#!/bin/bash\nto_upper() {\n  tr '[:lower:]' '[:upper:]'\n}\ncount_lines() {\n  wc -l < \"$1\" | tr -d '[:space:]'\n}\nfile_size() {\n  wc -c < \"$1\" | tr -d '[:space:]'\n}\n---DEMO---\nHELLO WORLD\n549"
+          },
+          {
+            "commands": "cat > /lib/utils.sh <<'EOS'\n#!/bin/bash\nto_upper() {\n  tr '[:lower:]' '[:upper:]'\n}\ncount_lines() {\n  wc -l < \"$1\" | awk '{print $1}'\n}\nfile_size() {\n  wc -c < \"$1\" | awk '{print $1}'\n}\nEOS\ncat /lib/utils.sh\necho \"--- verify ---\"\nsource /lib/utils.sh\necho 'hello world' | to_upper\ncount_lines /data/sample.txt\nfile_size /data/sample.txt\n# cross-check\nwc -l /data/sample.txt; wc -c /data/sample.txt; cat /data/sample.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "#!/bin/bash\nto_upper() {\n  tr '[:lower:]' '[:upper:]'\n}\ncount_lines() {\n  wc -l < \"$1\" | awk '{print $1}'\n}\nfile_size() {\n  wc -c < \"$1\" | awk '{print $1}'\n}\n--- verify ---\nHELLO WORLD\n5\n49\n5 /data/sample.txt\n49 /data/sample.txt\nline one\nline two\nline three\nline four\nline five\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

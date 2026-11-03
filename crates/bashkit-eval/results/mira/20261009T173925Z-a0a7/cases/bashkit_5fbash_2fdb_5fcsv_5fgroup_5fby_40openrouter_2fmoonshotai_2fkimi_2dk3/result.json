@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "db_csv_group_by",
+  "target": "openrouter/moonshotai/kimi-k3",
+  "input": [
+    "Read /data/sales.csv with columns: region, product, amount. Compute total amount per region (like SQL GROUP BY region, SUM(amount)). Print results as 'region: total' sorted by total descending."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Results (total amount per region, sorted descending):\n\n```\nnorth: 850\nsouth: 750\neast: 650\n```\n\n**How it works:** The script reads `/data/sales.csv` with `csv.DictReader`, accumulates `amount` into a per-region dictionary (equivalent to `GROUP BY region, SUM(amount)`), then sorts by total descending.\n\nThe breakdown:\n- **north**: 500 (widgets) + 200 (bolts) + 150 (gadgets) = 850\n- **south**: 300 (gadgets) + 350 (widgets) + 100 (bolts) = 750\n- **east**: 400 (widgets) + 250 (bolts) = 650",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cat /data/sales.csv",
+      "python3 - <<'EOF'\nimport csv\nfrom collections import defaultdict\n\ntotals = defaultdict(float)\nwith open('/data/sales.csv', newline='') as f:\n    for row in csv.DictReader(f):\n        totals[row['region']] += float(row['amount'])\n\nfor region, total in sorted(totals.items(), key=lambda kv: kv[1], reverse=True):\n    print(f\"{region}: {total:g}\")\nEOF"
+    ],
+    "usage": {
+      "input_tokens": 2113,
+      "output_tokens": 391,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 4138
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat /data/sales.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "region,product,amount\nnorth,widgets,500\nsouth,gadgets,300\nnorth,bolts,200\neast,widgets,400\nsouth,widgets,350\nnorth,gadgets,150\neast,bolts,250\nsouth,bolts,100\n"
+          },
+          {
+            "commands": "python3 - <<'EOF'\nimport csv\nfrom collections import defaultdict\n\ntotals = defaultdict(float)\nwith open('/data/sales.csv', newline='') as f:\n    for row in csv.DictReader(f):\n        totals[row['region']] += float(row['amount'])\n\nfor region, total in sorted(totals.items(), key=lambda kv: kv[1], reverse=True):\n    print(f\"{region}: {total:g}\")\nEOF",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "north: 850\nsouth: 750\neast: 650\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

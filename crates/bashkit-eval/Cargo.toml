@@ -28,7 +28,9 @@ path = "src/replay_main.rs"
 # (our own agent loop + provider stack) so we do NOT need mira-everruns.
 mira-eval = { version = "0.5", features = ["macros"] }
 
-bashkit = { path = "../bashkit", features = ["jq", "git"] }
+# cpython + sqlite: `mode=runtime` tasks run real python3 (CPython 3.14 on
+# WASI) and sqlite3 inside the eval Bash. See knowledge/operations/eval.md.
+bashkit = { path = "../bashkit", features = ["jq", "git", "cpython", "sqlite"] }
 bashkit-scripted-tool = { path = "../bashkit-scripted-tool", features = ["jq"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "io-std", "io-util", "fs"] }
 serde.workspace = true

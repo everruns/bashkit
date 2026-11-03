@@ -9,16 +9,2824 @@ use bashkit::{
     Bash, ExecutionLimits, FileSystem, FileSystemExt, FsLimits, InMemoryFs, MemoryLimits,
     OverlayFs, SessionLimits, TraceEventDetails, TraceEventKind, TraceMode,
 };
+use std::io::Read;
 use std::path::Path;
+use std::process::{Command, Stdio};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 // =============================================================================
 // 1. RESOURCE EXHAUSTION TESTS
 // =============================================================================
 
-mod resource_exhaustion {
+pub(crate) mod resource_exhaustion {
     use super::*;
+
+    /// Ancestor levels searched for the CLI binary. Five are needed for the
+    /// deepest known layout (`out`, hash, package, `build`, profile); the
+    /// spare one absorbs another level without reaching above `target`.
+    const CLI_SEARCH_DEPTH: usize = 6;
+
+    /// Locates the `bashkit` binary exported next to this test binary's
+    /// build tree, or returns the candidates it ruled out.
+    ///
+    /// Where cargo puts a *test* binary is not contractual and differs by
+    /// toolchain: the pinned stable builds it into `<profile>/deps/`, while
+    /// cargo 1.101-nightly's separate build directory uses
+    /// `<profile>/build/<package>/<hash>/out/`. What cargo does guarantee is
+    /// that the final `bashkit` binary is exported to the profile directory,
+    /// an ancestor of the test binary under either layout — so the profile
+    /// directory is found by walking up until the binary turns up, never by
+    /// assuming a fixed depth. Taking it as `exe.parent().parent()` passed on
+    /// stable and resolved into the hashed build directory under nightly,
+    /// which is how the nightly ASAN job went red while required CI on the
+    /// same commits stayed green.
+    ///
+    /// `is_file` is load-bearing: the nightly layout puts a *directory*
+    /// named after the package at `<profile>/build/bashkit`, which a bare
+    /// existence check would accept.
+    ///
+    /// The walk stops at cargo's target directory, marked by the
+    /// `CACHEDIR.TAG` cargo writes there, so an unrelated `bashkit` file
+    /// above the build tree can never be spawned in place of the binary
+    /// under test. That marker is belt-and-braces over `CLI_SEARCH_DEPTH`,
+    /// which bounds the walk whether or not it is present.
+    fn cli_in_ancestors(exe: &Path) -> Result<std::path::PathBuf, Vec<std::path::PathBuf>> {
+        let name = format!("bashkit{}", std::env::consts::EXE_SUFFIX);
+        let mut ruled_out = Vec::new();
+        for dir in exe.ancestors().skip(1).take(CLI_SEARCH_DEPTH) {
+            let candidate = dir.join(&name);
+            if candidate.is_file() {
+                return Ok(candidate);
+            }
+            ruled_out.push(candidate);
+            if dir.join("CACHEDIR.TAG").is_file() {
+                break;
+            }
+        }
+        Err(ruled_out)
+    }
+
+    /// TM-DOS-135: child-process runner for hostile scripts.
+    /// Hostile reproducers never run in the test process: pre-fix they
+    /// overflowed the stack and aborted the whole runner.
+    ///
+    /// The binary belongs to a sibling package, so `CARGO_BIN_EXE_*` is not
+    /// available here; it is built because the invocation selects that
+    /// package's own integration tests, which do get that variable. A
+    /// selection narrow enough to exclude them (`-p bashkit --test
+    /// integration` alone) leaves nothing to find, which used to surface as a
+    /// bare spawn `NotFound` and, once the launcher was introduced, as an
+    /// unexplained exit 127 with the bound assertions failing — both read
+    /// like product failures. Fail on the precondition instead, naming every
+    /// path ruled out.
+    pub(crate) fn bashkit_cli_path() -> std::path::PathBuf {
+        let exe = std::env::current_exe().expect("current test executable");
+        match cli_in_ancestors(&exe) {
+            Ok(cli) => cli,
+            Err(ruled_out) => panic!(
+                "bashkit CLI binary not found above the test binary {}: this suite spawns \
+                 it to run hostile reproducers out of process, so the test selection must \
+                 include the bashkit-cli package (its own integration tests are what make \
+                 cargo export the binary). Ruled out: {}",
+                exe.display(),
+                ruled_out
+                    .iter()
+                    .map(|p| p.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        }
+    }
+
+    pub(crate) struct BoundedRun {
+        pub(crate) timed_out: bool,
+        pub(crate) oversized: bool,
+        /// True when the deadline passed with readers unfinished: a foreign
+        /// descendant retains the pipes. Detection, not reaping: without
+        /// platform process-group APIs (no new dependencies) a foreign
+        /// descendant cannot be reaped portably, so the run fails visibly.
+        pub(crate) incomplete_readers: bool,
+        /// A pipe reader hit a real I/O error (anything but `Interrupted`,
+        /// which is retried). Capture is then partial by definition, so the
+        /// run fails closed instead of relabeling the error as a clean EOF.
+        pub(crate) read_error: bool,
+        /// OS termination accounted for: the loop observed an exit or
+        /// the bounded reap recovered one. Orthogonal to `exit_code`
+        /// (signaled victims have no code) and to injected observation
+        /// faults (which discard the observation, never the cleanup).
+        pub(crate) reaped: bool,
+        /// First stderr line from the launcher (`harness-limits: ...`),
+        /// proving the CPU/stack caps were applied to this run. Empty when
+        /// the launcher itself refused (fail-closed exit 99).
+        pub(crate) limits_note: String,
+        pub(crate) exit_code: Option<i32>,
+        pub(crate) stdout: String,
+        pub(crate) stderr: String,
+    }
+
+    /// Fail-closed launcher limits: 10 CPU seconds, 4 MiB main-thread
+    /// stack. Any refusal exits 99 before the producer starts, so a run
+    /// without limits can never be mistaken for a bounded one.
+    const BOUNDED_CLI_LIMITS: &str = "ulimit -s 4096 || exit 99; ulimit -t 10 || exit 99";
+
+    /// Per-pipe sample cap. Past the cap the reader stops draining and the
+    /// run is marked `oversized`, which fails the harness: oversize output
+    /// is never silently truncated.
+    const BOUNDED_SAMPLE_CAP: usize = 8192;
+    /// Finite cleanup grace after the execution deadline: at most 2s more
+    /// for pipe drains plus at most 5s to reap the victim. `limit` is the
+    /// execution deadline for the child itself; these graces bound the
+    /// harness teardown after it, so the whole run always terminates.
+    const DRAIN_GRACE: Duration = Duration::from_secs(2);
+    const REAP_GRACE: Duration = Duration::from_secs(5);
+    /// Shared completion grace for joining reader threads after all
+    /// receipts arrived. Full budget equation: execution `limit` + drain
+    /// 2s + reap 5s + completion 5s; every stage is finite.
+    const JOIN_GRACE: Duration = Duration::from_secs(5);
+    /// Absolute bound for the whole post-verdict cleanup: every stage
+    /// derives its allowance from one shared end instant (kill, absence
+    /// poll, handle join), so stage budgets can never stack past it.
+    /// Budget: execution `limit` + drain 2s + reap 5s run first; cleanup
+    /// itself (kill, join, absence) shares CLEANUP_TOTAL below.
+    const CLEANUP_TOTAL: Duration = Duration::from_secs(12);
+
+    /// Join verdict for one reader handle inside the shared completion
+    /// grace. `Unfinished` carries the SAME handle back so the caller can
+    /// release it and observe that thread's actual join — never a twin,
+    /// never detached-while-asserting-cleanup. `Panicked` means the thread
+    /// terminated by panicking (join returned, work failed).
+    enum JoinOutcome {
+        Joined,
+        Unfinished(std::thread::JoinHandle<()>),
+        Panicked,
+    }
+
+    /// Joins one reader handle inside the shared completion grace: the
+    /// single bounded-completion primitive used by both the runner gate
+    /// below and its deterministic proof test.
+    fn join_finished(handle: std::thread::JoinHandle<()>, end: Instant) -> JoinOutcome {
+        let mut finished = handle.is_finished();
+        while !finished && Instant::now() < end {
+            std::thread::sleep(Duration::from_millis(5));
+            finished = handle.is_finished();
+        }
+        if !finished {
+            return JoinOutcome::Unfinished(handle);
+        }
+        match handle.join() {
+            Ok(()) => JoinOutcome::Joined,
+            Err(_) => JoinOutcome::Panicked,
+        }
+    }
+
+    /// Reads one pipe up to the cap. Retention is truncated BEFORE the
+    /// buffer can grow past it, so a hostile stream can never inflate the
+    /// harness itself. `Interrupted` is retried; any other I/O error ends
+    /// the capture with the bytes kept so far and `read_error` set, never
+    /// relabeled as a clean EOF. Reaching exactly the cap followed by EOF
+    /// is not oversize; only real excess is flagged.
+    pub(crate) fn drain_capped<R: Read>(reader: &mut R) -> (Vec<u8>, bool, bool) {
+        let mut buf = Vec::new();
+        let mut chunk = [0u8; 4096];
+        loop {
+            match reader.read(&mut chunk) {
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(_) => {
+                    let over = buf.len() > BOUNDED_SAMPLE_CAP;
+                    return (buf, over, true);
+                }
+                Ok(0) => {
+                    let over = buf.len() > BOUNDED_SAMPLE_CAP;
+                    return (buf, over, false);
+                }
+                Ok(n) => {
+                    if buf.len() + n > BOUNDED_SAMPLE_CAP {
+                        buf.extend_from_slice(&chunk[..BOUNDED_SAMPLE_CAP - buf.len()]);
+                        return (buf, true, false);
+                    }
+                    buf.extend_from_slice(&chunk[..n]);
+                }
+            }
+        }
+    }
+
+    /// Bounded reader: one thread per pipe so a chatty stderr cannot
+    /// starve stdout. The worker stops at the cap instead of buffering the
+    /// whole hostile stream, then reports back with live oversize/error
+    /// flags observed at read time.
+    fn spawn_capped_reader(
+        id: u8,
+        mut pipe: Box<dyn Read + Send>,
+        tx: std::sync::mpsc::Sender<(u8, Vec<u8>, bool, bool)>,
+    ) -> std::thread::JoinHandle<()> {
+        std::thread::spawn(move || {
+            let (buf, oversized, read_error) = drain_capped(&mut pipe);
+            let _ = tx.send((id, buf, oversized, read_error));
+        })
+    }
+
+    /// Runs a script in the built CLI under `run_command_bounded`, with
+    /// trailing `$0`/ARG0 words after the `-c` script.
+    /// The launcher applies the fail-closed CPU/stack caps, reports the
+    /// effective values as the first stderr line, then `exec`s the CLI so
+    /// exit codes and diagnostics stay the real producer's own.
+    /// Fail-closed launcher shared by every bounded child: applies the
+    /// CPU/stack caps (exiting 99 when the platform refuses them), reports
+    /// the effective values as the first stderr line, then `exec`s the
+    /// target so exit codes stay the real producer's own. Portable limits
+    /// only: what the kernel enforces afterwards is platform behavior, and
+    /// the readback below proves what took effect here.
+    fn limit_launcher() -> String {
+        format!(
+            "{BOUNDED_CLI_LIMITS}; echo \"harness-limits: stack=$(ulimit -s) cpu=$(ulimit -t)\" >&2; exec \"$@\""
+        )
+    }
+
+    /// Splits the launcher's readback line off stderr. An absent line
+    /// means the launcher never ran (fail-closed before the target), and
+    /// the empty note records exactly that.
+    fn strip_launcher_note(run: &mut BoundedRun) {
+        (run.limits_note, run.stderr) = match run.stderr.split_once('\n') {
+            Some((first, rest)) if first.starts_with("harness-limits:") => {
+                (first.to_string(), rest.to_string())
+            }
+            _ => (String::new(), std::mem::take(&mut run.stderr)),
+        };
+    }
+
+    /// The launcher-wrapped CLI command a bounded run executes. Separated so
+    /// the harness wiring itself is assertable without running a child: the
+    /// sandbox does not expose host env to the script, so a bounded run
+    /// cannot report back what its own process received.
+    fn bounded_cli_command(script: &str, extra_args: &[&str]) -> Command {
+        let launcher = limit_launcher();
+        let mut cmd = Command::new("bash");
+        cmd.args(["-c", &launcher, "_"])
+            .arg(bashkit_cli_path())
+            .args(["-c", script])
+            .args(extra_args)
+            // The CLI is instrumented under coverage and these children are
+            // killed by design; without this the truncated profraw lands in
+            // tarpaulin's merge set. See `testing::child_profile_path`.
+            .env("LLVM_PROFILE_FILE", bashkit::testing::child_profile_path())
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        cmd
+    }
+
+    fn run_cli_argv_bounded(script: &str, extra_args: &[&str], limit: Duration) -> BoundedRun {
+        let mut run = run_command_bounded(bounded_cli_command(script, extra_args), limit);
+        strip_launcher_note(&mut run);
+        run
+    }
+
+    /// Presence of one PID as an explicit receipt, never inferred from a
+    /// bare nonzero exit: only an observed ESRCH text proves absence, while
+    /// EPERM or anything unknown keeps polling inside the bound.
+    enum PidPresence {
+        Present,
+        Absent,
+        Unknown,
+    }
+
+    /// Runs `kill` with the given args under a finite grace and classifies
+    /// the outcome from the observed exit plus stderr text. Built from the
+    /// same bounded primitives as the runner itself: the helper child is
+    /// terminated and reaped through `reap_with_grace` on every path that
+    /// does not observe its exit (no leaked running helpers), and its
+    /// stderr is drained through `drain_capped` (bounded retention, real
+    /// errors fail closed). EOF for that drain is construction-specific,
+    /// not assumed for arbitrary executables: this stderr pipe is private
+    /// to the `kill` helper binary, which performs one kill(2) and exits
+    /// without forking, so the observed exit closes its only write end.
+    /// ESRCH receipt text is matched case-insensitively (`no such
+    /// process`); EPERM and anything undecipherable stay Unknown — never
+    /// successful absence. Every wait inside is a bounded try_wait poll,
+    /// so the call itself always terminates.
+    /// What a bounded signal query actually proved, stage by stage.
+    /// Unknowns stay explicit on every error path; no stage infers the
+    /// success of another. Callers assert the fields they depend on.
+    struct SignalReceipt {
+        /// The signal was dispatched to the target (for `-9`), or the
+        /// query itself ran (for `-0`). False when the helper never ran
+        /// or its kill failed.
+        dispatched: bool,
+        /// The helper child was reaped inside the grace (no leak); a
+        /// try_wait error counts as unreaped, never as completion.
+        helper_reaped: bool,
+        /// The stderr drain completed within its cap without I/O error.
+        pipe_ok: bool,
+        /// Target presence: Absent only by observed ESRCH receipt text.
+        presence: PidPresence,
+        /// Unfinished drain reader on the timeout path: propagated for
+        /// caller-owned finite cleanup under the caller end, never
+        /// silently detached. `None` after a joined-inside success.
+        drain_thread: Option<std::thread::JoinHandle<()>>,
+    }
+
+    /// What one bounded helper execution actually proved, stage by
+    /// stage. Callers interpret `exit` per binary (`pkill` 0 = matched,
+    /// `pgrep` 0 = present / 1 = absent receipt / else unknown); every
+    /// wait inside is bounded by the single caller-owned `end` instant,
+    /// never a fresh grace stacked after a timeout.
+    struct HelperOutcome {
+        exit: Option<i32>,
+        stderr: Vec<u8>,
+        drained_ok: bool,
+        reaped: bool,
+        signaled: bool,
+        /// The drain reader on the timeout path, returned instead of
+        /// detached: the caller owns its finite cleanup. `None` after a
+        /// joined-inside success or when no drain was attempted.
+        drain_thread: Option<std::thread::JoinHandle<()>>,
+    }
+
+    /// Runs one short-lived helper (`kill`, `pkill`, `pgrep`: single-shot
+    /// binaries that never fork) to completion inside `end`. Kill/reap on
+    /// every non-exit path (a failed kill is recorded, never ignored);
+    /// stderr drained through the bounded primitive (retention capped,
+    /// errors fail closed). EOF for the drain is construction-specific:
+    /// these helpers hold the only write end and exit promptly, so an
+    /// observed exit closes it; anything else stays Unknown.
+    /// Resolves a helper binary to an absolute executable path by an
+    /// explicit PATH search (no silent per-spawn fallback): missing or
+    /// non-executable helpers fail closed as Unknown at the call site.
+    /// Callers additionally assert the binary runs (the trichotomy test
+    /// below), which is the executable evidence behind the documented
+    /// single-writer EOF contract.
+    fn resolve_helper(name: &str) -> Option<std::path::PathBuf> {
+        let path_var = std::env::var_os("PATH")?;
+        for dir in std::env::split_paths(&path_var) {
+            let candidate = dir.join(name);
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+        None
+    }
+
+    fn run_helper_bounded(program: &str, args: &[&str], end: Instant) -> HelperOutcome {
+        let blank = || HelperOutcome {
+            exit: None,
+            stderr: Vec::new(),
+            drained_ok: false,
+            reaped: false,
+            signaled: false,
+            drain_thread: None,
+        };
+        let bin = match resolve_helper(program) {
+            Some(b) => b,
+            None => {
+                return HelperOutcome {
+                    drain_thread: None,
+                    exit: None,
+                    stderr: Vec::new(),
+                    drained_ok: false,
+                    reaped: false,
+                    signaled: false,
+                };
+            }
+        };
+        let mut child = match Command::new(&bin)
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+        {
+            Ok(c) => c,
+            Err(_) => return blank(),
+        };
+        // Split the single deadline between observation and cleanup:
+        // the poll phase takes the first half so kill+reap always retain
+        // the second half — a timeout never leaves zero remaining reap
+        // time with ownership silently abandoned, and the total never
+        // exceeds `end`. (A fixed-second reserve cannot work here: for an
+        // end nearer than the reserve, checked_sub lands in the past and
+        // the poll phase would be skipped entirely.)
+        let remaining = end.saturating_duration_since(Instant::now());
+        let poll_end = Instant::now() + remaining / 2;
+        let exited = loop {
+            match child.try_wait() {
+                Ok(Some(_)) => break true,
+                Ok(None) => {
+                    if Instant::now() >= poll_end.min(end) {
+                        break false;
+                    }
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(_) => break false,
+            }
+        };
+        if !exited {
+            let signaled = child.kill().is_ok();
+            let mut poll = || child.try_wait();
+            let reaped =
+                reap_with_grace(&mut poll, end.saturating_duration_since(Instant::now())).is_some();
+            return HelperOutcome {
+                exit: None,
+                stderr: Vec::new(),
+                drained_ok: false,
+                reaped,
+                signaled,
+                drain_thread: None,
+            };
+        }
+        let mut pipe = match child.stderr.take() {
+            Some(p) => p,
+            None => {
+                return HelperOutcome {
+                    exit: None,
+                    stderr: Vec::new(),
+                    drained_ok: false,
+                    reaped: true,
+                    signaled: false,
+                    drain_thread: None,
+                };
+            }
+        };
+        // Owned finite drain: the reader runs on its own thread and the
+        // result is collected under the shared end, so even a retained
+        // writer (no EOF ever) cannot stall this call past its deadline.
+        // The cap inside drain_capped bounds retention; the timeout below
+        // bounds duration. A timed-out drain returns its original handle
+        // so the controlled fixture can terminate the writer and join it.
+        // The SAME drain reader is retained and finitely observed:
+        // on success it is joined below (proving original-reader
+        // completion — it already sent, so the join returns at once);
+        // on timeout its handle rides home in the receipt for
+        // caller-owned finite cleanup instead of silent detachment.
+        // Gate FIRST under the shared end, then take the sent value
+        // without blocking: receipt-send only proves the bytes moved,
+        // never that the thread finished. join_finished proves the
+        // SAME reader completed; try_recv afterwards cannot block (a
+        // finished thread either sent or panicked before sending).
+        // An unfinished handle rides home in the receipt for
+        // caller-owned finite cleanup instead of silent detachment.
+        // wait() first: the exit was already observed, so this reaps
+        // at once and never blocks. Its code is preserved on EVERY path
+        // below (direct OS reap receipt), even when the drain times out.
+        let code = child.wait().ok().and_then(|s| s.code());
+        let (drain_tx, drain_rx) = std::sync::mpsc::channel();
+        let drain_handle = std::thread::spawn(move || {
+            let _ = drain_tx.send(drain_capped(&mut pipe));
+        });
+        let outcome = match join_finished(
+            drain_handle,
+            Instant::now() + end.saturating_duration_since(Instant::now()),
+        ) {
+            JoinOutcome::Joined => drain_rx.try_recv().ok(),
+            JoinOutcome::Unfinished(handle) => {
+                return HelperOutcome {
+                    exit: code,
+                    stderr: Vec::new(),
+                    drained_ok: false,
+                    reaped: true,
+                    signaled: true,
+                    drain_thread: Some(handle),
+                };
+            }
+            JoinOutcome::Panicked => {
+                return HelperOutcome {
+                    exit: code,
+                    stderr: Vec::new(),
+                    drained_ok: false,
+                    reaped: true,
+                    signaled: true,
+                    drain_thread: None,
+                };
+            }
+        };
+        let (stderr, _, read_error) = match outcome {
+            Some(v) => v,
+            None => {
+                return HelperOutcome {
+                    exit: code,
+                    stderr: Vec::new(),
+                    drained_ok: false,
+                    reaped: true,
+                    signaled: true,
+                    drain_thread: None,
+                };
+            }
+        };
+        HelperOutcome {
+            exit: code,
+            stderr,
+            drained_ok: !read_error,
+            reaped: true,
+            signaled: true,
+            drain_thread: None,
+        }
+    }
+
+    fn signal_bounded(args: &[&str], grace: Duration) -> SignalReceipt {
+        // Single owned implementation: classification only lives here.
+        // The caller end (never a fresh stacked grace) bounds the helper;
+        // an unfinished drain handle rides home in the receipt for
+        // caller-owned finite cleanup under that same end — never
+        // detached here. Consuming arms are exclusive, so each moves the
+        // handle at most once.
+        let end = Instant::now() + grace;
+        let o = run_helper_bounded("kill", args, end);
+        // o.signaled is consumed below, not just written: a timeout path
+        // that dispatched its kill reports sent-but-unobserved, distinct
+        // from a helper that never ran at all.
+        if o.exit.is_none() && !o.reaped {
+            return SignalReceipt {
+                dispatched: o.signaled,
+                helper_reaped: false,
+                pipe_ok: false,
+                presence: PidPresence::Unknown,
+                drain_thread: o.drain_thread,
+            };
+        }
+        if !o.drained_ok {
+            return SignalReceipt {
+                dispatched: o.signaled,
+                helper_reaped: o.reaped,
+                pipe_ok: false,
+                presence: PidPresence::Unknown,
+                drain_thread: o.drain_thread,
+            };
+        }
+        let lowered = String::from_utf8_lossy(&o.stderr).to_lowercase();
+        match o.exit {
+            Some(0) => SignalReceipt {
+                dispatched: true,
+                helper_reaped: o.reaped,
+                pipe_ok: true,
+                presence: PidPresence::Present,
+                drain_thread: o.drain_thread,
+            },
+            _ if lowered.contains("no such process") => SignalReceipt {
+                dispatched: true,
+                helper_reaped: o.reaped,
+                pipe_ok: true,
+                presence: PidPresence::Absent,
+                drain_thread: o.drain_thread,
+            },
+            _ => SignalReceipt {
+                dispatched: false,
+                helper_reaped: o.reaped,
+                pipe_ok: true,
+                presence: PidPresence::Unknown,
+                drain_thread: o.drain_thread,
+            },
+        }
+    }
+
+    fn retain_join(
+        handle: std::thread::JoinHandle<()>,
+        end: Instant,
+        unfinished: &mut Vec<std::thread::JoinHandle<()>>,
+    ) -> bool {
+        match join_finished(handle, end) {
+            JoinOutcome::Joined => true,
+            JoinOutcome::Unfinished(handle) => {
+                unfinished.push(handle);
+                false
+            }
+            JoinOutcome::Panicked => false,
+        }
+    }
+
+    /// Test-scoped owned cleanup for the retained-pipe fixture: the exact
+    /// recorded descendant plus the ORIGINAL reader handles. The normal
+    /// path (`complete`) terminates the descendant, observes its absence
+    /// via ESRCH receipt, joins the original handles, and proves the total
+    /// elapsed bound. `Drop` fires the same kill best-effort (no asserts,
+    /// no panics) so setup/assertion failures never leak the 30s sleeper;
+    /// unfinished ORIGINAL handles return to the caller-owned observer,
+    /// which remains alive after this guard is consumed.
+    /// What finite cleanup actually proved: unknowns stay explicit,
+    /// never successful. The test asserts these instead of inferring
+    /// success from the absence of a hang.
+    struct CleanupReceipt {
+        signaled: bool,
+        descendant_gone: bool,
+        readers_joined: bool,
+        /// Every signal helper call inside cleanup reported its own
+        /// bounded reap plus a clean pipe drain. A false here means the
+        /// observations above rest on unhealthy helpers, never silent.
+        helper_clean: bool,
+        /// Reader handles that never finished inside the shared grace:
+        /// preserved here instead of silently detached, so the caller
+        /// sees the exact shortfall. Normally empty.
+        unjoined: Vec<std::thread::JoinHandle<()>>,
+        elapsed: Duration,
+    }
+
+    struct RetainedCleanup<'a> {
+        drop_readers: &'a mut Vec<std::thread::JoinHandle<()>>,
+        pid: Option<String>,
+        /// Test-controlled argv marker identifying the exact fixture
+        /// without any pid channel: usable even when pidfiles fail.
+        /// Bound before verdict asserts, like everything else owned here.
+        marker: Option<String>,
+        pending: Option<PendingJoiners>,
+        files: Vec<std::path::PathBuf>,
+        /// Optional outcome receipt for the Drop path: Drop writes how
+        /// far best-effort cleanup got (kill/join/files), and the test
+        /// reads it back instead of inferring cleanup from silence.
+        drop_note: Option<std::path::PathBuf>,
+    }
+
+    impl RetainedCleanup<'_> {
+        fn complete(&mut self, start: Instant) -> CleanupReceipt {
+            let end = Instant::now() + CLEANUP_TOTAL;
+            let remaining = || {
+                end.saturating_duration_since(Instant::now())
+                    .min(Duration::from_secs(5))
+            };
+            let mut signaled = false;
+            let mut gone = false;
+            let mut joined = false;
+            let mut unjoined = Vec::new();
+            let mut helper_clean = true;
+            // Termination prefers the pid identity and falls back to the
+            // marker ownership channel; both run under the shared end.
+            // A missing identity with no marker is honestly unowned.
+            let target = self.pid.clone();
+            let marker = self.marker.clone();
+            if target.is_some() || marker.is_some() {
+                // Terminate the exact owned descendant (not self-expiry):
+                // pid identity first, marker ownership channel as the
+                // fallback when no pid was ever recorded. ESRCH on the
+                // kill itself already proves absence; a dispatched signal
+                // proceeds to the join/absence proof. Every helper runs
+                // under the shared end (never a fresh stacked grace).
+                match (target.as_deref(), marker.as_deref()) {
+                    (Some(pid), _) => {
+                        let mut kill = signal_bounded(&["-9", pid], remaining());
+                        if let Some(h) = kill.drain_thread.take() {
+                            // Handoff from the (unreachable-for-kill) timeout
+                            // path: bounded join under the shared end, with
+                            // unfinished handles preserved, never detached.
+                            match join_finished(h, Instant::now() + remaining()) {
+                                JoinOutcome::Joined => {}
+                                JoinOutcome::Unfinished(handle) => {
+                                    unjoined.push(handle);
+                                    helper_clean = false;
+                                }
+                                JoinOutcome::Panicked => {
+                                    helper_clean = false;
+                                }
+                            }
+                        }
+                        if kill.dispatched {
+                            signaled = true;
+                        }
+                        if !(kill.helper_reaped && kill.pipe_ok) {
+                            helper_clean = false;
+                        }
+                        if matches!(kill.presence, PidPresence::Absent) {
+                            signaled = true;
+                            gone = true;
+                        }
+                    }
+                    (None, Some(m)) => {
+                        // pkill exit 0 matched exactly this fixture's
+                        // marker; anything else leaves absence to the
+                        // poll below (no inference from failure).
+                        let o = run_helper_bounded("pkill", &["-9", "-f", m], end);
+                        // SAME-handle rule: a handoff here (unreachable for
+                        // pkill) is joined boundedly under the shared end,
+                        // with unfinished handles preserved, never asserted
+                        // away or detached.
+                        if let Some(h) = o.drain_thread {
+                            match join_finished(
+                                h,
+                                Instant::now() + remaining().min(Duration::from_secs(2)),
+                            ) {
+                                JoinOutcome::Joined => {}
+                                JoinOutcome::Unfinished(handle) => {
+                                    unjoined.push(handle);
+                                    helper_clean = false;
+                                }
+                                JoinOutcome::Panicked => {
+                                    helper_clean = false;
+                                }
+                            }
+                        }
+                        if !(o.reaped && o.drained_ok) {
+                            helper_clean = false;
+                        }
+                        if o.exit == Some(0) {
+                            signaled = true;
+                        }
+                    }
+                    (None, None) => {}
+                }
+                // Join the ORIGINAL reader handles: the kill closed the
+                // retained pipes, so they must finish inside the shared
+                // grace. Missing receipts fail here, never silently.
+                // Join deferred past absence: see below.
+                // Absence receipt: only ESRCH counts; anything unknown
+                // retries inside the shared end, then stays false.
+                while !gone && Instant::now() < end {
+                    // Absence receipt: pid ESRCH text, or pgrep exit 1
+                    // (no match) for the marker channel. Anything else —
+                    // present, errors, undecipherable — retries inside the
+                    // shared end, then stays false. Never inferred.
+                    let absent = match (target.as_deref(), marker.as_deref()) {
+                        (Some(pid), _) => {
+                            let mut probe = signal_bounded(&["-0", pid], remaining());
+                            if let Some(h) = probe.drain_thread.take() {
+                                // Handoff from the (unreachable-for-kill)
+                                // timeout path: bounded join under the
+                                // shared end, unfinished preserved.
+                                match join_finished(h, Instant::now() + remaining()) {
+                                    JoinOutcome::Joined => {}
+                                    JoinOutcome::Unfinished(handle) => {
+                                        unjoined.push(handle);
+                                        helper_clean = false;
+                                    }
+                                    JoinOutcome::Panicked => {
+                                        helper_clean = false;
+                                    }
+                                }
+                            }
+                            if !(probe.helper_reaped && probe.pipe_ok) {
+                                helper_clean = false;
+                            }
+                            matches!(probe.presence, PidPresence::Absent)
+                        }
+                        (None, Some(m)) => {
+                            let o = run_helper_bounded("pgrep", &["-f", m], end);
+                            if let Some(h) = o.drain_thread {
+                                match join_finished(
+                                    h,
+                                    Instant::now() + remaining().min(Duration::from_secs(2)),
+                                ) {
+                                    JoinOutcome::Joined => {}
+                                    JoinOutcome::Unfinished(handle) => {
+                                        unjoined.push(handle);
+                                        helper_clean = false;
+                                    }
+                                    JoinOutcome::Panicked => {
+                                        helper_clean = false;
+                                    }
+                                }
+                            }
+                            if !(o.reaped && o.drained_ok) {
+                                helper_clean = false;
+                            }
+                            o.exit == Some(1)
+                        }
+                        (None, None) => break,
+                    };
+                    if absent {
+                        gone = true;
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+            }
+            // Join ORIGINAL handles unconditionally (not only with an
+            // identity): with no pid the pipes may stay held, in which
+            // case the shared grace expires and the handles are preserved
+            // in the receipt as explicit unknowns — never silently
+            // detached, never a vacuous success.
+            if let Some(pending) = self.pending.take() {
+                let mut ok = !pending.handles.is_empty();
+                for reader in pending.handles {
+                    match join_finished(reader, Instant::now() + remaining().min(JOIN_GRACE)) {
+                        JoinOutcome::Joined => {}
+                        JoinOutcome::Unfinished(handle) => {
+                            unjoined.push(handle);
+                            ok = false;
+                        }
+                        JoinOutcome::Panicked => {
+                            ok = false;
+                        }
+                    }
+                }
+                joined = ok;
+            }
+            // Receipt files are removed on every path, success or unwind.
+            for path in std::mem::take(&mut self.files) {
+                std::fs::remove_file(&path).ok();
+            }
+            self.pid = None;
+            CleanupReceipt {
+                signaled,
+                descendant_gone: gone,
+                readers_joined: joined,
+                helper_clean,
+                unjoined,
+                elapsed: start.elapsed(),
+            }
+        }
+    }
+
+    impl Drop for RetainedCleanup<'_> {
+        fn drop(&mut self) {
+            // Best-effort only (no asserts, no panics): terminate by pid
+            // identity first, marker ownership channel as fallback, then
+            // one bounded join attempt for retained handles, then file
+            // removal. ONE shared end bounds every stage below (kill,
+            // join, files): allowances derive from the remainder, never
+            // fresh stacked graces. The outcome receipt records helper
+            // health too, so callers observe rather than infer; the
+            // caller removes it after reading.
+            let end = Instant::now() + Duration::from_secs(10);
+            let remaining = || end.saturating_duration_since(Instant::now());
+            let mut killed = false;
+            let mut joined = false;
+            let mut helper_clean = true;
+            // The caller retains ownership even if this bounded Drop cannot join.
+            if let Some(pid) = self.pid.take() {
+                let o = run_helper_bounded(
+                    "kill",
+                    &["-9", &pid],
+                    Instant::now() + remaining().min(Duration::from_secs(5)),
+                );
+                killed = o.exit == Some(0);
+                if !(o.reaped && o.drained_ok) {
+                    helper_clean = false;
+                }
+                if let Some(h) = o.drain_thread {
+                    // Best-effort backstop for the unreachable handoff:
+                    // bounded attempt under the shared end, outcome
+                    // recorded (Drop cannot return handles).
+                    if !retain_join(h, end, self.drop_readers) {
+                        helper_clean = false;
+                    }
+                }
+            } else if let Some(m) = self.marker.take() {
+                let o = run_helper_bounded(
+                    "pkill",
+                    &["-9", "-f", &m],
+                    Instant::now() + remaining().min(Duration::from_secs(5)),
+                );
+                killed = o.exit == Some(0);
+                if !(o.reaped && o.drained_ok) {
+                    helper_clean = false;
+                }
+                let handoff_joined = match o.drain_thread {
+                    None => true,
+                    Some(h) => retain_join(h, end, self.drop_readers),
+                };
+                if !handoff_joined {
+                    helper_clean = false;
+                }
+            }
+            if let Some(pending) = self.pending.take() {
+                let join_end = Instant::now() + remaining().min(JOIN_GRACE);
+                let mut ok = true;
+                for reader in pending.handles {
+                    if !retain_join(reader, join_end, self.drop_readers) {
+                        ok = false;
+                    }
+                }
+                joined = ok;
+            }
+            for path in std::mem::take(&mut self.files) {
+                std::fs::remove_file(&path).ok();
+            }
+            if let Some(note) = self.drop_note.take() {
+                let _ = std::fs::write(
+                    &note,
+                    format!("killed={killed} joined={joined} helper_clean={helper_clean}"),
+                );
+            }
+        }
+    }
+
+    fn run_raw_bounded(program: &str, args: &[&str], limit: Duration) -> BoundedRun {
+        run_raw_bounded_with(program, args, limit, LifecycleFaults::default())
+    }
+
+    /// Runs an arbitrary program under the same fail-closed launcher (used
+    /// by harness selftests so they prove the effective CPU/stack bounds
+    /// instead of bypassing them). The caller supplies piped stdio.
+    fn run_raw_bounded_with(
+        program: &str,
+        args: &[&str],
+        limit: Duration,
+        faults: LifecycleFaults,
+    ) -> BoundedRun {
+        let (mut run, pending) = run_raw_core(program, args, limit, faults);
+        if !finish_joiners(pending) {
+            run.incomplete_readers = true;
+        }
+        run
+    }
+
+    /// Launcher-wrapped core without joining: the fixture owns the reader
+    /// threads from here (retained-pipe cleanup proof).
+    fn run_raw_core(
+        program: &str,
+        args: &[&str],
+        limit: Duration,
+        faults: LifecycleFaults,
+    ) -> (BoundedRun, PendingJoiners) {
+        let launcher = limit_launcher();
+        let mut cmd = Command::new("bash");
+        cmd.args(["-c", &launcher, "_"])
+            .arg(program)
+            .args(args)
+            // `program` is a parameter, so an instrumented binary can reach
+            // here; a non-instrumented helper just ignores this. Same reason
+            // as `run_cli_argv_bounded`.
+            .env("LLVM_PROFILE_FILE", bashkit::testing::child_profile_path())
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let (mut run, pending) = run_core(cmd, limit, faults);
+        strip_launcher_note(&mut run);
+        (run, pending)
+    }
+
+    /// Runs a script in the built CLI under `run_command_bounded`, with
+    /// no trailing words after the `-c` script.
+    fn run_cli_bounded(script: &str, limit: Duration) -> BoundedRun {
+        run_cli_argv_bounded(script, &[], limit)
+    }
+
+    /// Every bounded CLI child is handed a coverage profile path outside the
+    /// directory tarpaulin merges, and a distinct one per child.
+    ///
+    /// These children are killed by design, and a SIGKILLed instrumented
+    /// process leaves a truncated profraw that fails tarpaulin's merge step
+    /// (main Coverage runs 4588 and 4600). Asserted on the built `Command`
+    /// rather than from inside the child: the sandbox deliberately withholds
+    /// host env from the script (TM-INF-013), so a bounded run cannot echo
+    /// back what its own process received. This pins the actual value, which
+    /// the static scan in `bounded_child_launcher_scan_tests` cannot.
+    #[test]
+    fn bounded_cli_children_get_a_profile_path_outside_the_merge_set() {
+        fn profile_of(cmd: &Command) -> std::ffi::OsString {
+            cmd.get_envs()
+                .find(|(key, _)| *key == std::ffi::OsStr::new("LLVM_PROFILE_FILE"))
+                .map(|(_, value)| value.expect("profile path is set, not removed"))
+                .expect("bounded CLI children must get LLVM_PROFILE_FILE")
+                .to_owned()
+        }
+
+        let first = profile_of(&bounded_cli_command("echo hi", &[]));
+        let text = first.to_string_lossy();
+        assert!(text.ends_with(".profraw"), "{text}");
+        assert!(
+            !text.contains("tarpaulin"),
+            "child would write into tarpaulin's merge set: {text}"
+        );
+
+        // Distinct per child: two victims must not race on one file.
+        let second = profile_of(&bounded_cli_command("echo hi", &[]));
+        assert_ne!(first, second);
+    }
+
+    /// Reaps a victim inside a finite grace via caller-supplied polling.
+    /// Returns the observed status, or `None` when the victim cannot be
+    /// reaped inside the grace (or polling itself errors): the safe seam
+    /// for the unavailable-reap verdict.
+    pub(crate) fn reap_with_grace(
+        poll: &mut dyn FnMut() -> std::io::Result<Option<std::process::ExitStatus>>,
+        grace: Duration,
+    ) -> Option<std::process::ExitStatus> {
+        let end = Instant::now() + grace;
+        loop {
+            match poll() {
+                Ok(Some(s)) => return Some(s),
+                Ok(None) => {
+                    if Instant::now() >= end {
+                        return None;
+                    }
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(_) => return None,
+            }
+        }
+    }
+
+    /// Runs an already-built command with one shared wall deadline for
+    /// the child, plus finite drain/reap graces after it. The caller
+    /// supplies piped stdio: inherited pipes never report back and fail
+    /// the run as incomplete instead of hanging it.
+    /// child exit, pipe drain, and reaping:
+    /// - wall clock: past `limit` the child is killed; if it had already
+    ///   exited, the run is not marked timed out;
+    /// - output: one reader thread per pipe stops past the sample cap, the
+    ///   child is killed, and the run is marked `oversized` (a harness
+    ///   failure, never a silent cut). Readers run concurrently, so a
+    ///   chatty child can never deadlock the runner on a full pipe;
+    /// - drain: after the break, missing readers get a short grace period.
+    ///   Anything still missing means a foreign descendant retains the
+    ///   pipe: the run is marked `incomplete_readers` and fails visibly
+    ///   instead of waiting forever. Reader threads for retained pipes are
+    ///   dropped, not joined without a deadline (one documented thread
+    ///   leak per such run, only in the retention self-test).
+    /// - CPU/stack caps are the launcher's job (see above); Rust std
+    ///   exposes no portable per-child CPU/stack/memory caps, and Darwin
+    ///   does not enforce address-space caps: documented here, not claimed.
+    // Reaping is done by the bounded `try_wait` poll inside the cleanup
+    // grace below; an unconditional `wait()` would hang past the grace on
+    // an unkillable victim, which is exactly what this harness forbids.
+    // Test-only fault injection for the parent lifecycle: each flag
+    // drives the real lifecycle path with exactly one hostile condition.
+    // All flags stay off outside these tests.
+    #[derive(Clone, Default)]
+    pub(crate) struct LifecycleFaults {
+        /// Child poll fails: the parent must fail closed, never panic.
+        fail_poll: bool,
+        /// Stdout pipe reads fail: the parent verdict must carry
+        /// `read_error` with partial capture.
+        fail_read: bool,
+        /// Reaping never observes an exit: the unavailable-reap verdict.
+        /// Optional readiness gate for `fail_poll`: the fault fires only
+        /// after this file exists, proving the fixture victim truly live
+        /// under bounds before observation is broken. Without it the fault
+        /// could mask a spawn failure as poll breakage.
+        ready_file: Option<std::path::PathBuf>,
+        reap_never: bool,
+    }
+
+    /// A pipe that always fails reads: plugs a real I/O error into the
+    /// actual parent capture path (reader thread, channel, verdict).
+    struct FailRead;
+    impl Read for FailRead {
+        fn read(&mut self, _buf: &mut [u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::other("injected read failure"))
+        }
+    }
+
+    fn run_command_bounded(cmd: Command, limit: Duration) -> BoundedRun {
+        run_command_bounded_with(cmd, limit, LifecycleFaults::default())
+    }
+
+    /// Standard runner: core lifecycle plus the bounded join gate. Reader
+    /// threads that never reported stay detached by contract.
+    pub(crate) fn run_command_bounded_with(
+        cmd: Command,
+        limit: Duration,
+        faults: LifecycleFaults,
+    ) -> BoundedRun {
+        let (mut run, pending) = run_core(cmd, limit, faults);
+        if !finish_joiners(pending) {
+            run.incomplete_readers = true;
+        }
+        run
+    }
+
+    // Reaping is done by the bounded try_wait poll inside reap_with_grace;
+    // an unconditional wait() would hang past the cleanup grace on an
+    // unkillable victim, which is exactly what this harness forbids.
+    #[allow(clippy::zombie_processes)]
+    /// Owned reader handles for tests that must observe completion
+    /// themselves: the runner's verdict plus the actual threads.
+    struct PendingJoiners {
+        handles: Vec<std::thread::JoinHandle<()>>,
+        all_reported: bool,
+    }
+
+    /// Applies the bounded join gate to owned reader threads: joins only
+    /// while `is_finished` inside the shared completion grace, drops the
+    /// rest detached. Returns true only when every reported thread joined
+    /// cleanly; unfinished or panicking threads fail the verdict instead.
+    /// Callers OR the result into `incomplete_readers`.
+    fn finish_joiners(pending: PendingJoiners) -> bool {
+        if !pending.all_reported {
+            return false;
+        }
+        let end = Instant::now() + JOIN_GRACE;
+        let mut ok = true;
+        for reader in pending.handles {
+            match join_finished(reader, end) {
+                JoinOutcome::Joined => {}
+                JoinOutcome::Unfinished(_) | JoinOutcome::Panicked => {
+                    ok = false;
+                }
+            }
+        }
+        ok
+    }
+
+    /// Core lifecycle without joining: spawn, observe, terminate, reap,
+    /// drain, verdict. Callers own the reader threads from here.
+    fn run_core(
+        mut cmd: Command,
+        limit: Duration,
+        faults: LifecycleFaults,
+    ) -> (BoundedRun, PendingJoiners) {
+        let mut child = cmd.spawn().expect("spawn bounded child");
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut readers = Vec::new();
+        // Injected read failure plugs a real I/O error into the actual
+        // parent capture path (reader thread, channel, verdict). Without
+        // faults the take() path below is byte-identical to before.
+        if faults.fail_read {
+            readers.push(spawn_capped_reader(
+                0,
+                Box::new(FailRead) as Box<dyn Read + Send>,
+                tx.clone(),
+            ));
+        } else if let Some(pipe) = child.stdout.take() {
+            readers.push(spawn_capped_reader(0, Box::new(pipe), tx.clone()));
+        }
+        if let Some(pipe) = child.stderr.take() {
+            readers.push(spawn_capped_reader(1, Box::new(pipe), tx.clone()));
+        }
+        drop(tx);
+        let mut bufs: [Option<Vec<u8>>; 2] = [None, None];
+        let mut oversized = false;
+        let mut read_error = false;
+        let mut status = None;
+        let mut timed_out = false;
+        let mut poll_failed = false;
+        let deadline = Instant::now() + limit;
+        // Pipe EOF alone never ends the run: only an observed exit does,
+        // otherwise a child that closes output and keeps running would
+        // bypass the watchdog into an unbounded wait. The deadline verdict
+        // is recorded from pre-kill observed liveness and never recomputed
+        // after killing: reaping the SIGKILL victim must not flip a genuine
+        // timeout to false on scheduling luck.
+        loop {
+            while let Ok((id, buf, over, rerr)) = rx.try_recv() {
+                bufs[id as usize] = Some(buf);
+                oversized |= over;
+                read_error |= rerr;
+            }
+            if bufs[0].is_some() && bufs[1].is_some() && status.is_some() {
+                break;
+            }
+            if oversized {
+                // `kill` is idempotent; errors (already exited) are ignored.
+                let _ = child.kill();
+            }
+            if status.is_none() {
+                // A failed poll is an unobservable child, never a panic: fail
+                // closed through the kill/reap path with a distinct verdict
+                // (incomplete, no exit, not mislabeled as a timeout below).
+                // fail_poll fires only once the readiness file proves the
+                // victim truly live; before that the parent polls normally, so
+                // the fault can never mask a spawn/launch failure.
+                let armed = faults.fail_poll
+                    && faults
+                        .ready_file
+                        .as_ref()
+                        .map(|p| p.exists())
+                        .unwrap_or(true);
+                if armed {
+                    poll_failed = true;
+                    break;
+                }
+                match child.try_wait() {
+                    Ok(found) => status = found,
+                    Err(_) => {
+                        poll_failed = true;
+                        break;
+                    }
+                }
+            }
+            if Instant::now() >= deadline {
+                // Verdict only: termination happens in common cleanup below,
+                // so every path (timeout, oversized, poll failure) funnels
+                // through one reachable kill guard. An unobservable child
+                // keeps its distinct verdict (incomplete, exitless, and no
+                // timeout label) instead of being mislabeled.
+                if status.is_none() && !oversized && !poll_failed {
+                    timed_out = true;
+                }
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        // Bounded drain grace: an exited child with unretained pipes hits
+        // EOF promptly; anything still missing is a retained pipe.
+        // Common cleanup termination: every loop exit (observed
+        // completion, deadline, oversized, poll failure) funnels through
+        // this one reachable kill guard. It is idempotent — already-dead
+        // children are untouched — and the live oversize kill inside the
+        // loop stays as the early producer stop. Verdicts were recorded
+        // pre-kill above and are never recomputed from it.
+        if status.is_none() {
+            let _ = child.kill();
+        }
+        let grace_end = Instant::now() + DRAIN_GRACE;
+        while (bufs[0].is_none() || bufs[1].is_none()) && Instant::now() < grace_end {
+            match rx.recv_timeout(Duration::from_millis(50)) {
+                Ok((id, buf, over, rerr)) => {
+                    bufs[id as usize] = Some(buf);
+                    oversized |= over;
+                    read_error |= rerr;
+                }
+                Err(_) => {
+                    if bufs[0].is_some() && bufs[1].is_some() {
+                        break;
+                    }
+                }
+            }
+        }
+        let incomplete_readers = bufs[0].is_none() || bufs[1].is_none() || read_error;
+        // Bounded completion gate: a channel receipt proves its thread
+        // finished every blocking call, but scheduling can pause the sender
+        // between send and return, so a receipt is not the termination
+        // contract. Poll is_finished inside the shared completion grace and
+        // join only finished handles; unfinished handles stay detached and
+        // fail the run as incomplete instead. A panicking reader surfaces
+        // as incomplete too, never silent. std offers no timed join; this
+        // gate plus the elapsed-total assertions are the termination proof.
+        // No reproduced production hang is claimed from the static shape:
+        // the gate exists so none can occur.
+        let pending = PendingJoiners {
+            handles: readers,
+            all_reported: bufs[0].is_some() && bufs[1].is_some(),
+        };
+        // Reaps the victim inside a finite grace through a poll seam, so
+        // the unavailable-reap verdict is unit-testable without OS fakery.
+        // Bounded reap inside a finite cleanup grace: the execution deadline
+        // (`limit`) is already over, so reaping must never become an
+        // unbounded `wait`. A victim that cannot be reaped inside the grace
+        // fails the run visibly instead of hanging the suite; `timed_out`
+        // stays exactly as recorded pre-kill and is never recomputed here.
+        // Unavailable reap (or injected): the seam verdict flows into
+        // the real parent status instead of a helper-only simulation.
+        // The OS cleanup always runs (no zombies by construction);
+        // reap_never only discards the observation for the verdict, never
+        // the cleanup itself. Do not invent exit/reap success from it.
+        let mut poll = || child.try_wait();
+        let really_reaped = reap_with_grace(&mut poll, REAP_GRACE);
+        let reaped = if faults.reap_never {
+            None
+        } else {
+            really_reaped
+        };
+        let status = match (status, reaped) {
+            (Some(s), _) => Some(s),
+            (None, Some(s)) => Some(s),
+            (None, None) => None,
+        };
+        let incomplete_readers = incomplete_readers || status.is_none() || poll_failed;
+        let stdout = String::from_utf8_lossy(bufs[0].as_deref().unwrap_or(&[])).into_owned();
+        let stderr = String::from_utf8_lossy(bufs[1].as_deref().unwrap_or(&[])).into_owned();
+        let run = BoundedRun {
+            timed_out,
+            oversized,
+            incomplete_readers,
+            read_error,
+            // OS termination accounted for: the loop observed an exit or
+            // the bounded reap recovered one. Independent of `exit_code`
+            // (signaled victims have no code) and of injected observation
+            // faults (which discard the observation, never the cleanup).
+            reaped: status.is_some() || really_reaped.is_some(),
+            limits_note: String::new(),
+            exit_code: status.and_then(|s| s.code()),
+            stdout,
+            stderr,
+        };
+        (run, pending)
+    }
+
+    /// TM-DOS-136: scaled multiline token x long ARG0 stays bounded in a
+    /// child. The exact finding shape: `for x "` plus N `a`+newline lines
+    /// plus the closing quote (the parser expects `do`), invoked with a long
+    /// `-c` ARG0. Diagnostic storage used to grow as token lines x ARG0
+    /// before stderr capture. Both scales must exit 2 with a Bash-compatible
+    /// shape and flat <=1 KiB stderr, proving the report no longer grows
+    /// with the product. Never runs in the test process.
+    #[test]
+    fn syntax_diagnostic_multiline_times_arg0_is_bounded_in_child() {
+        for token_lines in [200usize, 2000usize] {
+            let mut script = String::from("for x \"");
+            for _ in 0..token_lines {
+                script.push('a');
+                script.push('\n');
+            }
+            script.push('"');
+            let arg0 = "B".repeat(8192);
+            let run = run_cli_argv_bounded(&script, &[&arg0], Duration::from_secs(20));
+            assert!(
+                !run.timed_out,
+                "token_lines={token_lines}: child hit the 20s watchdog"
+            );
+            assert_eq!(
+                run.exit_code,
+                Some(2),
+                "token_lines={token_lines}: raw child exit code"
+            );
+            assert!(
+                !run.oversized,
+                "token_lines={token_lines}: output exceeded the 8192-byte sample cap"
+            );
+            assert!(
+                !run.incomplete_readers,
+                "token_lines={token_lines}: reader threads did not finish"
+            );
+            assert!(
+                !run.read_error,
+                "token_lines={token_lines}: pipe reader hit a real I/O error"
+            );
+            assert!(
+                run.limits_note.contains("stack=4096"),
+                "token_lines={token_lines}: effective stack cap not read back: {}",
+                run.limits_note
+            );
+            assert!(
+                run.limits_note.contains("cpu=10"),
+                "token_lines={token_lines}: effective CPU cap not read back: {}",
+                run.limits_note
+            );
+            assert!(
+                run.stdout.is_empty(),
+                "token_lines={token_lines}: stdout must stay empty"
+            );
+            assert!(
+                run.stderr.contains("syntax error"),
+                "token_lines={token_lines}: keep the Bash-compatible shape"
+            );
+            assert!(
+                run.stderr.len() <= 1024,
+                "token_lines={token_lines}: {} stderr bytes, want <= 1024",
+                run.stderr.len()
+            );
+        }
+    }
+
+    /// Scripted pipe source for `drain_capped` selftests: replays
+    /// `Interrupted` retries, data, real errors, and EOF on demand.
+    enum ReadOp {
+        Interrupted,
+        Data(&'static [u8]),
+        Fail,
+        Eof,
+    }
+    struct ScriptedRead {
+        ops: Vec<ReadOp>,
+        off: usize,
+    }
+    impl Read for ScriptedRead {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            if self.off >= self.ops.len() {
+                return Ok(0);
+            }
+            match self.ops[self.off] {
+                ReadOp::Interrupted => {
+                    self.off += 1;
+                    Err(std::io::Error::from(std::io::ErrorKind::Interrupted))
+                }
+                ReadOp::Data(d) => {
+                    self.off += 1;
+                    let n = d.len().min(buf.len());
+                    buf[..n].copy_from_slice(&d[..n]);
+                    Ok(n)
+                }
+                ReadOp::Fail => {
+                    self.off += 1;
+                    Err(std::io::Error::new(std::io::ErrorKind::BrokenPipe, "boom"))
+                }
+                ReadOp::Eof => Ok(0),
+            }
+        }
+    }
+
+    #[test]
+    fn harness_reader_exact_cap_eof_is_clean() {
+        // Two 4096-byte reads land exactly on the 8192 cap, then EOF:
+        // full retention, no excess flag.
+        static CHUNK: [u8; 4096] = [b'x'; 4096];
+        let mut exact = ScriptedRead {
+            ops: vec![ReadOp::Data(&CHUNK), ReadOp::Data(&CHUNK), ReadOp::Eof],
+            off: 0,
+        };
+        let (buf, oversized, read_error) = drain_capped(&mut exact);
+        assert_eq!(buf.len(), BOUNDED_SAMPLE_CAP);
+        assert!(!oversized, "exact cap + EOF is not excess");
+        assert!(!read_error);
+    }
+
+    #[test]
+    fn harness_reader_real_excess_flags_oversized() {
+        let mut over: &[u8] = &vec![b'x'; BOUNDED_SAMPLE_CAP + 1];
+        let (buf, oversized, read_error) = drain_capped(&mut over);
+        assert_eq!(
+            buf.len(),
+            BOUNDED_SAMPLE_CAP,
+            "retention never passes the cap"
+        );
+        assert!(oversized, "cap + 1 is real excess");
+        assert!(!read_error);
+    }
+
+    #[test]
+    fn harness_reader_retries_interrupted_and_reports_errors() {
+        let mut ok = ScriptedRead {
+            ops: vec![ReadOp::Interrupted, ReadOp::Data(b"hi"), ReadOp::Eof],
+            off: 0,
+        };
+        let (buf, oversized, read_error) = drain_capped(&mut ok);
+        assert_eq!(buf, b"hi");
+        assert!(!oversized);
+        assert!(!read_error, "Interrupted is retried, not reported");
+        let mut bad = ScriptedRead {
+            ops: vec![ReadOp::Data(b"par"), ReadOp::Fail],
+            off: 0,
+        };
+        let (buf, _, read_error) = drain_capped(&mut bad);
+        assert_eq!(buf, b"par", "partial bytes are kept");
+        assert!(read_error, "real errors fail closed, never EOF");
+    }
+
+    #[test]
+    fn harness_signal_reports_presence_trichotomy() {
+        // Direct deterministic proof of the ESRCH/EPERM/Unknown split
+        // through the actual helper: self is Present, an impossible PID
+        // is Absent by ESRCH receipt, and an invalid PID string is
+        // Unknown (never successful absence).
+        let me_pid = std::process::id().to_string();
+        let tri_start = Instant::now();
+        let end = tri_start + Duration::from_secs(20);
+        let mut unfinished = Vec::new();
+        let me_check = signal_bounded(
+            &["-0", &me_pid],
+            end.saturating_duration_since(Instant::now())
+                .min(Duration::from_secs(5)),
+        );
+        match me_check.drain_thread {
+            None => {}
+            Some(h) => assert!(
+                retain_join(h, end, &mut unfinished),
+                "handoff joined under a finite bound"
+            ),
+        }
+        assert!(me_check.dispatched, "self-signal delivers");
+        assert!(me_check.helper_reaped, "helper reaped on every path");
+        assert!(me_check.pipe_ok, "pipe drained cleanly");
+        assert!(
+            matches!(me_check.presence, PidPresence::Present),
+            "own PID reads Present"
+        );
+        let gone_check = signal_bounded(
+            &["-0", "2147483647"],
+            end.saturating_duration_since(Instant::now())
+                .min(Duration::from_secs(5)),
+        );
+        match gone_check.drain_thread {
+            None => {}
+            Some(h) => assert!(
+                retain_join(h, end, &mut unfinished),
+                "handoff joined under a finite bound"
+            ),
+        }
+        assert!(gone_check.dispatched, "query itself delivered");
+        assert!(gone_check.helper_reaped, "helper reaped on every path");
+        assert!(
+            matches!(gone_check.presence, PidPresence::Absent),
+            "impossible PID reads Absent by ESRCH receipt"
+        );
+        let bad_check = signal_bounded(
+            &["-9", "not-a-pid"],
+            end.saturating_duration_since(Instant::now())
+                .min(Duration::from_secs(5)),
+        );
+        match bad_check.drain_thread {
+            None => {}
+            Some(h) => assert!(
+                retain_join(h, end, &mut unfinished),
+                "handoff joined under a finite bound"
+            ),
+        }
+        assert!(!bad_check.dispatched, "invalid PID string cannot deliver");
+        assert!(bad_check.helper_reaped, "helper reaped on every path");
+        assert!(
+            matches!(bad_check.presence, PidPresence::Unknown),
+            "undecipherable outcome stays Unknown, never absence"
+        );
+        assert!(
+            tri_start.elapsed() < Duration::from_secs(20),
+            "all three helper calls finished inside finite bounds: {:?}",
+            tri_start.elapsed()
+        );
+    }
+
+    /// An infinite writer that never yields EOF: proves the drain
+    /// terminates at the cap by retention bound alone, without any EOF.
+    struct EndlessWriter;
+    impl Read for EndlessWriter {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            for b in buf.iter_mut() {
+                *b = b'x';
+            }
+            Ok(buf.len())
+        }
+    }
+
+    #[test]
+    fn harness_drain_ends_without_eof_at_cap() {
+        let start = Instant::now();
+        let mut src = EndlessWriter;
+        let (buf, oversized, read_error) = drain_capped(&mut src);
+        assert_eq!(
+            buf.len(),
+            BOUNDED_SAMPLE_CAP,
+            "retention never passes the cap"
+        );
+        assert!(oversized, "uncapped stream is real excess");
+        assert!(!read_error);
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "no EOF needed for termination: {:?}",
+            start.elapsed()
+        );
+    }
+
+    #[test]
+    fn harness_helper_timeout_kills_and_reaps_bounded() {
+        // Deterministic timeout path through the shared helper: a 30s
+        // sleeper against a 200ms end always trips the deadline first.
+        // The helper must kill it, reap the signaled exit inside the
+        // reserved floor, and report exit-None with reaped true — never
+        // an abandoned running child, never an inferred exit.
+        let start = Instant::now();
+        let end = start + Duration::from_millis(200);
+        let mut unfinished = Vec::new();
+        let o = run_helper_bounded("sleep", &["30"], end);
+        assert_eq!(o.exit, None, "timed-out helper has no exit code");
+        assert!(o.signaled, "timeout path dispatched its kill");
+        assert!(o.reaped, "kill was reaped inside the reserved floor");
+        // SAME-handle rule even here: sleep drains instantly, so the join
+        // below succeeds at once and proves it (no assert-away).
+        if let Some(h) = o.drain_thread {
+            assert!(retain_join(h, end, &mut unfinished), "handoff joined");
+        }
+        assert!(
+            start.elapsed() < Duration::from_secs(10),
+            "helper timeout bounded end to end: {:?}",
+            start.elapsed()
+        );
+    }
+
+    #[test]
+    fn harness_helper_retained_writer_times_out_bounded() {
+        // Controlled retained-writer negative proof THROUGH the shared
+        // helper entry (not a manual copy of its poll/drain/channel): a
+        // backgrounded marker sleeper holds the stderr pipe open while
+        // the shell exits at once, under an applied CPU/stack/output
+        // envelope proven by file receipt. Ownership (marker, files) is
+        // acquired in the guard BEFORE the subject call, so setup and
+        // assertion failures clean up too; the drain handle joins the
+        // guard right after the call. Controlled cleanup (marker kill,
+        // SAME-handle join, absence) runs through guard.complete BEFORE
+        // any verdict assertion below. No twin, no self-expiry, no
+        // inference: every receipt is observed.
+        let marker = format!("syntax-held-{}", std::process::id());
+        let receipt =
+            std::env::temp_dir().join(format!("syntax-held-limits-{}", std::process::id()));
+        // SAME effective child envelope as the launcher (fail-closed
+        // 99 on refusal): the subject runs bounded even though it goes
+        // through run_helper directly.
+        let script = format!(
+            "{BOUNDED_CLI_LIMITS}; ulimit -s > '{}'; ulimit -t >> '{}'; exec -a '{marker}' sleep 30 & exit 0",
+            receipt.display(),
+            receipt.display()
+        );
+        let start = Instant::now();
+        let mut drop_readers = Vec::new();
+        let mut guard = RetainedCleanup {
+            drop_readers: &mut drop_readers,
+            pid: None,
+            marker: Some(marker.clone()),
+            pending: None,
+            files: vec![receipt.clone()],
+            drop_note: None,
+        };
+        let o = run_helper_bounded(
+            "bash",
+            &["-c", &script],
+            Instant::now() + Duration::from_secs(8),
+        );
+        // The SAME returned reader joins guard ownership immediately
+        // (before any assert): a panic below still cleans up via Drop.
+        let mut handle = o.drain_thread;
+        assert!(
+            handle.is_some(),
+            "unfinished reader rides home, never detached"
+        );
+        guard.pending = Some(PendingJoiners {
+            handles: vec![handle.take().unwrap()],
+            all_reported: false,
+        });
+        // Collect the envelope receipt now: complete() below removes its
+        // file as part of cleanup, so the bytes must be owned first. The
+        // assertions on its contents stay after cleanup with the verdict.
+        let receipt_text =
+            std::fs::read_to_string(&receipt).expect("envelope receipt written under bounds");
+        // Controlled cleanup BEFORE verdict assertions: terminate the
+        // exact writer through marker ownership, join the SAME original
+        // handle, observe absence, bound the total.
+        let cleanup = guard.complete(start);
+        // Verdict assertions on observed receipts only.
+        assert_eq!(o.exit, Some(0), "subject exit observed (direct OS reap)");
+        assert!(o.reaped, "observed exit reaped, no zombie");
+        assert!(
+            !o.drained_ok,
+            "retained writer yields no drain verdict (fail-closed)"
+        );
+        let mut lines = receipt_text.lines();
+        assert_eq!(lines.next(), Some("4096"), "effective stack cap applied");
+        assert_eq!(lines.next(), Some("10"), "effective CPU cap applied");
+        assert!(cleanup.signaled, "marker kill dispatched");
+        assert!(
+            cleanup.descendant_gone,
+            "writer absence observed (pgrep exit 1), not inferred"
+        );
+        assert!(
+            cleanup.readers_joined,
+            "SAME original reader joined after writer termination"
+        );
+        assert!(
+            cleanup.unjoined.is_empty(),
+            "no reader handle silently detached"
+        );
+        assert!(
+            cleanup.helper_clean,
+            "cleanup helpers reaped and drained on every call"
+        );
+        assert!(
+            cleanup.elapsed < Duration::from_secs(25),
+            "retained-writer proof bounded end to end: {:?}",
+            cleanup.elapsed
+        );
+    }
+
+    #[test]
+    fn harness_handshake_failure_has_owned_unknown_verdict() {
+        // Two identity channels for the SAME controlled victim: pidA is
+        // written by the fixture and establishes independent ownership
+        // BEFORE the fallible handshake; pidB is never written, so its
+        // handshake fails deterministically. The run verdict stays the
+        // helper's own (incomplete, exitless-timeout-free); cleanup runs
+        // through the owned channel with the SAME original readers.
+        let receipt = std::env::temp_dir().join(format!("syntax-hs-limits-{}", std::process::id()));
+        let pid_a = std::env::temp_dir().join(format!("syntax-hs-pid-a-{}", std::process::id()));
+        let pid_b = std::env::temp_dir().join(format!("syntax-hs-pid-b-{}", std::process::id()));
+        let script = format!(
+            "ulimit -s > '{}'; ulimit -t >> '{}'; sleep 30 & echo $! > '{}'; exit 0",
+            receipt.display(),
+            receipt.display(),
+            pid_a.display()
+        );
+        let start = Instant::now();
+        let (run, pending) = run_raw_core(
+            "bash",
+            &["-c", &script],
+            Duration::from_secs(5),
+            LifecycleFaults::default(),
+        );
+        // Ownership first: pidA binds the exact victim before the
+        // handshake on pidB is even attempted.
+        // Guard owns threads and file paths BEFORE any fallible read:
+        // a panic below still cleans up via Drop. The pid binds once the
+        // pidA handshake proves identity; without it there is honestly
+        // nothing to terminate.
+        let mut drop_readers = Vec::new();
+        let mut guard = RetainedCleanup {
+            drop_readers: &mut drop_readers,
+            drop_note: None,
+            marker: None,
+            pid: None,
+            pending: Some(pending),
+            files: vec![receipt, pid_a],
+        };
+        let owned = std::fs::read_to_string(&guard.files[1])
+            .expect("ownership channel recorded")
+            .trim()
+            .to_string();
+        guard.pid = Some(owned.clone());
+        assert!(!run.timed_out, "exited child misreported as timeout");
+        assert_eq!(run.exit_code, Some(0));
+        assert!(
+            run.incomplete_readers,
+            "retained pipes are reported, not hidden"
+        );
+        // The pidB handshake fails deterministically: nothing ever wrote
+        // it, and the verdict above was reached without it.
+        assert!(
+            std::fs::read_to_string(&pid_b).is_err(),
+            "unwritten handshake channel stays failed"
+        );
+        // Cleanup through the OWNED channel with the SAME original
+        // readers: terminate, join, observe absence, bound the total.
+        let receipt = guard.complete(start);
+        assert!(receipt.signaled, "owned descendant terminated");
+        assert!(
+            receipt.descendant_gone,
+            "ESRCH-observed absence of the owned victim"
+        );
+        assert!(
+            receipt.readers_joined,
+            "SAME original reader handles joined after the kill"
+        );
+        assert!(
+            receipt.helper_clean,
+            "cleanup helpers reaped and drained on every call"
+        );
+        assert!(
+            receipt.unjoined.is_empty(),
+            "no reader handle silently detached"
+        );
+        assert!(
+            receipt.elapsed < Duration::from_secs(25),
+            "owned cleanup bounded end to end: {:?}",
+            receipt.elapsed
+        );
+    }
+
+    #[test]
+    fn harness_ownership_channel_failure_has_owned_unknown_verdict() {
+        // Fixture with NO pid echo anywhere: no per-process identity
+        // channel exists, so the parent verdict stays honestly unknown.
+        // Ownership comes instead from a test-controlled argv marker
+        // (established in the script text before the run, usable whether
+        // or not any pidfile handshake succeeds): pkill/pgrep address the
+        // exact fixture through it, with exit codes as the receipts
+        // (pkill 0 = matched, pgrep 1 = gone). No twin handles, no
+        // self-expiry reliance: every assertion below is observed.
+        let marker = format!("syntax-sleeper-{}", std::process::id());
+        let receipt =
+            std::env::temp_dir().join(format!("syntax-hs-nopid-limits-{}", std::process::id()));
+        let script = format!(
+            "ulimit -s > '{}'; ulimit -t >> '{}'; exec -a '{}' sleep 30 & exit 0",
+            receipt.display(),
+            receipt.display(),
+            marker
+        );
+        let start = Instant::now();
+        let (run, pending) = run_raw_core(
+            "bash",
+            &["-c", &script],
+            Duration::from_secs(5),
+            LifecycleFaults::default(),
+        );
+        // Guard owns threads, files, AND the marker ownership channel
+        // BEFORE any assert below: a panic anywhere still cleans up via
+        // Drop. No pid identity was ever recorded for this fixture; the
+        // marker (established in the script text pre-launch) is the
+        // usable control channel, and complete() terminates through it.
+        let mut drop_readers = Vec::new();
+        let mut guard = RetainedCleanup {
+            drop_readers: &mut drop_readers,
+            drop_note: None,
+            pid: None,
+            marker: Some(marker.clone()),
+            pending: Some(pending),
+            files: vec![receipt],
+        };
+        assert!(!run.timed_out, "exited child misreported as timeout");
+        assert_eq!(run.exit_code, Some(0));
+        assert!(
+            run.incomplete_readers,
+            "retained pipes are reported, not hidden"
+        );
+        // No pid identity was ever recorded for this fixture (proven
+        // below): the marker ownership channel drove full cleanup, so the
+        // helper verdict stays honestly pid-less while every cleanup step
+        // carries an observed receipt.
+        let receipt = guard.complete(start);
+        assert!(
+            std::fs::read_to_string(
+                std::env::temp_dir().join(format!("syntax-hs-nopid-pid-{}", std::process::id()))
+            )
+            .is_err(),
+            "no pid identity was ever recorded for this fixture"
+        );
+        assert!(
+            receipt.signaled,
+            "marker ownership terminated the exact fixture"
+        );
+        assert!(
+            receipt.descendant_gone,
+            "marker absence observed (pgrep exit 1), not inferred"
+        );
+        assert!(
+            receipt.readers_joined,
+            "SAME original handles joined after marker termination"
+        );
+        assert!(
+            receipt.unjoined.is_empty(),
+            "no reader handle silently detached"
+        );
+        assert!(
+            receipt.helper_clean,
+            "cleanup helpers reaped and drained on every call"
+        );
+        // Termination, SAME-original-handle join, and absence all ran
+        // inside complete() through the marker channel (no pid identity
+        // was ever recorded): the receipt asserts below prove each, with
+        // no unbounded waits and no post-hoc inference.
+        assert!(
+            start.elapsed() < Duration::from_secs(25),
+            "owned unknown-verdict cleanup bounded end to end: {:?}",
+            start.elapsed()
+        );
+    }
+
+    #[test]
+    fn harness_drop_preserves_unfinished_reader_for_owner() {
+        let (release, wait) = std::sync::mpsc::channel();
+        let handle = std::thread::spawn(move || {
+            let _ = wait.recv_timeout(Duration::from_secs(20));
+        });
+        let original_id = handle.thread().id();
+        let mut readers = Vec::new();
+        let start = Instant::now();
+        {
+            let _guard = RetainedCleanup {
+                drop_readers: &mut readers,
+                pid: None,
+                marker: None,
+                pending: Some(PendingJoiners {
+                    handles: vec![handle],
+                    all_reported: false,
+                }),
+                files: Vec::new(),
+                drop_note: None,
+            };
+        }
+        // Release before any assertion, then observe the ORIGINAL returned handle.
+        let _ = release.send(());
+        let count = readers.len();
+        let returned_id = readers.first().map(|h| h.thread().id());
+        let end = start + Duration::from_secs(10);
+        let mut all_joined = true;
+        for handle in std::mem::take(&mut readers) {
+            all_joined &= retain_join(handle, end, &mut readers);
+        }
+        assert_eq!(
+            count, 1,
+            "Drop returns unfinished ownership, not just a count"
+        );
+        assert_eq!(returned_id, Some(original_id));
+        assert!(all_joined && readers.is_empty());
+        assert!(start.elapsed() < Duration::from_secs(10));
+    }
+
+    #[test]
+    fn harness_marker_drop_cleans_up_on_unwind() {
+        // Caught failure through a MARKER-owned fixture (no pid identity
+        // anywhere): the guard is built before any assert, the panic
+        // unwinds through it, and Drop terminates via the marker channel,
+        // joins the SAME original readers, removes files, and writes its
+        // outcome receipt. The test reads that receipt back instead of
+        // inferring cleanup from silence.
+        let marker = format!("syntax-unwind-{}", std::process::id());
+        let note = std::env::temp_dir().join(format!("syntax-unwind-note-{}", std::process::id()));
+        let script = format!("exec -a '{marker}' sleep 30 & exit 0");
+        let (run, pending) = run_raw_core(
+            "bash",
+            &["-c", &script],
+            Duration::from_secs(5),
+            LifecycleFaults::default(),
+        );
+        let mut drop_readers = Vec::new();
+        let guard = RetainedCleanup {
+            drop_readers: &mut drop_readers,
+            pid: None,
+            marker: Some(marker.clone()),
+            pending: Some(pending),
+            files: vec![],
+            drop_note: Some(note.clone()),
+        };
+        assert!(
+            run.incomplete_readers,
+            "fixture holds pipes as designed before the panic"
+        );
+        let start = Instant::now();
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+            let _guard = guard;
+            panic!("simulated assertion failure with marker-owned guard");
+        }));
+        assert!(outcome.is_err(), "the simulated failure unwinds");
+        // Drop fired on unwind: read its outcome receipt (written before
+        // the guard was consumed), then prove absence independently.
+        let note_text = std::fs::read_to_string(&note).expect("Drop wrote its outcome receipt");
+        std::fs::remove_file(&note).ok();
+        assert_eq!(
+            note_text, "killed=true joined=true helper_clean=true",
+            "Drop terminated and joined with healthy helpers, observed not inferred"
+        );
+        // ONE shared end for the whole absence proof: each pgrep
+        // derives its allowance from the remainder, and only a healthy
+        // helper reporting exit 1 counts as absence (unhealthy helpers
+        // retry inside the bound, never prove anything).
+        let end = Instant::now() + Duration::from_secs(10);
+        let mut gone = false;
+        while Instant::now() < end {
+            let o = run_helper_bounded(
+                "pgrep",
+                &["-f", &marker],
+                Instant::now()
+                    + end
+                        .saturating_duration_since(Instant::now())
+                        .min(Duration::from_secs(5)),
+            );
+            assert!(
+                o.drain_thread.is_none(),
+                "pgrep drains instantly; a handoff here fails closed"
+            );
+            assert!(
+                o.drain_thread.is_none(),
+                "pgrep drains instantly by construction; a handoff here fails closed"
+            );
+            if o.exit == Some(1) && o.reaped && o.drained_ok {
+                gone = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert!(gone, "unwind path absence observed via pgrep exit 1");
+        assert!(
+            start.elapsed() < Duration::from_secs(25),
+            "marker unwind cleanup bounded: {:?}",
+            start.elapsed()
+        );
+    }
+
+    #[test]
+    fn harness_owned_guard_survives_unwind_then_completes() {
+        // The guard survives a borrow-only panic (never consumed by it),
+        // then runs its explicit finite cleanup AFTER catch_unwind: same
+        // owned descendant terminated, SAME original handles joined,
+        // absence observed, verdict asserted. This is the unwind path
+        // with receipts, complementing the Drop-consumed proof.
+        let pid_a =
+            std::env::temp_dir().join(format!("syntax-hs-postunwind-pid-{}", std::process::id()));
+        let script = format!("sleep 30 & echo $! > '{}'; exit 0", pid_a.display());
+        let (run, pending) = run_raw_core(
+            "bash",
+            &["-c", &script],
+            Duration::from_secs(5),
+            LifecycleFaults::default(),
+        );
+        // Guard owns threads and file paths BEFORE the assert below: a
+        // failure here still cleans up via Drop. The pid binds after its
+        // read; the post-unwind stage below then uses this SAME guard.
+        let mut drop_readers = Vec::new();
+        let mut guard_opt = Some(RetainedCleanup {
+            drop_readers: &mut drop_readers,
+            drop_note: None,
+            marker: None,
+            pid: None,
+            pending: Some(pending),
+            files: vec![pid_a.clone()],
+        });
+        // Identity binds before any assert below: the pidfile read is
+        // fallible setup, and the guard already owns threads and files
+        // while it runs.
+        let owned = std::fs::read_to_string(&pid_a)
+            .expect("ownership channel recorded")
+            .trim()
+            .to_string();
+        guard_opt.as_mut().unwrap().pid = Some(owned.clone());
+        assert!(
+            run.incomplete_readers,
+            "fixture holds pipes as designed before the panic"
+        );
+        let start = Instant::now();
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let g = guard_opt.as_mut().unwrap();
+            let _ = g;
+            panic!("simulated assertion failure with guard alive");
+        }));
+        assert!(outcome.is_err(), "the simulated failure unwinds");
+        // The SAME guard survived (only borrowed): explicit finite cleanup
+        // after unwind, then the negative verdict and original-handle
+        // completion on the actual owned resources.
+        let mut guard = guard_opt.take().expect("guard survived unwind");
+        let receipt = guard.complete(start);
+        assert!(receipt.signaled, "owned descendant terminated");
+        assert!(
+            receipt.descendant_gone,
+            "ESRCH-observed absence of the owned victim"
+        );
+        assert!(
+            receipt.readers_joined,
+            "SAME original reader handles joined after the kill"
+        );
+        assert!(
+            receipt.unjoined.is_empty(),
+            "no reader handle silently detached"
+        );
+        assert!(
+            receipt.elapsed < Duration::from_secs(25),
+            "post-unwind cleanup bounded: {:?}",
+            receipt.elapsed
+        );
+        assert!(
+            run.incomplete_readers,
+            "negative verdict preserved through unwind and cleanup"
+        );
+    }
+
+    #[test]
+    fn harness_handshake_fixture_cleans_up_on_unwind() {
+        // Caught setup/assertion failure through the owned handshake
+        // fixture: panic BEFORE normal complete, then prove the guard's
+        // Drop terminated the exact owned descendant inside a finite
+        // bound. No success flags come from the unwound path — only the
+        // absence receipt plus the reaped-termination observation below.
+        let pid_a =
+            std::env::temp_dir().join(format!("syntax-hs-unwind-pid-{}", std::process::id()));
+        let script = format!("sleep 30 & echo $! > '{}'; exit 0", pid_a.display());
+        let (run, pending) = run_raw_core(
+            "bash",
+            &["-c", &script],
+            Duration::from_secs(5),
+            LifecycleFaults::default(),
+        );
+        // Guard acquired BEFORE any assert below: a failure in the
+        // ownership read or in the verdict assert still cleans up via
+        // Drop. The incomplete assert runs inside the closure, after the
+        // guard owns the exact descendant and the original handles.
+        // Guard owns threads and files BEFORE the fallible pidA read:
+        // a failure here still cleans up via Drop (no identity to kill,
+        // files removed, threads documented). The pid binds below.
+        let mut drop_readers = Vec::new();
+        let mut guard = RetainedCleanup {
+            drop_readers: &mut drop_readers,
+            drop_note: None,
+            marker: None,
+            pid: None,
+            pending: Some(pending),
+            files: vec![pid_a.clone()],
+        };
+        let owned = std::fs::read_to_string(&pid_a)
+            .expect("ownership channel recorded")
+            .trim()
+            .to_string();
+        guard.pid = Some(owned.clone());
+        let start = Instant::now();
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+            let _guard = guard;
+            assert!(
+                run.incomplete_readers,
+                "fixture holds pipes as designed before the panic"
+            );
+            panic!("simulated assertion failure before complete");
+        }));
+        assert!(outcome.is_err(), "the simulated failure unwinds");
+        // The guard's Drop fired its kill; reap the signaled exit through
+        // the (bounded) absence poll below — kill -0 succeeds on zombies,
+        // so absence alone would prove nothing without this note: the
+        // sleeper here was orphaned (reparented past the fixture shell),
+        // hence no zombie lingers for this test to reap.
+        let end = Instant::now() + Duration::from_secs(10);
+        let mut gone = false;
+        while Instant::now() < end {
+            match signal_bounded(&["-0", &owned], Duration::from_secs(5)).presence {
+                PidPresence::Absent => {
+                    gone = true;
+                    break;
+                }
+                PidPresence::Present | PidPresence::Unknown => {
+                    std::thread::sleep(Duration::from_millis(50))
+                }
+            }
+        }
+        assert!(gone, "unwind path still terminated the owned descendant");
+        assert!(
+            start.elapsed() < Duration::from_secs(20),
+            "unwind cleanup bounded: {:?}",
+            start.elapsed()
+        );
+        std::fs::remove_file(&pid_a).ok();
+    }
+    #[test]
+    fn harness_cleanup_guard_fires_on_unwind() {
+        // A live sleeper owned by a guard that never reaches complete():
+        // the panic below simulates an assertion failure, and Drop must
+        // still terminate the exact descendant with a bounded absence
+        // receipt. No success flags are asserted from the unwound path —
+        // only that nothing leaks past the bound.
+        let mut child = Command::new("sleep")
+            .arg("30")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn unwind fixture");
+        let pid = child.id().to_string();
+        let start = Instant::now();
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let mut drop_readers = Vec::new();
+            let _guard = RetainedCleanup {
+                drop_readers: &mut drop_readers,
+                drop_note: None,
+                marker: None,
+                pid: Some(pid.clone()),
+                pending: None,
+                files: vec![],
+            };
+            panic!("simulated assertion failure before complete");
+        }));
+        assert!(outcome.is_err(), "the simulated failure unwinds");
+        // The guard's Drop fired its kill; this direct child is now a
+        // zombie (kill -0 succeeds on zombies), so reap through our own
+        // handle first — the reaped signaled exit is itself the
+        // termination receipt — then prove absence via ESRCH.
+        let reap_end = Instant::now() + Duration::from_secs(5);
+        let reaped = loop {
+            match child.try_wait() {
+                Ok(Some(s)) => break Some(s),
+                Ok(None) => {
+                    assert!(
+                        Instant::now() < reap_end,
+                        "unwound victim reaped inside the bound"
+                    );
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(_) => break None,
+            }
+        };
+        assert!(
+            reaped.map(|s| s.code()) == Some(None),
+            "unwound victim died signaled, not exited"
+        );
+        let end = Instant::now() + Duration::from_secs(10);
+        let mut gone = false;
+        while Instant::now() < end {
+            match signal_bounded(&["-0", &pid], Duration::from_secs(5)).presence {
+                PidPresence::Absent => {
+                    gone = true;
+                    break;
+                }
+                PidPresence::Present | PidPresence::Unknown => {
+                    std::thread::sleep(Duration::from_millis(50))
+                }
+            }
+        }
+        assert!(gone, "unwind path still terminated the owned descendant");
+        assert!(
+            start.elapsed() < Duration::from_secs(20),
+            "unwind cleanup bounded: {:?}",
+            start.elapsed()
+        );
+        // Reap through our direct handle so no zombie outlives the test;
+        // the victim is already dead, so this returns at once.
+        let _ = child.wait();
+    }
+
+    #[test]
+    fn harness_reap_seam_covers_poll_verdicts() {
+        // A pre-reaped status to replay through the seam.
+        let mut done = Command::new("bash");
+        done.args(["-c", "exit 3"]);
+        let mut done = done.spawn().expect("spawn seam status source");
+        let status = loop {
+            if let Some(s) = done.try_wait().expect("poll seam source") {
+                break s;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        };
+        // Immediate exit reaps at once.
+        let mut once = Some(status);
+        assert!(reap_with_grace(&mut || Ok(once.take()), Duration::from_secs(5)).is_some());
+        // Delayed exit reaps once observed.
+        let mut pending = 2;
+        let got = reap_with_grace(
+            &mut || {
+                if pending == 0 {
+                    Ok(Some(status))
+                } else {
+                    pending -= 1;
+                    Ok(None)
+                }
+            },
+            Duration::from_secs(5),
+        );
+        assert_eq!(got.map(|s| s.code()), Some(Some(3)));
+        // A victim that never exits fails the verdict inside the grace.
+        let start = Instant::now();
+        let none: Option<std::process::ExitStatus> =
+            reap_with_grace(&mut || Ok(None), Duration::from_millis(50));
+        assert!(none.is_none(), "unreapable victim fails visibly");
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "grace bounds the wait"
+        );
+        // Poll errors fail closed too.
+        let err: Option<std::process::ExitStatus> = reap_with_grace(
+            &mut || Err(std::io::Error::other("gone")),
+            Duration::from_secs(5),
+        );
+        assert!(err.is_none());
+    }
+
+    #[test]
+    fn harness_join_gate_proves_paused_sender_unfinished() {
+        // A sender paused after send, driven through the ACTUAL
+        // `join_finished` gate the runner uses. The sender blocks on
+        // `release` right after sending, so it is alive by construction
+        // when the parent observes the receipt: no timing luck involved.
+        // The thread body after release is a bare return (no blocking
+        // calls), so the release below is a bounded cleanup path watched
+        // by its own finite deadline. The SAME handle goes through both
+        // verdicts: unfinished first, then actually joined — never a twin,
+        // never detached-while-asserting-cleanup.
+        let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
+        let (rel_tx, rel_rx) = std::sync::mpsc::channel::<()>();
+        let handle = std::thread::spawn(move || {
+            let _ = done_tx.send(());
+            let _ = rel_rx.recv();
+        });
+        done_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("sender ran to the pause point inside the readiness bound");
+        let handle = match join_finished(handle, Instant::now() + Duration::from_millis(100)) {
+            JoinOutcome::Unfinished(h) => h,
+            JoinOutcome::Joined => panic!("paused-after-send thread must fail the gate"),
+            JoinOutcome::Panicked => panic!("paused sender must not panic"),
+        };
+        // Explicit release of THAT SAME thread with finite join cleanup:
+        // dropping the release sender unblocks the receiver with an error,
+        // the thread returns, and the gate joins it inside the watchdog.
+        drop(rel_tx);
+        let start = Instant::now();
+        match join_finished(handle, start + Duration::from_secs(5)) {
+            JoinOutcome::Joined => {}
+            JoinOutcome::Unfinished(_) => panic!("released thread must join inside the watchdog"),
+            JoinOutcome::Panicked => panic!("released thread must not panic"),
+        }
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "cleanup path bounded"
+        );
+    }
+    #[test]
+    fn harness_parent_verdict_covers_injected_faults() {
+        // Poll failure against a TRULY LIVE child through the REAL parent
+        // lifecycle: no panic, real termination in common cleanup, and a
+        // verdict distinct from timeout. The orphaned `sleep` is self-bound
+        // (30s); grandchildren cannot be reaped portably.
+        // Readiness file: the victim proves itself truly live under bounds
+        // before observation is broken. Direct exec replaces the shell, so
+        // killing closes the pipes at once with no orphan.
+        let ready = std::env::temp_dir().join(format!("syntax-poll-ready-{}", std::process::id()));
+        let script = format!("echo live > '{}'; exec sleep 30", ready.display());
+        let start = Instant::now();
+        let run = run_raw_bounded_with(
+            "bash",
+            &["-c", &script],
+            Duration::from_secs(5),
+            LifecycleFaults {
+                fail_poll: true,
+                ready_file: Some(ready.clone()),
+                ..Default::default()
+            },
+        );
+        let elapsed = start.elapsed();
+        let ready_seen = ready.exists();
+        std::fs::remove_file(&ready).ok();
+        // The common cleanup really terminated the live child; the exit
+        // comes back signaled (no code), and the verdict stays distinct
+        // from a timeout (incomplete, exitless, no timeout label).
+        assert!(ready_seen, "victim proved truly live before poll breakage");
+        assert_eq!(run.exit_code, None, "killed live child has no exit code");
+        assert!(
+            run.reaped,
+            "actual OS reap observed, separate from the exit verdict"
+        );
+        assert!(
+            run.limits_note.contains("stack=4096") && run.limits_note.contains("cpu=10"),
+            "effective caps read back: {}",
+            run.limits_note
+        );
+        assert!(run.incomplete_readers, "poll failure fails the run visibly");
+        assert!(
+            !run.timed_out,
+            "poll failure must not be mislabeled as a timeout"
+        );
+        assert!(
+            elapsed < Duration::from_secs(15),
+            "cleanup bounded without waiting for any descendant: {elapsed:?}"
+        );
+        assert!(
+            elapsed < Duration::from_secs(15),
+            "cleanup bounded without waiting for the 30s sleeper: {elapsed:?}"
+        );
+        // Injected read failure through the REAL parent capture path:
+        // partial capture with read_error set, never a clean EOF.
+        let mut c = Command::new("bash");
+        c.args(["-c", "exit 0"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let run = run_command_bounded_with(
+            c,
+            Duration::from_secs(5),
+            LifecycleFaults {
+                fail_read: true,
+                ..Default::default()
+            },
+        );
+        assert!(run.read_error, "injected read error propagates");
+        assert!(
+            run.incomplete_readers,
+            "partial capture fails the run visibly"
+        );
+        // Unavailable reap through the REAL parent verdict: the victim is
+        // killed on the deadline but its exit can never be observed. Runs
+        // under the fail-closed launcher so the effective bounds apply;
+        // the injected verdict (None) stays separate from the successful
+        // OS cleanup the runner still performs (no zombies by construction).
+        let start = Instant::now();
+        let run = run_raw_bounded_with(
+            "bash",
+            &["-c", "while true; do :; done"],
+            Duration::from_secs(2),
+            LifecycleFaults {
+                reap_never: true,
+                ..Default::default()
+            },
+        );
+        let elapsed = start.elapsed();
+        assert_eq!(run.exit_code, None, "unreaped victim has no exit code");
+        assert!(
+            run.incomplete_readers,
+            "unavailable reap fails the run visibly"
+        );
+        assert!(run.timed_out, "the deadline did trip");
+        assert!(
+            run.reaped,
+            "real OS cleanup ran despite discarded observation"
+        );
+        assert!(
+            run.limits_note.contains("stack=4096") && run.limits_note.contains("cpu=10"),
+            "effective caps read back: {}",
+            run.limits_note
+        );
+        assert!(
+            elapsed < Duration::from_secs(12),
+            "deadline 2s + drain 2s + reap 5s bound the run: {elapsed:?}"
+        );
+    }
+
+    #[test]
+    fn harness_timeout_kills_and_reaps_within_grace() {
+        // Pure-builtin busy loop: no grandchildren can inherit the pipes,
+        // so killing the shell closes them and the readers finish.
+        // Pure-builtin busy loop: no grandchildren can inherit the pipes,
+        // so killing the shell closes them and the readers finish. Runs
+        // under the fail-closed launcher so the effective CPU/stack bounds
+        // are applied and read back, not bypassed.
+        let start = Instant::now();
+        let run = run_raw_bounded(
+            "bash",
+            &["-c", "while true; do :; done"],
+            Duration::from_secs(2),
+        );
+        let elapsed = start.elapsed();
+        assert!(run.timed_out, "busy loop must trip the 2s deadline");
+        assert_eq!(run.exit_code, None, "killed victim has no exit code");
+        assert!(!run.oversized);
+        assert!(!run.read_error);
+        assert!(
+            !run.incomplete_readers,
+            "silent child: pipes close on kill, readers finish"
+        );
+        assert!(
+            run.limits_note.contains("stack=4096"),
+            "effective stack cap read back: {}",
+            run.limits_note
+        );
+        assert!(
+            run.limits_note.contains("cpu=10"),
+            "effective CPU cap read back: {}",
+            run.limits_note
+        );
+        assert!(
+            elapsed < Duration::from_secs(12),
+            "deadline 2s + drain 2s + reap 5s bound the run: {elapsed:?}"
+        );
+    }
+
+    #[test]
+    fn harness_overflow_child_is_flagged_with_clean_read() {
+        // 9000 bytes: just over the 8192 cap, small enough to exit on its
+        // own through the pipe buffer, so the verdict is overflow alone.
+        let start = Instant::now();
+        let run = run_raw_bounded(
+            "bash",
+            &["-c", "head -c 9000 /dev/zero"],
+            Duration::from_secs(10),
+        );
+        let elapsed = start.elapsed();
+        assert!(run.oversized, "9000 retained bytes are real excess");
+        assert_eq!(run.stderr.len() + run.stdout.len(), 8192);
+        assert!(!run.read_error);
+        assert!(!run.timed_out);
+        assert!(
+            run.limits_note.contains("stack=4096") && run.limits_note.contains("cpu=10"),
+            "effective caps read back: {}",
+            run.limits_note
+        );
+        assert!(
+            elapsed < Duration::from_secs(19),
+            "limit 10s + drain 2s + reap 5s bound the run: {elapsed:?}"
+        );
+    }
+
+    /// TM-DOS-135: hostile indirect cycles are refused in a bounded child.
+    /// Exact finding reproducer plus the mutual variant. Both run in a
+    /// child CLI under a wall-clock watchdog (never in the test runner:
+    /// pre-fix they overflowed the stack and aborted the process) and are
+    /// refused with `invalid variable name`, like modern bash (5.x); the
+    /// real producer exit status is asserted, never relabeled.
+    #[test]
+    fn indirect_hostile_cycles_rejected_in_bounded_child() {
+        for script in [
+            "unset a\nr='a[0]:-${!r}]'\necho \"${!r}\"",
+            "unset a\nr='a[0]:-${!s}]'\ns='a[0]:-${!r}]'\necho \"${!r}\"",
+        ] {
+            let run = run_cli_bounded(script, Duration::from_secs(20));
+            assert!(!run.timed_out, "hostile script hung: {script}");
+            assert!(!run.oversized, "hostile script oversized: {script}");
+            assert!(
+                !run.incomplete_readers,
+                "hostile script readers incomplete: {script}"
+            );
+            assert!(
+                run.limits_note.contains("stack=4096") && run.limits_note.contains("cpu=10"),
+                "limits not applied: {}",
+                run.limits_note
+            );
+            assert_eq!(
+                run.exit_code,
+                Some(1),
+                "script: {script}, stdout: {}, stderr: {}",
+                run.stdout,
+                run.stderr
+            );
+            assert!(run.stdout.is_empty(), "stdout: {}", run.stdout);
+            assert!(
+                run.stderr.contains("invalid variable name"),
+                "stderr: {}",
+                run.stderr
+            );
+            assert!(run.stderr.len() < 1024, "stderr: {}", run.stderr);
+        }
+    }
+
+    /// Layout regression for the CLI lookup, over synthetic trees rather
+    /// than this run's own: the live tree only ever has the one layout its
+    /// toolchain produces, so the other would go uncovered until a nightly
+    /// job went red. Both known layouts must resolve the exported binary;
+    /// the package-named `build/bashkit` directory must not be mistaken for
+    /// it; and absence must stay an error, never a path that fails later as
+    /// a spawn error or an exit 127.
+    #[test]
+    fn cli_lookup_resolves_known_cargo_layouts() {
+        let root = std::env::temp_dir().join(format!("bashkit-cli-layout-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let profile = root.join("target/x86_64-unknown-linux-gnu/debug");
+        // Stable: `<profile>/deps/<test>`. Nightly 1.101 separate build
+        // directory: `<profile>/build/<package>/<hash>/out/<test>`, whose
+        // package level collides by name with the binary being sought.
+        let stable_exe = profile.join("deps/integration-0a5939c1");
+        let nightly_exe = profile.join("build/bashkit/f7e14526a94504a4/out/integration-f7e1");
+        for exe in [&stable_exe, &nightly_exe] {
+            std::fs::create_dir_all(exe.parent().expect("test binary dir"))
+                .expect("create test binary dir");
+            std::fs::write(exe, b"").expect("create test binary");
+        }
+
+        for exe in [&stable_exe, &nightly_exe] {
+            let ruled_out = cli_in_ancestors(exe).expect_err("no binary exported yet");
+            assert!(
+                ruled_out.contains(&profile.join("bashkit")),
+                "the profile directory must be among the paths reported: {ruled_out:?}"
+            );
+        }
+
+        // A same-named file above the build tree is never a substitute for
+        // the binary under test: spawning it would be a false pass, worse
+        // than the failure. The target directory marker stops the walk.
+        std::fs::write(root.join("target/CACHEDIR.TAG"), b"Signature: 8a477f59")
+            .expect("mark target dir");
+        std::fs::write(
+            root.join(format!("bashkit{}", std::env::consts::EXE_SUFFIX)),
+            b"",
+        )
+        .expect("decoy above the build tree");
+        for exe in [&stable_exe, &nightly_exe] {
+            let ruled_out = cli_in_ancestors(exe).expect_err("decoy must not be accepted");
+            assert!(
+                !ruled_out.iter().any(|p| p.parent() == Some(root.as_path())),
+                "walk escaped the target directory: {ruled_out:?}"
+            );
+        }
+
+        let cli = profile.join(format!("bashkit{}", std::env::consts::EXE_SUFFIX));
+        std::fs::write(&cli, b"").expect("export cli binary");
+        for exe in [&stable_exe, &nightly_exe] {
+            assert_eq!(
+                cli_in_ancestors(exe).as_deref().ok(),
+                Some(cli.as_path()),
+                "layout not resolved for {}",
+                exe.display()
+            );
+        }
+
+        std::fs::remove_dir_all(&root).expect("clean up layout fixture");
+    }
+
+    /// The bounded runner itself is tested: a hung child must be
+    /// reported as a timeout, and an overproducer as oversize. Both fail
+    /// visibly (a boolean the harness asserts on), so a helper regression
+    /// cannot silently pass hostile coverage. The short-deadline case runs
+    /// repeatedly: the timeout verdict must be deterministic, never a
+    /// scheduling coin flip.
+    #[test]
+    fn bounded_helper_kills_hung_child() {
+        let run = run_cli_bounded("sleep 30", Duration::from_secs(3));
+        assert!(
+            run.timed_out,
+            "hung child not reported: {:?}",
+            run.exit_code
+        );
+        assert!(!run.oversized, "hung child misreported as oversize");
+        assert!(
+            !run.incomplete_readers,
+            "hung child misreported as incomplete"
+        );
+        // Repeated short deadlines: every run must report the timeout.
+        for _ in 0..3 {
+            let run = run_cli_bounded("sleep 30", Duration::from_secs(2));
+            assert!(run.timed_out, "short deadline flaked");
+            assert!(!run.oversized, "short deadline misreported as oversize");
+        }
+    }
+
+    /// The launcher is fail-closed: if `ulimit` refuses, the producer never
+    /// starts (exit 99) instead of running unbounded. A shadowed failing
+    /// `ulimit` exercises the refusal with a harmless instant child.
+    #[test]
+    fn bounded_launcher_failure_is_fail_closed() {
+        let probe = [
+            "ulimit() { return 1; }; ",
+            BOUNDED_CLI_LIMITS,
+            "; echo SURVIVED",
+        ]
+        .concat();
+        let out = Command::new("bash")
+            .args(["-c", &probe])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn launcher probe")
+            .wait_with_output()
+            .expect("reap launcher probe");
+        assert_eq!(
+            out.status.code(),
+            Some(99),
+            "stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            !String::from_utf8_lossy(&out.stdout).contains("SURVIVED"),
+            "launcher ran the producer without limits"
+        );
+    }
+
+    /// Both pipes hit EOF while the producer lives: only the wall deadline
+    /// may end the run. The previous loop broke on complete buffers and
+    /// then waited without a deadline; this case hung it forever.
+    #[test]
+    fn bounded_helper_covers_early_pipe_close() {
+        let run = run_cli_bounded("echo hi; exec 1>&- 2>&-; sleep 30", Duration::from_secs(5));
+        assert!(run.timed_out, "live producer with closed pipes not killed");
+        assert!(!run.oversized, "early close misreported as oversize");
+        assert!(
+            !run.incomplete_readers,
+            "closed pipes misreported as incomplete"
+        );
+        assert!(run.stdout.contains("hi"), "stdout: {}", run.stdout);
+        assert_eq!(run.exit_code, None, "expected SIGKILL, no exit code");
+    }
+
+    /// An exited child with descendant-retained pipes: the exit is observed
+    /// but readers never finish. The helper must report incomplete readers
+    /// within bounds, not wait forever. Runs under the fail-closed launcher;
+    /// because the retained pipes keep even the launcher's own readback
+    /// line unread, the effective bounds are proven through a per-process
+    /// receipt file the fixture shell writes before parking the sleeper
+    /// (removed below). The guard terminates the exact descendant
+    /// promptly after the verdict; the sleeper's own 30s lifetime remains
+    /// only as the backstop bound (grandchildren cannot be reaped
+    /// portably). The elapsed assertion proves the run returns without
+    /// waiting for it.
+    #[test]
+    fn bounded_helper_flags_retained_pipes() {
+        // The sleeper's PID is retained through a second receipt file so
+        // the test itself terminates and finitely observes the exact
+        // descendant it created — no waiting for the 30s self-expiry, no
+        // universal process-tree reaper, just test-scoped cleanup of owned
+        // resources. Unique per process; removed below.
+        let receipt =
+            std::env::temp_dir().join(format!("syntax-retained-limits-{}", std::process::id()));
+        let pidfile =
+            std::env::temp_dir().join(format!("syntax-retained-pid-{}", std::process::id()));
+        let script = format!(
+            "ulimit -s > '{}'; ulimit -t >> '{}'; sleep 30 & echo $! > '{}'; exit 0",
+            receipt.display(),
+            receipt.display(),
+            pidfile.display()
+        );
+        // Handle-retaining core: this fixture owns the ORIGINAL reader
+        // threads from here (not a twin, not detached-while-asserting).
+        let start = Instant::now();
+        let (run, pending) = run_raw_core(
+            "bash",
+            &["-c", &script],
+            Duration::from_secs(5),
+            LifecycleFaults::default(),
+        );
+        let elapsed = start.elapsed();
+        // Guard owns the ORIGINAL reader handles and both receipt paths
+        // BEFORE any fallible setup read below: a panic in the reads or
+        // in the verdict asserts still cleans up via Drop (best-effort
+        // kill once the pid binds, file removal, no panics). The pid
+        // itself binds after the pidfile read; without an identity there
+        // is nothing to terminate, which Drop records honestly.
+        let mut drop_readers = Vec::new();
+        let mut guard = RetainedCleanup {
+            drop_readers: &mut drop_readers,
+            drop_note: None,
+            marker: None,
+            pid: None,
+            pending: Some(pending),
+            files: vec![receipt, pidfile],
+        };
+        let receipt_text =
+            std::fs::read_to_string(&guard.files[0]).expect("fixture shell ran under the launcher");
+        let sleeper = std::fs::read_to_string(&guard.files[1])
+            .expect("fixture recorded its descendant identity")
+            .trim()
+            .to_string();
+        guard.pid = Some(sleeper.clone());
+        assert!(!run.timed_out, "exited child misreported as timeout");
+        assert!(
+            run.incomplete_readers,
+            "retained pipes not reported as incomplete"
+        );
+        assert!(!run.read_error, "open pipes are not I/O errors");
+        assert!(
+            receipt_text.lines().next() == Some("4096")
+                && receipt_text.lines().nth(1) == Some("10"),
+            "effective stack/cpu bounds applied to the fixture: {receipt_text:?}"
+        );
+        assert_eq!(run.exit_code, Some(0), "stdout: {}", run.stdout);
+        assert!(
+            elapsed < Duration::from_secs(15),
+            "returned in {elapsed:?} without waiting for the 30s sleeper"
+        );
+        // Controlled cleanup of the ACTUAL owned resources through the
+        // guard (its Drop covers any failure above too): terminate the
+        // exact retained descendant, join the ORIGINAL reader handles,
+        // observe absence, prove the total bound.
+        let receipt = guard.complete(start);
+        assert!(receipt.signaled, "owned descendant terminated");
+        assert!(
+            receipt.descendant_gone,
+            "ESRCH-observed absence, not inferred"
+        );
+        assert!(
+            receipt.readers_joined,
+            "ORIGINAL reader handles joined after the kill"
+        );
+        assert!(
+            receipt.helper_clean,
+            "cleanup helpers reaped and drained on every call"
+        );
+        assert!(
+            receipt.unjoined.is_empty(),
+            "no reader handle silently detached"
+        );
+        assert!(
+            receipt.elapsed < Duration::from_secs(25),
+            "verdict plus owned cleanup bounded end to end: {:?}",
+            receipt.elapsed
+        );
+    }
+
+    #[test]
+    fn bounded_helper_flags_oversize_output() {
+        let script =
+            "i=0; while ((i < 4000)); do echo \"padding line $i padding\"; i=$((i + 1)); done";
+        let run = run_cli_bounded(script, Duration::from_secs(20));
+        assert!(!run.timed_out, "overproducer hung");
+        assert!(run.oversized, "overproducer not flagged as oversize");
+        assert!(
+            !run.incomplete_readers,
+            "overproducer misreported as incomplete"
+        );
+        assert!(
+            run.stdout.len() <= BOUNDED_SAMPLE_CAP + 4096,
+            "sample not capped: {}",
+            run.stdout.len()
+        );
+    }
+
+    /// TM-DOS-135: a bracket indirect target is refused unless the first
+    /// complete `[...]` reference consumes the whole value. Modern bash
+    /// (5.x) rejects trailing operators with `invalid variable name`;
+    /// refusal also keeps a nested `${!...}` from ever reaching the desugar
+    /// re-parse, which re-entered indirect expansion without bound.
+    /// Valid nested subscripts resolve whole.
+    #[tokio::test]
+    async fn indirect_array_boundary_rejects_trailing_operators() {
+        // Trailing operator/nesting text is refused, like bash 5.x. Older
+        // bash 3.2 ignored the tail, so no real-bash oracle is asserted
+        // for these shapes; the rejection itself is the contract.
+        for target in [
+            "a[0]:-injected]",
+            "a[0]-injected]",
+            "a[0]:=injected]",
+            "a[0]+injected]",
+            "a[0]/x/injected]",
+            "a[0][1]",
+            "a[0]}${x:-injected}[0]",
+            "a[b[0]]:-D",
+        ] {
+            let mut bash = Bash::new();
+            let result = bash
+                .exec(&format!("a=(1 2)\nb=(0)\nr='{target}'\necho \"${{!r}}\""))
+                .await
+                .unwrap();
+            assert_ne!(result.exit_code, 0, "target accepted: {target}");
+            assert_eq!(result.exit_code, 1, "target: {target}");
+            assert!(result.stdout.is_empty(), "target: {target}");
+            assert!(
+                result.stderr.contains("invalid variable name"),
+                "target: {target}: {}",
+                result.stderr
+            );
+            assert!(result.stderr.len() < 1024, "target: {target}");
+        }
+
+        // Nested subscripts resolve whole (bash: `two`/`two`).
+        let mut bash = Bash::new();
+        let result = bash
+            .exec("a=(zero one two three)\nb=(2)\nr='a[b[0]]'\nprintf \"indirect=[%s]\\n\" \"${!r}\"\nprintf \"direct=[%s]\\n\" \"${a[b[0]]}\"")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "indirect=[two]\ndirect=[two]\n");
+        assert!(result.stderr.is_empty(), "stderr: {}", result.stderr);
+        // Associative references agree between direct and indirect use.
+        // Portable note: indexed cases above also run against real bash
+        // below; assoc arrays need bash 4+, so agreement is asserted here.
+        let mut bash = Bash::new();
+        let result = bash
+            .exec("declare -A h=([k]=V [key]=W)\nkey=k\nr='h[$key]'\necho \"dollar=[${!r}] direct=[${h[$key]}]\"\nr='h[key]'\necho \"plain=[${!r}] direct=[${h[key]}]\"\nr='h[@]'\necho \"at=[${!r}] direct=[${h[@]}]\"")
+            .await
+            .unwrap();
+        assert_eq!(
+            result.stdout,
+            "dollar=[V] direct=[V]\nplain=[W] direct=[W]\nat=[V W] direct=[V W]\n"
+        );
+        assert!(result.stderr.is_empty(), "stderr: {}", result.stderr);
+    }
+
+    // Out of scope: `]` inside an assoc key is unsupported by the
+    // direct subscript parser as well (`declare` accepts it, reads
+    // misparse), so no indirect agreement is asserted for that shape.
+    // The boundary scan still tracks quotes so a complete reference
+    // stays whole if the parser ever learns quoted brackets.
+
+    /// TM-DOS-135: finite nested indexed indirects match real bash
+    /// byte-for-byte. Indexed arrays work on bash 3.2+, so this runs on
+    /// macOS and Linux CI alike.
+    #[tokio::test]
+    async fn indirect_nested_indexed_matches_real_bash() {
+        for script in [
+            "a=(zero one two three); b=(2); r='a[b[0]]'; printf 'indirect=[%s]\n' \"${!r}\"; printf 'direct=[%s]\n' \"${a[b[0]]}\"",
+            "a=(1 2); r='a[0]'; echo \"out=[${!r}]\"",
+            "a=(x y); r='a[@]'; echo \"out=[${!r}]\"",
+            "a=(x y); i=1; r='a[$i]'; echo \"out=[${!r}]\"",
+        ] {
+            let expected = Command::new("bash")
+                .args(["--noprofile", "--norc", "-c", script])
+                .output()
+                .expect("run real bash");
+            assert!(
+                expected.status.success(),
+                "real bash failed: {script}: {}",
+                String::from_utf8_lossy(&expected.stderr)
+            );
+            let mut harness = Bash::new();
+            let result = harness.exec(script).await.unwrap();
+            assert_eq!(
+                result.stdout,
+                String::from_utf8_lossy(&expected.stdout).into_owned(),
+                "script: {script}"
+            );
+            assert!(result.stderr.is_empty(), "stderr: {}", result.stderr);
+        }
+    }
 
     /// V1: Test that command limit prevents infinite execution
     #[tokio::test]
@@ -4012,9 +6820,9 @@ f
 extra[0]=x
 printf "%s %s\n" "${#arr[@]}" "${#extra[@]}"
 "#;
-        let result = bash.exec(script).await.unwrap();
-
-        assert_eq!(result.exit_code, 0);
+        let error = bash.exec(script).await.unwrap_err();
+        assert!(error.to_string().contains("array entry limit (3)"));
+        let result = bash.exec("echo ${#arr[@]} ${#extra[@]}").await.unwrap();
         assert_eq!(result.stdout.trim(), "3 0");
     }
 
@@ -4054,9 +6862,9 @@ for ((i = 0; i < 10; i++)); do ((c[k$i]+=1)); done
 for ((i = 0; i < 10; i++)); do ((a[i]++)); done
 printf "%s %s\n" "${#c[@]}" "${#a[@]}"
 "#;
-        let result = bash.exec(script).await.unwrap();
-
-        assert_eq!(result.exit_code, 0);
+        let error = bash.exec(script).await.unwrap_err();
+        assert!(error.to_string().contains("array entry limit (3)"));
+        let result = bash.exec("echo ${#c[@]} ${#a[@]}").await.unwrap();
         assert_eq!(result.stdout.trim(), "3 0");
     }
 
@@ -4243,9 +7051,10 @@ for i in $(seq 1 100); do
 done
 echo "done"
 "#;
-        let result = bash.exec(script).await.unwrap();
-        // Script completes; insertions beyond limit are silently dropped
-        assert_eq!(result.exit_code, 0);
+        let error = bash.exec(script).await.unwrap_err();
+        assert!(error.to_string().contains("array entry limit (50)"));
+        let result = bash.exec("echo ${#arr[@]}").await.unwrap();
+        assert_eq!(result.stdout, "50\n");
     }
 
     /// TM-DOS-060: Function count bomb — defining many functions.
@@ -4968,15 +7777,10 @@ while [ $i -lt 200 ]; do
 done
 echo ${#arr[@]}
 "#;
-        let result = bash.exec(script).await.unwrap();
-        assert_eq!(result.exit_code, 0);
-        let count: usize = result.stdout.trim().parse().unwrap_or(0);
-        // max_array_entries=100 means at most 100 entries created
-        assert!(
-            count <= 100,
-            "Array entries should be capped at max_array_entries, got {}",
-            count
-        );
+        let error = bash.exec(script).await.unwrap_err();
+        assert!(error.to_string().contains("array entry limit (100)"));
+        let result = bash.exec("echo ${#arr[@]}").await.unwrap();
+        assert_eq!(result.stdout, "100\n");
     }
 
     /// TM-DOS-060: Unquoted expansion in array assignment must still respect

@@ -39,6 +39,65 @@ pub(crate) fn invalid_option(cmd: &str, arg: &str, code: i32) -> ExecResult {
     ExecResult::err(msg, code)
 }
 
+/// Read a multi-valued clap arg as owned strings under either value type
+/// clap may have stored for it.
+///
+/// Decision: the `generated/*_args.rs` surfaces are ported verbatim from
+/// uutils, so whether an arg carries clap's default `String` parser or an
+/// explicit `OsStringValueParser` is upstream's choice, and it flips
+/// across revisions. `get_many::<T>` *panics* on a type mismatch, so a
+/// consumer that names one type turns an upstream parser change into a
+/// panic — and the drift PR is generated-only, so it cannot fix its own
+/// consumers (`knowledge/runtimes/coreutils-args-port.md` § The drift PR
+/// cannot fix its own consumers). Asking for both keeps the consumer
+/// valid against the current pin and upstream HEAD at the same time,
+/// which is the only state in which the weekly drift run can get past its
+/// build and test steps.
+///
+/// Non-UTF-8 bytes are replaced, matching the `to_string_lossy` reads in
+/// `cat`, `ls` and `truncate`.
+pub(crate) fn string_values(matches: &clap::ArgMatches, id: &str) -> Vec<String> {
+    if let Ok(Some(values)) = matches.try_get_many::<std::ffi::OsString>(id) {
+        return values.map(|v| v.to_string_lossy().into_owned()).collect();
+    }
+    if let Ok(Some(values)) = matches.try_get_many::<String>(id) {
+        return values.cloned().collect();
+    }
+    debug_assert_readable(matches, id, "string_values");
+    Vec::new()
+}
+
+/// Single-valued counterpart of [`string_values`]; same rationale.
+pub(crate) fn string_value(matches: &clap::ArgMatches, id: &str) -> Option<String> {
+    if let Ok(Some(value)) = matches.try_get_one::<std::ffi::OsString>(id) {
+        return Some(value.to_string_lossy().into_owned());
+    }
+    if let Ok(Some(value)) = matches.try_get_one::<String>(id) {
+        return Some(value.clone());
+    }
+    debug_assert_readable(matches, id, "string_value");
+    None
+}
+
+/// Guard the one hole the tolerant reads above open: a *third* value type.
+///
+/// Trying two types and giving up turns clap's loud panic into a silent
+/// "no value", which for an arg the user did pass would mean the flag is
+/// quietly ignored — worse than a panic, because nothing reports it. Only
+/// `String` and `OsString` are expected (upstream flips between exactly
+/// those two), so an arg that is present and readable as neither is a
+/// porting bug, not user input. Firing only under `debug_assertions`
+/// keeps the loud signal everywhere it is actionable — `cargo test`, and
+/// so the weekly drift run's own test steps — while an embedder's release
+/// build degrades instead of aborting.
+fn debug_assert_readable(matches: &clap::ArgMatches, id: &str, caller: &str) {
+    debug_assert!(
+        !matches.try_contains_id(id).unwrap_or(false),
+        "helpers::{caller}: arg `{id}` is present but is neither OsString \
+         nor String; teach this helper the value type upstream now uses"
+    );
+}
+
 /// Default helpers shared by builtin commands.
 ///
 /// Each impl binds the command name to the type, removing the need to
@@ -111,6 +170,90 @@ mod tests {
     fn invalid_option_long() {
         let r = invalid_option("wc", "--foo", 1);
         assert_eq!(r.stderr, "wc: unrecognized option '--foo'\n");
+    }
+
+    /// Two spellings of the same surface: clap's default `String` parser
+    /// (what the pinned uutils rev generates) and an explicit
+    /// `OsStringValueParser` (what upstream HEAD generates).
+    fn arg_surface(os_string: bool) -> clap::Command {
+        let many = clap::Arg::new("files")
+            .num_args(0..)
+            .action(clap::ArgAction::Append);
+        let one = clap::Arg::new("width").long("width");
+        let (many, one) = if os_string {
+            (
+                many.value_parser(clap::builder::OsStringValueParser::new()),
+                one.value_parser(clap::builder::OsStringValueParser::new()),
+            )
+        } else {
+            (many, one)
+        };
+        clap::Command::new("demo").arg(many).arg(one)
+    }
+
+    #[test]
+    fn string_values_reads_either_value_parser() {
+        for os_string in [false, true] {
+            let matches = arg_surface(os_string)
+                .try_get_matches_from(["demo", "a", "b"])
+                .unwrap();
+            assert_eq!(
+                string_values(&matches, "files"),
+                vec!["a".to_string(), "b".to_string()],
+                "os_string={os_string}"
+            );
+        }
+    }
+
+    #[test]
+    fn string_value_reads_either_value_parser() {
+        for os_string in [false, true] {
+            let matches = arg_surface(os_string)
+                .try_get_matches_from(["demo", "--width", "16"])
+                .unwrap();
+            assert_eq!(
+                string_value(&matches, "width").as_deref(),
+                Some("16"),
+                "os_string={os_string}"
+            );
+        }
+    }
+
+    #[test]
+    fn string_reads_report_absent_args_as_empty() {
+        for os_string in [false, true] {
+            let matches = arg_surface(os_string)
+                .try_get_matches_from(["demo"])
+                .unwrap();
+            assert!(string_values(&matches, "files").is_empty());
+            assert_eq!(string_value(&matches, "width"), None);
+        }
+    }
+
+    /// A value type neither read handles must not pass silently: a flag the
+    /// user did supply would otherwise be dropped with no diagnostic.
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "neither OsString nor String")]
+    fn string_value_rejects_an_unhandled_value_type() {
+        let matches = clap::Command::new("demo")
+            .arg(
+                clap::Arg::new("width")
+                    .long("width")
+                    .value_parser(clap::value_parser!(u64)),
+            )
+            .try_get_matches_from(["demo", "--width", "16"])
+            .unwrap();
+        let _ = string_value(&matches, "width");
+    }
+
+    /// An id that is not in the surface at all must not panic the way
+    /// `get_many`/`get_one` would.
+    #[test]
+    fn string_reads_tolerate_unknown_ids() {
+        let matches = arg_surface(true).try_get_matches_from(["demo"]).unwrap();
+        assert!(string_values(&matches, "nope").is_empty());
+        assert_eq!(string_value(&matches, "nope"), None);
     }
 
     #[test]

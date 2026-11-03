@@ -1,0 +1,71 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "file_path_organizer",
+  "target": "anthropic/claude-opus-5-5",
+  "input": [
+    "Under /uploads there are files with various extensions. Write a script that: 1) For each file, determines its extension and moves it into a subdirectory named after that extension (e.g., .txt files go to /uploads/txt/, .csv files go to /uploads/csv/). Create the subdirectories as needed. 2) Print each move as 'moved: FILENAME -> EXTENSION_DIR/'. 3) After all moves, print a summary of how many files per extension as 'EXT: N files'. Handle the case where a file has no extension by putting it in /uploads/other/."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "8/8 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I wrote the script at `/home/eval/organize.sh` and ran it on `/uploads`. It moved all 7 files into folders named after their extensions.\n\n**Output:**\n```\nmoved: README -> other/\nmoved: config.json -> json/\nmoved: data.csv -> csv/\nmoved: image.png -> png/\nmoved: notes.txt -> txt/\nmoved: report.txt -> txt/\nmoved: results.csv -> csv/\n\nSummary:\ncsv: 2 files\njson: 1 files\nother: 1 files\npng: 1 files\ntxt: 2 files\n```\n\n**Script:**\n```bash\n#!/usr/bin/env bash\n# Sort files in an uploads directory into subdirectories by extension.\nset -u\nDIR=\"${1:-/uploads}\"\ndeclare -A counts\n\nfor path in \"$DIR\"/*; do\n    [[ -f \"$path\" ]] || continue          # skip directories / non-regular files\n    name=\"${path##*/}\"\n    base=\"${name#.}\"                      # ignore leading dot of hidden files (.bashrc)\n    if [[ \"$base\" == *.* && \"${base##*.}\" != \"\" ]]; then\n        ext=\"${base##*.}\"\n    else\n        ext=\"other\"                       # no extension (or trailing dot)\n    fi\n    mkdir -p \"$DIR/$ext\"\n    if [[ -e \"$DIR/$ext/$name\" ]]; then\n        echo \"skipped: $name (already exists in $ext/)\" >&2\n        continue\n    fi\n    mv -- \"$path\" \"$DIR/$ext/\" && {\n        echo \"moved: $name -> $ext/\"\n        counts[$ext]=$(( ${counts[$ext]:-0} + 1 ))\n    }\ndone\n\necho\necho \"Summary:\"\nfor ext in $(printf '%s\\n' \"${!counts[@]}\" | sort); do\n    echo \"$ext: ${counts[$ext]} files\"\ndone\n```\n\n**How it handles some cases:**\n- **No extension:** files like `README` go to `other/`. So do names ending in a dot (`file.`) and names that are only a leading dot (`.bashrc`).\n- **Multiple dots:** only the last part counts, so `archive.tar.gz` goes to `gz/`.\n- **Running it again:** it only looks at files directly in `/uploads`, so files already sorted into subfolders are left alone. If a file with the same name is already in the target folder, it skips that file and prints a warning instead of overwriting it.\n- **Other folders:** you can pass a different directory as the first argument, e.g. `./organize.sh /some/dir`.\n\n**Things to be aware of:**\n- **Hidden files:** files whose names start with a dot are not moved, because bash's `*` pattern doesn't match them. Adding `shopt -s dotglob` near the top would include them.\n- **\"1 files\":** I followed your `EXT: N files` format exactly, so a count of 1 reads \"1 files\".\n- **Upper/lower case:** `.TXT` and `.txt` go to separate folders.",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "ls -la /uploads; find /uploads | head -50",
+      "cat > /home/eval/organize.sh <<'EOF'\n#!/usr/bin/env bash\n# Sort files in an uploads directory into subdirectories by extension.\nset -u\nDIR=\"${1:-/uploads}\"\ndeclare -A counts\n\nfor path in \"$DIR\"/*; do\n    [[ -f \"$path\" ]] || continue          # skip directories / non-regular files\n    name=\"${path##*/}\"\n    base=\"${name#.}\"                      # ignore leading dot of hidden files (.bashrc)\n    if [[ \"$base\" == *.* && \"${base##*.}\" != \"\" ]]; then\n        ext=\"${base##*.}\"\n    else\n        ext=\"other\"                       # no extension (or trailing dot)\n    fi\n    mkdir -p \"$DIR/$ext\"\n    if [[ -e \"$DIR/$ext/$name\" ]]; then\n        echo \"skipped: $name (already exists in $ext/)\" >&2\n        continue\n    fi\n    mv -- \"$path\" \"$DIR/$ext/\" && {\n        echo \"moved: $name -> $ext/\"\n        counts[$ext]=$(( ${counts[$ext]:-0} + 1 ))\n    }\ndone\n\necho\necho \"Summary:\"\nfor ext in $(printf '%s\\n' \"${!counts[@]}\" | sort); do\n    n=${counts[$ext]}\n    [[ $n -eq 1 ]] && word=file || word=files\n    echo \"$ext: $n $word\"\ndone\nEOF\nchmod +x /home/eval/organize.sh\nbash /home/eval/organize.sh; echo; find /uploads | sort",
+      "cd /home/eval\npython3 - <<'EOF'\np='organize.sh'; s=open(p).read()\ns=s.replace('''    n=${counts[$ext]}\n    [[ $n -eq 1 ]] && word=file || word=files\n    echo \"$ext: $n $word\"''','''    echo \"$ext: ${counts[$ext]} files\"''')\nopen(p,'w').write(s)\nEOF\n# reset\nfor d in /uploads/*/; do mv \"$d\"* /uploads/; rmdir \"$d\"; done\nbash organize.sh; echo; cat organize.sh"
+    ],
+    "usage": {
+      "input_tokens": 8113,
+      "output_tokens": 2167,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 21224
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 3.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /uploads; find /uploads | head -50",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       17 2026-10-09 17:43 README\n-rw-r--r--       13 2026-10-09 17:43 config.json\n-rw-r--r--        5 2026-10-09 17:43 data.csv\n-rw-r--r--        8 2026-10-09 17:43 image.png\n-rw-r--r--       13 2026-10-09 17:43 notes.txt\n-rw-r--r--       14 2026-10-09 17:43 report.txt\n-rw-r--r--        5 2026-10-09 17:43 results.csv\n/uploads\n/uploads/README\n/uploads/config.json\n/uploads/data.csv\n/uploads/image.png\n/uploads/notes.txt\n/uploads/report.txt\n/uploads/results.csv\n"
+          },
+          {
+            "commands": "cat > /home/eval/organize.sh <<'EOF'\n#!/usr/bin/env bash\n# Sort files in an uploads directory into subdirectories by extension.\nset -u\nDIR=\"${1:-/uploads}\"\ndeclare -A counts\n\nfor path in \"$DIR\"/*; do\n    [[ -f \"$path\" ]] || continue          # skip directories / non-regular files\n    name=\"${path##*/}\"\n    base=\"${name#.}\"                      # ignore leading dot of hidden files (.bashrc)\n    if [[ \"$base\" == *.* && \"${base##*.}\" != \"\" ]]; then\n        ext=\"${base##*.}\"\n    else\n        ext=\"other\"                       # no extension (or trailing dot)\n    fi\n    mkdir -p \"$DIR/$ext\"\n    if [[ -e \"$DIR/$ext/$name\" ]]; then\n        echo \"skipped: $name (already exists in $ext/)\" >&2\n        continue\n    fi\n    mv -- \"$path\" \"$DIR/$ext/\" && {\n        echo \"moved: $name -> $ext/\"\n        counts[$ext]=$(( ${counts[$ext]:-0} + 1 ))\n    }\ndone\n\necho\necho \"Summary:\"\nfor ext in $(printf '%s\\n' \"${!counts[@]}\" | sort); do\n    n=${counts[$ext]}\n    [[ $n -eq 1 ]] && word=file || word=files\n    echo \"$ext: $n $word\"\ndone\nEOF\nchmod +x /home/eval/organize.sh\nbash /home/eval/organize.sh; echo; find /uploads | sort",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "moved: README -> other/\nmoved: config.json -> json/\nmoved: data.csv -> csv/\nmoved: image.png -> png/\nmoved: notes.txt -> txt/\nmoved: report.txt -> txt/\nmoved: results.csv -> csv/\n\nSummary:\ncsv: 2 files\njson: 1 file\nother: 1 file\npng: 1 file\ntxt: 2 files\n\n/uploads\n/uploads/csv\n/uploads/csv/data.csv\n/uploads/csv/results.csv\n/uploads/json\n/uploads/json/config.json\n/uploads/other\n/uploads/other/README\n/uploads/png\n/uploads/png/image.png\n/uploads/txt\n/uploads/txt/notes.txt\n/uploads/txt/report.txt\n"
+          },
+          {
+            "commands": "cd /home/eval\npython3 - <<'EOF'\np='organize.sh'; s=open(p).read()\ns=s.replace('''    n=${counts[$ext]}\n    [[ $n -eq 1 ]] && word=file || word=files\n    echo \"$ext: $n $word\"''','''    echo \"$ext: ${counts[$ext]} files\"''')\nopen(p,'w').write(s)\nEOF\n# reset\nfor d in /uploads/*/; do mv \"$d\"* /uploads/; rmdir \"$d\"; done\nbash organize.sh; echo; cat organize.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "moved: README -> other/\nmoved: config.json -> json/\nmoved: data.csv -> csv/\nmoved: image.png -> png/\nmoved: notes.txt -> txt/\nmoved: report.txt -> txt/\nmoved: results.csv -> csv/\n\nSummary:\ncsv: 2 files\njson: 1 files\nother: 1 files\npng: 1 files\ntxt: 2 files\n\n#!/usr/bin/env bash\n# Sort files in an uploads directory into subdirectories by extension.\nset -u\nDIR=\"${1:-/uploads}\"\ndeclare -A counts\n\nfor path in \"$DIR\"/*; do\n    [[ -f \"$path\" ]] || continue          # skip directories / non-regular files\n    name=\"${path##*/}\"\n    base=\"${name#.}\"                      # ignore leading dot of hidden files (.bashrc)\n    if [[ \"$base\" == *.* && \"${base##*.}\" != \"\" ]]; then\n        ext=\"${base##*.}\"\n    else\n        ext=\"other\"                       # no extension (or trailing dot)\n    fi\n    mkdir -p \"$DIR/$ext\"\n    if [[ -e \"$DIR/$ext/$name\" ]]; then\n        echo \"skipped: $name (already exists in $ext/)\" >&2\n        continue\n    fi\n    mv -- \"$path\" \"$DIR/$ext/\" && {\n        echo \"moved: $name -> $ext/\"\n        counts[$ext]=$(( ${counts[$ext]:-0} + 1 ))\n    }\ndone\n\necho\necho \"Summary:\"\nfor ext in $(printf '%s\\n' \"${!counts[@]}\" | sort); do\n    echo \"$ext: ${counts[$ext]} files\"\ndone\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

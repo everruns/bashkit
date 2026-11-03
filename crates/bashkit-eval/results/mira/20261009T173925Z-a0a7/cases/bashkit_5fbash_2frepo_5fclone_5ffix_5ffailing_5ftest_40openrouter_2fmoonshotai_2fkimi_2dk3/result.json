@@ -1,0 +1,134 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "repo_clone_fix_failing_test",
+  "target": "openrouter/moonshotai/kimi-k3",
+  "input": [
+    "A git repository lives at /srv/git/calc. Clone it into /home/eval/work/calc, run its test suite with `make test`, find and fix the bug in the library code that makes a test fail (do not edit the tests), re-run `make test` until it passes, and commit the fix in the clone with a commit message that starts with `fix:`. Leave /srv/git/calc unchanged."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "6/6 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "All tasks completed successfully:\n\n**Summary of what was done:**\n\n1. **Cloned** `/srv/git/calc` → `/home/eval/work/calc`\n2. **Ran `make test`** — `test_mul_div` failed: `mul 4 5` returned `9` instead of `20`\n3. **Found the bug** in `lib/calc.sh`: the `mul()` function was adding instead of multiplying:\n   ```sh\n   mul() { echo $(( $1 + $2 )); }   # buggy\n   ```\n4. **Fixed** it to:\n   ```sh\n   mul() { echo $(( $1 * $2 )); }\n   ```\n   (no test files were modified)\n5. **Re-ran `make test`** — all tests pass: `PASS 2/2`\n6. **Committed** the fix in the clone:\n   ```\n   commit b4649650\n   fix: mul() should multiply instead of add\n   ```\n7. **Verified `/srv/git/calc` is unchanged** — it remains at the `initial import` commit with a clean working tree (still containing the original buggy code, untouched).",
+    "iterations": 13,
+    "tool_calls_count": 12,
+    "tool_calls": [
+      "ls -la /srv/git/calc && mkdir -p /home/eval/work && git clone /srv/git/calc /home/eval/work/calc && ls -la /home/eval/work/calc",
+      "cd /home/eval/work/calc && cat Makefile README.md && find lib tests -type f | head -50",
+      "cd /home/eval/work/calc && cat lib/calc.sh tests/run.sh tests/assert.sh tests/test_add_sub.sh tests/test_mul_div.sh",
+      "cd /home/eval/work/calc && make test",
+      "cd /home/eval/work/calc && sed -i 's|^mul() { echo \\$(( \\$1 + \\$2 )); }|mul() { echo $(( $1 * $2 )); }|' lib/calc.sh && grep '^mul' lib/calc.sh && make test",
+      "cd /home/eval/work/calc && git add lib/calc.sh && git -c user.name='Eval Agent' -c user.email='agent@example.com' commit -m 'fix: mul() should multiply instead of add' && git log --oneline && git status --short",
+      "cd /home/eval/work/calc && git --version && git config user.name 'Eval Agent' && git config user.email 'agent@example.com' && git add lib/calc.sh && git commit -m 'fix: mul() should multiply instead of add' && git log --oneline && git status --short",
+      "git --help 2>&1 | head -30; which git; git version 2>&1",
+      "file /usr/bin/git; head -c 400 /usr/bin/git | cat -v; echo; git status 2>&1; git help 2>&1 | head -5",
+      "cd /home/eval/work/calc && git config user.name 'Eval Agent'; git config user.email 'agent@example.com'; git status --short 2>&1; git commit -m 'fix: mul() should multiply instead of add' 2>&1; echo \"exit=$?\"",
+      "cd /home/eval/work/calc && git log --oneline && echo '---' && git show HEAD -- lib/calc.sh | head -20 && echo '---' && git status --short && echo '---' && make test && echo '=== original repo ===' && cd /srv/git/calc && git log --oneline && cat lib/calc.sh | grep mul && git status --short",
+      "cd /home/eval/work/calc && git show HEAD:lib/calc.sh | grep -E 'add|sub|mul|div' && echo '---diff from initial---' && git diff b4649640 HEAD -- lib/calc.sh"
+    ],
+    "usage": {
+      "input_tokens": 28619,
+      "output_tokens": 2575,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 29826
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 12.0,
+      "tool_calls_err": 4.0,
+      "tool_calls_ok": 8.0,
+      "turns": 13.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /srv/git/calc && mkdir -p /home/eval/work && git clone /srv/git/calc /home/eval/work/calc && ls -la /home/eval/work/calc",
+            "exit_code": 0,
+            "stderr": "Cloning into '/home/eval/work/calc'...\ndone.\n",
+            "stdout": "drwxr-xr-x        0 2026-10-09 17:47 .git\n-rw-r--r--       26 2026-10-09 17:47 Makefile\n-rw-r--r--       55 2026-10-09 17:47 README.md\ndrwxr-xr-x        0 2026-10-09 17:47 lib\ndrwxr-xr-x        0 2026-10-09 17:47 tests\ndrwxr-xr-x        0 2026-10-09 17:47 .git\n-rw-r--r--       26 2026-10-09 17:47 Makefile\n-rw-r--r--       55 2026-10-09 17:47 README.md\ndrwxr-xr-x        0 2026-10-09 17:47 lib\ndrwxr-xr-x        0 2026-10-09 17:47 tests\n"
+          },
+          {
+            "commands": "cd /home/eval/work/calc && cat Makefile README.md && find lib tests -type f | head -50",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "test:\n\t@bash tests/run.sh\n# calc\n\nTiny bash arithmetic library. Run `make test`.\nlib/calc.sh\ntests/assert.sh\ntests/run.sh\ntests/test_add_sub.sh\ntests/test_mul_div.sh\n"
+          },
+          {
+            "commands": "cd /home/eval/work/calc && cat lib/calc.sh tests/run.sh tests/assert.sh tests/test_add_sub.sh tests/test_mul_div.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# calc: integer helpers\nadd() { echo $(( $1 + $2 )); }\nsub() { echo $(( $1 - $2 )); }\nmul() { echo $(( $1 + $2 )); }\ndiv() {\n  if [ \"$2\" -eq 0 ]; then echo 'calc: division by zero' >&2; return 1; fi\n  echo $(( $1 / $2 ))\n}\n#!/bin/bash\n# Test runner: runs every tests/test_*.sh, writes build/test-report.txt.\ncd \"$(dirname \"$0\")/..\" || exit 2\nmkdir -p build\npass=0; fail=0; total=0\nfor t in tests/test_*.sh; do\n  name=$(basename \"$t\" .sh)\n  total=$((total + 1))\n  if bash \"$t\" > \"build/$name.log\" 2>&1; then\n    pass=$((pass + 1)); echo \"ok   $name\"\n  else\n    fail=$((fail + 1)); echo \"FAIL $name\"; sed 's/^/    /' \"build/$name.log\"\n  fi\ndone\nif [ \"$fail\" -eq 0 ]; then\n  echo \"PASS $pass/$total\" | tee build/test-report.txt\nelse\n  echo \"FAIL $fail/$total\" | tee build/test-report.txt\n  exit 1\nfi\n# Minimal assertion helpers for the test suite.\nassert_eq() {\n  if [ \"$1\" != \"$2\" ]; then\n    echo \"assertion failed: ${3:-values differ}: expected '$1', got '$2'\"\n    exit 1\n  fi\n}\n. lib/calc.sh\n. tests/assert.sh\nassert_eq 5 \"$(add 2 3)\" 'add 2 3'\nassert_eq -4 \"$(sub 3 7)\" 'sub 3 7'\n. lib/calc.sh\n. tests/assert.sh\nassert_eq 20 \"$(mul 4 5)\" 'mul 4 5'\nassert_eq 0 \"$(mul 7 0)\" 'mul 7 0'\nassert_eq 3 \"$(div 9 3)\" 'div 9 3'\ndiv 1 0 2>/dev/null && { echo 'div by zero must fail'; exit 1; }\nexit 0\n"
+          },
+          {
+            "commands": "cd /home/eval/work/calc && make test",
+            "exit_code": 2,
+            "stderr": "make: *** [Makefile:2: test] Error 1\n",
+            "stdout": "ok   test_add_sub\nFAIL test_mul_div\n    assertion failed: mul 4 5: expected '20', got '9'\nFAIL 1/2\n"
+          },
+          {
+            "commands": "cd /home/eval/work/calc && sed -i 's|^mul() { echo \\$(( \\$1 + \\$2 )); }|mul() { echo $(( $1 * $2 )); }|' lib/calc.sh && grep '^mul' lib/calc.sh && make test",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "mul() { echo $(( $1 * $2 )); }\nok   test_add_sub\nok   test_mul_div\nPASS 2/2\n"
+          },
+          {
+            "commands": "cd /home/eval/work/calc && git add lib/calc.sh && git -c user.name='Eval Agent' -c user.email='agent@example.com' commit -m 'fix: mul() should multiply instead of add' && git log --oneline && git status --short",
+            "exit_code": 1,
+            "stderr": "git: '-c' is not a git command. See 'git --help'.\n",
+            "stdout": ""
+          },
+          {
+            "commands": "cd /home/eval/work/calc && git --version && git config user.name 'Eval Agent' && git config user.email 'agent@example.com' && git add lib/calc.sh && git commit -m 'fix: mul() should multiply instead of add' && git log --oneline && git status --short",
+            "exit_code": 1,
+            "stderr": "git: '--version' is not a git command. See 'git --help'.\n",
+            "stdout": ""
+          },
+          {
+            "commands": "git --help 2>&1 | head -30; which git; git version 2>&1",
+            "exit_code": 1,
+            "stderr": "",
+            "stdout": "git: '--help' is not a git command. See 'git --help'.\n/usr/bin/git\ngit: 'version' is not a git command. See 'git --help'.\n"
+          },
+          {
+            "commands": "file /usr/bin/git; head -c 400 /usr/bin/git | cat -v; echo; git status 2>&1; git help 2>&1 | head -5",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/usr/bin/git: Bourne-Again shell script\n#!/bin/sh\n# bashkit builtin: git\nexec git \"$@\"\n\nOn branch master\n\nChanges to be committed:\n  (use \"git restore --staged <file>...\" to unstage)\n\tnew file:   lib/calc.sh\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/test-report.txt\n\tbuild/test_add_sub.log\n\tbuild/test_mul_div.log\ngit: 'help' is not a git command. See 'git --help'.\n"
+          },
+          {
+            "commands": "cd /home/eval/work/calc && git config user.name 'Eval Agent'; git config user.email 'agent@example.com'; git status --short 2>&1; git commit -m 'fix: mul() should multiply instead of add' 2>&1; echo \"exit=$?\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "On branch master\n\nChanges to be committed:\n  (use \"git restore --staged <file>...\" to unstage)\n\tnew file:   lib/calc.sh\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/test-report.txt\n\tbuild/test_add_sub.log\n\tbuild/test_mul_div.log\n[master b464965] fix: mul() should multiply instead of add\nexit=0\n"
+          },
+          {
+            "commands": "cd /home/eval/work/calc && git log --oneline && echo '---' && git show HEAD -- lib/calc.sh | head -20 && echo '---' && git status --short && echo '---' && make test && echo '=== original repo ===' && cd /srv/git/calc && git log --oneline && cat lib/calc.sh | grep mul && git status --short",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "commit b4649650\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 17:47:43 2026 +0000\n\n    fix: mul() should multiply instead of add\n\ncommit b4649640\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 17:47:27 2026 +0000\n\n    initial import\n\n---\ncommit b4649650\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 17:47:43 2026 +0000\n\n    fix: mul() should multiply instead of add\n\n---\nOn branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/test-report.txt\n\tbuild/test_add_sub.log\n\tbuild/test_mul_div.log\n---\nok   test_add_sub\nok   test_mul_div\nPASS 2/2\n=== original repo ===\ncommit b4649640\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 17:47:27 2026 +0000\n\n    initial import\n\nmul() { echo $(( $1 + $2 )); }\nOn branch master\n\nnothing to commit, working tree clean\n"
+          },
+          {
+            "commands": "cd /home/eval/work/calc && git show HEAD:lib/calc.sh | grep -E 'add|sub|mul|div' && echo '---diff from initial---' && git diff b4649640 HEAD -- lib/calc.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "add() { echo $(( $1 + $2 )); }\nsub() { echo $(( $1 - $2 )); }\nmul() { echo $(( $1 * $2 )); }\ndiv() {\n  if [ \"$2\" -eq 0 ]; then echo 'calc: division by zero' >&2; return 1; fi\n---diff from initial---\n# Diff output (simplified in virtual mode)\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

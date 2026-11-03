@@ -1,0 +1,63 @@
+{
+  "eval": "bashkit_generate",
+  "sample": "gen_log_status_report",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "Write a bash script that summarises an access log.\n\nStarting files:\n--- /home/eval/logs/access.log ---\n2026-10-01T10:00:01Z GET /api/users 200 12ms\n2026-10-01T10:00:02Z GET /api/orders 500 340ms\n2026-10-01T10:00:03Z POST /api/orders 201 45ms\n2026-10-01T10:00:04Z GET /api/users 200 8ms\n2026-10-01T10:00:05Z GET /health 200 1ms\n2026-10-01T10:00:06Z GET /api/orders/7 404 5ms\n2026-10-01T10:00:07Z DELETE /api/users/3 503 120ms\n2026-10-01T10:00:08Z GET /api/users 200 10ms\n--- end ---\n\nEach line is: ISO timestamp, HTTP method, path, status code, latency.\n\nThe script must:\n1. Create /home/eval/reports (it does not exist yet).\n2. Write /home/eval/reports/status.txt: one line per distinct status code, formatted `CODE COUNT` (single space), sorted by code ascending.\n3. Write /home/eval/reports/errors.txt: for every request with a 5xx status, the line `METHOD PATH`, in log order.\n4. Print exactly one line to stdout: `total=<number of requests> errors=<number of 5xx requests>`.\n5. Exit 0."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "4/4 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "```bash\n#!/usr/bin/env bash\nset -euo pipefail\n\nLOG_FILE=\"/home/eval/logs/access.log\"\nREPORT_DIR=\"/home/eval/reports\"\n\nmkdir -p \"$REPORT_DIR\"\n\nawk 'NF {print $4}' \"$LOG_FILE\" | sort -n | uniq -c | awk '{print $2, $1}' > \"$REPORT_DIR/status.txt\"\n\nawk 'NF && $4 >= 500 && $4 <= 599 {print $2, $3}' \"$LOG_FILE\" > \"$REPORT_DIR/errors.txt\"\n\ntotal=$(awk 'NF {c++} END {print c+0}' \"$LOG_FILE\")\nerrors=$(awk 'NF {c++} END {print c+0}' \"$REPORT_DIR/errors.txt\")\n\nprintf \"total=%s errors=%s\\n\" \"$total\" \"$errors\"\nexit 0\n```",
+    "iterations": 1,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "#!/usr/bin/env bash\nset -euo pipefail\n\nLOG_FILE=\"/home/eval/logs/access.log\"\nREPORT_DIR=\"/home/eval/reports\"\n\nmkdir -p \"$REPORT_DIR\"\n\nawk 'NF {print $4}' \"$LOG_FILE\" | sort -n | uniq -c | awk '{print $2, $1}' > \"$REPORT_DIR/status.txt\"\n\nawk 'NF && $4 >= 500 && $4 <= 599 {print $2, $3}' \"$LOG_FILE\" > \"$REPORT_DIR/errors.txt\"\n\ntotal=$(awk 'NF {c++} END {print c+0}' \"$LOG_FILE\")\nerrors=$(awk 'NF {c++} END {print c+0}' \"$REPORT_DIR/errors.txt\")\n\nprintf \"total=%s errors=%s\\n\" \"$total\" \"$errors\"\nexit 0\n"
+    ],
+    "usage": {
+      "input_tokens": 741,
+      "output_tokens": 2277,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 15785
+    },
+    "metrics": {
+      "exec_ms": 5.0,
+      "exit_code": 0.0,
+      "extracted": 1.0,
+      "generate_ms": 15780.0,
+      "script_bytes": 502.0,
+      "script_found": 1.0,
+      "timed_out": 0.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "#!/usr/bin/env bash\nset -euo pipefail\n\nLOG_FILE=\"/home/eval/logs/access.log\"\nREPORT_DIR=\"/home/eval/reports\"\n\nmkdir -p \"$REPORT_DIR\"\n\nawk 'NF {print $4}' \"$LOG_FILE\" | sort -n | uniq -c | awk '{print $2, $1}' > \"$REPORT_DIR/status.txt\"\n\nawk 'NF && $4 >= 500 && $4 <= 599 {print $2, $3}' \"$LOG_FILE\" > \"$REPORT_DIR/errors.txt\"\n\ntotal=$(awk 'NF {c++} END {print c+0}' \"$LOG_FILE\")\nerrors=$(awk 'NF {c++} END {print c+0}' \"$REPORT_DIR/errors.txt\")\n\nprintf \"total=%s errors=%s\\n\" \"$total\" \"$errors\"\nexit 0\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "total=8 errors=2\n"
+          }
+        ]
+      },
+      "generate": {
+        "extraction": "fenced",
+        "timed_out": false
+      }
+    }
+  },
+  "skipped": false
+}

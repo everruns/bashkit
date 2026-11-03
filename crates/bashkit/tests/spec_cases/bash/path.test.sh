@@ -130,3 +130,12 @@ echo $?
 ### expect
 2
 ### end
+
+### dirname_end_of_options
+# `--` ends options; it is not an operand
+dirname -- build/pub/out.txt
+dirname -- -dashed/name
+### expect
+build/pub
+-dashed
+### end

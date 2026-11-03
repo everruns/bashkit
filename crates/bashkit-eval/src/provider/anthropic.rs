@@ -86,13 +86,17 @@ impl AnthropicProvider {
             })
             .collect();
 
-        serde_json::json!({
+        let mut body = serde_json::json!({
             "model": self.model,
             "max_tokens": 4096,
             "system": system,
             "messages": api_messages,
-            "tools": api_tools
-        })
+        });
+        // No tools offered (one-shot generate eval): omit the field entirely.
+        if !api_tools.is_empty() {
+            body["tools"] = serde_json::Value::Array(api_tools);
+        }
+        body
     }
 
     fn parse_response(&self, body: serde_json::Value) -> Result<ProviderResponse> {
@@ -201,5 +205,34 @@ impl Provider for AnthropicProvider {
 
     fn model(&self) -> &str {
         &self.model
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn provider() -> AnthropicProvider {
+        AnthropicProvider {
+            client: {
+                ensure_rustls_crypto_provider().unwrap();
+                build_http_client().unwrap()
+            },
+            api_key: String::new(),
+            model: "m".to_string(),
+        }
+    }
+
+    #[test]
+    fn empty_tools_are_omitted() {
+        let body = provider().build_request_body(&[], &[], "sys");
+        assert!(body.get("tools").is_none());
+        let tool = ToolDefinition {
+            name: "bash".into(),
+            description: "d".into(),
+            input_schema: serde_json::json!({}),
+        };
+        let body = provider().build_request_body(&[], &[tool], "sys");
+        assert_eq!(body["tools"].as_array().unwrap().len(), 1);
     }
 }

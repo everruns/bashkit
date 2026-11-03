@@ -1,0 +1,71 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "json_ndjson_error_aggregate",
+  "target": "openrouter/meta/muse-spark-1.3-contributor",
+  "input": [
+    "Read /var/log/services.jsonl which contains newline-delimited JSON log entries. Each line is a JSON object with fields: timestamp, service, level, message. Count how many ERROR-level entries each service has. Print results as 'service: count' lines, sorted by count descending."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "auth: 3\npayments: 2\napi: 1",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "cat /var/log/services.jsonl | head -n 20; echo \"---\"; wc -l /var/log/services.jsonl; ls -l /var/log/services.jsonl",
+      "cat -A /var/log/services.jsonl\necho \"===\"\nwhich jq; jq --version 2>&1; echo \"---jq check done---\"\ngrep -c '\"level\":\"ERROR\"' /var/log/services.jsonl || grep -c '\"level\"[[:space:]]*:[[:space:]]*\"ERROR\"' /var/log/services.jsonl",
+      "jq -r 'select(.level==\"ERROR\") | .service' /var/log/services.jsonl | sort | uniq -c | sort -k1,1nr | awk '{print $2\": \"$1}'"
+    ],
+    "usage": {
+      "input_tokens": 5436,
+      "output_tokens": 1769,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 26569
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 3.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat /var/log/services.jsonl | head -n 20; echo \"---\"; wc -l /var/log/services.jsonl; ls -l /var/log/services.jsonl",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "{\"timestamp\":\"2024-01-01T10:00:00Z\",\"service\":\"auth\",\"level\":\"ERROR\",\"message\":\"token expired\"}\n{\"timestamp\":\"2024-01-01T10:00:01Z\",\"service\":\"api\",\"level\":\"INFO\",\"message\":\"request received\"}\n{\"timestamp\":\"2024-01-01T10:00:02Z\",\"service\":\"auth\",\"level\":\"ERROR\",\"message\":\"invalid credentials\"}\n{\"timestamp\":\"2024-01-01T10:00:03Z\",\"service\":\"payments\",\"level\":\"ERROR\",\"message\":\"gateway timeout\"}\n{\"timestamp\":\"2024-01-01T10:00:04Z\",\"service\":\"auth\",\"level\":\"INFO\",\"message\":\"login success\"}\n{\"timestamp\":\"2024-01-01T10:00:05Z\",\"service\":\"api\",\"level\":\"ERROR\",\"message\":\"rate limited\"}\n{\"timestamp\":\"2024-01-01T10:00:06Z\",\"service\":\"auth\",\"level\":\"ERROR\",\"message\":\"token expired\"}\n{\"timestamp\":\"2024-01-01T10:00:07Z\",\"service\":\"payments\",\"level\":\"ERROR\",\"message\":\"invalid card\"}\n{\"timestamp\":\"2024-01-01T10:00:08Z\",\"service\":\"api\",\"level\":\"INFO\",\"message\":\"health check ok\"}\n{\"timestamp\":\"2024-01-01T10:00:09Z\",\"service\":\"payments\",\"level\":\"INFO\",\"message\":\"payment processed\"}---\n9 /var/log/services.jsonl\n-rw-r--r--      979 2026-10-09 04:58 /var/log/services.jsonl\n"
+          },
+          {
+            "commands": "cat -A /var/log/services.jsonl\necho \"===\"\nwhich jq; jq --version 2>&1; echo \"---jq check done---\"\ngrep -c '\"level\":\"ERROR\"' /var/log/services.jsonl || grep -c '\"level\"[[:space:]]*:[[:space:]]*\"ERROR\"' /var/log/services.jsonl",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "{\"timestamp\":\"2024-01-01T10:00:00Z\",\"service\":\"auth\",\"level\":\"ERROR\",\"message\":\"token expired\"}$\n{\"timestamp\":\"2024-01-01T10:00:01Z\",\"service\":\"api\",\"level\":\"INFO\",\"message\":\"request received\"}$\n{\"timestamp\":\"2024-01-01T10:00:02Z\",\"service\":\"auth\",\"level\":\"ERROR\",\"message\":\"invalid credentials\"}$\n{\"timestamp\":\"2024-01-01T10:00:03Z\",\"service\":\"payments\",\"level\":\"ERROR\",\"message\":\"gateway timeout\"}$\n{\"timestamp\":\"2024-01-01T10:00:04Z\",\"service\":\"auth\",\"level\":\"INFO\",\"message\":\"login success\"}$\n{\"timestamp\":\"2024-01-01T10:00:05Z\",\"service\":\"api\",\"level\":\"ERROR\",\"message\":\"rate limited\"}$\n{\"timestamp\":\"2024-01-01T10:00:06Z\",\"service\":\"auth\",\"level\":\"ERROR\",\"message\":\"token expired\"}$\n{\"timestamp\":\"2024-01-01T10:00:07Z\",\"service\":\"payments\",\"level\":\"ERROR\",\"message\":\"invalid card\"}$\n{\"timestamp\":\"2024-01-01T10:00:08Z\",\"service\":\"api\",\"level\":\"INFO\",\"message\":\"health check ok\"}$\n{\"timestamp\":\"2024-01-01T10:00:09Z\",\"service\":\"payments\",\"level\":\"INFO\",\"message\":\"payment processed\"}===\n/usr/bin/jq\njq-1.8\n---jq check done---\n6\n"
+          },
+          {
+            "commands": "jq -r 'select(.level==\"ERROR\") | .service' /var/log/services.jsonl | sort | uniq -c | sort -k1,1nr | awk '{print $2\": \"$1}'",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "auth: 3\npayments: 2\napi: 1\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

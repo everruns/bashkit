@@ -38,3 +38,31 @@ echo alive
 ### expect
 alive
 ### end
+
+### nested_self_signals_return_to_each_handler
+trap 'echo first; kill -USR2 $$; echo last' USR1
+trap 'echo second' USR2
+kill -USR1 $$
+kill -USR1 $$
+echo done
+### expect
+first
+second
+last
+first
+second
+last
+done
+### end
+
+### ignored_self_signal_and_handler_exit
+trap 'echo ignored' USR1
+trap '' USR1
+kill -USR1 $$
+trap 'echo caught; exit 7' USR2
+kill -USR2 $$
+echo unreachable
+### expect
+caught
+### exit_code: 7
+### end

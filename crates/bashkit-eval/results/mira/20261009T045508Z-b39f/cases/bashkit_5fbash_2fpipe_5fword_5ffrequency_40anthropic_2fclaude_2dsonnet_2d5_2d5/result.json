@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "pipe_word_frequency",
+  "target": "anthropic/claude-sonnet-5-5",
+  "input": [
+    "Read /data/poem.txt and find the 3 most frequently used words. Print each word with its count, one per line, sorted by frequency descending."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "The 3 most frequent words in `/data/poem.txt` are below. I lowercased the text and ignored punctuation.\n\n```\nthe 8\non 3\ncat 2\n```\n\nThird place is a tie at 2 only if other words also appear twice. Checking the top 8 counts, \"cat\" is the only word with 2, so the ranking is unambiguous.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cat /data/poem.txt | tr -cs \"[:alpha:]'\" '\\n' | tr 'A-Z' 'a-z' | grep -v '^$' | sort | uniq -c | sort -k1,1nr -k2 | head -3 | awk '{print $2, $1}'",
+      "cat /data/poem.txt | tr -cs \"[:alpha:]'\" '\\n' | tr 'A-Z' 'a-z' | grep -v '^$' | sort | uniq -c | sort -k1,1nr -k2 | head -8"
+    ],
+    "usage": {
+      "input_tokens": 2436,
+      "output_tokens": 423,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 5030
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat /data/poem.txt | tr -cs \"[:alpha:]'\" '\\n' | tr 'A-Z' 'a-z' | grep -v '^$' | sort | uniq -c | sort -k1,1nr -k2 | head -3 | awk '{print $2, $1}'",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "the 8\non 3\ncat 2\n"
+          },
+          {
+            "commands": "cat /data/poem.txt | tr -cs \"[:alpha:]'\" '\\n' | tr 'A-Z' 'a-z' | grep -v '^$' | sort | uniq -c | sort -k1,1nr -k2 | head -8",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "      8 the\n      3 on\n      2 cat\n      1 bog\n      1 dog\n      1 frog\n      1 hat\n      1 in\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

@@ -136,6 +136,39 @@ BuiltinCallback = Callable[
     str | BuiltinResult | Awaitable[str | BuiltinResult],
 ]
 
+class CommandStatus:
+    """Command completion, separate from output. Native async API only."""
+
+    exit_code: int
+    def __init__(self, exit_code: int = 0) -> None: ...
+
+class CommandInput:
+    """Request-scoped byte reader. Clones share the cursor."""
+
+    def __aiter__(self) -> CommandInput: ...
+    async def __anext__(self) -> bytes: ...
+    async def read_chunk(self) -> bytes | None: ...
+
+class CommandOutput:
+    """Request-scoped byte writer. Awaiting write applies backpressure."""
+
+    async def write(self, data: bytes) -> None: ...
+
+class CommandContext:
+    """Live command capabilities; I/O is revoked when execution ends."""
+
+    name: str
+    argv: list[str]
+    env: dict[str, str]
+    cwd: str
+    fs: FileSystem
+    stdin: CommandInput
+    stdout: CommandOutput
+    stderr: CommandOutput
+
+CommandCallback = Callable[[CommandContext], Awaitable[CommandStatus | int]]
+ByteSink = Callable[[bytes], Awaitable[None]]
+
 class FileSystem:
     """Direct access to Bashkit's virtual filesystem or a standalone mountable FS.
 
@@ -395,7 +428,7 @@ class FileSystem:
         ...
 
 class ExternalHandler(Protocol):
-    """Protocol for the external function handler passed to Bash.
+    """Protocol for the external function handler passed to Bash or BashTool.
 
     Called when Monty Python code invokes a registered external function.
     Must be an async callable with this exact signature.
@@ -414,6 +447,11 @@ class ExternalHandler(Protocol):
     """
 
     async def __call__(self, fn_name: str, args: list[Any], kwargs: dict[str, Any]) -> Any: ...
+
+class TypeScriptExternalHandler(Protocol):
+    """Async host handler for TypeScript calls; arguments and results are JSON values."""
+
+    async def __call__(self, fn_name: str, args: list[Any]) -> Any: ...
 
 class ShellState:
     """Read-only snapshot of shell state.
@@ -564,13 +602,34 @@ class Bash:
         """
         ...
 
-    async def execute(self, commands: str, on_output: OutputHandler | None = None) -> ExecResult:
+    def add_command(self, name: str, callback: CommandCallback) -> None:
+        """Register a live byte command; requires native async execute()."""
+        ...
+
+    async def execute(
+        self,
+        commands: str,
+        on_output: OutputHandler | None = None,
+        *,
+        capture: int | None = None,
+        stdout: ByteSink | None = None,
+        stderr: ByteSink | None = None,
+        timeout_seconds: float | None = None,
+        output_file: str | None = None,
+        max_output_file_bytes: int | None = None,
+    ) -> ExecResult:
         """Execute bash commands asynchronously.
 
         Args:
             commands: Bash script to run (like ``bash -c "commands"``).
             on_output: Optional callback receiving chunked ``(stdout, stderr)``
                 pairs during execution. Must be synchronous.
+            timeout_seconds: Optional wall-clock cap for this call only. It can
+                only tighten the constructor ``timeout_seconds``, never extend it.
+            output_file: Optional absolute VFS path that receives combined
+                stdout+stderr, created or truncated first. Bounded by
+                ``max_output_file_bytes`` (default 10 MiB) and filesystem limits,
+                not the in-memory output caps. Not combinable with ``on_output``.
 
         Async ``custom_builtins`` callbacks run on the caller's active asyncio
         loop.
@@ -588,11 +647,19 @@ class Bash:
         """
         ...
 
-    def execute_sync(self, commands: str, on_output: OutputHandler | None = None) -> ExecResult:
+    def execute_sync(
+        self,
+        commands: str,
+        on_output: OutputHandler | None = None,
+        *,
+        timeout_seconds: float | None = None,
+        output_file: str | None = None,
+        max_output_file_bytes: int | None = None,
+    ) -> ExecResult:
         """Execute bash commands synchronously (blocking).
 
-        Not supported when ``external_handler`` is configured — use
-        ``execute()`` (async) instead. ``on_output`` must be synchronous.
+        Async external handlers use the instance's private worker loop.
+        Use ``await execute()`` for clients bound to the caller's running loop. ``on_output`` must be synchronous.
         Async ``custom_builtins`` callbacks run on a private loop here.
         When called from inside a running event loop (e.g. Jupyter / IPython),
         callbacks are dispatched to a background thread with their own loop so
@@ -608,7 +675,9 @@ class Bash:
         """
         ...
 
-    async def execute_or_throw(self, commands: str, on_output: OutputHandler | None = None) -> ExecResult:
+    async def execute_or_throw(
+        self, commands: str, on_output: OutputHandler | None = None, *, timeout_seconds: float | None = None
+    ) -> ExecResult:
         """Execute commands asynchronously; raise ``BashError`` on non-zero exit.
 
         ``on_output`` must be synchronous.
@@ -625,7 +694,9 @@ class Bash:
         """
         ...
 
-    def execute_sync_or_throw(self, commands: str, on_output: OutputHandler | None = None) -> ExecResult:
+    def execute_sync_or_throw(
+        self, commands: str, on_output: OutputHandler | None = None, *, timeout_seconds: float | None = None
+    ) -> ExecResult:
         """Execute commands synchronously; raise ``BashError`` on non-zero exit.
 
         ``on_output`` must be synchronous.
@@ -1114,6 +1185,12 @@ class BashTool:
         custom_builtins: Mapping[str, BuiltinCallback] | None = None,
         network: NetworkConfig | None = None,
         profile: ExecutionProfile = ExecutionProfile.Standard,
+        python: bool = False,
+        typescript: bool = False,
+        external_functions: list[str] | None = None,
+        external_handler: ExternalHandler | None = None,
+        typescript_external_functions: list[str] | None = None,
+        typescript_external_handler: TypeScriptExternalHandler | None = None,
     ) -> None:
         """Create a new BashTool.
 
@@ -1145,6 +1222,24 @@ class BashTool:
             network: Optional outbound HTTP / network configuration. See
                 ``Bash.__init__`` for accepted keys. Preserved across
                 ``reset()`` and ``from_snapshot()``.
+            profile: Execution profile (Standard or Compatibility).
+            python: Register sandboxed Monty Python (default ``False``).
+            typescript: Register sandboxed ZapCode TypeScript (default ``False``).
+            external_functions: Host function names callable from embedded Python.
+            external_handler: Async ``(name, args, kwargs)`` Python dispatcher.
+            typescript_external_functions: Host function names callable from TypeScript.
+            typescript_external_handler: Async ``(name, args)`` TypeScript dispatcher.
+
+        External handlers run on the caller's loop with ``await execute()`` and
+        on a dedicated private worker loop with ``execute_sync()``, including
+        inside notebooks. ContextVars are captured per execution. Handlers must
+        not re-enter this interpreter or its live filesystem handles. Reset
+        retains callbacks; snapshot factories require callbacks supplied again.
+
+        Embedded runtimes share the shell's virtual filesystem and stay enabled
+        after ``reset()``. Python additionally requires the host to provide
+        ``env={"BASHKIT_ALLOW_INPROCESS_PYTHON": "1"}`` at construction.
+        An agent script cannot grant this permission with ``export``.
 
         Example::
 
@@ -1155,10 +1250,32 @@ class BashTool:
             ... )
             >>> print(tool.name)
             bash
+            >>> tool = BashTool(
+            ...     python=True,
+            ...     typescript=True,
+            ...     env={"BASHKIT_ALLOW_INPROCESS_PYTHON": "1"},
+            ... )
+            >>> tool.execute_sync("python -c 'print(21)' && ts -c '21'").stdout
+            '21\\n21\\n'
         """
         ...
 
-    async def execute(self, commands: str, on_output: OutputHandler | None = None) -> ExecResult:
+    def add_command(self, name: str, callback: CommandCallback) -> None:
+        """Register a live byte command; requires native async execute()."""
+        ...
+
+    async def execute(
+        self,
+        commands: str,
+        on_output: OutputHandler | None = None,
+        *,
+        capture: int | None = None,
+        stdout: ByteSink | None = None,
+        stderr: ByteSink | None = None,
+        timeout_seconds: float | None = None,
+        output_file: str | None = None,
+        max_output_file_bytes: int | None = None,
+    ) -> ExecResult:
         """Execute bash commands asynchronously.
 
         Async ``custom_builtins`` callbacks run on the caller's active asyncio
@@ -1175,7 +1292,15 @@ class BashTool:
         """
         ...
 
-    def execute_sync(self, commands: str, on_output: OutputHandler | None = None) -> ExecResult:
+    def execute_sync(
+        self,
+        commands: str,
+        on_output: OutputHandler | None = None,
+        *,
+        timeout_seconds: float | None = None,
+        output_file: str | None = None,
+        max_output_file_bytes: int | None = None,
+    ) -> ExecResult:
         """Execute bash commands synchronously (blocking).
 
         Async ``custom_builtins`` callbacks run on a private loop here.
@@ -1195,7 +1320,9 @@ class BashTool:
         """
         ...
 
-    async def execute_or_throw(self, commands: str, on_output: OutputHandler | None = None) -> ExecResult:
+    async def execute_or_throw(
+        self, commands: str, on_output: OutputHandler | None = None, *, timeout_seconds: float | None = None
+    ) -> ExecResult:
         """Execute commands asynchronously; raise ``BashError`` on non-zero exit.
 
         ``on_output`` must be synchronous.
@@ -1209,7 +1336,9 @@ class BashTool:
         """
         ...
 
-    def execute_sync_or_throw(self, commands: str, on_output: OutputHandler | None = None) -> ExecResult:
+    def execute_sync_or_throw(
+        self, commands: str, on_output: OutputHandler | None = None, *, timeout_seconds: float | None = None
+    ) -> ExecResult:
         """Execute commands synchronously; raise ``BashError`` on non-zero exit.
 
         ``on_output`` must be synchronous.
@@ -1412,6 +1541,12 @@ class BashTool:
         custom_builtins: Mapping[str, BuiltinCallback] | None = None,
         network: NetworkConfig | None = None,
         profile: ExecutionProfile = ExecutionProfile.Standard,
+        python: bool = False,
+        typescript: bool = False,
+        external_functions: list[str] | None = None,
+        external_handler: ExternalHandler | None = None,
+        typescript_external_functions: list[str] | None = None,
+        typescript_external_handler: TypeScriptExternalHandler | None = None,
     ) -> BashTool:
         """Create a new ``BashTool`` from snapshot bytes and optional constructor kwargs."""
         ...
@@ -1435,6 +1570,12 @@ class BashTool:
         custom_builtins: Mapping[str, BuiltinCallback] | None = None,
         network: NetworkConfig | None = None,
         profile: ExecutionProfile = ExecutionProfile.Standard,
+        python: bool = False,
+        typescript: bool = False,
+        external_functions: list[str] | None = None,
+        external_handler: ExternalHandler | None = None,
+        typescript_external_functions: list[str] | None = None,
+        typescript_external_handler: TypeScriptExternalHandler | None = None,
     ) -> BashTool:
         """Create a new ``BashTool`` from HMAC-protected snapshot bytes."""
         ...

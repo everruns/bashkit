@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "complex_diff_report",
+  "target": "openrouter/meta/muse-spark-1.3-contributor",
+  "input": [
+    "Compare /data/v1.conf and /data/v2.conf. Produce a human-readable summary showing: which keys were added, which were removed, and which had their values changed. Print the summary to stdout."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "6/6 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Comparison of /data/v1.conf vs /data/v2.conf\n==================================================\n\nAdded keys (1) — present in v2 only:\n  + timeout=30\n\nRemoved keys (1) — present in v1 only:\n  - max_connections=100\n\nChanged values (3):\n  ~ host: 'localhost' -> '0.0.0.0'\n  ~ log_level: 'info' -> 'debug'\n  ~ port: '8080' -> '9090'\n\nUnchanged (1):\n    workers=4\n\nSummary: 1 added, 1 removed, 3 changed, 1 unchanged.\n",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cat /data/v1.conf; echo \"---V2---\"; cat /data/v2.conf; echo \"---ls---\"; ls -R /data 2>&1",
+      "python3 << 'PY'\nfrom pathlib import Path\n\ndef parse(p):\n    d = {}\n    for raw in Path(p).read_text().splitlines():\n        line = raw.strip()\n        if not line or line.startswith('#') or line.startswith(';'):\n            continue\n        if '=' not in line:\n            continue\n        k, v = line.split('=', 1)\n        d[k.strip()] = v.strip()\n    return d\n\nf1 = \"/data/v1.conf\"\nf2 = \"/data/v2.conf\"\na = parse(f1)\nb = parse(f2)\n\nadded = {k: b[k] for k in b if k not in a}\nremoved = {k: a[k] for k in a if k not in b}\nchanged = {k: (a[k], b[k]) for k in a if k in b and a[k] != b[k]}\nunchanged = {k: a[k] for k in a if k in b and a[k] == b[k]}\n\nprint(f\"Comparison of {f1} vs {f2}\")\nprint(\"=\" * 50)\nprint()\nif added:\n    print(f\"Added keys ({len(added)}) — present in v2 only:\")\n    for k in sorted(added):\n        print(f\"  + {k}={added[k]}\")\nelse:\n    print(\"Added keys: none\")\nprint()\nif removed:\n    print(f\"Removed keys ({len(removed)}) — present in v1 only:\")\n    for k in sorted(removed):\n        print(f\"  - {k}={removed[k]}\")\nelse:\n    print(\"Removed keys: none\")\nprint()\nif changed:\n    print(f\"Changed values ({len(changed)}):\")\n    for k in sorted(changed):\n        old, new = changed[k]\n        print(f\"  ~ {k}: '{old}' -> '{new}'\")\nelse:\n    print(\"Changed values: none\")\nprint()\nif unchanged:\n    print(f\"Unchanged ({len(unchanged)}):\")\n    for k in sorted(unchanged):\n        print(f\"    {k}={unchanged[k]}\")\nprint()\nprint(f\"Summary: {len(added)} added, {len(removed)} removed, {len(changed)} changed, {len(unchanged)} unchanged.\")\nPY"
+    ],
+    "usage": {
+      "input_tokens": 3847,
+      "output_tokens": 2065,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 25225
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat /data/v1.conf; echo \"---V2---\"; cat /data/v2.conf; echo \"---ls---\"; ls -R /data 2>&1",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "port=8080\nhost=localhost\nlog_level=info\nworkers=4\nmax_connections=100\n---V2---\nport=9090\nhost=0.0.0.0\nlog_level=debug\nworkers=4\ntimeout=30\n---ls---\n/data:\nv1.conf\nv2.conf\n"
+          },
+          {
+            "commands": "python3 << 'PY'\nfrom pathlib import Path\n\ndef parse(p):\n    d = {}\n    for raw in Path(p).read_text().splitlines():\n        line = raw.strip()\n        if not line or line.startswith('#') or line.startswith(';'):\n            continue\n        if '=' not in line:\n            continue\n        k, v = line.split('=', 1)\n        d[k.strip()] = v.strip()\n    return d\n\nf1 = \"/data/v1.conf\"\nf2 = \"/data/v2.conf\"\na = parse(f1)\nb = parse(f2)\n\nadded = {k: b[k] for k in b if k not in a}\nremoved = {k: a[k] for k in a if k not in b}\nchanged = {k: (a[k], b[k]) for k in a if k in b and a[k] != b[k]}\nunchanged = {k: a[k] for k in a if k in b and a[k] == b[k]}\n\nprint(f\"Comparison of {f1} vs {f2}\")\nprint(\"=\" * 50)\nprint()\nif added:\n    print(f\"Added keys ({len(added)}) — present in v2 only:\")\n    for k in sorted(added):\n        print(f\"  + {k}={added[k]}\")\nelse:\n    print(\"Added keys: none\")\nprint()\nif removed:\n    print(f\"Removed keys ({len(removed)}) — present in v1 only:\")\n    for k in sorted(removed):\n        print(f\"  - {k}={removed[k]}\")\nelse:\n    print(\"Removed keys: none\")\nprint()\nif changed:\n    print(f\"Changed values ({len(changed)}):\")\n    for k in sorted(changed):\n        old, new = changed[k]\n        print(f\"  ~ {k}: '{old}' -> '{new}'\")\nelse:\n    print(\"Changed values: none\")\nprint()\nif unchanged:\n    print(f\"Unchanged ({len(unchanged)}):\")\n    for k in sorted(unchanged):\n        print(f\"    {k}={unchanged[k]}\")\nprint()\nprint(f\"Summary: {len(added)} added, {len(removed)} removed, {len(changed)} changed, {len(unchanged)} unchanged.\")\nPY",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Comparison of /data/v1.conf vs /data/v2.conf\n==================================================\n\nAdded keys (1) — present in v2 only:\n  + timeout=30\n\nRemoved keys (1) — present in v1 only:\n  - max_connections=100\n\nChanged values (3):\n  ~ host: 'localhost' -> '0.0.0.0'\n  ~ log_level: 'info' -> 'debug'\n  ~ port: '8080' -> '9090'\n\nUnchanged (1):\n    workers=4\n\nSummary: 1 added, 1 removed, 3 changed, 1 unchanged.\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

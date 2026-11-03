@@ -56,6 +56,42 @@ fn redirect_target_may_split(redirect: &Redirect) -> bool {
     })
 }
 
+// Read admission, any excess backend capacity, and cached text travel together.
+type InputStorage = [Option<crate::limits::ExecutionBudgetLease>; 3];
+type StdinSlot = Option<(crate::StreamData, InputStorage)>;
+
+/// Assign the stdin slot, dropping any previous buffer and its clone lease
+/// together, including fresh materializations as well as copies.
+fn set_stdin_slot(slot: &mut StdinSlot, value: Option<crate::StreamData>, lease: InputStorage) {
+    *slot = value.map(|data| (data, lease));
+}
+
+/// Result of input-redirection processing: the stdin buffer plus the
+/// live-bytes leases for both representations.
+/// Callers hold `stdin_lease` for as long as they retain `stdin`.
+pub(crate) struct StdinSetup {
+    pub stdin: Option<crate::StreamData>,
+    pub stdin_lease: InputStorage,
+}
+
+/// Numbered-fd table with replace semantics: re-redirecting an fd drops the
+/// superseded buffer — and its live-bytes lease — instead of piling clones.
+/// Aggregate input consumption stays cumulative.
+type OwnFdEntry = (i32, crate::StreamData, InputStorage);
+
+fn replace_own_fd(
+    own_fds: &mut Vec<OwnFdEntry>,
+    fd: i32,
+    data: crate::StreamData,
+    lease: InputStorage,
+) {
+    if let Some(slot) = own_fds.iter_mut().find(|(existing, _, _)| *existing == fd) {
+        *slot = (fd, data, lease);
+    } else {
+        own_fds.push((fd, data, lease));
+    }
+}
+
 /// `N<<EOF` / `N<<<word` with N >= 3: a readable fd for the command's body.
 fn high_fd_here(redirect: &Redirect) -> bool {
     matches!(
@@ -229,6 +265,94 @@ impl Interpreter {
         self.diag(format!("{path}: {reason}\n"))
     }
 
+    /// Admit a backend read before loading and retain its capacity through decoding.
+    // THREAT[TM-DOS-103]: metadata and device ceilings precede VFS allocation.
+    async fn read_input_stream(
+        &self,
+        path: &Path,
+        create: bool,
+    ) -> Result<(crate::StreamData, InputStorage)> {
+        let budget = &self.execution_budget;
+        // Open substitution links describe a pipe, not a VFS symlink target.
+        // Its owner supplies the buffered size before read_file copies it.
+        let buffered = self.proc_subs.input_len(path);
+        let source = if buffered.is_some() {
+            path.to_path_buf()
+        } else {
+            match budget.run(crate::fs::canonicalize(&*self.fs, path)).await? {
+                Ok(source) => source,
+                Err(crate::Error::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {
+                    // Mounted backends can serve a path without synthetic
+                    // parent entries. Its stat/read below decide existence.
+                    path.to_path_buf()
+                }
+                Err(error) => return Err(error),
+            }
+        };
+        // Preserve the configured VFS's following policy for actual I/O;
+        // canonical resolution above only identifies bounded device reads.
+        let size = match budget.run(self.fs.stat(path)).await? {
+            Ok(metadata) => metadata.size,
+            Err(crate::Error::Io(error))
+                if create && error.kind() == std::io::ErrorKind::NotFound =>
+            {
+                0
+            }
+            Err(error) => return Err(error),
+        };
+        let reported = usize::try_from(size)
+            .map_err(|_| LimitExceeded::Memory("input redirection size overflow".into()))?;
+        let device = match source.to_str() {
+            // InMemoryFs devices report zero size but materialize these bounded reads.
+            Some("/dev/zero") => 1 << 20,
+            Some("/dev/random" | "/dev/urandom") => 8192,
+            _ => 0,
+        };
+        let size = reported.max(device).max(buffered.unwrap_or(0));
+        budget.consume_input(size)?;
+        budget.consume_work(1 + size.div_ceil(1024) as u64)?;
+        let raw = budget.lease_bytes(size)?;
+        if create {
+            // An empty append may load an existing lazy file, so admission
+            // must precede opening as well as the subsequent read.
+            budget.run(self.fs.append_file(path, b"")).await??;
+        }
+        let bytes = budget.run(self.fs.read_file(path)).await??;
+        budget.consume_input(bytes.len().saturating_sub(size))?;
+        let extra = budget.lease_bytes(bytes.capacity().saturating_sub(size))?;
+        let (stream, text) = crate::StreamData::from_admitted_bytes(bytes, budget)?;
+        Ok((stream, [Some(raw), Some(extra), text]))
+    }
+
+    fn input_stream_from_text(
+        &self,
+        content: String,
+        newline: bool,
+    ) -> Result<(crate::StreamData, InputStorage)> {
+        let budget = &self.execution_budget;
+        let mut text = crate::limits::BudgetedString::try_from_string(content, Some(budget))?;
+        if newline {
+            text.try_push('\n')?;
+        }
+        budget.consume_input(
+            text.len()
+                .checked_mul(2)
+                .ok_or_else(|| LimitExceeded::Memory("input redirection size overflow".into()))?,
+        )?;
+        let (stream, [bytes, text]) = crate::StreamData::from_budgeted_string(text, Some(budget))?;
+        Ok((stream, [bytes, text, None]))
+    }
+
+    fn clone_input_stream(
+        &self,
+        content: &crate::StreamData,
+    ) -> Result<(crate::StreamData, InputStorage)> {
+        self.execution_budget
+            .consume_input(content.retained_len())?;
+        let (stream, [bytes, text]) = content.try_clone_budgeted(&self.execution_budget)?;
+        Ok((stream, [bytes, text, None]))
+    }
+
     /// Process input redirections (< file, <<< string). `demand` is how
     /// much the command reads, for stdin taken from a coproc's pipe.
     pub(super) async fn process_input_redirections(
@@ -237,10 +361,13 @@ impl Interpreter {
         redirects: &[Redirect],
         demand: StdinDemand,
         high_fd_stdin: HighFdStdin,
-    ) -> Result<Option<crate::StreamData>> {
-        let mut stdin = existing_stdin;
+    ) -> crate::error::Result<StdinSetup> {
+        // Stdin slot: a budgeted clone's live lease travels with the buffer
+        // so replacing stdin drops both together; the surviving lease is
+        // handed to the caller with stdin.
+        let mut stdin: StdinSlot = existing_stdin.map(|data| (data, [None, None, None]));
         // Readable fds this command's own redirects open (`4<<E <&4`).
-        let mut own_fds: Vec<(i32, crate::StreamData)> = Vec::new();
+        let mut own_fds: Vec<OwnFdEntry> = Vec::new();
 
         for redirect in redirects {
             // Fd N >= 1 for an input-side redirect (`3<f`, `4<<<w`, `5<>f`).
@@ -250,19 +377,20 @@ impl Interpreter {
                     // `<>`: open (creating) the file read-write.
                     let target_path = self.expand_word(&redirect.target).await?;
                     let path = self.resolve_path(&target_path);
-                    let content = if is_dev_null(&path) {
-                        crate::StreamData::new()
+                    let (content, storage) = if is_dev_null(&path) {
+                        (crate::StreamData::new(), [None, None, None])
                     } else if !self.shell_features.has_file_redirects() {
                         return Err(crate::error::Error::Execution(
                             self.diag(format!("{}: filesystem redirection disabled", target_path)),
                         ));
                     } else {
-                        let opened = match self.fs.append_file(&path, b"").await {
-                            Ok(()) => self.fs.read_file(&path).await,
-                            Err(e) => Err(e),
-                        };
+                        // Keep backend-admission state off recursive command frames.
+                        let opened = Box::pin(self.read_input_stream(&path, true)).await;
                         match opened {
-                            Ok(content) => content.into(),
+                            Ok(content) => content,
+                            Err(e @ (crate::Error::ResourceLimit(_) | crate::Error::Cancelled)) => {
+                                return Err(e);
+                            }
                             Err(e) => {
                                 return Err(crate::error::Error::CommandFailure(
                                     self.diag(format!("{target_path}: {}\n", io_error_reason(&e))),
@@ -271,8 +399,10 @@ impl Interpreter {
                         }
                     };
                     match high_fd {
-                        Some(fd) => own_fds.push((fd, content)),
-                        None => stdin = Some(content),
+                        Some(fd) => {
+                            replace_own_fd(&mut own_fds, fd, content, storage);
+                        }
+                        None => set_stdin_slot(&mut stdin, Some(content), storage),
                     }
                 }
                 RedirectKind::Input => {
@@ -290,18 +420,18 @@ impl Interpreter {
                     if self.fd_alias(&path) == Some(0) {
                         // `< /dev/stdin` re-reads the current stdin: no-op.
                     } else if is_dev_null(&path) {
-                        stdin = Some(crate::StreamData::new()); // EOF
+                        set_stdin_slot(
+                            &mut stdin,
+                            Some(crate::StreamData::new()),
+                            [None, None, None],
+                        ); // EOF
                     } else if !self.shell_features.has_file_redirects() {
                         return Err(crate::error::Error::Execution(
                             self.diag(format!("{}: filesystem redirection disabled", target_path)),
                         ));
                     } else {
-                        match self.fs.read_file(&path).await {
-                            Ok(content) => {
-                                let content: crate::StreamData = content.into();
-                                if let Some(fd) = high_fd {
-                                    own_fds.push((fd, content.clone()));
-                                }
+                        match Box::pin(self.read_input_stream(&path, false)).await {
+                            Ok((content, storage)) => {
                                 // WTF: on a compound `3<file` also feeds
                                 // stdin; loops like `while read -u 3 ...;
                                 // done 3<file` rely on it until per-command
@@ -313,9 +443,21 @@ impl Interpreter {
                                     (Some(fd), HighFdStdin::Fd(u)) => fd == u,
                                     (Some(_), HighFdStdin::Never) => false,
                                 };
-                                if feeds {
-                                    stdin = Some(content);
+                                if let Some(fd) = high_fd {
+                                    if feeds {
+                                        let (copy, copy_storage) =
+                                            self.clone_input_stream(&content)?;
+                                        replace_own_fd(&mut own_fds, fd, copy, copy_storage);
+                                        set_stdin_slot(&mut stdin, Some(content), storage);
+                                    } else {
+                                        replace_own_fd(&mut own_fds, fd, content, storage);
+                                    }
+                                } else {
+                                    set_stdin_slot(&mut stdin, Some(content), storage);
                                 }
+                            }
+                            Err(e @ (crate::Error::ResourceLimit(_) | crate::Error::Cancelled)) => {
+                                return Err(e);
                             }
                             Err(e) => {
                                 return Err(crate::error::Error::CommandFailure(
@@ -328,20 +470,24 @@ impl Interpreter {
                 RedirectKind::HereString => {
                     // <<< string - use the target as stdin content
                     let content = self.expand_word(&redirect.target).await?;
-                    let content: crate::StreamData = format!("{}\n", content).into();
+                    let (content, storage) = self.input_stream_from_text(content, true)?;
                     match high_fd {
-                        Some(fd) => own_fds.push((fd, content)),
-                        None => stdin = Some(content),
+                        Some(fd) => {
+                            replace_own_fd(&mut own_fds, fd, content, storage);
+                        }
+                        None => set_stdin_slot(&mut stdin, Some(content), storage),
                     }
                 }
                 RedirectKind::HereDoc | RedirectKind::HereDocStrip => {
                     // << EOF / <<- EOF - use the heredoc content as stdin;
                     // `3<<EOF` feeds fd 3.
-                    let content: crate::StreamData =
-                        self.expand_word(&redirect.target).await?.into();
+                    let content = self.expand_word(&redirect.target).await?;
+                    let (content, storage) = self.input_stream_from_text(content, false)?;
                     match high_fd {
-                        Some(fd) => own_fds.push((fd, content)),
-                        None => stdin = Some(content),
+                        Some(fd) => {
+                            replace_own_fd(&mut own_fds, fd, content, storage);
+                        }
+                        None => set_stdin_slot(&mut stdin, Some(content), storage),
                     }
                 }
                 RedirectKind::DupInput => {
@@ -360,12 +506,15 @@ impl Interpreter {
                     let Ok(src) = target.parse::<i32>() else {
                         continue;
                     };
-                    // `<&4` after this command's own `4<<E`.
-                    if let Some((_, content)) = own_fds.iter().rev().find(|(fd, _)| *fd == src) {
-                        let content = content.clone();
+                    // `<&4` after this command's own `4<<E`: the clone below is
+                    // charged before allocation.
+                    if let Some((_, content, _)) =
+                        own_fds.iter().rev().find(|(fd, _, _)| *fd == src)
+                    {
+                        let (content, lease) = self.clone_input_stream(content)?;
                         match high_fd {
-                            Some(fd) => own_fds.push((fd, content)),
-                            None => stdin = Some(content),
+                            Some(fd) => replace_own_fd(&mut own_fds, fd, content, lease),
+                            None => set_stdin_slot(&mut stdin, Some(content), lease),
                         }
                         continue;
                     }
@@ -391,11 +540,16 @@ impl Interpreter {
                                     text.push('\n');
                                 }
                             }
-                            stdin = Some(text.into());
+                            let (content, storage) = self.input_stream_from_text(text, false)?;
+                            set_stdin_slot(&mut stdin, Some(content), storage);
                         }
                         Some(coproc::InputFd::Pipe(end)) => {
                             let pipe = Arc::clone(&end.0);
-                            stdin = Some(Box::pin(coproc::read_coproc_input(pipe, demand)).await);
+                            set_stdin_slot(
+                                &mut stdin,
+                                Some(Box::pin(coproc::read_coproc_input(pipe, demand)).await),
+                                [None, None, None],
+                            );
                         }
                         // `<&5` with fd 5 never opened (or closed): bash
                         // reports it and does not run the command.
@@ -416,7 +570,12 @@ impl Interpreter {
             }
         }
 
-        Ok(stdin)
+        let mut stdin_lease = [None, None, None];
+        let stdin = stdin.map(|(data, lease)| {
+            stdin_lease = lease;
+            data
+        });
+        Ok(StdinSetup { stdin, stdin_lease })
     }
 
     /// Apply output redirections to command output
@@ -844,8 +1003,10 @@ impl Interpreter {
                         continue;
                     }
 
-                    if redirect.kind == RedirectKind::Output
-                        && self.scoped.variables.get("SHOPT_C").map(|v| v.as_str()) == Some("1")
+                    if matches!(
+                        redirect.kind,
+                        RedirectKind::Output | RedirectKind::OutputBoth
+                    ) && self.scoped.variables.get("SHOPT_C").map(|v| v.as_str()) == Some("1")
                         && !is_dev_null(&path)
                         && self.fs.stat(&path).await.is_ok_and(clobber_protected)
                     {
@@ -1559,4 +1720,356 @@ fn redirect_reads(kind: RedirectKind) -> bool {
             | RedirectKind::DupOutput
             | RedirectKind::OutputBoth
     )
+}
+
+impl Interpreter {
+    /// Resolve and open a live command's output fds before invoking host code.
+    /// Duplication copies the current destination, preserving redirect order.
+    pub(super) async fn live_command_routes(
+        &mut self,
+        redirects: &[Redirect],
+        fs: Arc<dyn FileSystem>,
+    ) -> Result<[crate::command::CommandRoute; 2]> {
+        use crate::command::CommandRoute as Route;
+        let mut fds = HashMap::from([(1, Route::Stdout), (2, Route::Stderr)]);
+        for (fd, target) in &self.exec_fd_table {
+            let route = match target {
+                FdTarget::Stdout => Route::Stdout,
+                FdTarget::Stderr => Route::Stderr,
+                FdTarget::WriteFile(path, _) | FdTarget::AppendFile(path, _) => {
+                    Route::file(fs.clone(), path.clone(), &self.execution_budget)?
+                }
+                FdTarget::DevNull => Route::Discard,
+                FdTarget::Closed => Route::Closed,
+                FdTarget::Coproc(writer) => Route::Pipe(writer.pipe().clone()),
+            };
+            fds.insert(*fd, route);
+        }
+        for redirect in redirects {
+            if !matches!(
+                redirect.kind,
+                RedirectKind::Output
+                    | RedirectKind::Clobber
+                    | RedirectKind::Append
+                    | RedirectKind::OutputBoth
+                    | RedirectKind::DupOutput
+            ) {
+                continue;
+            }
+            let source = redirect.fd.unwrap_or(1);
+            let target = self.expand_word(&redirect.target).await?;
+            let route = if redirect.kind == RedirectKind::DupOutput {
+                if target == "-" {
+                    Route::Closed
+                } else {
+                    let fd = target.parse::<i32>().map_err(|_| {
+                        crate::Error::CommandFailure(
+                            self.redirect_error(&target, "Bad file descriptor"),
+                        )
+                    })?;
+                    fds.get(&fd).cloned().ok_or_else(|| {
+                        crate::Error::CommandFailure(
+                            self.redirect_error(&target, "Bad file descriptor"),
+                        )
+                    })?
+                }
+            } else {
+                let path = self.resolve_path(&target);
+                if let Some(fd) = self.fd_alias(&path) {
+                    fds.get(&fd).cloned().ok_or_else(|| {
+                        crate::Error::CommandFailure(
+                            self.redirect_error(&target, "Bad file descriptor"),
+                        )
+                    })?
+                } else if is_dev_null(&path) {
+                    Route::Discard
+                } else {
+                    if matches!(
+                        redirect.kind,
+                        RedirectKind::Output | RedirectKind::OutputBoth
+                    ) && self
+                        .scoped
+                        .variables
+                        .get("SHOPT_C")
+                        .is_some_and(|v| v == "1")
+                        && fs.stat(&path).await.is_ok_and(clobber_protected)
+                    {
+                        return Err(crate::Error::CommandFailure(
+                            self.redirect_error(&target, "cannot overwrite existing file"),
+                        ));
+                    }
+                    let open = if redirect.kind == RedirectKind::Append {
+                        fs.append_file(&path, b"").await
+                    } else {
+                        fs.write_file(&path, b"").await
+                    };
+                    match open {
+                        Ok(()) => {}
+                        Err(error @ crate::Error::Io(_)) => {
+                            return Err(crate::Error::CommandFailure(
+                                self.redirect_error(&target, &io_error_reason(&error)),
+                            ));
+                        }
+                        Err(error) => return Err(error),
+                    }
+                    Route::file(fs.clone(), path, &self.execution_budget)?
+                }
+            };
+            if redirect.kind == RedirectKind::OutputBoth {
+                fds.insert(1, route.clone());
+                fds.insert(2, route);
+            } else {
+                fds.insert(source, route);
+            }
+        }
+        Ok([
+            fds.remove(&1).unwrap_or(Route::Closed),
+            fds.remove(&2).unwrap_or(Route::Closed),
+        ])
+    }
+}
+
+#[cfg(test)]
+mod input_admission_tests {
+    use super::*;
+
+    fn ordinary_input(kind: RedirectKind) -> Redirect {
+        Redirect {
+            kind,
+            fd: None,
+            fd_var: None,
+            target: Word::quoted_literal("/a"),
+            heredoc_delim: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn input_admission_mount_refuses_lazy_before_loading() {
+        let loads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let observed = Arc::clone(&loads);
+        let mounted = Arc::new(crate::InMemoryFs::new());
+        mounted.add_lazy_file(
+            "/a",
+            2,
+            0o644,
+            Arc::new(move || {
+                observed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                b"ab".to_vec()
+            }),
+        );
+        let fs = crate::MountableFs::new(Arc::new(crate::InMemoryFs::new()));
+        fs.mount("/mnt/input", mounted).unwrap();
+        let mut bash = crate::Bash::builder()
+            .fs(Arc::new(fs))
+            .limits(crate::ExecutionLimits::new().max_live_intermediate_bytes(1))
+            .build();
+        bash.interpreter.begin_execution_budget();
+        let result = bash
+            .interpreter
+            .read_input_stream(Path::new("/mnt/input/a"), false)
+            .await;
+        assert!(matches!(result, Err(crate::Error::ResourceLimit(_))));
+        assert_eq!(loads.load(std::sync::atomic::Ordering::Relaxed), 0);
+        assert_eq!(bash.interpreter.execution_budget.live_bytes_for_test(), 0);
+    }
+
+    #[tokio::test]
+    async fn input_admission_tiny_buffered_pipe() {
+        for (cap, succeeds) in [(1, false), (4, true)] {
+            let mut bash = crate::Bash::builder()
+                .limits(crate::ExecutionLimits::new().max_live_intermediate_bytes(cap))
+                .build();
+            bash.interpreter.begin_execution_budget();
+            bash.interpreter
+                .proc_subs
+                .open(63, crate::fs::ProcSubData::test_input(b"ab"));
+            let path = Path::new("/dev/fd/63");
+            assert_eq!(bash.interpreter.fs.stat(path).await.unwrap().size, 0);
+            let result = bash.interpreter.read_input_stream(path, false).await;
+            if succeeds {
+                let (stream, storage) = result.unwrap();
+                assert_eq!(stream.as_bytes(), b"ab");
+                assert_eq!(bash.interpreter.execution_budget.live_bytes_for_test(), 4);
+                drop((stream, storage));
+            } else {
+                assert!(matches!(result, Err(crate::Error::ResourceLimit(_))));
+            }
+            assert!(bash.interpreter.proc_subs.is_open(63));
+            assert_eq!(bash.interpreter.execution_budget.live_bytes_for_test(), 0);
+        }
+    }
+
+    #[tokio::test]
+    async fn input_admission_readwrite_refuses_lazy_load_before_open() {
+        let loads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let observed = Arc::clone(&loads);
+        let fs = Arc::new(crate::InMemoryFs::new());
+        fs.add_lazy_file(
+            "/a",
+            2,
+            0o644,
+            Arc::new(move || {
+                observed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                b"ab".to_vec()
+            }),
+        );
+        let mut bash = crate::Bash::builder()
+            .fs(fs)
+            .limits(crate::ExecutionLimits::new().max_aggregate_input_bytes(1))
+            .build();
+        bash.interpreter.begin_execution_budget();
+        let redirect = ordinary_input(RedirectKind::ReadWrite);
+        let result = bash
+            .interpreter
+            .process_input_redirections(None, &[redirect], StdinDemand::All, HighFdStdin::Never)
+            .await;
+        assert!(matches!(result, Err(crate::Error::ResourceLimit(_))));
+        assert_eq!(loads.load(std::sync::atomic::Ordering::Relaxed), 0);
+    }
+
+    #[tokio::test]
+    async fn input_admission_preserves_cancellation_during_tiny_read() {
+        for kind in [RedirectKind::Input, RedirectKind::ReadWrite] {
+            let fs = Arc::new(crate::InMemoryFs::new());
+            let mut bash = crate::Bash::builder().fs(fs.clone()).build();
+            bash.interpreter.begin_execution_budget();
+            let token = bash.interpreter.cancellation_token();
+            fs.add_lazy_file(
+                "/a",
+                2,
+                0o644,
+                Arc::new(move || {
+                    token.store(true, std::sync::atomic::Ordering::Relaxed);
+                    b"ab".to_vec()
+                }),
+            );
+            let redirect = ordinary_input(kind);
+            let result = bash
+                .interpreter
+                .process_input_redirections(None, &[redirect], StdinDemand::All, HighFdStdin::Never)
+                .await;
+            assert!(
+                matches!(result, Err(crate::Error::Cancelled)),
+                "cancellation must not become a command failure"
+            );
+            assert_eq!(bash.interpreter.execution_budget.live_bytes_for_test(), 0);
+        }
+    }
+
+    #[tokio::test]
+    async fn input_admission_refuses_lazy_read_before_loading() {
+        for limits in [
+            crate::ExecutionLimits::new().max_aggregate_input_bytes(1),
+            crate::ExecutionLimits::new().max_live_intermediate_bytes(1),
+        ] {
+            let loads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let observed = Arc::clone(&loads);
+            let fs = Arc::new(crate::InMemoryFs::new());
+            fs.add_lazy_file(
+                "/a",
+                2,
+                0o644,
+                Arc::new(move || {
+                    observed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    b"ab".to_vec()
+                }),
+            );
+            let mut bash = crate::Bash::builder().fs(fs).limits(limits).build();
+            bash.interpreter.begin_execution_budget();
+            let result = bash
+                .interpreter
+                .read_input_stream(Path::new("/a"), false)
+                .await;
+            assert!(matches!(result, Err(crate::Error::ResourceLimit(_))));
+            assert_eq!(loads.load(std::sync::atomic::Ordering::Relaxed), 0);
+            assert_eq!(bash.interpreter.execution_budget.live_bytes_for_test(), 0);
+        }
+    }
+
+    #[tokio::test]
+    async fn input_admission_tiny_read_exact_boundary_and_failure_refund() {
+        for (cap, succeeds) in [(3, false), (4, true)] {
+            let mut bash = crate::Bash::builder()
+                .limits(crate::ExecutionLimits::new().max_live_intermediate_bytes(cap))
+                .build();
+            bash.fs().write_file(Path::new("/a"), b"ab").await.unwrap();
+            bash.interpreter.begin_execution_budget();
+            let result = bash
+                .interpreter
+                .read_input_stream(Path::new("/a"), false)
+                .await;
+            if succeeds {
+                let (stream, storage) = result.unwrap();
+                assert_eq!(stream.as_bytes(), b"ab");
+                assert_eq!(bash.interpreter.execution_budget.live_bytes_for_test(), 4);
+                drop((stream, storage));
+            } else {
+                assert!(matches!(result, Err(crate::Error::ResourceLimit(_))));
+            }
+            assert_eq!(bash.interpreter.execution_budget.live_bytes_for_test(), 0);
+        }
+    }
+
+    #[tokio::test]
+    async fn input_admission_preserves_missing_file_error() {
+        let mut bash = crate::Bash::new();
+        bash.interpreter.begin_execution_budget();
+        assert!(
+            bash.interpreter
+                .read_input_stream(Path::new("/absent"), false)
+                .await
+                .is_err()
+        );
+        assert_eq!(bash.interpreter.execution_budget.live_bytes_for_test(), 0);
+    }
+
+    #[test]
+    fn input_admission_text_and_clone_hold_both_representations() {
+        for newline in [false, true] {
+            let mut bash = crate::Bash::new();
+            bash.interpreter.begin_execution_budget();
+            let (stream, storage) = bash
+                .interpreter
+                .input_stream_from_text("a".into(), newline)
+                .unwrap();
+            let expected = if newline {
+                b"a\n".as_slice()
+            } else {
+                b"a".as_slice()
+            };
+            assert_eq!(stream.as_bytes(), expected);
+            let original_live = bash.interpreter.execution_budget.live_bytes_for_test();
+            assert!(original_live >= (2 * expected.len()) as u64);
+            let (copy, copy_storage) = bash.interpreter.clone_input_stream(&stream).unwrap();
+            assert_eq!(copy, stream);
+            assert_eq!(
+                bash.interpreter.execution_budget.live_bytes_for_test(),
+                original_live + (2 * expected.len()) as u64
+            );
+            drop((copy, copy_storage));
+            assert_eq!(
+                bash.interpreter.execution_budget.live_bytes_for_test(),
+                original_live
+            );
+            drop((stream, storage));
+            assert_eq!(bash.interpreter.execution_budget.live_bytes_for_test(), 0);
+        }
+    }
+
+    #[tokio::test]
+    async fn input_admission_retains_fresh_stdin_storage() {
+        let mut bash = crate::Bash::new();
+        bash.fs().write_file(Path::new("/a"), b"ab").await.unwrap();
+        bash.interpreter.begin_execution_budget();
+        let redirect = ordinary_input(RedirectKind::Input);
+        let setup = bash
+            .interpreter
+            .process_input_redirections(None, &[redirect], StdinDemand::All, HighFdStdin::Never)
+            .await
+            .unwrap();
+        assert_eq!(setup.stdin.as_ref().unwrap().as_bytes(), b"ab");
+        assert_eq!(bash.interpreter.execution_budget.live_bytes_for_test(), 4);
+        drop(setup);
+        assert_eq!(bash.interpreter.execution_budget.live_bytes_for_test(), 0);
+    }
 }

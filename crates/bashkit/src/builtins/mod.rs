@@ -59,6 +59,8 @@ mod export;
 mod expr;
 mod factor;
 mod fc;
+#[cfg(all(feature = "fetchkit", not(target_arch = "wasm32")))]
+mod fetchkit;
 mod fileops;
 mod find;
 mod flow;
@@ -86,6 +88,8 @@ mod ls;
 mod make;
 mod man;
 mod mapfile;
+#[cfg(all(feature = "markkit", not(target_arch = "wasm32")))]
+mod markkit;
 mod mkfifo;
 #[cfg(feature = "terminal")]
 mod nano;
@@ -199,6 +203,8 @@ pub use export::Export;
 pub use expr::Expr;
 pub use factor::Factor;
 pub use fc::Fc;
+#[cfg(all(feature = "fetchkit", not(target_arch = "wasm32")))]
+pub use fetchkit::Fetchkit;
 pub use fileops::{Chmod, Chown, Cp, Ln, Mkdir, Mktemp, Mv, Rm, Touch};
 pub use find::Find;
 pub use flow::{Break, Colon, Continue, Exit, False, Return, True};
@@ -226,6 +232,8 @@ pub(crate) use ls::{fnmatch, glob_match};
 pub use make::Make;
 pub use man::Man;
 pub use mapfile::Mapfile;
+#[cfg(all(feature = "markkit", not(target_arch = "wasm32")))]
+pub use markkit::Markkit;
 pub use mkfifo::Mkfifo;
 pub use navigation::{Cd, Pwd};
 pub use nl::Nl;
@@ -454,6 +462,18 @@ pub(crate) struct RegisteredBuiltin {
 }
 
 impl BuiltinRegistry {
+    /// Register or replace a streaming command in the live registry.
+    pub fn insert_command(&self, name: impl Into<String>, command: impl crate::Command + 'static) {
+        let name = name.into();
+        self.insert(
+            name.clone(),
+            Arc::new(crate::command::CommandAdapter {
+                name,
+                command: Arc::new(command),
+            }),
+        );
+    }
+
     /// Create an empty registry.
     pub fn new() -> Self {
         Self::default()
@@ -1020,17 +1040,46 @@ pub struct Context<'a> {
 }
 
 /// Stdin pipe of a streaming filter stage, see [`Context::stdin_stream`].
-pub(crate) struct StdinStream(std::sync::Arc<crate::interpreter::pipe::Pipe>);
+pub(crate) struct StdinStream {
+    pipe: std::sync::Arc<crate::interpreter::pipe::Pipe>,
+    budget: crate::ExecutionBudget,
+}
 
 impl StdinStream {
     /// Next chunk of input; empty at end of input.
-    pub(crate) async fn read(&self) -> Vec<u8> {
-        self.0.read_some().await
+    pub(crate) async fn read(&self) -> Result<Vec<u8>> {
+        let bytes = self.budget.run(self.pipe.read_some()).await?;
+        // THREAT[TM-DOS-096]: streaming consumers share the same input ledger
+        // as buffered utilities and public CommandInput readers.
+        self.budget.consume_input(bytes.len())?;
+        self.budget
+            .consume_work(1 + bytes.len().div_ceil(1024) as u64)?;
+        Ok(bytes)
     }
 
     /// Everything left, for filters that need their whole input.
-    pub(crate) async fn read_to_end(&self) -> Vec<u8> {
-        self.0.read_to_end().await
+    pub(crate) async fn read_to_end(&self) -> Result<crate::limits::BudgetedBytes> {
+        let mut bytes = crate::limits::BudgetedBytes::new(Some(&self.budget))?;
+        loop {
+            let chunk = self.read().await?;
+            if chunk.is_empty() {
+                return Ok(bytes);
+            }
+            bytes.try_extend_from_slice(&chunk)?;
+        }
+    }
+}
+
+/// Collected input keeps both byte and text storage admitted while in use.
+pub(crate) struct CollectedInput {
+    data: crate::StreamData,
+    _storage: crate::stream::StreamStorage,
+}
+
+impl std::ops::Deref for CollectedInput {
+    type Target = crate::StreamData;
+    fn deref(&self) -> &Self::Target {
+        &self.data
     }
 }
 
@@ -1044,39 +1093,44 @@ pub(crate) const STREAM_CHUNK_BYTES: usize = 4 * 1024;
 /// [`STREAM_CHUNK_BYTES`] unless one record is longer; the tail comes at
 /// end of input.
 pub(crate) struct InputChunks<'c> {
-    buf: Vec<u8>,
+    buf: crate::limits::BudgetedBytes,
     pos: usize,
-    buffered: Option<&'c [u8]>,
+    buffered: Option<std::borrow::Cow<'c, [u8]>>,
+    buffered_pos: usize,
+    budget: Option<crate::ExecutionBudget>,
     input: Option<StdinStream>,
     eof: bool,
 }
 
 impl<'c> InputChunks<'c> {
     /// Stdin of this builtin: `ctx.stdin`, then the streaming pipe if any.
-    pub(crate) fn stdin(ctx: &Context<'c>) -> Self {
-        Self {
-            buf: Vec::new(),
+    pub(crate) fn stdin(ctx: &Context<'c>) -> Result<Self> {
+        let budget = ctx.shell.as_ref().map(|s| s.execution_budget.clone());
+        Ok(Self {
+            buf: crate::limits::BudgetedBytes::new(budget.as_ref())?,
             pos: 0,
-            buffered: ctx.stdin.map(|s| s.as_bytes()),
+            buffered: ctx.stdin.map(|s| std::borrow::Cow::Borrowed(s.as_bytes())),
+            buffered_pos: 0,
+            budget,
             input: ctx.stdin_stream(),
             eof: false,
-        }
+        })
     }
 
     /// Input that is already all in memory (a file's contents).
-    pub(crate) fn bytes(bytes: Vec<u8>) -> Self {
-        Self {
-            buf: bytes,
-            pos: 0,
-            buffered: None,
-            input: None,
-            eof: true,
-        }
+    pub(crate) fn bytes(ctx: &Context<'c>, bytes: Vec<u8>) -> Result<Self> {
+        let mut input = Self::stdin(ctx)?;
+        input.buffered = Some(std::borrow::Cow::Owned(bytes));
+        input.input = None;
+        Ok(input)
     }
 
     /// Next piece, or `None` at end of input. `cut(data)` returns how many
     /// leading bytes of `data` can be handled now (0 for "need more").
-    pub(crate) async fn next(&mut self, cut: impl Fn(&[u8]) -> usize) -> Option<Vec<u8>> {
+    pub(crate) async fn next(
+        &mut self,
+        cut: impl Fn(&[u8]) -> usize,
+    ) -> Result<Option<crate::limits::BudgetedBytes>> {
         loop {
             let rest = &self.buf[self.pos..];
             let window = rest.len().min(STREAM_CHUNK_BYTES);
@@ -1088,27 +1142,38 @@ impl<'c> InputChunks<'c> {
                 n = rest.len();
             }
             if n > 0 {
-                let piece = rest[..n].to_vec();
+                // THREAT[TM-DOS-103]: include long records and their returned
+                // copies in live storage; a bounded pipe alone is insufficient.
+                let mut piece = crate::limits::BudgetedBytes::new(self.budget.as_ref())?;
+                piece.try_extend_from_slice(&rest[..n])?;
                 self.pos += n;
-                return Some(piece);
+                return Ok(Some(piece));
             }
             if self.eof {
-                return None;
+                return Ok(None);
             }
-            self.buf.drain(..self.pos);
+            self.buf.copy_within(self.pos.., 0);
+            let remaining = self.buf.len() - self.pos;
+            self.buf.truncate(remaining);
             self.pos = 0;
-            if let Some(buffered) = self.buffered.take() {
-                self.buf.extend_from_slice(buffered);
+            if let Some(buffered) = &self.buffered {
+                let end = (self.buffered_pos + STREAM_CHUNK_BYTES).min(buffered.len());
+                self.buf
+                    .try_extend_from_slice(&buffered[self.buffered_pos..end])?;
+                self.buffered_pos = end;
+                if end == buffered.len() {
+                    self.buffered = None;
+                }
                 continue;
             }
             let more = match &self.input {
-                Some(input) => input.read().await,
+                Some(input) => input.read().await?,
                 None => Vec::new(),
             };
             if more.is_empty() {
                 self.eof = true;
             } else {
-                self.buf.extend_from_slice(&more);
+                self.buf.try_extend_from_slice(&more)?;
             }
         }
     }
@@ -1129,13 +1194,18 @@ pub(crate) fn cut_utf8(data: &[u8]) -> usize {
 }
 
 /// Stdout pipe of a streaming pipeline stage, see [`Context::stdout_stream`].
-pub(crate) struct StdoutStream(std::sync::Arc<crate::interpreter::pipe::Pipe>);
+pub(crate) struct StdoutStream(crate::command::CommandOutput);
 
 impl StdoutStream {
     /// Wait for room in the pipe, then write. False once nobody reads.
-    pub(crate) async fn write(&self, data: &[u8]) -> bool {
-        self.0.writable().await;
-        self.0.write(data)
+    pub(crate) async fn write(&self, data: &[u8]) -> Result<bool> {
+        match self.0.write_all(data).await {
+            Ok(()) => Ok(true),
+            Err(crate::Error::Io(error)) if error.kind() == std::io::ErrorKind::BrokenPipe => {
+                Ok(false)
+            }
+            Err(error) => Err(error),
+        }
     }
 }
 
@@ -1228,7 +1298,7 @@ impl<'a> Context<'a> {
     pub(crate) fn stdout_stream(&self) -> Option<StdoutStream> {
         self.shell
             .as_ref()
-            .and_then(|shell| shell.stdout_pipe.clone())
+            .and_then(|shell| shell.stdout_stream.clone())
             .map(StdoutStream)
     }
 
@@ -1236,24 +1306,47 @@ impl<'a> Context<'a> {
     /// pipeline (`loop | cat | head -1`). `ctx.stdin` then holds only data
     /// already buffered before the stage started; read the rest here.
     pub(crate) fn stdin_stream(&self) -> Option<StdinStream> {
-        self.shell
-            .as_ref()
-            .and_then(|shell| shell.stdin_pipe.clone())
-            .map(StdinStream)
+        self.shell.as_ref().and_then(|shell| {
+            shell.stdin_pipe.clone().map(|pipe| StdinStream {
+                pipe,
+                budget: shell.execution_budget.clone(),
+            })
+        })
     }
 
     /// All of stdin, including what is still in a streaming stdin pipe, for
     /// a filter stage that needs its whole input before it can write.
-    pub(crate) async fn stdin_to_end(&self) -> Option<crate::StreamData> {
-        let Some(input) = self.stdin_stream() else {
-            return self.stdin.cloned();
+    pub(crate) async fn stdin_to_end(&self) -> Result<CollectedInput> {
+        let budget = self.shell.as_ref().map(|s| s.execution_budget.clone());
+        let mut all = crate::limits::BudgetedBytes::new(budget.as_ref())?;
+        if let Some(stdin) = self.stdin {
+            all.try_extend_from_slice(stdin.as_bytes())?;
+        }
+        if let Some(input) = self.stdin_stream() {
+            loop {
+                let chunk = input.read().await?;
+                if chunk.is_empty() {
+                    break;
+                }
+                all.try_extend_from_slice(&chunk)?;
+            }
+        }
+        self.collected_input(all)
+    }
+
+    pub(crate) fn collected_input(
+        &self,
+        bytes: crate::limits::BudgetedBytes,
+    ) -> Result<CollectedInput> {
+        let (data, storage) = if let Some(shell) = &self.shell {
+            crate::StreamData::from_budgeted_bytes(bytes, shell.execution_budget)?
+        } else {
+            (bytes.into_parts().0.into(), [None, None])
         };
-        let mut all = self
-            .stdin
-            .map(|s| s.as_bytes().to_vec())
-            .unwrap_or_default();
-        all.extend_from_slice(&input.read_to_end().await);
-        Some(all.into())
+        Ok(CollectedInput {
+            data,
+            _storage: storage,
+        })
     }
 
     /// Remaining wall-clock budget of the current `exec*` call, if limited.
@@ -1367,6 +1460,11 @@ pub(crate) fn test_stream_opt(text: Option<&str>) -> Option<&'static crate::Stre
 /// or [`ExecResult::err`](crate::ExecResult::err) for errors with exit code.
 #[async_trait]
 pub trait Builtin: Send + Sync {
+    /// Internal bridge used by registered `Command` adapters.
+    #[doc(hidden)]
+    fn streams_io(&self) -> bool {
+        false
+    }
     /// Execute the builtin command.
     ///
     /// # Arguments
@@ -1727,6 +1825,9 @@ fn cap_diagnostic(mut text: String, max_bytes: usize) -> String {
 
 #[async_trait]
 impl Builtin for std::sync::Arc<dyn Builtin> {
+    fn streams_io(&self) -> bool {
+        (**self).streams_io()
+    }
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
         (**self).execute(ctx).await
     }

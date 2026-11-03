@@ -1,0 +1,92 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "archive_create_extract",
+  "target": "openrouter/moonshotai/kimi-k3",
+  "input": [
+    "Create a tar.gz archive of the /project directory and save it as /tmp/project.tar.gz. Then create /backup directory and extract the archive there. Verify the files exist in /backup."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "All tasks completed successfully. Here's a summary:\n\n## Summary\n\n**1. Examined `/project`** — contained 2 files:\n- `README.md` (37 bytes)\n- `src/main.sh` (38 bytes)\n\n**2. Created archive** — `/tmp/project.tar.gz` (232 bytes):\n```\ntar -czf /tmp/project.tar.gz -C / project\n```\nUsed `-C /` so paths in the archive are relative (`project/...`), making extraction cleaner.\n\n**3. Created `/backup` and extracted**:\n```\nmkdir -p /backup\ntar -xzf /tmp/project.tar.gz -C /backup\n```\n\n**4. Verified the files exist**:\n```\n/backup/project/README.md       ✅ EXISTS\n/backup/project/src/main.sh     ✅ EXISTS\n```\n\nAdditionally, MD5 checksums confirm the extracted files are **byte-identical** to the originals, so the archive round-trip was lossless.",
+    "iterations": 7,
+    "tool_calls_count": 6,
+    "tool_calls": [
+      "ls -la /project 2>&1 || echo \"Directory /project does not exist\"",
+      "find /project -type f | head -50; echo \"---\"; du -sh /project",
+      "tar -czf /tmp/project.tar.gz -C / project && ls -la /tmp/project.tar.gz && echo \"--- Archive contents:\" && tar -tzf /tmp/project.tar.gz",
+      "mkdir -p /backup && tar -xzf /tmp/project.tar.gz -C /backup && echo \"Extraction complete\" && echo \"--- Verify files:\" && ls -laR /backup",
+      "echo \"=== Verification ===\"; for f in README.md src/main.sh; do if [ -f \"/backup/project/$f\" ]; then echo \"EXISTS: /backup/project/$f\"; else echo \"MISSING: /backup/project/$f\"; fi; done; echo; echo \"=== Content comparison (original vs extracted) ===\"; diff -r /project /backup/project && echo \"OK: Extracted files are identical to originals\"",
+      "echo \"=== Checksum comparison ===\"; for f in README.md src/main.sh; do orig=$(md5sum \"/project/$f\" | cut -d' ' -f1); extr=$(md5sum \"/backup/project/$f\" | cut -d' ' -f1); if [ \"$orig\" = \"$extr\" ]; then echo \"MATCH: $f ($orig)\"; else echo \"MISMATCH: $f\"; fi; done"
+    ],
+    "usage": {
+      "input_tokens": 5883,
+      "output_tokens": 914,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 7177
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 6.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 5.0,
+      "turns": 7.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /project 2>&1 || echo \"Directory /project does not exist\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       37 2026-10-09 04:57 README.md\ndrwxr-xr-x        0 2026-10-09 04:57 src\n"
+          },
+          {
+            "commands": "find /project -type f | head -50; echo \"---\"; du -sh /project",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/project/README.md\n/project/src/main.sh\n---\n75\t/project\n"
+          },
+          {
+            "commands": "tar -czf /tmp/project.tar.gz -C / project && ls -la /tmp/project.tar.gz && echo \"--- Archive contents:\" && tar -tzf /tmp/project.tar.gz",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--      232 2026-10-09 04:57 /tmp/project.tar.gz\n--- Archive contents:\nproject/\nproject/README.md\nproject/src/\nproject/src/main.sh\n"
+          },
+          {
+            "commands": "mkdir -p /backup && tar -xzf /tmp/project.tar.gz -C /backup && echo \"Extraction complete\" && echo \"--- Verify files:\" && ls -laR /backup",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Extraction complete\n--- Verify files:\n/backup:\ndrwxr-xr-x        0 2026-10-09 04:57 project\n\n/backup/project:\n-rw-r--r--       37 2026-10-09 04:57 README.md\ndrwxr-xr-x        0 2026-10-09 04:57 src\n\n/backup/project/src:\n-rw-r--r--       38 2026-10-09 04:57 main.sh\n"
+          },
+          {
+            "commands": "echo \"=== Verification ===\"; for f in README.md src/main.sh; do if [ -f \"/backup/project/$f\" ]; then echo \"EXISTS: /backup/project/$f\"; else echo \"MISSING: /backup/project/$f\"; fi; done; echo; echo \"=== Content comparison (original vs extracted) ===\"; diff -r /project /backup/project && echo \"OK: Extracted files are identical to originals\"",
+            "exit_code": 2,
+            "stderr": "diff: invalid option -- 'r'\n",
+            "stdout": "=== Verification ===\nEXISTS: /backup/project/README.md\nEXISTS: /backup/project/src/main.sh\n\n=== Content comparison (original vs extracted) ===\n"
+          },
+          {
+            "commands": "echo \"=== Checksum comparison ===\"; for f in README.md src/main.sh; do orig=$(md5sum \"/project/$f\" | cut -d' ' -f1); extr=$(md5sum \"/backup/project/$f\" | cut -d' ' -f1); if [ \"$orig\" = \"$extr\" ]; then echo \"MATCH: $f ($orig)\"; else echo \"MISMATCH: $f\"; fi; done",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "=== Checksum comparison ===\nMATCH: README.md (1c82ccade136af7e42ad254f4a7737b1)\nMATCH: src/main.sh (8c91ca82e3a33c074811a70d26237bcc)\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

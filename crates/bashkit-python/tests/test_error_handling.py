@@ -35,7 +35,7 @@ _NAMES = (
     "test_bash_external_functions_without_handler_raises",
     "test_bash_non_callable_handler_raises",
     "test_bash_external_handler_requires_python_true",
-    "test_bash_execute_sync_with_handler_raises",
+    "test_bash_execute_sync_with_handler",
     "test_bash_sync_handler_raises",
 )
 

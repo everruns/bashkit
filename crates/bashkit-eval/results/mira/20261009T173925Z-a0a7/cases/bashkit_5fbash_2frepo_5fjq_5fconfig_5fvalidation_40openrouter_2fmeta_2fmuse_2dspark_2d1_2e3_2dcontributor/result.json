@@ -1,0 +1,190 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "repo_jq_config_validation",
+  "target": "openrouter/meta/muse-spark-1.3-contributor",
+  "input": [
+    "In the git repo /home/eval/svc, `make test` validates every config/*.json file with jq. Make it pass by fixing the config files (not the validator), keeping every value's meaning the same. Then commit with a message starting with `config:`."
+  ],
+  "passed": false,
+  "aggregate": 0.8333333333333334,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 0.8333333333333334,
+      "pass": false,
+      "reason": "5/6 checks passed (weighted rate 83%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "All checks pass — now tidying up the workspace.",
+    "iterations": 20,
+    "tool_calls_count": 20,
+    "tool_calls": [
+      "cd /home/eval/svc && pwd; ls -R; echo \"---\"; cat Makefile 2>&1; echo \"---\"; cat makefile 2>&1; echo \"---\"; git log --oneline -5 2>&1; git status 2>&1",
+      "cd /home/eval/svc && cat tests/run.sh; echo \"===\"; cat tests/test_configs.sh; echo \"===\"; for f in config/*.json; do echo \"--- $f ---\"; cat \"$f\"; echo; done\necho \"=== make test ===\"; make test 2>&1; echo \"exit:$?\"",
+      "cd /home/eval/svc\ncat config/prod.json\ncat config/staging.json\n# Check jq conditions individually\necho \"== prod ==\"\njq --arg env prod '.env == $env' config/prod.json\njq '.port | type' config/prod.json\njq '.replicas' config/prod.json\njq '[.features[] | type] ' config/prod.json\necho \"== staging ==\"\njq --arg env staging '.env == $env' config/staging.json\njq '.port | type' config/staging.json\njq '[.features[] | type]' config/staging.json",
+      "cd /home/eval/svc && cat > config/prod.json <<'EOF'\n{\n  \"env\": \"prod\",\n  \"port\": 443,\n  \"replicas\": 6,\n  \"features\": {\n    \"beta\": false,\n    \"audit\": true\n  }\n}\nEOF\ncat > config/staging.json <<'EOF'\n{\n  \"env\": \"staging\",\n  \"port\": 8080,\n  \"replicas\": 2,\n  \"features\": {\n    \"beta\": true,\n    \"audit\": true\n  }\n}\nEOF\necho \"--- prod ---\"; cat config/prod.json\necho \"--- staging ---\"; cat config/staging.json\necho \"--- dev (untouched) ---\"; cat config/dev.json\nmake test 2>&1; echo \"exit:$?\"",
+      "cd /home/eval/svc && git status --short; echo \"---\"; git diff; echo \"---\"; git config user.name 2>&1; git config user.email 2>&1; cat .gitignore 2>&1",
+      "cd /home/eval/svc && git status; echo EXIT:$?",
+      "cd /home/eval/svc\ngit diff HEAD -- config/prod.json 2>&1; echo \"diff-exit:$?\"\ngit diff -- config/prod.json 2>&1; echo \"diff2-exit:$?\"\ngit ls-files 2>&1\necho \"--- show HEAD version ---\"\ngit show HEAD:config/prod.json 2>&1\necho \"--- working file ---\"\ncat config/prod.json 2>&1\necho \"--- check-ignore ---\"\ngit check-ignore -v config/prod.json build/test-report.txt 2>&1; echo \"ci-exit:$?\"\nls -la; cat .git/info/exclude 2>&1\ngit status --porcelain 2>&1; echo \"porcelain-exit:$?\"",
+      "cd /home/eval/svc\ngit log --oneline -10 2>&1\necho \"=== log full ===\"\ngit log --stat -5 2>&1 | head -n 100\necho \"=== show staging HEAD ===\"\ngit show HEAD:config/staging.json 2>&1\necho \"=== show dev HEAD ===\"\ngit show HEAD:config/dev.json 2>&1\necho \"=== ls git ===\"\nls -R .git 2>&1 | head -n 100",
+      "cd /home/eval/svc\necho \"== .git/HEAD ==\"; cat .git/HEAD 2>&1\necho \"== .git/config ==\"; cat .git/config 2>&1\necho \"== .git/index ==\"; cat .git/index 2>&1; echo \"---\"; ls -l .git/index 2>&1; hexdump -C .git/index 2>&1 | head\necho \"== .git/commits ==\"; ls -lR .git/commits 2>&1; cat .git/commits/* 2>&1 | head -n 200\necho \"== .git/tracked ==\"; cat .git/tracked 2>&1\necho \"== .git/refs/heads/master ==\"; cat .git/refs/heads/master 2>&1\necho \"== git help ==\"; git --help 2>&1 | head -n 100\nwhich git 2>&1; type git 2>&1; ls -l $(which git) 2>&1 || true\n",
+      "cat /usr/bin/git; echo \"===\"; ls -l /usr/bin/git*",
+      "cd /home/eval/svc\necho \"--- cat .git/commits file ---\"\ncat .git/commits; echo; hexdump -C .git/commits | head\necho \"--- ls -la .git* ---\"\nls -laR 2>&1 | head -n 100\necho \"--- env ---\"\nenv | sort\necho \"--- bashkit? ---\"\nset | head -n 200\ntype git; type -a git 2>&1\nenable -a 2>&1 | head -n 100\n",
+      "help git 2>&1 | head -n 200\necho \"=== enable git help? ===\"\nenable -p 2>&1 | grep git\necho \"== try git with no args ==\"\ngit 2>&1; echo exit:$?\necho \"== git log --help ==\"\ngit log --help 2>&1 | head -n 100\necho \"== git commit --help ==\"\ngit commit --help 2>&1 | head -n 100",
+      "cd /home/eval/svc\necho \"== git status ==\"; git status 2>&1\necho \"== git diff ==\"; git diff 2>&1\necho \"== git diff HEAD ==\"; git diff HEAD 2>&1\necho \"== git log ==\"; git log 2>&1\necho \"== git ls-files ==\"; git ls-files 2>&1\necho \"== git rev-parse checks ==\"\ngit rev-parse HEAD 2>&1; echo \"rp-exit:$?\"\ngit rev-parse --help 2>&1 | head -n 50 || true",
+      "cd /home/eval/svc\necho \"=== current prod ===\"; cat config/prod.json\necho \"=== try to understand git impl: modify file then status ===\"\necho \"test change\" >> config/prod.json\ncat config/prod.json\ngit status 2>&1\ngit diff 2>&1\necho \"--- restore ---\"\ncat > config/prod.json <<'EOF'\n{\n  \"env\": \"prod\",\n  \"port\": 443,\n  \"replicas\": 6,\n  \"features\": {\n    \"beta\": false,\n    \"audit\": true\n  }\n}\nEOF\ngit status 2>&1\necho \"=== git show HEAD:config/prod.json again ===\"\ngit show HEAD:config/prod.json 2>&1\necho \"=== git show with original bad content test: does show reflect working tree? ===\"\n# Temporarily put bad content and show\ncp config/prod.json /tmp/good.json\ncat > config/prod.json <<'EOF'\n{\n  \"env\": \"TOTALLY_DIFFERENT\",\n  \"port\": 1,\n  \"replicas\": 1,\n  \"features\": {\n    \"beta\": true,\n    \"audit\": false\n  }\n}\nEOF\ngit show HEAD:config/prod.json 2>&1\necho \"--- restoring good ---\"\ncp /tmp/good.json config/prod.json\ncat config/prod.json",
+      "cd /home/eval/svc\ngit add --help 2>&1 | head -n 50\necho \"===\"\ngit commit --help 2>&1 | head -n 100 || true\n# Try different invocations - the earlier error \"switch m requires a value\" suggests -m handling is weird\n# Let's try verbose\ngit status 2>&1\ngit add config/prod.json 2>&1; echo \"add-exit:$?\"\ngit status 2>&1\ncat .git/index 2>&1; echo \"index-bytes:$(wc -c <.git/index 2>&1)\"\nls -la .git/ 2>&1",
+      "cd /home/eval/svc\ngit add config/staging.json 2>&1; echo \"add-exit:$?\"\ngit status 2>&1\ncat .git/index 2>&1; echo\nmake test 2>&1; echo \"test-exit:$?\"",
+      "cd /home/eval/svc && git commit -m \"config: fix types while preserving values\" 2>&1; echo \"exit:$?\"\ngit log 2>&1 | head -n 50\ngit status 2>&1",
+      "cd /home/eval/svc\necho \"=== log ===\"; git log 2>&1\necho \"=== show HEAD ===\"; git show HEAD 2>&1 | head -n 100\necho \"=== show HEAD:prod ===\"; git show HEAD:config/prod.json 2>&1\necho \"=== show HEAD:staging ===\"; git show HEAD:config/staging.json 2>&1\necho \"=== rev-parse ===\"; git rev-parse HEAD 2>&1\necho \"=== make test ===\"; make test 2>&1; echo \"exit:$?\"",
+      "cd /home/eval/svc\necho \"== commits file ==\"; cat .git/commits; echo\necho \"== refs ===\"; cat .git/refs/heads/master; echo\necho \"== tracked ==\"; cat .git/tracked; echo; echo \"---hex---\"; hexdump -C .git/tracked\necho \"== index ==\"; cat .git/index; echo; hexdump -C .git/index\necho \"== objects ==\"; ls -R .git/objects 2>&1; find .git -type f -exec ls -l {} \\;\necho \"== ls-files ==\"; git ls-files 2>&1\necho \"== status ==\"; git status 2>&1\necho \"== diff ==\"; git diff 2>&1; echo \"diff-exit:$?\"\necho \"== log ==\"; git log 2>&1",
+      "cd /home/eval/svc\nrm -rf build\ngit status 2>&1\necho \"=== final files ===\"\nfor f in config/*.json; do echo \"--- $f ---\"; cat \"$f\"; echo; done\necho \"=== validator untouched? ===\"\ncat tests/test_configs.sh\necho \"=== log ===\"\ngit log 2>&1\necho \"=== make test (final) ===\"\nmake test 2>&1; echo \"exit:$?\"\necho \"=== cleanup build again for clean status? ===\"\nrm -rf build\ngit status 2>&1\ngit log 2>&1 | head -n 20"
+    ],
+    "usage": {
+      "input_tokens": 105254,
+      "output_tokens": 15537,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 190318
+    },
+    "metrics": {
+      "natural_stop": 0.0,
+      "tool_calls": 20.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 19.0,
+      "turns": 20.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cd /home/eval/svc && pwd; ls -R; echo \"---\"; cat Makefile 2>&1; echo \"---\"; cat makefile 2>&1; echo \"---\"; git log --oneline -5 2>&1; git status 2>&1",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/home/eval/svc\n.:\nMakefile\nconfig\ntests\n\n./config:\ndev.json\nprod.json\nstaging.json\n\n./tests:\nrun.sh\ntest_configs.sh\n---\ntest:\n\t@bash tests/run.sh\n---\ncat: makefile: No such file or directory\n---\ncommit b46497d3\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 17:49:48 2026 +0000\n\n    initial import\n\nOn branch master\n\nnothing to commit, working tree clean\n"
+          },
+          {
+            "commands": "cd /home/eval/svc && cat tests/run.sh; echo \"===\"; cat tests/test_configs.sh; echo \"===\"; for f in config/*.json; do echo \"--- $f ---\"; cat \"$f\"; echo; done\necho \"=== make test ===\"; make test 2>&1; echo \"exit:$?\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "#!/bin/bash\n# Test runner: runs every tests/test_*.sh, writes build/test-report.txt.\ncd \"$(dirname \"$0\")/..\" || exit 2\nmkdir -p build\npass=0; fail=0; total=0\nfor t in tests/test_*.sh; do\n  name=$(basename \"$t\" .sh)\n  total=$((total + 1))\n  if bash \"$t\" > \"build/$name.log\" 2>&1; then\n    pass=$((pass + 1)); echo \"ok   $name\"\n  else\n    fail=$((fail + 1)); echo \"FAIL $name\"; sed 's/^/    /' \"build/$name.log\"\n  fi\ndone\nif [ \"$fail\" -eq 0 ]; then\n  echo \"PASS $pass/$total\" | tee build/test-report.txt\nelse\n  echo \"FAIL $fail/$total\" | tee build/test-report.txt\n  exit 1\nfi\n===\n# Each config: env matches the file name, port is a number, replicas >= 1,\n# and every feature flag is a boolean.\nstatus=0\nfor f in config/*.json; do\n  env=$(basename \"$f\" .json)\n  jq -e --arg env \"$env\" '\n    (.env == $env) and (.port | type == \"number\") and (.replicas >= 1)\n    and ([.features[] | type == \"boolean\"] | all)' \"$f\" > /dev/null \\\n    || { echo \"invalid: $f\"; status=1; }\ndone\nexit $status\n===\n--- config/dev.json ---\n{\n  \"env\": \"dev\",\n  \"port\": 3000,\n  \"replicas\": 1,\n  \"features\": {\n    \"beta\": true,\n    \"audit\": false\n  }\n}\n\n--- config/prod.json ---\n{\n  \"env\": \"production\",\n  \"port\": 443,\n  \"replicas\": 6,\n  \"features\": {\n    \"beta\": false,\n    \"audit\": \"true\"\n  }\n}\n\n--- config/staging.json ---\n{\n  \"env\": \"staging\",\n  \"port\": \"8080\",\n  \"replicas\": 2,\n  \"features\": {\n    \"beta\": true,\n    \"audit\": true\n  }\n}\n\n=== make test ===\nFAIL test_configs\n    invalid: config/prod.json\n    invalid: config/staging.json\nFAIL 1/1\nmake: *** [Makefile:2: test] Error 1\nexit:2\n"
+          },
+          {
+            "commands": "cd /home/eval/svc\ncat config/prod.json\ncat config/staging.json\n# Check jq conditions individually\necho \"== prod ==\"\njq --arg env prod '.env == $env' config/prod.json\njq '.port | type' config/prod.json\njq '.replicas' config/prod.json\njq '[.features[] | type] ' config/prod.json\necho \"== staging ==\"\njq --arg env staging '.env == $env' config/staging.json\njq '.port | type' config/staging.json\njq '[.features[] | type]' config/staging.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "{\n  \"env\": \"production\",\n  \"port\": 443,\n  \"replicas\": 6,\n  \"features\": {\n    \"beta\": false,\n    \"audit\": \"true\"\n  }\n}\n{\n  \"env\": \"staging\",\n  \"port\": \"8080\",\n  \"replicas\": 2,\n  \"features\": {\n    \"beta\": true,\n    \"audit\": true\n  }\n}\n== prod ==\nfalse\n\"number\"\n6\n[\n  \"boolean\",\n  \"string\"\n]\n== staging ==\ntrue\n\"string\"\n[\n  \"boolean\",\n  \"boolean\"\n]\n"
+          },
+          {
+            "commands": "cd /home/eval/svc && cat > config/prod.json <<'EOF'\n{\n  \"env\": \"prod\",\n  \"port\": 443,\n  \"replicas\": 6,\n  \"features\": {\n    \"beta\": false,\n    \"audit\": true\n  }\n}\nEOF\ncat > config/staging.json <<'EOF'\n{\n  \"env\": \"staging\",\n  \"port\": 8080,\n  \"replicas\": 2,\n  \"features\": {\n    \"beta\": true,\n    \"audit\": true\n  }\n}\nEOF\necho \"--- prod ---\"; cat config/prod.json\necho \"--- staging ---\"; cat config/staging.json\necho \"--- dev (untouched) ---\"; cat config/dev.json\nmake test 2>&1; echo \"exit:$?\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "--- prod ---\n{\n  \"env\": \"prod\",\n  \"port\": 443,\n  \"replicas\": 6,\n  \"features\": {\n    \"beta\": false,\n    \"audit\": true\n  }\n}\n--- staging ---\n{\n  \"env\": \"staging\",\n  \"port\": 8080,\n  \"replicas\": 2,\n  \"features\": {\n    \"beta\": true,\n    \"audit\": true\n  }\n}\n--- dev (untouched) ---\n{\n  \"env\": \"dev\",\n  \"port\": 3000,\n  \"replicas\": 1,\n  \"features\": {\n    \"beta\": true,\n    \"audit\": false\n  }\n}\nok   test_configs\nPASS 1/1\nexit:0\n"
+          },
+          {
+            "commands": "cd /home/eval/svc && git status --short; echo \"---\"; git diff; echo \"---\"; git config user.name 2>&1; git config user.email 2>&1; cat .gitignore 2>&1",
+            "exit_code": 1,
+            "stderr": "",
+            "stdout": "On branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/test-report.txt\n\tbuild/test_configs.log\n---\n# Diff output (simplified in virtual mode)\n---\nEval Agent\neval@bashkit-eval.invalid\ncat: .gitignore: No such file or directory\n"
+          },
+          {
+            "commands": "cd /home/eval/svc && git status; echo EXIT:$?",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "On branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/test-report.txt\n\tbuild/test_configs.log\nEXIT:0\n"
+          },
+          {
+            "commands": "cd /home/eval/svc\ngit diff HEAD -- config/prod.json 2>&1; echo \"diff-exit:$?\"\ngit diff -- config/prod.json 2>&1; echo \"diff2-exit:$?\"\ngit ls-files 2>&1\necho \"--- show HEAD version ---\"\ngit show HEAD:config/prod.json 2>&1\necho \"--- working file ---\"\ncat config/prod.json 2>&1\necho \"--- check-ignore ---\"\ngit check-ignore -v config/prod.json build/test-report.txt 2>&1; echo \"ci-exit:$?\"\nls -la; cat .git/info/exclude 2>&1\ngit status --porcelain 2>&1; echo \"porcelain-exit:$?\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# Diff output (simplified in virtual mode)\ndiff-exit:0\n# Diff output (simplified in virtual mode)\ndiff2-exit:0\nMakefile\nconfig/dev.json\nconfig/prod.json\nconfig/staging.json\ntests/run.sh\ntests/test_configs.sh\n--- show HEAD version ---\n{\n  \"env\": \"prod\",\n  \"port\": 443,\n  \"replicas\": 6,\n  \"features\": {\n    \"beta\": false,\n    \"audit\": true\n  }\n}\n--- working file ---\n{\n  \"env\": \"prod\",\n  \"port\": 443,\n  \"replicas\": 6,\n  \"features\": {\n    \"beta\": false,\n    \"audit\": true\n  }\n}\n--- check-ignore ---\ngit: 'check-ignore' is not a git command. See 'git --help'.\nci-exit:1\ndrwxr-xr-x        0 2026-10-09 17:49 .git\n-rw-r--r--       26 2026-10-09 17:49 Makefile\ndrwxr-xr-x        0 2026-10-09 17:49 build\ndrwxr-xr-x        0 2026-10-09 17:49 config\ndrwxr-xr-x        0 2026-10-09 17:49 tests\ncat: .git/info/exclude: No such file or directory\nOn branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/test-report.txt\n\tbuild/test_configs.log\nporcelain-exit:0\n"
+          },
+          {
+            "commands": "cd /home/eval/svc\ngit log --oneline -10 2>&1\necho \"=== log full ===\"\ngit log --stat -5 2>&1 | head -n 100\necho \"=== show staging HEAD ===\"\ngit show HEAD:config/staging.json 2>&1\necho \"=== show dev HEAD ===\"\ngit show HEAD:config/dev.json 2>&1\necho \"=== ls git ===\"\nls -R .git 2>&1 | head -n 100",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "commit b46497d3\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 17:49:48 2026 +0000\n\n    initial import\n\n=== log full ===\ncommit b46497d3\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 17:49:48 2026 +0000\n\n    initial import\n\n=== show staging HEAD ===\n{\n  \"env\": \"staging\",\n  \"port\": 8080,\n  \"replicas\": 2,\n  \"features\": {\n    \"beta\": true,\n    \"audit\": true\n  }\n}\n=== show dev HEAD ===\n{\n  \"env\": \"dev\",\n  \"port\": 3000,\n  \"replicas\": 1,\n  \"features\": {\n    \"beta\": true,\n    \"audit\": false\n  }\n}\n=== ls git ===\n.git:\nHEAD\ncommits\nconfig\nindex\nobjects\nrefs\ntracked\n\n.git/objects:\n\n.git/refs:\nheads\ntags\n\n.git/refs/heads:\nmaster\n\n.git/refs/tags:\n"
+          },
+          {
+            "commands": "cd /home/eval/svc\necho \"== .git/HEAD ==\"; cat .git/HEAD 2>&1\necho \"== .git/config ==\"; cat .git/config 2>&1\necho \"== .git/index ==\"; cat .git/index 2>&1; echo \"---\"; ls -l .git/index 2>&1; hexdump -C .git/index 2>&1 | head\necho \"== .git/commits ==\"; ls -lR .git/commits 2>&1; cat .git/commits/* 2>&1 | head -n 200\necho \"== .git/tracked ==\"; cat .git/tracked 2>&1\necho \"== .git/refs/heads/master ==\"; cat .git/refs/heads/master 2>&1\necho \"== git help ==\"; git --help 2>&1 | head -n 100\nwhich git 2>&1; type git 2>&1; ls -l $(which git) 2>&1 || true\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "== .git/HEAD ==\nref: refs/heads/master\n== .git/config ==\n[core]\n\trepositoryformatversion = 0\n\tfilemode = true\n\tbare = false\n[user]\n\tname = Eval Agent\n\temail = eval@bashkit-eval.invalid\n== .git/index ==\n---\n-rw-r--r--        0 2026-10-09 17:49 .git/index\n== .git/commits ==\n-rw-r--r--       72 2026-10-09 17:49 .git/commits\ncat: .git/commits/*: No such file or directory\n== .git/tracked ==\nMakefile\nconfig/staging.json\ntests/test_configs.sh\nconfig/prod.json\nconfig/dev.json\ntests/run.sh== .git/refs/heads/master ==\nb46497d3== git help ==\ngit: '--help' is not a git command. See 'git --help'.\n/usr/bin/git\ngit is hashed (/usr/bin/git)\n-rwxr-xr-x       47 2026-10-09 17:49 /usr/bin/git\n"
+          },
+          {
+            "commands": "cat /usr/bin/git; echo \"===\"; ls -l /usr/bin/git*",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "#!/bin/sh\n# bashkit builtin: git\nexec git \"$@\"\n===\n-rwxr-xr-x       47 2026-10-09 17:49 /usr/bin/git\n"
+          },
+          {
+            "commands": "cd /home/eval/svc\necho \"--- cat .git/commits file ---\"\ncat .git/commits; echo; hexdump -C .git/commits | head\necho \"--- ls -la .git* ---\"\nls -laR 2>&1 | head -n 100\necho \"--- env ---\"\nenv | sort\necho \"--- bashkit? ---\"\nset | head -n 200\ntype git; type -a git 2>&1\nenable -a 2>&1 | head -n 100\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "--- cat .git/commits file ---\nb46497d3|Eval Agent|eval@bashkit-eval.invalid|1791568188|initial import\n\n00000000  62 34 36 34 39 37 64 33  7c 45 76 61 6c 20 41 67  |b46497d3|Eval Ag|\n00000010  65 6e 74 7c 65 76 61 6c  40 62 61 73 68 6b 69 74  |ent|eval@bashkit|\n00000020  2d 65 76 61 6c 2e 69 6e  76 61 6c 69 64 7c 31 37  |-eval.invalid|17|\n00000030  39 31 35 36 38 31 38 38  7c 69 6e 69 74 69 61 6c  |91568188|initial|\n00000040  20 69 6d 70 6f 72 74 0a                           | import.|\n00000048\n--- ls -la .git* ---\n.:\ndrwxr-xr-x        0 2026-10-09 17:49 .git\n-rw-r--r--       26 2026-10-09 17:49 Makefile\ndrwxr-xr-x        0 2026-10-09 17:49 build\ndrwxr-xr-x        0 2026-10-09 17:49 config\ndrwxr-xr-x        0 2026-10-09 17:49 tests\n\n./.git:\n-rw-r--r--       23 2026-10-09 17:49 HEAD\n-rw-r--r--       72 2026-10-09 17:49 commits\n-rw-r--r--      128 2026-10-09 17:49 config\n-rw-r--r--        0 2026-10-09 17:49 index\ndrwxr-xr-x        0 2026-10-09 17:49 objects\ndrwxr-xr-x        0 2026-10-09 17:49 refs\n-rw-r--r--       96 2026-10-09 17:49 tracked\n\n./.git/objects:\n\n./.git/refs:\ndrwxr-xr-x        0 2026-10-09 17:49 heads\ndrwxr-xr-x        0 2026-10-09 17:49 tags\n\n./.git/refs/heads:\n-rw-r--r--        8 2026-10-09 17:49 master\n\n./.git/refs/tags:\n\n./build:\n-rw-r--r--        9 2026-10-09 17:50 test-report.txt\n-rw-r--r--        0 2026-10-09 17:50 test_configs.log\n\n./config:\n-rw-r--r--      110 2026-10-09 17:49 dev.json\n-rw-r--r--      110 2026-10-09 17:50 prod.json\n-rw-r--r--      113 2026-10-09 17:50 staging.json\n\n./tests:\n-rw-r--r--      574 2026-10-09 17:49 run.sh\n-rw-r--r--      406 2026-10-09 17:49 test_configs.sh\n--- env ---\nBASHKIT_ALLOW_INPROCESS_SQLITE=1\nOLDPWD=/home/eval/svc\nPWD=/home/eval/svc\nUSER=eval\n--- bashkit? ---\nBASHKIT_ALLOW_INPROCESS_SQLITE=1\nBASH_VERSINFO=([0]=\"5\" [1]=\"2\" [2]=\"15\" [3]=\"1\" [4]=\"release\" [5]=\"virtual\")\nEUID=1000\nHOME=/home/eval\nHOSTNAME=bashkit-eval\nHOSTTYPE=x86_64\nMACHTYPE=x86_64-pc-linux-gnu\nOLDPWD=/home/eval/svc\nOPTIND=1\nOSTYPE=linux-gnu\nPATH=/usr/local/bin:/usr/bin:/bin\nPIPESTATUS=([0]=\"0\")\nPPID=0\nPS4='+ '\nPWD=/home/eval/svc\nSHELL=/bin/bash\nSHLVL=1\nUID=1000\nUSER=eval\n_=set\nf=config/staging.json\ngit is hashed (/usr/bin/git)\ngit is /usr/bin/git\ngit is /bin/git\nenable .\nenable :\nenable [\nenable alias\nenable arch\nenable assert\nenable awk\nenable b2sum\nenable base32\nenable base64\nenable basename\nenable basenc\nenable bc\nenable bg\nenable bind\nenable break\nenable bunzip2\nenable busybox\nenable bzcat\nenable bzip2\nenable caller\nenable cat\nenable cd\nenable chgrp\nenable chmod\nenable chown\nenable cksum\nenable clear\nenable cmp\nenable column\nenable comm\nenable compgen\nenable complete\nenable compopt\nenable continue\nenable cp\nenable csv\nenable curl\nenable cut\nenable date\nenable dd\nenable df\nenable diff\nenable dirname\nenable dirs\nenable disown\nenable dotenv\nenable du\nenable echo\nenable egrep\nenable enable\nenable env\nenable envsubst\nenable eval\nenable exit\nenable expand\nenable export\nenable expr\nenable factor\nenable false\nenable fc\nenable fg\nenable fgrep\nenable file\nenable find\nenable flock\nenable fmt\nenable fold\nenable free\nenable gawk\nenable getconf\nenable git\nenable glob\nenable grep\nenable groups\nenable gunzip\nenable gzip\nenable hash\nenable head\nenable help\nenable hexdump\nenable history\nenable hostid\nenable hostname\nenable http\nenable iconv\nenable id\nenable install\nenable jobs\nenable join\nenable jq\nenable json\nenable kill\nenable less\nenable link\nenable ln\nenable local\nenable locale\nenable log\nenable logname\n"
+          },
+          {
+            "commands": "help git 2>&1 | head -n 200\necho \"=== enable git help? ===\"\nenable -p 2>&1 | grep git\necho \"== try git with no args ==\"\ngit 2>&1; echo exit:$?\necho \"== git log --help ==\"\ngit log --help 2>&1 | head -n 100\necho \"== git commit --help ==\"\ngit commit --help 2>&1 | head -n 100",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "bash: line 1: help: no help topics match `git'.  Try `help help' or `man -k git' or `info git'.\n=== enable git help? ===\nenable git\n== try git with no args ==\nusage: git <command> [<args>]\n\nAvailable commands:\n\tinit      Create an empty Git repository\n\tconfig    Get and set repository options\n\tadd       Add file contents to the index\n\tcommit    Record changes to the repository\n\tstatus    Show the working tree status\n\tlog       Show commit logs\n\tbranch    List, create, or delete branches\n\tcheckout  Switch branches or restore files\n\tdiff      Show changes (simplified)\n\treset     Reset current HEAD\n\tremote    Manage remotes\n\tclone     Clone a repository (URL validation only)\n\tfetch     Fetch from remote (URL validation only)\n\tpush      Push to remote (URL validation only)\n\tpull      Pull from remote (URL validation only)\n\tshow      Show commit or file content\n\tls-files  List tracked files\n\trev-parse Resolve refs and repo metadata\n\trestore   Restore working tree or index files\n\tmerge-base Find merge base between commits\n\tgrep      Search tracked file contents\nexit:1\n== git log --help ==\ncommit b46497d3\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 17:49:48 2026 +0000\n\n    initial import\n\n== git commit --help ==\nerror: switch 'm' requires a value\n"
+          },
+          {
+            "commands": "cd /home/eval/svc\necho \"== git status ==\"; git status 2>&1\necho \"== git diff ==\"; git diff 2>&1\necho \"== git diff HEAD ==\"; git diff HEAD 2>&1\necho \"== git log ==\"; git log 2>&1\necho \"== git ls-files ==\"; git ls-files 2>&1\necho \"== git rev-parse checks ==\"\ngit rev-parse HEAD 2>&1; echo \"rp-exit:$?\"\ngit rev-parse --help 2>&1 | head -n 50 || true",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "== git status ==\nOn branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/test-report.txt\n\tbuild/test_configs.log\n== git diff ==\n# Diff output (simplified in virtual mode)\n== git diff HEAD ==\n# Diff output (simplified in virtual mode)\n== git log ==\ncommit b46497d3\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 17:49:48 2026 +0000\n\n    initial import\n\n== git ls-files ==\nMakefile\nconfig/dev.json\nconfig/prod.json\nconfig/staging.json\ntests/run.sh\ntests/test_configs.sh\n== git rev-parse checks ==\nb46497d3\nrp-exit:0\ninternal error: fatal: ambiguous argument '--help': unknown revision\n"
+          },
+          {
+            "commands": "cd /home/eval/svc\necho \"=== current prod ===\"; cat config/prod.json\necho \"=== try to understand git impl: modify file then status ===\"\necho \"test change\" >> config/prod.json\ncat config/prod.json\ngit status 2>&1\ngit diff 2>&1\necho \"--- restore ---\"\ncat > config/prod.json <<'EOF'\n{\n  \"env\": \"prod\",\n  \"port\": 443,\n  \"replicas\": 6,\n  \"features\": {\n    \"beta\": false,\n    \"audit\": true\n  }\n}\nEOF\ngit status 2>&1\necho \"=== git show HEAD:config/prod.json again ===\"\ngit show HEAD:config/prod.json 2>&1\necho \"=== git show with original bad content test: does show reflect working tree? ===\"\n# Temporarily put bad content and show\ncp config/prod.json /tmp/good.json\ncat > config/prod.json <<'EOF'\n{\n  \"env\": \"TOTALLY_DIFFERENT\",\n  \"port\": 1,\n  \"replicas\": 1,\n  \"features\": {\n    \"beta\": true,\n    \"audit\": false\n  }\n}\nEOF\ngit show HEAD:config/prod.json 2>&1\necho \"--- restoring good ---\"\ncp /tmp/good.json config/prod.json\ncat config/prod.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "=== current prod ===\n{\n  \"env\": \"prod\",\n  \"port\": 443,\n  \"replicas\": 6,\n  \"features\": {\n    \"beta\": false,\n    \"audit\": true\n  }\n}\n=== try to understand git impl: modify file then status ===\n{\n  \"env\": \"prod\",\n  \"port\": 443,\n  \"replicas\": 6,\n  \"features\": {\n    \"beta\": false,\n    \"audit\": true\n  }\n}\ntest change\nOn branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/test-report.txt\n\tbuild/test_configs.log\n# Diff output (simplified in virtual mode)\n--- restore ---\nOn branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/test-report.txt\n\tbuild/test_configs.log\n=== git show HEAD:config/prod.json again ===\n{\n  \"env\": \"prod\",\n  \"port\": 443,\n  \"replicas\": 6,\n  \"features\": {\n    \"beta\": false,\n    \"audit\": true\n  }\n}\n=== git show with original bad content test: does show reflect working tree? ===\n{\n  \"env\": \"TOTALLY_DIFFERENT\",\n  \"port\": 1,\n  \"replicas\": 1,\n  \"features\": {\n    \"beta\": true,\n    \"audit\": false\n  }\n}\n--- restoring good ---\n{\n  \"env\": \"prod\",\n  \"port\": 443,\n  \"replicas\": 6,\n  \"features\": {\n    \"beta\": false,\n    \"audit\": true\n  }\n}\n"
+          },
+          {
+            "commands": "cd /home/eval/svc\ngit add --help 2>&1 | head -n 50\necho \"===\"\ngit commit --help 2>&1 | head -n 100 || true\n# Try different invocations - the earlier error \"switch m requires a value\" suggests -m handling is weird\n# Let's try verbose\ngit status 2>&1\ngit add config/prod.json 2>&1; echo \"add-exit:$?\"\ngit status 2>&1\ncat .git/index 2>&1; echo \"index-bytes:$(wc -c <.git/index 2>&1)\"\nls -la .git/ 2>&1",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Nothing specified, nothing added.\n===\nerror: switch 'm' requires a value\nOn branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/test-report.txt\n\tbuild/test_configs.log\nadd-exit:0\nOn branch master\n\nChanges to be committed:\n  (use \"git restore --staged <file>...\" to unstage)\n\tnew file:   config/prod.json\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/test-report.txt\n\tbuild/test_configs.log\nconfig/prod.jsonindex-bytes:16\n-rw-r--r--       23 2026-10-09 17:49 HEAD\n-rw-r--r--       72 2026-10-09 17:49 commits\n-rw-r--r--      128 2026-10-09 17:49 config\n-rw-r--r--       16 2026-10-09 17:52 index\ndrwxr-xr-x        0 2026-10-09 17:49 objects\ndrwxr-xr-x        0 2026-10-09 17:49 refs\n-rw-r--r--       96 2026-10-09 17:49 tracked\n"
+          },
+          {
+            "commands": "cd /home/eval/svc\ngit add config/staging.json 2>&1; echo \"add-exit:$?\"\ngit status 2>&1\ncat .git/index 2>&1; echo\nmake test 2>&1; echo \"test-exit:$?\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "add-exit:0\nOn branch master\n\nChanges to be committed:\n  (use \"git restore --staged <file>...\" to unstage)\n\tnew file:   config/prod.json\n\tnew file:   config/staging.json\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/test-report.txt\n\tbuild/test_configs.log\nconfig/prod.json\nconfig/staging.json\nok   test_configs\nPASS 1/1\ntest-exit:0\n"
+          },
+          {
+            "commands": "cd /home/eval/svc && git commit -m \"config: fix types while preserving values\" 2>&1; echo \"exit:$?\"\ngit log 2>&1 | head -n 50\ngit status 2>&1",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "[master b464973] config: fix types while preserving values\nexit:0\ncommit b464973c\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 17:52:19 2026 +0000\n\n    config: fix types while preserving values\n\ncommit b46497d3\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 17:49:48 2026 +0000\n\n    initial import\n\nOn branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/test-report.txt\n\tbuild/test_configs.log\n"
+          },
+          {
+            "commands": "cd /home/eval/svc\necho \"=== log ===\"; git log 2>&1\necho \"=== show HEAD ===\"; git show HEAD 2>&1 | head -n 100\necho \"=== show HEAD:prod ===\"; git show HEAD:config/prod.json 2>&1\necho \"=== show HEAD:staging ===\"; git show HEAD:config/staging.json 2>&1\necho \"=== rev-parse ===\"; git rev-parse HEAD 2>&1\necho \"=== make test ===\"; make test 2>&1; echo \"exit:$?\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "=== log ===\ncommit b464973c\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 17:52:19 2026 +0000\n\n    config: fix types while preserving values\n\ncommit b46497d3\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 17:49:48 2026 +0000\n\n    initial import\n\n=== show HEAD ===\ncommit b464973c\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 17:52:19 2026 +0000\n\n    config: fix types while preserving values\n\n=== show HEAD:prod ===\n{\n  \"env\": \"prod\",\n  \"port\": 443,\n  \"replicas\": 6,\n  \"features\": {\n    \"beta\": false,\n    \"audit\": true\n  }\n}\n=== show HEAD:staging ===\n{\n  \"env\": \"staging\",\n  \"port\": 8080,\n  \"replicas\": 2,\n  \"features\": {\n    \"beta\": true,\n    \"audit\": true\n  }\n}\n=== rev-parse ===\nb464973c\n=== make test ===\nok   test_configs\nPASS 1/1\nexit:0\n"
+          },
+          {
+            "commands": "cd /home/eval/svc\necho \"== commits file ==\"; cat .git/commits; echo\necho \"== refs ===\"; cat .git/refs/heads/master; echo\necho \"== tracked ==\"; cat .git/tracked; echo; echo \"---hex---\"; hexdump -C .git/tracked\necho \"== index ==\"; cat .git/index; echo; hexdump -C .git/index\necho \"== objects ==\"; ls -R .git/objects 2>&1; find .git -type f -exec ls -l {} \\;\necho \"== ls-files ==\"; git ls-files 2>&1\necho \"== status ==\"; git status 2>&1\necho \"== diff ==\"; git diff 2>&1; echo \"diff-exit:$?\"\necho \"== log ==\"; git log 2>&1",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "== commits file ==\nb464973c|Eval Agent|eval@bashkit-eval.invalid|1791568339|config: fix types while preserving values\nb46497d3|Eval Agent|eval@bashkit-eval.invalid|1791568188|initial import\n\n== refs ===\nb464973c\n== tracked ==\nconfig/prod.json\ntests/run.sh\nconfig/dev.json\ntests/test_configs.sh\nconfig/staging.json\nMakefile\n---hex---\n00000000  63 6f 6e 66 69 67 2f 70  72 6f 64 2e 6a 73 6f 6e  |config/prod.json|\n00000010  0a 74 65 73 74 73 2f 72  75 6e 2e 73 68 0a 63 6f  |.tests/run.sh.co|\n00000020  6e 66 69 67 2f 64 65 76  2e 6a 73 6f 6e 0a 74 65  |nfig/dev.json.te|\n00000030  73 74 73 2f 74 65 73 74  5f 63 6f 6e 66 69 67 73  |sts/test_configs|\n00000040  2e 73 68 0a 63 6f 6e 66  69 67 2f 73 74 61 67 69  |.sh.config/stagi|\n00000050  6e 67 2e 6a 73 6f 6e 0a  4d 61 6b 65 66 69 6c 65  |ng.json.Makefile|\n00000060\n== index ==\n\n== objects ==\n.git/objects:\n-rw-r--r--       23 2026-10-09 17:49 .git/HEAD\n-rw-r--r--      171 2026-10-09 17:52 .git/commits\n-rw-r--r--      128 2026-10-09 17:49 .git/config\n-rw-r--r--        0 2026-10-09 17:52 .git/index\n-rw-r--r--        8 2026-10-09 17:52 .git/refs/heads/master\n-rw-r--r--       96 2026-10-09 17:52 .git/tracked\n== ls-files ==\nMakefile\nconfig/dev.json\nconfig/prod.json\nconfig/staging.json\ntests/run.sh\ntests/test_configs.sh\n== status ==\nOn branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/test-report.txt\n\tbuild/test_configs.log\n== diff ==\n# Diff output (simplified in virtual mode)\ndiff-exit:0\n== log ==\ncommit b464973c\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 17:52:19 2026 +0000\n\n    config: fix types while preserving values\n\ncommit b46497d3\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 17:49:48 2026 +0000\n\n    initial import\n\n"
+          },
+          {
+            "commands": "cd /home/eval/svc\nrm -rf build\ngit status 2>&1\necho \"=== final files ===\"\nfor f in config/*.json; do echo \"--- $f ---\"; cat \"$f\"; echo; done\necho \"=== validator untouched? ===\"\ncat tests/test_configs.sh\necho \"=== log ===\"\ngit log 2>&1\necho \"=== make test (final) ===\"\nmake test 2>&1; echo \"exit:$?\"\necho \"=== cleanup build again for clean status? ===\"\nrm -rf build\ngit status 2>&1\ngit log 2>&1 | head -n 20",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "On branch master\n\nnothing to commit, working tree clean\n=== final files ===\n--- config/dev.json ---\n{\n  \"env\": \"dev\",\n  \"port\": 3000,\n  \"replicas\": 1,\n  \"features\": {\n    \"beta\": true,\n    \"audit\": false\n  }\n}\n\n--- config/prod.json ---\n{\n  \"env\": \"prod\",\n  \"port\": 443,\n  \"replicas\": 6,\n  \"features\": {\n    \"beta\": false,\n    \"audit\": true\n  }\n}\n\n--- config/staging.json ---\n{\n  \"env\": \"staging\",\n  \"port\": 8080,\n  \"replicas\": 2,\n  \"features\": {\n    \"beta\": true,\n    \"audit\": true\n  }\n}\n\n=== validator untouched? ===\n# Each config: env matches the file name, port is a number, replicas >= 1,\n# and every feature flag is a boolean.\nstatus=0\nfor f in config/*.json; do\n  env=$(basename \"$f\" .json)\n  jq -e --arg env \"$env\" '\n    (.env == $env) and (.port | type == \"number\") and (.replicas >= 1)\n    and ([.features[] | type == \"boolean\"] | all)' \"$f\" > /dev/null \\\n    || { echo \"invalid: $f\"; status=1; }\ndone\nexit $status\n=== log ===\ncommit b464973c\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 17:52:19 2026 +0000\n\n    config: fix types while preserving values\n\ncommit b46497d3\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 17:49:48 2026 +0000\n\n    initial import\n\n=== make test (final) ===\nok   test_configs\nPASS 1/1\nexit:0\n=== cleanup build again for clean status? ===\nOn branch master\n\nnothing to commit, working tree clean\ncommit b464973c\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 17:52:19 2026 +0000\n\n    config: fix types while preserving values\n\ncommit b46497d3\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 17:49:48 2026 +0000\n\n    initial import\n\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

@@ -12,6 +12,7 @@ safe: access fails deterministically after that `exec*()` completes or is cancel
 - [Hooks](./hooks.md) - Interceptor hooks for the execution pipeline
 - [Compatibility Reference](./compatibility.md) - Supported bash features
 - [Threat Model](./threat-model.md) - Security considerations
+- [Streaming commands](streaming.md) - Live byte handlers, async sinks and explicit capture
 
 ## Quick Start
 

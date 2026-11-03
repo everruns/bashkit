@@ -1,0 +1,99 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "db_csv_join_aggregate",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "Join /data/orders.csv and /data/products.csv on product_id. For each category, compute the total revenue (quantity * price). Print 'category: total_revenue' sorted by revenue descending."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "electronics: 450\nhardware: 165",
+    "iterations": 8,
+    "tool_calls_count": 7,
+    "tool_calls": [
+      "head -n 5 /data/orders.csv /data/products.csv",
+      "python3 -c \"\nimport csv\nfrom collections import defaultdict\n\nproducts = {}\nwith open('/data/products.csv', mode='r') as f:\n    reader = csv.DictReader(f)\n    for row in reader:\n        products[row['product_id']] = (row['category'], float(row['price']))\n\nrevenue = defaultdict(float)\nwith open('/data/orders.csv', mode='r') as f:\n    reader = csv.DictReader(f)\n    for row in reader:\n        pid = row['product_id']\n        qty = float(row['quantity'])\n        if pid in products:\n            cat, price = products[pid]\n            revenue[cat] += qty * price\n\nfor cat, rev in sorted(revenue.items(), key=lambda x: x[1], reverse=True):\n    # check formatting of revenue (integer vs float, etc.)\n    print(f'{cat}: {rev}')\n\"",
+      "cat /data/products.csv; echo \"---\"; cat /data/orders.csv",
+      "sqlite3 :memory: \"\n.mode csv\n.import /data/orders.csv orders\n.import /data/products.csv products\nSELECT p.category, SUM(o.quantity * p.price) as total_revenue\nFROM orders o\nJOIN products p ON o.product_id = p.product_id\nGROUP BY p.category\nORDER BY total_revenue DESC;\n\"",
+      "python3 -c \"\nimport csv\nfrom collections import defaultdict\n\nproducts = {}\nwith open('/data/products.csv') as f:\n    for row in csv.DictReader(f):\n        products[row['product_id']] = (row['category'], int(row['price']) if row['price'].isdigit() else float(row['price']))\n\nrev = defaultdict(int)\nwith open('/data/orders.csv') as f:\n    for row in csv.DictReader(f):\n        cat, price = products[row['product_id']]\n        rev[cat] += int(row['quantity']) * price\n\nfor cat, total in sorted(rev.items(), key=lambda x: x[1], reverse=True):\n    print(f'{cat}: {total}')\n\"",
+      "python3 -c \"\nimport csv\nfrom collections import defaultdict\n\nproducts = {}\nwith open('/data/products.csv') as f:\n    for row in csv.DictReader(f):\n        price = float(row['price']) if '.' in row['price'] else int(row['price'])\n        products[row['product_id']] = (row['category'], price)\n\nrev = defaultdict(lambda: 0)\nwith open('/data/orders.csv') as f:\n    for row in csv.DictReader(f):\n        cat, price = products[row['product_id']]\n        qty = float(row['quantity']) if '.' in row['quantity'] else int(row['quantity'])\n        rev[cat] += qty * price\n\nfor cat, total in sorted(rev.items(), key=lambda x: x[1], reverse=True):\n    print(f'{cat}: {total}')\n\"",
+      "python3 -c \"\nimport csv\nfrom collections import defaultdict\n\nproducts = {}\nwith open('/data/products.csv') as f:\n    for row in csv.DictReader(f):\n        products[row['product_id']] = (row['category'], float(row['price']))\n\nrev = defaultdict(float)\nwith open('/data/orders.csv') as f:\n    for row in csv.DictReader(f):\n        cat, price = products[row['product_id']]\n        rev[cat] += float(row['quantity']) * price\n\nfor cat, total in sorted(rev.items(), key=lambda x: x[1], reverse=True):\n    val = int(total) if total.is_integer() else total\n    print(f'{cat}: {val}')\n\""
+    ],
+    "usage": {
+      "input_tokens": 8013,
+      "output_tokens": 1104,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 20007
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 7.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 6.0,
+      "turns": 8.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "head -n 5 /data/orders.csv /data/products.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "==> /data/orders.csv <==\norder_id,product_id,quantity\n1,101,3\n2,102,5\n3,101,2\n4,103,1\n\n==> /data/products.csv <==\nproduct_id,name,category,price\n101,Widget,hardware,25\n102,Gadget,electronics,50\n103,Bolt,hardware,10\n"
+          },
+          {
+            "commands": "python3 -c \"\nimport csv\nfrom collections import defaultdict\n\nproducts = {}\nwith open('/data/products.csv', mode='r') as f:\n    reader = csv.DictReader(f)\n    for row in reader:\n        products[row['product_id']] = (row['category'], float(row['price']))\n\nrevenue = defaultdict(float)\nwith open('/data/orders.csv', mode='r') as f:\n    reader = csv.DictReader(f)\n    for row in reader:\n        pid = row['product_id']\n        qty = float(row['quantity'])\n        if pid in products:\n            cat, price = products[pid]\n            revenue[cat] += qty * price\n\nfor cat, rev in sorted(revenue.items(), key=lambda x: x[1], reverse=True):\n    # check formatting of revenue (integer vs float, etc.)\n    print(f'{cat}: {rev}')\n\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "electronics: 450.0\nhardware: 165.0\n"
+          },
+          {
+            "commands": "cat /data/products.csv; echo \"---\"; cat /data/orders.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "product_id,name,category,price\n101,Widget,hardware,25\n102,Gadget,electronics,50\n103,Bolt,hardware,10\n---\norder_id,product_id,quantity\n1,101,3\n2,102,5\n3,101,2\n4,103,1\n5,102,4\n6,103,3\n"
+          },
+          {
+            "commands": "sqlite3 :memory: \"\n.mode csv\n.import /data/orders.csv orders\n.import /data/products.csv products\nSELECT p.category, SUM(o.quantity * p.price) as total_revenue\nFROM orders o\nJOIN products p ON o.product_id = p.product_id\nGROUP BY p.category\nORDER BY total_revenue DESC;\n\"",
+            "exit_code": 1,
+            "stderr": "sqlite: unknown dot-command: .import\n",
+            "stdout": ""
+          },
+          {
+            "commands": "python3 -c \"\nimport csv\nfrom collections import defaultdict\n\nproducts = {}\nwith open('/data/products.csv') as f:\n    for row in csv.DictReader(f):\n        products[row['product_id']] = (row['category'], int(row['price']) if row['price'].isdigit() else float(row['price']))\n\nrev = defaultdict(int)\nwith open('/data/orders.csv') as f:\n    for row in csv.DictReader(f):\n        cat, price = products[row['product_id']]\n        rev[cat] += int(row['quantity']) * price\n\nfor cat, total in sorted(rev.items(), key=lambda x: x[1], reverse=True):\n    print(f'{cat}: {total}')\n\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "electronics: 450\nhardware: 165\n"
+          },
+          {
+            "commands": "python3 -c \"\nimport csv\nfrom collections import defaultdict\n\nproducts = {}\nwith open('/data/products.csv') as f:\n    for row in csv.DictReader(f):\n        price = float(row['price']) if '.' in row['price'] else int(row['price'])\n        products[row['product_id']] = (row['category'], price)\n\nrev = defaultdict(lambda: 0)\nwith open('/data/orders.csv') as f:\n    for row in csv.DictReader(f):\n        cat, price = products[row['product_id']]\n        qty = float(row['quantity']) if '.' in row['quantity'] else int(row['quantity'])\n        rev[cat] += qty * price\n\nfor cat, total in sorted(rev.items(), key=lambda x: x[1], reverse=True):\n    print(f'{cat}: {total}')\n\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "electronics: 450\nhardware: 165\n"
+          },
+          {
+            "commands": "python3 -c \"\nimport csv\nfrom collections import defaultdict\n\nproducts = {}\nwith open('/data/products.csv') as f:\n    for row in csv.DictReader(f):\n        products[row['product_id']] = (row['category'], float(row['price']))\n\nrev = defaultdict(float)\nwith open('/data/orders.csv') as f:\n    for row in csv.DictReader(f):\n        cat, price = products[row['product_id']]\n        rev[cat] += float(row['quantity']) * price\n\nfor cat, total in sorted(rev.items(), key=lambda x: x[1], reverse=True):\n    val = int(total) if total.is_integer() else total\n    print(f'{cat}: {val}')\n\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "electronics: 450\nhardware: 165\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

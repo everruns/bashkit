@@ -1,0 +1,57 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "script_array_stats",
+  "target": "openrouter/moonshotai/kimi-k3",
+  "input": [
+    "Given these numbers: 42 17 93 8 55 71 3 88 29 64. Write a bash script that computes the minimum, maximum, and sum. Print exactly three lines: 'min: N', 'max: N', 'sum: N'."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "4/4 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "The script runs correctly and produces exactly the three required lines:\n\n```\nmin: 3\nmax: 93\nsum: 470\n```\n\n**How it works:**\n- The numbers are stored in a string and iterated over with a `for` loop (which splits on whitespace).\n- `min` and `max` start empty; the `-z` test initializes them on the first number, after which each value is compared and the extremes updated.\n- `sum` accumulates via bash arithmetic expansion `$((sum + n))`.\n\nThe file was saved to `/home/eval/stats.sh` if you want to reuse it.",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "cat > /home/eval/stats.sh <<'EOF'\n#!/usr/bin/env bash\n\nnumbers=\"42 17 93 8 55 71 3 88 29 64\"\n\nmin=\nmax=\nsum=0\n\nfor n in $numbers; do\n    if [[ -z $min || $n -lt $min ]]; then\n        min=$n\n    fi\n    if [[ -z $max || $n -gt $max ]]; then\n        max=$n\n    fi\n    sum=$((sum + n))\ndone\n\necho \"min: $min\"\necho \"max: $max\"\necho \"sum: $sum\"\nEOF\nbash /home/eval/stats.sh"
+    ],
+    "usage": {
+      "input_tokens": 1498,
+      "output_tokens": 691,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 5550
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat > /home/eval/stats.sh <<'EOF'\n#!/usr/bin/env bash\n\nnumbers=\"42 17 93 8 55 71 3 88 29 64\"\n\nmin=\nmax=\nsum=0\n\nfor n in $numbers; do\n    if [[ -z $min || $n -lt $min ]]; then\n        min=$n\n    fi\n    if [[ -z $max || $n -gt $max ]]; then\n        max=$n\n    fi\n    sum=$((sum + n))\ndone\n\necho \"min: $min\"\necho \"max: $max\"\necho \"sum: $sum\"\nEOF\nbash /home/eval/stats.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "min: 3\nmax: 93\nsum: 470\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

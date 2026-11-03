@@ -1,0 +1,71 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "rt_py_toml_render",
+  "target": "openai/gpt-6-luna",
+  "input": [
+    "Render per-environment configs: for every /config/env/*.toml file, merge it over /config/base.toml and write /out/<name>.json (dev.toml -> /out/dev.json). Merge rules: tables merge recursively; any other value (scalars, arrays, arrays of tables) in the override replaces the base value; an override value equal to the string \"__unset__\" removes that key. TOML dates and datetimes become strings via Python's isoformat(). JSON: 2-space indent, keys sorted, non-ASCII characters written as-is (not \\u escapes), trailing newline. Also write /out/index.txt listing the environment names, sorted, one per line."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "3/3 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Rendered `/out/dev.json` and `/out/prod.json` using the requested merge rules, and wrote the sorted environment list to `/out/index.txt`.",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "find /config -maxdepth 3 -type f -print 2>/dev/null; find /out -maxdepth 2 -type f -print 2>/dev/null; pwd",
+      "cat /config/base.toml; printf '\\n--- dev ---\\n'; cat /config/env/dev.toml; printf '\\n--- prod ---\\n'; cat /config/env/prod.toml; mkdir -p /out",
+      "python3 - <<'PY'\nfrom pathlib import Path\nimport tomllib, json, datetime\n\nbase_path = Path('/config/base.toml')\nenv_dir = Path('/config/env')\nout_dir = Path('/out')\nout_dir.mkdir(parents=True, exist_ok=True)\nbase = tomllib.loads(base_path.read_text(encoding='utf-8'))\n\ndef merge(base, override):\n    result = dict(base)\n    for key, value in override.items():\n        if value == '__unset__' and isinstance(value, str):\n            result.pop(key, None)\n        elif key in result and isinstance(result[key], dict) and isinstance(value, dict):\n            result[key] = merge(result[key], value)\n        else:\n            result[key] = value\n    return result\n\ndef convert(value):\n    if isinstance(value, dict):\n        return {key: convert(item) for key, item in value.items()}\n    if isinstance(value, list):\n        return [convert(item) for item in value]\n    if isinstance(value, (datetime.datetime, datetime.date, datetime.time)):\n        return value.isoformat()\n    return value\n\nenvironments = sorted(env_dir.glob('*.toml'), key=lambda p: p.stem)\nnames = []\nfor path in environments:\n    name = path.stem\n    names.append(name)\n    override = tomllib.loads(path.read_text(encoding='utf-8'))\n    rendered = convert(merge(base, override))\n    (out_dir / f'{name}.json').write_text(json.dumps(rendered, indent=2, sort_keys=True, ensure_ascii=False) + '\\n', encoding='utf-8')\n(out_dir / 'index.txt').write_text(''.join(name + '\\n' for name in names), encoding='utf-8')\nPY\nfind /out -maxdepth 1 -type f -print -exec cat {} \\;"
+    ],
+    "usage": {
+      "input_tokens": 3910,
+      "output_tokens": 659,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 8504
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 3.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "find /config -maxdepth 3 -type f -print 2>/dev/null; find /out -maxdepth 2 -type f -print 2>/dev/null; pwd",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/config/base.toml\n/config/env/README.md\n/config/env/dev.toml\n/config/env/prod.toml\n/home/user\n"
+          },
+          {
+            "commands": "cat /config/base.toml; printf '\\n--- dev ---\\n'; cat /config/env/dev.toml; printf '\\n--- prod ---\\n'; cat /config/env/prod.toml; mkdir -p /out",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "name = \"shop\"\ndebug = false\nreleased = 2026-09-30\nmaintenance = 2026-10-12T02:00:00+02:00\n\n[server]\nhost = \"0.0.0.0\"\nport = 8080\nworkers = 4\ntags = [\"web\", \"api\"]\n\n[server.tls]\nenabled = false\ncert = \"/etc/ssl/shop.pem\"\n\n[db]\nurl = \"postgres://db/shop\"\npool = { min = 1, max = 10 }\n\n[[routes]]\npath = \"/\"\nbackend = \"web\"\n\n[[routes]]\npath = \"/api\"\nbackend = \"api\"\n\n--- dev ---\ndebug = true\ngreeting = \"Привіт, світ\"\n\n[server]\nport = 3000\ntags = [\"dev\"]\n\n[server.tls]\ncert = \"__unset__\"\n\n[db.pool]\nmax = 2\n\n--- prod ---\nmaintenance = \"__unset__\"\n\n[server]\nworkers = 16\n\n[server.tls]\nenabled = true\n\n[db]\nurl = \"postgres://prod-db:5432/shop\"\nreplica = { url = \"postgres://replica/shop\", lag_ms = 250 }\n\n[[routes]]\npath = \"/\"\nbackend = \"cdn\"\n"
+          },
+          {
+            "commands": "python3 - <<'PY'\nfrom pathlib import Path\nimport tomllib, json, datetime\n\nbase_path = Path('/config/base.toml')\nenv_dir = Path('/config/env')\nout_dir = Path('/out')\nout_dir.mkdir(parents=True, exist_ok=True)\nbase = tomllib.loads(base_path.read_text(encoding='utf-8'))\n\ndef merge(base, override):\n    result = dict(base)\n    for key, value in override.items():\n        if value == '__unset__' and isinstance(value, str):\n            result.pop(key, None)\n        elif key in result and isinstance(result[key], dict) and isinstance(value, dict):\n            result[key] = merge(result[key], value)\n        else:\n            result[key] = value\n    return result\n\ndef convert(value):\n    if isinstance(value, dict):\n        return {key: convert(item) for key, item in value.items()}\n    if isinstance(value, list):\n        return [convert(item) for item in value]\n    if isinstance(value, (datetime.datetime, datetime.date, datetime.time)):\n        return value.isoformat()\n    return value\n\nenvironments = sorted(env_dir.glob('*.toml'), key=lambda p: p.stem)\nnames = []\nfor path in environments:\n    name = path.stem\n    names.append(name)\n    override = tomllib.loads(path.read_text(encoding='utf-8'))\n    rendered = convert(merge(base, override))\n    (out_dir / f'{name}.json').write_text(json.dumps(rendered, indent=2, sort_keys=True, ensure_ascii=False) + '\\n', encoding='utf-8')\n(out_dir / 'index.txt').write_text(''.join(name + '\\n' for name in names), encoding='utf-8')\nPY\nfind /out -maxdepth 1 -type f -print -exec cat {} \\;",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/out/dev.json\n{\n  \"db\": {\n    \"pool\": {\n      \"max\": 2,\n      \"min\": 1\n    },\n    \"url\": \"postgres://db/shop\"\n  },\n  \"debug\": true,\n  \"greeting\": \"Привіт, світ\",\n  \"maintenance\": \"2026-10-12T02:00:00+02:00\",\n  \"name\": \"shop\",\n  \"released\": \"2026-09-30\",\n  \"routes\": [\n    {\n      \"backend\": \"web\",\n      \"path\": \"/\"\n    },\n    {\n      \"backend\": \"api\",\n      \"path\": \"/api\"\n    }\n  ],\n  \"server\": {\n    \"host\": \"0.0.0.0\",\n    \"port\": 3000,\n    \"tags\": [\n      \"dev\"\n    ],\n    \"tls\": {\n      \"enabled\": false\n    },\n    \"workers\": 4\n  }\n}\n/out/index.txt\ndev\nprod\n/out/prod.json\n{\n  \"db\": {\n    \"pool\": {\n      \"max\": 10,\n      \"min\": 1\n    },\n    \"replica\": {\n      \"lag_ms\": 250,\n      \"url\": \"postgres://replica/shop\"\n    },\n    \"url\": \"postgres://prod-db:5432/shop\"\n  },\n  \"debug\": false,\n  \"name\": \"shop\",\n  \"released\": \"2026-09-30\",\n  \"routes\": [\n    {\n      \"backend\": \"cdn\",\n      \"path\": \"/\"\n    }\n  ],\n  \"server\": {\n    \"host\": \"0.0.0.0\",\n    \"port\": 8080,\n    \"tags\": [\n      \"web\",\n      \"api\"\n    ],\n    \"tls\": {\n      \"cert\": \"/etc/ssl/shop.pem\",\n      \"enabled\": true\n    },\n    \"workers\": 16\n  }\n}\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

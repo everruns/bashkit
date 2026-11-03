@@ -26,6 +26,7 @@ const LS_SUPPORTED_IDS: &[&str] = &[
     // The 8 short flags the original bashkit ls accepted.
     "long",           // -l
     "all",            // -a
+    "almost-all",     // -A (same listing as -a: . and .. are never shown)
     "human-readable", // -h
     "1",              // -1
     "recursive",      // -R
@@ -63,6 +64,7 @@ pub(super) struct LsOptions {
 /// Options:
 ///   -l   Use long listing format
 ///   -a   Show hidden files (starting with .)
+///   -A   Same as -a (bashkit never lists . and ..)
 ///   -h   Human-readable sizes (with -l)
 ///   -1   One entry per line
 ///   -R   List subdirectories recursively
@@ -158,7 +160,7 @@ impl Builtin for Ls {
 
         let opts = LsOptions {
             long: matches.get_flag("long"),
-            all: matches.get_flag("all"),
+            all: matches.get_flag("all") || matches.get_flag("almost-all"),
             human: matches.get_flag("human-readable"),
             one_per_line: matches.get_flag("1"),
             recursive: matches.get_flag("recursive"),

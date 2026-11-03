@@ -1,0 +1,63 @@
+{
+  "eval": "bashkit_generate",
+  "sample": "gen_printf_report",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "Write a bash script that builds an aligned sales report.\n\nStarting files (fields are separated by a single TAB character):\n--- /home/eval/data/sales.tsv ---\nregion\tproduct\tunits\tunit_price\nnorth\twidget\t10\t2.50\nsouth\twidget\t4\t2.50\nnorth\tgadget\t3\t10.00\neast\tgizmo\t7\t1.25\nsouth\tgadget\t1\t10.00\neast\twidget\t2\t2.50\n--- end ---\n\nWrite /home/eval/data/report.txt with:\n- a header line formatted with printf `%-8s %6s %10s` and the values `REGION UNITS REVENUE`;\n- one line per region with total units and total revenue (sum of units * unit_price), formatted `%-8s %6d %10.2f`, sorted by revenue descending (ties by region name ascending);\n- a line of exactly 26 `-` characters;\n- a final line formatted `%-8s %6d %10.2f` with `TOTAL`, the total units and the total revenue.\nExit 0."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "```bash\n#!/bin/bash\nset -euo pipefail\n\nawk -F'\\t' '\nBEGIN {\n    tot_units = 0\n    tot_rev = 0\n}\nNR > 1 {\n    r = $1\n    u = $3 + 0\n    p = $4 + 0\n    rev_row = u * p\n    units[r] += u\n    rev[r] += rev_row\n    tot_units += u\n    tot_rev += rev_row\n}\nEND {\n    printf \"%-8s %6s %10s\\n\", \"REGION\", \"UNITS\", \"REVENUE\"\n\n    n = 0\n    for (r in units) {\n        reg[n] = r\n        n++\n    }\n\n    for (i = 0; i < n; i++) {\n        best = i\n        for (j = i + 1; j < n; j++) {\n            rj = reg[j]\n            rb = reg[best]\n            diff = rev[rj] - rev[rb]\n            if (diff > 0.0001) {\n                best = j\n            } else if (diff >= -0.0001 && rj < rb) {\n                best = j\n            }\n        }\n        if (best != i) {\n            tmp = reg[i]\n            reg[i] = reg[best]\n            reg[best] = tmp\n        }\n    }\n\n    for (i = 0; i < n; i++) {\n        r = reg[i]\n        printf \"%-8s %6d %10.2f\\n\", r, units[r], rev[r]\n    }\n\n    printf \"--------------------------\\n\"\n    printf \"%-8s %6d %10.2f\\n\", \"TOTAL\", tot_units, tot_rev\n}\n' /home/eval/data/sales.tsv > /home/eval/data/report.txt\n\nexit 0\n```",
+    "iterations": 1,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "#!/bin/bash\nset -euo pipefail\n\nawk -F'\\t' '\nBEGIN {\n    tot_units = 0\n    tot_rev = 0\n}\nNR > 1 {\n    r = $1\n    u = $3 + 0\n    p = $4 + 0\n    rev_row = u * p\n    units[r] += u\n    rev[r] += rev_row\n    tot_units += u\n    tot_rev += rev_row\n}\nEND {\n    printf \"%-8s %6s %10s\\n\", \"REGION\", \"UNITS\", \"REVENUE\"\n\n    n = 0\n    for (r in units) {\n        reg[n] = r\n        n++\n    }\n\n    for (i = 0; i < n; i++) {\n        best = i\n        for (j = i + 1; j < n; j++) {\n            rj = reg[j]\n            rb = reg[best]\n            diff = rev[rj] - rev[rb]\n            if (diff > 0.0001) {\n                best = j\n            } else if (diff >= -0.0001 && rj < rb) {\n                best = j\n            }\n        }\n        if (best != i) {\n            tmp = reg[i]\n            reg[i] = reg[best]\n            reg[best] = tmp\n        }\n    }\n\n    for (i = 0; i < n; i++) {\n        r = reg[i]\n        printf \"%-8s %6d %10.2f\\n\", r, units[r], rev[r]\n    }\n\n    printf \"--------------------------\\n\"\n    printf \"%-8s %6d %10.2f\\n\", \"TOTAL\", tot_units, tot_rev\n}\n' /home/eval/data/sales.tsv > /home/eval/data/report.txt\n\nexit 0\n"
+    ],
+    "usage": {
+      "input_tokens": 554,
+      "output_tokens": 4473,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 30766
+    },
+    "metrics": {
+      "exec_ms": 3.0,
+      "exit_code": 0.0,
+      "extracted": 1.0,
+      "generate_ms": 30763.0,
+      "script_bytes": 1119.0,
+      "script_found": 1.0,
+      "timed_out": 0.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "#!/bin/bash\nset -euo pipefail\n\nawk -F'\\t' '\nBEGIN {\n    tot_units = 0\n    tot_rev = 0\n}\nNR > 1 {\n    r = $1\n    u = $3 + 0\n    p = $4 + 0\n    rev_row = u * p\n    units[r] += u\n    rev[r] += rev_row\n    tot_units += u\n    tot_rev += rev_row\n}\nEND {\n    printf \"%-8s %6s %10s\\n\", \"REGION\", \"UNITS\", \"REVENUE\"\n\n    n = 0\n    for (r in units) {\n        reg[n] = r\n        n++\n    }\n\n    for (i = 0; i < n; i++) {\n        best = i\n        for (j = i + 1; j < n; j++) {\n            rj = reg[j]\n            rb = reg[best]\n            diff = rev[rj] - rev[rb]\n            if (diff > 0.0001) {\n                best = j\n            } else if (diff >= -0.0001 && rj < rb) {\n                best = j\n            }\n        }\n        if (best != i) {\n            tmp = reg[i]\n            reg[i] = reg[best]\n            reg[best] = tmp\n        }\n    }\n\n    for (i = 0; i < n; i++) {\n        r = reg[i]\n        printf \"%-8s %6d %10.2f\\n\", r, units[r], rev[r]\n    }\n\n    printf \"--------------------------\\n\"\n    printf \"%-8s %6d %10.2f\\n\", \"TOTAL\", tot_units, tot_rev\n}\n' /home/eval/data/sales.tsv > /home/eval/data/report.txt\n\nexit 0\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          }
+        ]
+      },
+      "generate": {
+        "extraction": "fenced",
+        "timed_out": false
+      }
+    }
+  },
+  "skipped": false
+}

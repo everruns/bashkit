@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "script_assoc_array",
+  "target": "openrouter/moonshotai/kimi-k3",
+  "input": [
+    "Use a bash associative array (declare -A) to build a country-code lookup. Map: US='United States', GB='United Kingdom', DE='Germany', JP='Japan', FR='France'. Then read /data/visitors.csv (columns: name,country_code) and for each row, look up the full country name and print 'name visited from FULL_COUNTRY_NAME'. At the end, print a count per country sorted by count descending as 'FULL_NAME: N visitors'."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "The script ran successfully. Here's a summary of what it does:\n\n**Script breakdown (`/home/eval/lookup.sh`):**\n\n1. **Lookup table** — `declare -A countries` creates the associative array mapping `US → United States`, `GB → United Kingdom`, `DE → Germany`, `JP → Japan`, `FR → France`.\n\n2. **Per-row processing** — Reads `/data/visitors.csv` with `IFS=',' read -r name code`, skipping the header row. Each code is looked up with `\"${countries[$code]:-$code}\"` (falling back to the raw code if an unknown one ever appears), and prints e.g. `Alice visited from United States`.\n\n3. **Aggregation** — A second associative array `counts` tallies visitors per full country name.\n\n4. **Sorted report** — The counts are printed as tab-separated lines, piped through `sort -t $'\\t' -k2,2nr` (numeric, reverse/descending on the count field), then reformatted.\n\n**Output:**\n```\nAlice visited from United States\nBob visited from United Kingdom\nCarol visited from United States\nDave visited from Japan\nEve visited from Germany\nFrank visited from United States\nGrace visited from United Kingdom\n\nUnited States: 3 visitors\nUnited Kingdom: 2 visitors\nGermany: 1 visitors\nJapan: 1 visitors\n```\n\nThe counts are correctly sorted descending (3, 2, 1, 1). One small safety detail: the script strips a potential trailing `\\r` in case the CSV ever has Windows-style line endings, which would otherwise break the associative-array lookup.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "ls -la /data/ && head -20 /data/visitors.csv && echo \"---\" && wc -l /data/visitors.csv",
+      "cat << 'EOF' > /home/eval/lookup.sh\n#!/usr/bin/env bash\n\n# Associative array mapping country codes to full country names\ndeclare -A countries=(\n  [US]='United States'\n  [GB]='United Kingdom'\n  [DE]='Germany'\n  [JP]='Japan'\n  [FR]='France'\n)\n\n# Associative array for counting visitors per country\ndeclare -A counts=()\n\n# Read CSV, skipping the header row\nfirst=1\nwhile IFS=',' read -r name code; do\n  # Skip header\n  if (( first )); then first=0; continue; fi\n  # Skip empty lines\n  [[ -z \"$name\" ]] && continue\n\n  # Strip any trailing carriage return (in case of CRLF line endings)\n  code=\"${code%$'\\r'}\"\n\n  # Look up full country name (fall back to the code itself if unknown)\n  full=\"${countries[$code]:-$code}\"\n\n  echo \"$name visited from $full\"\n\n  # Increment per-country counter\n  (( counts[$full] += 1 ))\ndone < /data/visitors.csv\n\necho\n\n# Print counts sorted by count descending\nfor country in \"${!counts[@]}\"; do\n  printf '%s\\t%d\\n' \"$country\" \"${counts[$country]}\"\ndone | sort -t $'\\t' -k2,2nr | while IFS=$'\\t' read -r country n; do\n  echo \"$country: $n visitors\"\ndone\nEOF\nbash /home/eval/lookup.sh"
+    ],
+    "usage": {
+      "input_tokens": 2658,
+      "output_tokens": 931,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 12805
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /data/ && head -20 /data/visitors.csv && echo \"---\" && wc -l /data/visitors.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       76 2026-10-09 17:44 visitors.csv\nname,country_code\nAlice,US\nBob,GB\nCarol,US\nDave,JP\nEve,DE\nFrank,US\nGrace,GB\n---\n8 /data/visitors.csv\n"
+          },
+          {
+            "commands": "cat << 'EOF' > /home/eval/lookup.sh\n#!/usr/bin/env bash\n\n# Associative array mapping country codes to full country names\ndeclare -A countries=(\n  [US]='United States'\n  [GB]='United Kingdom'\n  [DE]='Germany'\n  [JP]='Japan'\n  [FR]='France'\n)\n\n# Associative array for counting visitors per country\ndeclare -A counts=()\n\n# Read CSV, skipping the header row\nfirst=1\nwhile IFS=',' read -r name code; do\n  # Skip header\n  if (( first )); then first=0; continue; fi\n  # Skip empty lines\n  [[ -z \"$name\" ]] && continue\n\n  # Strip any trailing carriage return (in case of CRLF line endings)\n  code=\"${code%$'\\r'}\"\n\n  # Look up full country name (fall back to the code itself if unknown)\n  full=\"${countries[$code]:-$code}\"\n\n  echo \"$name visited from $full\"\n\n  # Increment per-country counter\n  (( counts[$full] += 1 ))\ndone < /data/visitors.csv\n\necho\n\n# Print counts sorted by count descending\nfor country in \"${!counts[@]}\"; do\n  printf '%s\\t%d\\n' \"$country\" \"${counts[$country]}\"\ndone | sort -t $'\\t' -k2,2nr | while IFS=$'\\t' read -r country n; do\n  echo \"$country: $n visitors\"\ndone\nEOF\nbash /home/eval/lookup.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Alice visited from United States\nBob visited from United Kingdom\nCarol visited from United States\nDave visited from Japan\nEve visited from Germany\nFrank visited from United States\nGrace visited from United Kingdom\n\nUnited States: 3 visitors\nUnited Kingdom: 2 visitors\nGermany: 1 visitors\nJapan: 1 visitors\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

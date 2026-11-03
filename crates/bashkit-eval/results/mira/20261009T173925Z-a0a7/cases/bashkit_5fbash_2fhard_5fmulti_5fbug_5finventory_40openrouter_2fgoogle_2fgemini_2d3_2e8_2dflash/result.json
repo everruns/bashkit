@@ -1,0 +1,225 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "hard_multi_bug_inventory",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "The git repository at /home/eval/inventory has a failing test suite. Run `make test`, then fix the library code under lib/ until every test passes. The test runner stops at the first failing test, so fixing one problem may reveal the next. Do not modify anything under tests/ or data/ (the data files are exports from another system and are correct as they are). When `make test` passes, run `make report` to regenerate build/report.txt from data/stock.csv, then commit your fix in the repo with a commit message that starts with `fix:`."
+  ],
+  "passed": false,
+  "aggregate": 0.9230769230769232,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 0.9230769230769232,
+      "pass": false,
+      "reason": "10/11 checks passed (weighted rate 92%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "",
+    "iterations": 25,
+    "tool_calls_count": 25,
+    "tool_calls": [
+      "cd /home/eval/inventory && pwd && git status && ls -la",
+      "cd /home/eval/inventory && cat Makefile && ls -la lib/ tests/ bin/",
+      "cd /home/eval/inventory && make test",
+      "cd /home/eval/inventory\ncat tests/run.sh\ncat tests/assert.sh\ncat tests/test_1_format.sh\ncat tests/test_2_total.sh\ncat tests/test_3_low.sh\ncat lib/format.sh\ncat lib/inventory.sh\ncat bin/report.sh",
+      "cd /home/eval/inventory\ncat tests/fixtures/stock.csv\necho \"--- data/stock.csv ---\"\ncat data/stock.csv",
+      "cd /home/eval/inventory\nwc -l tests/fixtures/stock.csv data/stock.csv",
+      "python3 -c \"\nwith open('/home/eval/inventory/tests/fixtures/stock.csv', 'rb') as f:\n    print('fixtures stock:', repr(f.read()))\nwith open('/home/eval/inventory/data/stock.csv', 'rb') as f:\n    print('data stock:', repr(f.read()))\n\"",
+      "find tests/",
+      "python3 -c \"\nwith open('data/stock.csv') as f:\n    lines = [line.strip() for line in f if line.strip()][1:]\nimport csv\nreader = csv.reader(lines)\ntotal = 0\nfor row in reader:\n    sku, name, qty, price = row[0], row[1], int(row[2]), int(row[3])\n    total += qty * price\nprint('Total cents:', total, 'dollars:', f'{total/100:.2f}')\n\"",
+      "python3 -c \"\nwith open('data/stock.csv') as f:\n    lines = [line.strip() for line in f if line.strip()][1:]\nimport csv\nreader = csv.reader(lines)\nfor row in reader:\n    sku, name, qty, price = row[0], row[1], int(row[2]), int(row[3])\n    if qty < 10:\n        print(sku, qty)\n\"",
+      "python3 -c \"\nwith open('tests/fixtures/stock.csv') as f:\n    lines = [line.strip() for line in f if line.strip()][1:]\nimport csv\nreader = csv.reader(lines)\ntotal = 0\nfor row in reader:\n    sku, name, qty, price = row[0], row[1], int(row[2]), int(row[3])\n    total += qty * price\nprint('Total cents:', total, 'dollars:', f'{total/100:.2f}')\n\"",
+      "which awk python3 python sed",
+      "awk --version",
+      "awk -v FPAT='([^,]+)|(\"[^\"]+\")' 'NR>1 {\n  sku=$1;\n  qty=$3;\n  price=$4;\n  gsub(/^\"|\"$/, \"\", sku);\n  gsub(/^\"|\"$/, \"\", qty);\n  gsub(/^\"|\"$/, \"\", price);\n  print sku, qty, price;\n}' tests/fixtures/stock.csv",
+      "awk -v FPAT='([^,]+)|(\"[^\"]+\")' 'NR>1 {\n  sku=$1;\n  qty=$3;\n  price=$4;\n  gsub(/^\"|\"$/, \"\", sku);\n  gsub(/^\"|\"$/, \"\", qty);\n  gsub(/^\"|\"$/, \"\", price);\n  print sku, qty, price;\n}' data/stock.csv",
+      "cat << 'EOF' > lib/format.sh\n# format.sh: money formatting\n# cents N -> dollars with exactly two decimals, e.g. 1205 -> 12.05\ncents() {\n  local n=$1\n  printf '%d.%02d\\n' $(( n / 100 )) $(( n % 100 ))\n}\nEOF\n\ncat << 'EOF' > lib/inventory.sh\n# inventory.sh: stock file helpers.\n# Stock files are CSV: sku,name,qty,price_cents with a header line. Names may\n# be quoted and contain commas. Exports from the warehouse system do not end\n# with a newline.\n. lib/format.sh\n\n# each_item FILE: print \"sku qty price_cents\" for every data row\neach_item() {\n  awk -v FPAT='([^,]+)|(\"[^\"]+\")' 'NR>1 {\n    sku=$1;\n    qty=$3;\n    price=$4;\n    gsub(/^\"|\"$/, \"\", sku);\n    gsub(/^\"|\"$/, \"\", qty);\n    gsub(/^\"|\"$/, \"\", price);\n    print sku, qty, price;\n  }' \"$1\"\n}\n\n# total_value FILE: sum of qty*price_cents over all rows, formatted as dollars\ntotal_value() {\n  local total=0 sku qty price\n  while read -r sku qty price || [ -n \"$sku\" ]; do\n    [ -z \"$sku\" ] && continue\n    total=$(( total + qty * price ))\n  done < <(each_item \"$1\")\n  cents \"$total\"\n}\n\n# low_stock FILE MIN: skus with qty strictly below MIN, sorted by sku\nlow_stock() {\n  local sku qty price min=$2\n  each_item \"$1\" | while read -r sku qty price || [ -n \"$sku\" ]; do\n    [ -z \"$sku\" ] && continue\n    if (( qty < min )); then echo \"$sku\"; fi\n  done | sort\n}\nEOF",
+      "cd /home/eval/inventory && make test",
+      "cd /home/eval/inventory && make report",
+      "cat /home/eval/inventory/build/report.txt",
+      "(cd /tmp && bash /home/eval/inventory/tests/run.sh)",
+      "(cd /home/eval/inventory && . lib/inventory.sh && each_item tests/fixtures/stock.csv)",
+      "(\n  DIR=$(mktemp -d)\n  cd \"$DIR\"\n  echo \"Testing from $DIR\"\n  . /home/eval/inventory/lib/inventory.sh\n)",
+      "cat << 'EOF' > /home/eval/inventory/lib/inventory.sh\n# inventory.sh: stock file helpers.\n# Stock files are CSV: sku,name,qty,price_cents with a header line. Names may\n# be quoted and contain commas. Exports from the warehouse system do not end\n# with a newline.\nLIB_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\n. \"$LIB_DIR/format.sh\"\n\n# each_item FILE: print \"sku qty price_cents\" for every data row\neach_item() {\n  awk -v FPAT='([^,]+)|(\"[^\"]+\")' 'NR>1 {\n    sku=$1;\n    qty=$3;\n    price=$4;\n    gsub(/^\"|\"$/, \"\", sku);\n    gsub(/^\"|\"$/, \"\", qty);\n    gsub(/^\"|\"$/, \"\", price);\n    print sku, qty, price;\n  }' \"$1\"\n}\n\n# total_value FILE: sum of qty*price_cents over all rows, formatted as dollars\ntotal_value() {\n  local total=0 sku qty price\n  while read -r sku qty price || [ -n \"$sku\" ]; do\n    [ -z \"$sku\" ] && continue\n    total=$(( total + qty * price ))\n  done < <(each_item \"$1\")\n  cents \"$total\"\n}\n\n# low_stock FILE MIN: skus with qty strictly below MIN, sorted by sku\nlow_stock() {\n  local sku qty price min=$2\n  each_item \"$1\" | while read -r sku qty price || [ -n \"$sku\" ]; do\n    [ -z \"$sku\" ] && continue\n    if (( qty < min )); then echo \"$sku\"; fi\n  done | sort\n}\nEOF",
+      "cd /home/eval/inventory\nmake test\nmake report",
+      "cd /home/eval/inventory && git status"
+    ],
+    "usage": {
+      "input_tokens": 79635,
+      "output_tokens": 2284,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 64759
+    },
+    "metrics": {
+      "natural_stop": 0.0,
+      "tool_calls": 25.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 24.0,
+      "turns": 25.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cd /home/eval/inventory && pwd && git status && ls -la",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/home/eval/inventory\nOn branch master\n\nnothing to commit, working tree clean\ndrwxr-xr-x        0 2026-10-09 17:51 .git\n-rw-r--r--       77 2026-10-09 17:51 Makefile\n-rw-r--r--      103 2026-10-09 17:51 README.md\ndrwxr-xr-x        0 2026-10-09 17:51 bin\ndrwxr-xr-x        0 2026-10-09 17:51 data\ndrwxr-xr-x        0 2026-10-09 17:51 lib\ndrwxr-xr-x        0 2026-10-09 17:51 tests\n"
+          },
+          {
+            "commands": "cd /home/eval/inventory && cat Makefile && ls -la lib/ tests/ bin/",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "test:\n\t@bash tests/run.sh\n\nreport:\n\t@bash bin/report.sh\n\n.PHONY: test report\nlib/:\n-rw-r--r--      171 2026-10-09 17:51 format.sh\n-rw-r--r--      917 2026-10-09 17:51 inventory.sh\n\ntests/:\n-rw-r--r--      182 2026-10-09 17:51 assert.sh\ndrwxr-xr-x        0 2026-10-09 17:51 fixtures\n-rw-r--r--      495 2026-10-09 17:51 run.sh\n-rw-r--r--      178 2026-10-09 17:51 test_1_format.sh\n-rw-r--r--      130 2026-10-09 17:51 test_2_total.sh\n-rw-r--r--      278 2026-10-09 17:51 test_3_low.sh\n\nbin/:\n-rw-r--r--      292 2026-10-09 17:51 report.sh\n"
+          },
+          {
+            "commands": "cd /home/eval/inventory && make test",
+            "exit_code": 2,
+            "stderr": "make: *** [Makefile:2: test] Error 1\n",
+            "stdout": "FAIL test_1_format\n    assertion failed: cents 1205: expected '12.05', got '12.5'\n"
+          },
+          {
+            "commands": "cd /home/eval/inventory\ncat tests/run.sh\ncat tests/assert.sh\ncat tests/test_1_format.sh\ncat tests/test_2_total.sh\ncat tests/test_3_low.sh\ncat lib/format.sh\ncat lib/inventory.sh\ncat bin/report.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "#!/bin/bash\n# Runs tests/test_*.sh in order and stops at the first failure.\ncd \"$(dirname \"$0\")/..\" || exit 2\nmkdir -p build\nn=0\ntotal=$(ls tests/test_*.sh | wc -l)\nfor t in tests/test_*.sh; do\n  name=$(basename \"$t\" .sh)\n  if bash \"$t\" > \"build/$name.log\" 2>&1; then\n    n=$((n + 1)); echo \"ok   $name\"\n  else\n    echo \"FAIL $name\"; sed 's/^/    /' \"build/$name.log\"\n    echo \"FAIL after $n/$total\" > build/test-report.txt\n    exit 1\n  fi\ndone\necho \"PASS $n/$total\" | tee build/test-report.txt\n# Minimal assertion helpers for the test suite.\nassert_eq() {\n  if [ \"$1\" != \"$2\" ]; then\n    echo \"assertion failed: ${3:-values differ}: expected '$1', got '$2'\"\n    exit 1\n  fi\n}\n. lib/format.sh\n. tests/assert.sh\nassert_eq 12.05 \"$(cents 1205)\" 'cents 1205'\nassert_eq 0.99 \"$(cents 99)\" 'cents 99'\nassert_eq 3.00 \"$(cents 300)\" 'cents 300'\necho \"format ok\"\n. lib/inventory.sh\n. tests/assert.sh\nv=$(total_value tests/fixtures/stock.csv)\necho \"total=$v\"\nassert_eq 53.13 \"$v\" 'total value'\n. lib/inventory.sh\n. tests/assert.sh\nv=$(low_stock tests/fixtures/stock.csv 5 | tr '\\n' ' ')\necho \"low5=$v\"\nassert_eq 'T-2 T-3 ' \"$v\" 'low stock below 5'\nv=$(low_stock tests/fixtures/stock.csv 11 | tr '\\n' ' ')\necho \"low11=$v\"\nassert_eq 'T-1 T-2 T-3 ' \"$v\" 'low stock below 11'\n# format.sh: money formatting\n# cents N -> dollars with exactly two decimals, e.g. 1205 -> 12.05\ncents() {\n  local n=$1\n  printf '%d.%d\\n' $(( n / 100 )) $(( n % 100 ))\n}\n# inventory.sh: stock file helpers.\n# Stock files are CSV: sku,name,qty,price_cents with a header line. Names may\n# be quoted and contain commas. Exports from the warehouse system do not end\n# with a newline.\n. lib/format.sh\n\n# each_item FILE: print \"sku qty price_cents\" for every data row\neach_item() {\n  local sku name qty price\n  {\n    read -r _header\n    while IFS=, read -r sku name qty price; do\n      echo \"$sku $qty $price\"\n    done\n  } < \"$1\"\n}\n\n# total_value FILE: sum of qty*price_cents over all rows, formatted as dollars\ntotal_value() {\n  local total=0 sku qty price\n  while read -r sku qty price; do\n    total=$(( total + qty * price ))\n  done < <(each_item \"$1\")\n  cents \"$total\"\n}\n\n# low_stock FILE MIN: skus with qty strictly below MIN, sorted by sku\nlow_stock() {\n  local sku qty price\n  each_item \"$1\" | while read -r sku qty price; do\n    if [[ $qty < $2 ]]; then echo \"$sku\"; fi\n  done | sort\n}\n#!/bin/bash\n# Writes build/report.txt for data/stock.csv.\ncd \"$(dirname \"$0\")/..\" || exit 2\n. lib/inventory.sh\nmkdir -p build\n{\n  echo \"total: $(total_value data/stock.csv)\"\n  echo \"low:   $(low_stock data/stock.csv 10 | tr '\\n' ' ' | sed 's/ $//')\"\n} > build/report.txt\ncat build/report.txt\n"
+          },
+          {
+            "commands": "cd /home/eval/inventory\ncat tests/fixtures/stock.csv\necho \"--- data/stock.csv ---\"\ncat data/stock.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "sku,name,qty,price_cents\nT-1,Widget,10,150\nT-2,\"Gadget, large\",3,1205\nT-3,Gizmo,2,99--- data/stock.csv ---\nsku,name,qty,price_cents\nA-100,Hex bolt M4,120,15\nA-101,Hex nut M4,7,4\nB-104,\"Washer, steel\",40,5\nC-200,Hinge,3,1205\nC-201,Hinge pin,12,99\nD-300,Bracket,9,250"
+          },
+          {
+            "commands": "cd /home/eval/inventory\nwc -l tests/fixtures/stock.csv data/stock.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "  3 tests/fixtures/stock.csv\n  6 data/stock.csv\n  9 total\n"
+          },
+          {
+            "commands": "python3 -c \"\nwith open('/home/eval/inventory/tests/fixtures/stock.csv', 'rb') as f:\n    print('fixtures stock:', repr(f.read()))\nwith open('/home/eval/inventory/data/stock.csv', 'rb') as f:\n    print('data stock:', repr(f.read()))\n\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "fixtures stock: b'sku,name,qty,price_cents\\nT-1,Widget,10,150\\nT-2,\"Gadget, large\",3,1205\\nT-3,Gizmo,2,99'\ndata stock: b'sku,name,qty,price_cents\\nA-100,Hex bolt M4,120,15\\nA-101,Hex nut M4,7,4\\nB-104,\"Washer, steel\",40,5\\nC-200,Hinge,3,1205\\nC-201,Hinge pin,12,99\\nD-300,Bracket,9,250'\n"
+          },
+          {
+            "commands": "find tests/",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "tests/\ntests/assert.sh\ntests/fixtures\ntests/fixtures/stock.csv\ntests/run.sh\ntests/test_1_format.sh\ntests/test_2_total.sh\ntests/test_3_low.sh\n"
+          },
+          {
+            "commands": "python3 -c \"\nwith open('data/stock.csv') as f:\n    lines = [line.strip() for line in f if line.strip()][1:]\nimport csv\nreader = csv.reader(lines)\ntotal = 0\nfor row in reader:\n    sku, name, qty, price = row[0], row[1], int(row[2]), int(row[3])\n    total += qty * price\nprint('Total cents:', total, 'dollars:', f'{total/100:.2f}')\n\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Total cents: 9081 dollars: 90.81\n"
+          },
+          {
+            "commands": "python3 -c \"\nwith open('data/stock.csv') as f:\n    lines = [line.strip() for line in f if line.strip()][1:]\nimport csv\nreader = csv.reader(lines)\nfor row in reader:\n    sku, name, qty, price = row[0], row[1], int(row[2]), int(row[3])\n    if qty < 10:\n        print(sku, qty)\n\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "A-101 7\nC-200 3\nD-300 9\n"
+          },
+          {
+            "commands": "python3 -c \"\nwith open('tests/fixtures/stock.csv') as f:\n    lines = [line.strip() for line in f if line.strip()][1:]\nimport csv\nreader = csv.reader(lines)\ntotal = 0\nfor row in reader:\n    sku, name, qty, price = row[0], row[1], int(row[2]), int(row[3])\n    total += qty * price\nprint('Total cents:', total, 'dollars:', f'{total/100:.2f}')\n\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Total cents: 5313 dollars: 53.13\n"
+          },
+          {
+            "commands": "which awk python3 python sed",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/usr/bin/awk\n/usr/bin/python3\n/usr/bin/python\n/usr/bin/sed\n"
+          },
+          {
+            "commands": "awk --version",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "GNU Awk 5.2.1 (bashkit)\n"
+          },
+          {
+            "commands": "awk -v FPAT='([^,]+)|(\"[^\"]+\")' 'NR>1 {\n  sku=$1;\n  qty=$3;\n  price=$4;\n  gsub(/^\"|\"$/, \"\", sku);\n  gsub(/^\"|\"$/, \"\", qty);\n  gsub(/^\"|\"$/, \"\", price);\n  print sku, qty, price;\n}' tests/fixtures/stock.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "T-1 10 150\nT-2 3 1205\nT-3 2 99\n"
+          },
+          {
+            "commands": "awk -v FPAT='([^,]+)|(\"[^\"]+\")' 'NR>1 {\n  sku=$1;\n  qty=$3;\n  price=$4;\n  gsub(/^\"|\"$/, \"\", sku);\n  gsub(/^\"|\"$/, \"\", qty);\n  gsub(/^\"|\"$/, \"\", price);\n  print sku, qty, price;\n}' data/stock.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "A-100 120 15\nA-101 7 4\nB-104 40 5\nC-200 3 1205\nC-201 12 99\nD-300 9 250\n"
+          },
+          {
+            "commands": "cat << 'EOF' > lib/format.sh\n# format.sh: money formatting\n# cents N -> dollars with exactly two decimals, e.g. 1205 -> 12.05\ncents() {\n  local n=$1\n  printf '%d.%02d\\n' $(( n / 100 )) $(( n % 100 ))\n}\nEOF\n\ncat << 'EOF' > lib/inventory.sh\n# inventory.sh: stock file helpers.\n# Stock files are CSV: sku,name,qty,price_cents with a header line. Names may\n# be quoted and contain commas. Exports from the warehouse system do not end\n# with a newline.\n. lib/format.sh\n\n# each_item FILE: print \"sku qty price_cents\" for every data row\neach_item() {\n  awk -v FPAT='([^,]+)|(\"[^\"]+\")' 'NR>1 {\n    sku=$1;\n    qty=$3;\n    price=$4;\n    gsub(/^\"|\"$/, \"\", sku);\n    gsub(/^\"|\"$/, \"\", qty);\n    gsub(/^\"|\"$/, \"\", price);\n    print sku, qty, price;\n  }' \"$1\"\n}\n\n# total_value FILE: sum of qty*price_cents over all rows, formatted as dollars\ntotal_value() {\n  local total=0 sku qty price\n  while read -r sku qty price || [ -n \"$sku\" ]; do\n    [ -z \"$sku\" ] && continue\n    total=$(( total + qty * price ))\n  done < <(each_item \"$1\")\n  cents \"$total\"\n}\n\n# low_stock FILE MIN: skus with qty strictly below MIN, sorted by sku\nlow_stock() {\n  local sku qty price min=$2\n  each_item \"$1\" | while read -r sku qty price || [ -n \"$sku\" ]; do\n    [ -z \"$sku\" ] && continue\n    if (( qty < min )); then echo \"$sku\"; fi\n  done | sort\n}\nEOF",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "cd /home/eval/inventory && make test",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "ok   test_1_format\nok   test_2_total\nok   test_3_low\nPASS 3/3\n"
+          },
+          {
+            "commands": "cd /home/eval/inventory && make report",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "total: 90.81\nlow:   A-101 C-200 D-300\n"
+          },
+          {
+            "commands": "cat /home/eval/inventory/build/report.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "total: 90.81\nlow:   A-101 C-200 D-300\n"
+          },
+          {
+            "commands": "(cd /tmp && bash /home/eval/inventory/tests/run.sh)",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "ok   test_1_format\nok   test_2_total\nok   test_3_low\nPASS 3/3\n"
+          },
+          {
+            "commands": "(cd /home/eval/inventory && . lib/inventory.sh && each_item tests/fixtures/stock.csv)",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "T-1 10 150\nT-2 3 1205\nT-3 2 99\n"
+          },
+          {
+            "commands": "(\n  DIR=$(mktemp -d)\n  cd \"$DIR\"\n  echo \"Testing from $DIR\"\n  . /home/eval/inventory/lib/inventory.sh\n)",
+            "exit_code": 0,
+            "stderr": "/home/eval/inventory/lib/inventory.sh: line 5: lib/format.sh: No such file or directory\n",
+            "stdout": "Testing from /tmp/tmp.xYEEbDYVkG\n"
+          },
+          {
+            "commands": "cat << 'EOF' > /home/eval/inventory/lib/inventory.sh\n# inventory.sh: stock file helpers.\n# Stock files are CSV: sku,name,qty,price_cents with a header line. Names may\n# be quoted and contain commas. Exports from the warehouse system do not end\n# with a newline.\nLIB_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\n. \"$LIB_DIR/format.sh\"\n\n# each_item FILE: print \"sku qty price_cents\" for every data row\neach_item() {\n  awk -v FPAT='([^,]+)|(\"[^\"]+\")' 'NR>1 {\n    sku=$1;\n    qty=$3;\n    price=$4;\n    gsub(/^\"|\"$/, \"\", sku);\n    gsub(/^\"|\"$/, \"\", qty);\n    gsub(/^\"|\"$/, \"\", price);\n    print sku, qty, price;\n  }' \"$1\"\n}\n\n# total_value FILE: sum of qty*price_cents over all rows, formatted as dollars\ntotal_value() {\n  local total=0 sku qty price\n  while read -r sku qty price || [ -n \"$sku\" ]; do\n    [ -z \"$sku\" ] && continue\n    total=$(( total + qty * price ))\n  done < <(each_item \"$1\")\n  cents \"$total\"\n}\n\n# low_stock FILE MIN: skus with qty strictly below MIN, sorted by sku\nlow_stock() {\n  local sku qty price min=$2\n  each_item \"$1\" | while read -r sku qty price || [ -n \"$sku\" ]; do\n    [ -z \"$sku\" ] && continue\n    if (( qty < min )); then echo \"$sku\"; fi\n  done | sort\n}\nEOF",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "cd /home/eval/inventory\nmake test\nmake report",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "ok   test_1_format\nok   test_2_total\nok   test_3_low\nPASS 3/3\ntotal: 90.81\nlow:   A-101 C-200 D-300\n"
+          },
+          {
+            "commands": "cd /home/eval/inventory && git status",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "On branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/report.txt\n\tbuild/test-report.txt\n\tbuild/test_1_format.log\n\tbuild/test_2_total.log\n\tbuild/test_3_low.log\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

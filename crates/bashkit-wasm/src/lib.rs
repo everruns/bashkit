@@ -35,7 +35,11 @@ use serde::Serialize;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::{JsFuture, future_to_promise};
 
+#[cfg(any(feature = "python", feature = "typescript"))]
+mod runtime_functions;
+
 mod hostfs;
+mod streaming;
 use hostfs::HostFs;
 
 #[cfg(feature = "terminal")]
@@ -362,7 +366,16 @@ fn sanitize_js_error(value: &JsValue) -> String {
 /// Parsed, `Send`-free construction config. Kept so `reset()` can rebuild an
 /// equivalent interpreter.
 struct Config {
+    registry: bashkit::BuiltinRegistry,
     profile: bashkit::ExecutionProfileName,
+    #[cfg_attr(not(feature = "python"), allow(dead_code))]
+    python: bool,
+    #[cfg_attr(not(feature = "typescript"), allow(dead_code))]
+    typescript: bool,
+    #[cfg_attr(not(feature = "python"), allow(dead_code))]
+    external_functions: Vec<String>,
+    #[cfg_attr(not(feature = "typescript"), allow(dead_code))]
+    typescript_external_functions: Vec<String>,
     username: Option<String>,
     hostname: Option<String>,
     cwd: Option<String>,
@@ -413,6 +426,19 @@ impl Bash {
         })
     }
 
+    /// Register a live command. Cloned I/O handles expire with the execution.
+    #[wasm_bindgen(js_name = addCommand)]
+    pub fn add_command(&self, name: String, callback: js_sys::Function) {
+        self.config.registry.insert_command(
+            name.clone(),
+            streaming::JsCommand {
+                name,
+                callback: SendWrapper::new(callback),
+                in_sync: self.sync_flag.clone(),
+            },
+        );
+    }
+
     /// Execute `commands` synchronously and return the result.
     ///
     /// Only valid for scripts that complete without yielding — i.e. plain bash
@@ -446,15 +472,17 @@ impl Bash {
     // (e.g. execute() invoked from inside a builtin callback) into a clean error
     // instead of a panic, so holding it across the await point is sound here.
     #[allow(clippy::await_holding_refcell_ref)]
-    pub fn execute(&self, commands: String) -> js_sys::Promise {
+    pub fn execute(&self, commands: String, options: JsValue) -> js_sys::Promise {
         let inner = self.inner.clone();
         future_to_promise(async move {
             let mut guard = inner.try_borrow_mut().map_err(|_| {
                 JsError::new("bash instance is busy (reentrant execution is not supported)")
             })?;
-            match guard.exec(&commands).await {
+            match streaming::execute(&mut guard, &commands, options, bashkit::ExecOptions::new())
+                .await
+            {
                 Ok(r) => Ok(JsValue::from(ExecResult::from(r))),
-                Err(e) => Err(JsValue::from(JsError::new(&e.to_string()))),
+                Err(e) => Err(e),
             }
         })
     }
@@ -503,6 +531,52 @@ impl Bash {
                 Ok(r) => Ok(JsValue::from(ExecResult::from(r))),
                 Err(e) => Err(JsValue::from(JsError::new(&e.to_string()))),
             }
+        })
+    }
+
+    /// Execute with a revocable, per-execution host dispatcher.
+    #[cfg(any(feature = "python", feature = "typescript"))]
+    #[wasm_bindgen(js_name = executeWithRuntime)]
+    #[allow(clippy::await_holding_refcell_ref)]
+    pub fn execute_with_runtime(
+        &self,
+        commands: String,
+        dispatcher: js_sys::Function,
+        on_output: Option<js_sys::Function>,
+        options: JsValue,
+    ) -> js_sys::Promise {
+        let inner = self.inner.clone();
+        let session = runtime_functions::Session(SendWrapper::new(dispatcher));
+        future_to_promise(async move {
+            let mut guard = inner.try_borrow_mut().map_err(|_| {
+                JsError::new("bash instance is busy (reentrant execution is not supported)")
+            })?;
+            let exec_options = bashkit::ExecOptions::new()
+                .extensions(bashkit::ExecutionExtensions::new().with(session));
+            let error = Arc::new(Mutex::new(None));
+            let exec_options = if let Some(output) = on_output {
+                let output = SendWrapper::new(output);
+                let error = error.clone();
+                exec_options.streaming(Box::new(move |stdout, stderr| {
+                    if error.lock().is_ok_and(|slot| slot.is_some()) {
+                        return;
+                    }
+                    if let Err(value) = output.call2(
+                        &JsValue::NULL,
+                        &JsValue::from_str(stdout),
+                        &JsValue::from_str(stderr),
+                    ) {
+                        *error.lock().expect("output error lock") = Some(sanitize_js_error(&value));
+                    }
+                }))
+            } else {
+                exec_options
+            };
+            let result = streaming::execute(&mut guard, &commands, options, exec_options).await;
+            if let Some(error) = error.lock().expect("output error lock").take() {
+                return Err(JsError::new(&error).into());
+            }
+            result.map(|r| JsValue::from(ExecResult::from(r)))
         })
     }
 
@@ -876,7 +950,50 @@ fn core_builder(config: &Config, sync_flag: &Arc<AtomicBool>) -> bashkit::BashBu
         );
     }
 
-    builder
+    #[cfg(feature = "python")]
+    if config.python {
+        builder = builder.env("BASHKIT_ALLOW_INPROCESS_PYTHON", "1");
+        builder = if config.external_functions.is_empty() {
+            builder.python()
+        } else {
+            builder.python_with_external_handler(
+                profile.python_limits().clone(),
+                config.external_functions.clone(),
+                runtime_functions::python_handler(),
+            )
+        };
+    }
+    #[cfg(feature = "typescript")]
+    if config.typescript {
+        builder = if config.typescript_external_functions.is_empty() {
+            builder.typescript()
+        } else {
+            builder.typescript_with_external_handler(
+                profile.typescript_limits().clone(),
+                config.typescript_external_functions.clone(),
+                runtime_functions::typescript_handler(),
+            )
+        };
+    }
+    builder.builtin_registry(config.registry.clone())
+}
+
+fn read_function_names(options: &JsValue, key: &str) -> Result<Vec<String>, JsError> {
+    let value = js_sys::Reflect::get(options, &JsValue::from_str(key))
+        .map_err(|_| JsError::new("cannot read function names"))?;
+    if value.is_undefined() {
+        return Ok(Vec::new());
+    }
+    if !js_sys::Array::is_array(&value) {
+        return Err(JsError::new("function names must be an array"));
+    }
+    js_sys::Array::from(&value)
+        .iter()
+        .map(|v| {
+            v.as_string()
+                .ok_or_else(|| JsError::new("function names must be strings"))
+        })
+        .collect()
 }
 
 /// Seed pre-created files as normal writable VFS entries.
@@ -896,7 +1013,12 @@ fn seed_files(fs: &Arc<dyn FileSystemTrait>, files: &[(String, String)]) -> Resu
 fn parse_options(options: &JsValue) -> Result<Config, JsError> {
     if options.is_undefined() || options.is_null() {
         return Ok(Config {
+            registry: bashkit::BuiltinRegistry::new(),
             profile: bashkit::ExecutionProfileName::Standard,
+            python: false,
+            typescript: false,
+            external_functions: Vec::new(),
+            typescript_external_functions: Vec::new(),
             username: None,
             hostname: None,
             cwd: None,
@@ -958,6 +1080,34 @@ fn parse_options(options: &JsValue) -> Result<Config, JsError> {
         _ => None,
     };
 
+    let flag = |key: &str| -> Result<bool, JsError> {
+        let value = js_sys::Reflect::get(options, &JsValue::from_str(key))
+            .map_err(|_| JsError::new("cannot read runtime option"))?;
+        if value.is_undefined() {
+            return Ok(false);
+        }
+        value
+            .as_bool()
+            .ok_or_else(|| JsError::new("runtime flags must be booleans"))
+    };
+    let python = flag("python")?;
+    let typescript = flag("typescript")?;
+    if (python && !cfg!(feature = "python")) || (typescript && !cfg!(feature = "typescript")) {
+        return Err(JsError::new(
+            "runtime unavailable in this bundle; import @everruns/bashkit-wasm/runtimes",
+        ));
+    }
+    let external_functions = read_function_names(options, "externalFunctions")?;
+    let typescript_external_functions =
+        read_function_names(options, "typescriptExternalFunctions")?;
+    if (!external_functions.is_empty() && !python)
+        || (!typescript_external_functions.is_empty() && !typescript)
+    {
+        return Err(JsError::new(
+            "external functions require their runtime to be enabled",
+        ));
+    }
+
     // customBuiltins: { [name]: (ctx) => string | Promise<string> }
     let mut builtins = Vec::new();
     if let Ok(cb) = js_sys::Reflect::get(options, &JsValue::from_str("customBuiltins"))
@@ -981,7 +1131,12 @@ fn parse_options(options: &JsValue) -> Result<Config, JsError> {
     }
 
     Ok(Config {
+        registry: bashkit::BuiltinRegistry::new(),
         profile,
+        python,
+        typescript,
+        external_functions,
+        typescript_external_functions,
         username: get_str("username"),
         hostname: get_str("hostname"),
         cwd: get_str("cwd"),

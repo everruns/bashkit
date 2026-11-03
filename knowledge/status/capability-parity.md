@@ -22,7 +22,7 @@ A dash means the feature is intentionally unsupported and has a recorded reason 
 | Capability | Rust BashBuilder | Rust BashTool | Rust ScriptedTool | CLI | Python | NAPI JavaScript | Browser WASM | C ABI |
 |---|---|---|---|---|---|---|---|---|
 | Host-configurable execution resource limits | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Host-triggered cancellation of in-flight execution | ✅ | — | — | — | ✅ | ✅ | ✅ | — |
+| Host-triggered cancellation of in-flight execution | ✅ | — | — | — | ✅ | ✅ | ✅ | ✅ |
 | Execution deadlines or timeouts | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Bounded stdout and stderr with truncation reporting | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Initial virtual working directory | ✅ | ✅ | — | — | ✅ | ✅ | ✅ | ✅ |
@@ -35,12 +35,14 @@ A dash means the feature is intentionally unsupported and has a recorded reason 
 | Explicit outbound-network policy | ✅ | ✅ | — | ✅ | ✅ | ✅ | — | — |
 | Host-provided HTTP transport or egress hook | ✅ | ✅ | — | — | — | — | — | — |
 | Host-visible virtual filesystem state | ✅ | ✅ | — | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Filesystem mounts beyond seeded virtual files | ✅ | ✅ | — | ✅ | ✅ | ✅ | — | — |
+| Filesystem mounts beyond seeded virtual files | ✅ | ✅ | — | ✅ | ✅ | ✅ | — | ✅ |
 | Snapshot and restore of interpreter state | ✅ | — | — | — | ✅ | ✅ | ✅ | — |
-| Explicit embedded Python opt-in | ✅ | ✅ | — | ✅ | ✅ | ✅ | — | — |
-| Explicit embedded TypeScript opt-in | ✅ | ✅ | — | — | — | — | — | — |
+| Explicit embedded Python opt-in | ✅ | ✅ | — | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Explicit embedded TypeScript opt-in | ✅ | ✅ | — | — | ✅ | ✅ | ✅ | ✅ |
 | Explicit embedded SQLite opt-in | ✅ | ✅ | — | ✅ | ✅ | ✅ | — | — |
-| In-process interactive terminal session (keystrokes in, screen text and per-command transcript out; vi, less) | ✅ | — | — | — | ✅ | ✅ | — | — |
+| In-process interactive terminal session (keystrokes in, screen text and per-command transcript out; vi, less) | ✅ | — | — | — | ✅ | ✅ | ✅ | — |
+| Named host callbacks invoked from embedded Python | ✅ | ✅ | — | — | ✅ | ✅ | ✅ | ✅ |
+| Named host callbacks invoked from embedded TypeScript | ✅ | ✅ | — | — | ✅ | ✅ | ✅ | ✅ |
 
 ## Intentional exclusions
 
@@ -74,6 +76,8 @@ A dash means the feature is intentionally unsupported and has a recorded reason 
 - `runtime_typescript`: Language runtimes are intentionally absent from the logic-only shell.
 - `runtime_sqlite`: Language runtimes are intentionally absent from the logic-only shell.
 - `interactive_terminal`: ScriptedTool runs logic-only scripts per call and has no terminal device.
+- `host_functions_python`: Language runtimes are intentionally absent from the logic-only shell.
+- `host_functions_typescript`: Language runtimes are intentionally absent from the logic-only shell.
 
 ### CLI
 
@@ -88,20 +92,20 @@ A dash means the feature is intentionally unsupported and has a recorded reason 
 - `snapshots`: The CLI exposes no snapshot commands.
 - `runtime_typescript`: The CLI build does not register the TypeScript runtime.
 - `interactive_terminal`: The CLI's interactive mode runs on the host's real terminal (rustyline), not the in-process Terminal.
+- `host_functions_python`: A standalone process cannot receive in-process host callbacks.
+- `host_functions_typescript`: A standalone process cannot receive in-process host callbacks.
 
 ### Python
 
 - `stdin`: execute() accepts a command string and optional output callback, not top-level host stdin.
 - `host_call_suspension`: Python custom builtins await callbacks directly; no request and resume handle is exposed.
 - `transport_hooks`: Python exposes network policy and credentials but no custom HttpTransport implementation hook.
-- `runtime_typescript`: The Python package does not compile or expose the TypeScript runtime.
 
 ### NAPI JavaScript
 
 - `stdin`: execute() accepts a command string and output callback, not top-level host stdin.
 - `host_call_suspension`: NAPI custom builtins await callbacks directly; no request and resume handle is exposed.
 - `transport_hooks`: NAPI exposes network policy and credentials but no JavaScript HttpTransport hook.
-- `runtime_typescript`: The NAPI package does not compile or expose the TypeScript runtime.
 
 ### Browser WASM
 
@@ -112,25 +116,18 @@ A dash means the feature is intentionally unsupported and has a recorded reason 
 - `network_policy`: The slim browser build has no network builtin or host socket access.
 - `transport_hooks`: The slim browser build has no HTTP transport.
 - `mounts`: Browser WASM exposes one in-memory VFS and no host filesystem mounts.
-- `runtime_python`: The slim browser build omits embedded language runtimes.
-- `runtime_typescript`: The slim browser build omits embedded language runtimes.
 - `runtime_sqlite`: The slim browser build omits embedded language runtimes.
-- `interactive_terminal`: Not exposed in the slim browser package yet.
 
 ### C ABI
 
 - `runtime_env`: The C ABI exposes no post-construction configuration surface.
-- `cancellation`: ABI v1 exposes synchronous execute with no cancellation handle.
 - `stdin`: ABI v1 execute accepts script bytes only.
 - `custom_builtins`: ABI v1 has no callback registration table.
 - `host_call_suspension`: ABI v1 has no asynchronous event and resume API.
 - `tool_callbacks`: ABI v1 has no tool-callback registration table.
 - `network_policy`: ABI v1 deliberately ships only git, jq, and VFS capabilities.
 - `transport_hooks`: ABI v1 has no host HTTP transport vtable.
-- `mounts`: ABI v1 supports seeded and mutable VFS files, not filesystem mounts.
 - `snapshots`: ABI v1 has no snapshot functions.
-- `runtime_python`: ABI v1 omits embedded language runtimes.
-- `runtime_typescript`: ABI v1 omits embedded language runtimes.
 - `runtime_sqlite`: ABI v1 omits embedded language runtimes.
 - `interactive_terminal`: Not exposed in the C ABI.
 

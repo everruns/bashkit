@@ -4,6 +4,7 @@
 * [CPython WebAssembly Runtime](cpython-wasm.md) - Real CPython 3.14 as python3, compiled to WASI, snapshotted with Wizer and run on Wasmtime's Pulley interpreter over the bashkit VFS.
 * [Wasm Coreutils](wasm-coreutils.md) - Real uutils/coreutils compiled to wasm32-wasip1, precompiled to Pulley and run as sandboxed builtins on the shared WASI host.
 * [ZapCode Runtime](zapcode-runtime.md) - Embedded TypeScript runtime, external functions, VFS bridging, and resource limits.
+* [Markkit and Fetchkit Builtins](markkit-fetchkit-builtins.md) - The markkit and fetchkit CLIs as builtins with the identical interface, on the VFS and network allowlist.
 * [SQLite Builtin](sqlite-builtin.md) - Embedded SQLite through Turso with memory and virtual filesystem backends.
 * [Coreutils Argument Port](coreutils-args-port.md) - Code generation design for porting uutils clap arguments and uucore modules.
 * [Vendored jaq-json](jaq-json-vendor.md) - Why and how jq's JSON value type is vendored from upstream jaq-json, the memory meter patched into it, and how to sync upstream releases.
@@ -12,3 +13,4 @@
 * [Browser Package](browser-package.md) - Slim single-threaded WebAssembly package design for browsers and JavaScript runtimes.
 * [Non-JS WebAssembly Embedding](non-js-wasm.md) - Running bashkit as a wasm component with no JS engine and no WASI, including the Hyperlight micro-VM guest.
 * [C API](c-api.md) - Versioned native C ABI, ownership rules, packaging, and compatibility boundaries.
+* [Node Package](node-package.md) - Native JavaScript bindings and embedded-runtime callback execution across Node, Bun and Deno.

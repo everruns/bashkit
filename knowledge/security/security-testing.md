@@ -73,6 +73,17 @@ probability `10%`, count `5*`): see [fail crate docs](https://docs.rs/fail).
 2. **Filesystem failure**: I/O errors, permission denied, disk full, partial writes, data corruption
 3. **Interpreter failure**: execution errors, panic recovery, unexpected exit codes
 
+## dd GNU Regression Oracle
+
+`dd_tests` compares only tiny ordinary copies against a GNU dd binary. Discovery
+requires a successful `--version` and recognizes the `dd (coreutils)` package
+banner as well as `dd (GNU coreutils)`. GNU dd's
+[version-option code](https://github.com/coreutils/coreutils/blob/v9.4/src/dd.c#L2288)
+uses the package name; requiring the longer phrase anywhere in the output rejects
+GNU versions without a matching footer. The inert banner fixture also rejects
+uutils, BSD, and unrelated programs. Linux CI must find GNU dd; all byte, stderr,
+and exit-status assertions remain mandatory. See [Builtins](../foundations/builtins.md).
+
 ## od Width Regression Oracle
 
 `od_resource_tests` compares valid-width layouts with GNU `od` when available
@@ -95,6 +106,71 @@ from one source share their filename allocation and that rollback/unset leave no
 orphan entries or retained filename allocation. No host-exhaustion probe is needed.
 The real-Bash comparison sources both the original and post-unset replacement;
 Bash versions differ in the filename they assign to a definition inside `-c`.
+
+## Arithmetic Associative-Key Budgets
+
+`arithmetic_resource_tests` exercises the public `Bash::exec` path with keys
+bounded to a few KiB and small live-memory/work budgets. It covers repeated
+`$name` and `${name}` through `((...))`, quoted `let`, and `$((...))`, reads,
+assignment/compound assignment/increment/decrement, recursive key scanning,
+namerefs, 64 KiB key boundaries, and session recovery after rejection. Finite
+valid-key cases compare stdout and status with Bash >= 4 (associative arrays
+are unavailable in macOS's stock Bash 3.2; Linux CI supplies Bash 5.x).
+The interpreter unit test checks the exact UTF-8 append boundary and a
+cancellation checkpoint without growing a buffer after rejection. Resource
+probes run in externally supervised subprocesses; full memory-exhaustion
+payloads are unnecessary.
+
+## Pipeline admission fixtures
+
+`pipeline_admission_*` unit fixtures use ordinary two-stage no-output commands,
+one occupied job slot, zero storage admission, and an inert environment value.
+They assert typed errors, cancellation before construction, atomic shared job
+admission, and lease/slot refunds. `pipeline_admission_tests` compares a tiny
+export-isolation pipeline with real Bash and covers sequential zero-slot and
+lastpipe behavior. These fixtures need no large exported values or fan-out.
+
+## Make Substitution Admission
+
+`builtins::make::expand::tests::subst_*` covers checked result-size arithmetic,
+remaining allowance, non-overlapping Unicode/empty-pattern semantics, and tiny
+shared live-memory/work/cancellation budgets. Near-cap tests modify only a
+numeric counter; the rejected result would contain four bytes. Overflow tests
+operate on lengths without allocating them. Parser ownership tests retain two
+four-byte results and verify shared clones and final lease release.
+`make_substitution_tests` exercises ordinary immediate/recursive/append
+assignments and recipes through `Bash::exec`. No allocation or recursive
+amplification reproducer is needed for these admission contracts.
+See [Builtins](../foundations/builtins.md) and TM-DOS-126 in the
+[Threat Model](threat-model.md).
+
+## Standard-stream capture admission
+
+`fs::std_streams::tests` uses at most a few bytes per buffer. It checks
+shared capacity admission before growth, alias/write/append atomicity,
+empty-write work and cancellation, retained collection byte/text leases,
+lossy UTF-8 boundaries, stdin copy/container ownership, and temporary-copy
+admission with ordinary filesystem pass-through. Zero device-copy admission
+checks only a numeric read ceiling and never loads device bytes. Its
+`windows_containment_` name also includes it in the existing Windows job; the
+assertion requires the pre-read admission error for direct and absolute-symlink
+sources. The numeric
+`budgeted_vec_length_cap_also_bounds_geometric_capacity` fixture checks a
+five-byte ceiling without a large allocation. `dev_fd_path_tests` adds
+zero/three-byte admission configurations, session recovery, discarded
+redirects, and a two-byte alias/append comparison with real Bash.
+No amplified-output or host-exhaustion workload is required.
+
+## Streaming boundary regressions
+
+`streaming_audit_tests` uses a producer emitting 1 KiB stack chunks, a 16 KiB
+aggregate input budget, and a 64 KiB live-memory budget. It checks builtin
+stream readers, delimiter-free records and whole-input collectors without host
+exhaustion workloads, plus recovery after refusal. Gated producers prove
+redirected filters deliver before producer completion. Saved-fd tests cover
+stdout/stderr, ordering, output caps and failed sinks; byte substitution and
+redirect permutations compare against real Bash. These complement the existing
+`streaming_command_tests` cancellation/revocation and pipe backpressure tests.
 
 ## Adding New Fail Points
 

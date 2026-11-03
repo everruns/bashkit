@@ -29,6 +29,7 @@ The backend exposes file operations on the same VFS used by bash::
 from __future__ import annotations
 
 import asyncio
+import base64
 import posixpath
 import threading
 import time
@@ -37,6 +38,9 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from bashkit import BashTool as NativeBashTool
+
+if TYPE_CHECKING:
+    from bashkit._bashkit import ExternalHandler, TypeScriptExternalHandler
 
 # THREAT[TM-DOS-113]: Agent-facing VFS helpers bypass shell execution limits.
 # Keep every direct walk and retained grep result independently bounded.
@@ -53,6 +57,71 @@ _MAX_OPERATION_FILES = 10_000
 _MAX_OPERATION_BYTES = 10_000_000
 _DEFAULT_GREP_MATCHES = 1_000
 _MAX_GREP_RESULT_BYTES = 100_000
+# Mirrors deepagents' sandbox binary read cap (`MAX_BINARY_BYTES`): images, PDFs
+# and other binary files are returned base64-encoded up to this size.
+_MAX_BINARY_READ_BYTES = 500 * 1024
+
+
+# Capture-at-source preview shape, mirroring Deep Agents' `BaseSandbox` wrapper
+# so the model sees the same head/tail excerpt whichever sandbox it runs in.
+_CAPTURE_MAX_BYTES = 10 * 1024 * 1024
+_CAPTURE_HEAD_LINES = 5
+_CAPTURE_TAIL_LINES = 5
+_CAPTURE_HEAD_BYTES = 2000
+_CAPTURE_TAIL_BYTES = 2000
+_CAPTURE_CLIP_NOTICE = "... [output clipped here; {captured_bytes} bytes total, full output at the path above] ..."
+_CAPTURE_CLIP_NOTICE_CAPPED = (
+    "... [output clipped here; capture stopped at its {captured_bytes}-byte limit, "
+    "so the file at the path above is also incomplete] ..."
+)
+_CAPTURE_EXCERPT_CLIP_NOTICE = (
+    "... [the excerpts above and below are byte-capped, so the lines bordering this marker may be cut mid-line] ..."
+)
+
+
+def _capture_preview(data: bytes, *, capped: bool) -> tuple[str, bool]:
+    """Build the offload preview for captured output.
+
+    Returns ``(preview, has_truncation_marker)``: a head/tail excerpt around a
+    truncation marker when there are more lines than the head+tail budget,
+    otherwise a leading byte excerpt closed by a clip notice.
+    """
+    omitted = data.count(b"\n") - _CAPTURE_HEAD_LINES - _CAPTURE_TAIL_LINES
+    if omitted > 0:
+        head_lines = data.splitlines(keepends=True)[:_CAPTURE_HEAD_LINES]
+        tail_lines = data.splitlines(keepends=True)[-_CAPTURE_TAIL_LINES:]
+        head = b"".join(data[:_CAPTURE_HEAD_BYTES].splitlines(keepends=True)[:_CAPTURE_HEAD_LINES])
+        tail = b"".join(data[-_CAPTURE_TAIL_BYTES:].splitlines(keepends=True)[-_CAPTURE_TAIL_LINES:])
+        parts = [head]
+        if sum(map(len, head_lines)) > _CAPTURE_HEAD_BYTES or sum(map(len, tail_lines)) > _CAPTURE_TAIL_BYTES:
+            parts.append(b"\n" + _CAPTURE_EXCERPT_CLIP_NOTICE.encode() + b"\n")
+        parts.append(TRUNCATION_MARKER_TEMPLATE.format(omitted_lines=omitted).encode() + b"\n")
+        parts.append(tail)
+        return b"".join(parts).decode("utf-8", errors="replace"), True
+    budget = _CAPTURE_HEAD_BYTES + _CAPTURE_TAIL_BYTES
+    preview = data[:budget]
+    if len(data) > budget:
+        notice = _CAPTURE_CLIP_NOTICE_CAPPED if capped else _CAPTURE_CLIP_NOTICE
+        preview += b"\n" + notice.format(captured_bytes=len(data)).encode() + b"\n"
+    return preview.decode("utf-8", errors="replace"), False
+
+
+def _file_error_code(exc: Exception) -> str:
+    """Map a native VFS error to deepagents' `FileOperationError` codes.
+
+    The protocol standardizes these so the model can act on them; anything
+    unrecognized keeps the native message.
+    """
+    message = str(exc).lower()
+    if "is a directory" in message:
+        return "is_directory"
+    if "not found" in message or "no such file" in message or "not a directory" in message:
+        return "file_not_found"
+    if "permission" in message or "read-only" in message or "readonly" in message:
+        return "permission_denied"
+    if "invalid path" in message or "path traversal" in message:
+        return "invalid_path"
+    return str(exc)
 
 
 class _BudgetExceeded(Exception):
@@ -88,6 +157,7 @@ try:
     from deepagents.backends.protocol import (
         DeleteResult,
         EditResult,
+        ExecuteOffloadResult,
         ExecuteResponse,
         FileDownloadResponse,
         FileInfo,
@@ -100,15 +170,21 @@ try:
         SandboxBackendProtocol,
         WriteResult,
     )
-    from deepagents.backends.utils import compile_grep_include_glob
+    from deepagents.backends.sandbox import BaseSandbox
+    from deepagents.backends.utils import (
+        TRUNCATION_MARKER_TEMPLATE,
+        _get_backend_read_file_type,
+        compile_grep_include_glob,
+    )
     from langchain.agents.middleware.types import AgentMiddleware
-    from langchain_core.tools import tool as langchain_tool
+    from langchain_core.tools import StructuredTool
 
     DEEPAGENTS_AVAILABLE = True
 except ImportError:
     DEEPAGENTS_AVAILABLE = False
     if not TYPE_CHECKING:
         SandboxBackendProtocol = object
+        BaseSandbox = object
         AgentMiddleware = object
 
 
@@ -118,9 +194,7 @@ def _make_bash_tool(bash_instance: NativeBashTool, max_output_length: int = 100_
     tool_name = bash_instance.name
     tool_description = bash_instance.description()
 
-    @langchain_tool(tool_name, description=tool_description)
-    def bashkit(command: str) -> str:
-        result = bash_instance.execute_sync(command)
+    def format_result(result) -> str:
         output = result.stdout
         if result.error:
             output += f"\nError: {result.error}"
@@ -133,7 +207,15 @@ def _make_bash_tool(bash_instance: NativeBashTool, max_output_length: int = 100_
             output = output[:max_output_length] + "\n[truncated]"
         return output
 
-    return bashkit
+    def bashkit(command: str) -> str:
+        return format_result(bash_instance.execute_sync(command))
+
+    async def abashkit(command: str) -> str:
+        return format_result(await bash_instance.execute(command))
+
+    # Decision: provide a native coroutine. LangChain's default async wrapper
+    # runs the sync function in a worker, losing caller-loop callback affinity.
+    return StructuredTool.from_function(func=bashkit, coroutine=abashkit, name=tool_name, description=tool_description)
 
 
 if DEEPAGENTS_AVAILABLE:
@@ -159,6 +241,13 @@ if DEEPAGENTS_AVAILABLE:
             max_commands: int | None = None,
             max_loop_iterations: int | None = None,
             timeout_seconds: float | None = None,
+            python: bool = False,
+            typescript: bool = False,
+            env: dict[str, str] | None = None,
+            external_functions: list[str] | None = None,
+            external_handler: ExternalHandler | None = None,
+            typescript_external_functions: list[str] | None = None,
+            typescript_external_handler: TypeScriptExternalHandler | None = None,
         ):
             """Initialize middleware.
 
@@ -169,6 +258,18 @@ if DEEPAGENTS_AVAILABLE:
                 max_commands: Max commands (ignored if bash_tool provided)
                 max_loop_iterations: Max iterations (ignored if bash_tool provided)
                 timeout_seconds: Execution timeout in seconds (ignored if bash_tool provided)
+                python: Enable Monty Python (ignored if bash_tool provided)
+                typescript: Enable ZapCode TypeScript (ignored if bash_tool provided)
+                env: Initial environment for a new tool (ignored if bash_tool provided).
+                    Python requires BASHKIT_ALLOW_INPROCESS_PYTHON=1 at construction.
+                external_functions: Python host function names (ignored if bash_tool provided).
+                external_handler: Async ``(name, args, kwargs)`` dispatcher
+                    (ignored if bash_tool provided). Async tool calls use the
+                    caller loop; sync calls use a private worker loop.
+                typescript_external_functions: TypeScript host function names
+                    (ignored if bash_tool provided).
+                typescript_external_handler: Async ``(name, args)`` dispatcher
+                    with JSON values (ignored if bash_tool provided).
             """
             if bash_tool is not None:
                 self._bash = bash_tool
@@ -180,6 +281,13 @@ if DEEPAGENTS_AVAILABLE:
                     max_commands=max_commands,
                     max_loop_iterations=max_loop_iterations,
                     timeout_seconds=timeout_seconds,
+                    python=python,
+                    typescript=typescript,
+                    env=env,
+                    external_functions=external_functions,
+                    external_handler=external_handler,
+                    typescript_external_functions=typescript_external_functions,
+                    typescript_external_handler=typescript_external_handler,
                 )
                 self._owns_bash = True
 
@@ -203,7 +311,14 @@ if DEEPAGENTS_AVAILABLE:
             if self._owns_bash:
                 self._bash.reset()
 
-    class BashkitBackend(SandboxBackendProtocol):
+    # Decision: subclass `BaseSandbox` only so Deep Agents routes large
+    # `execute` output through `execute_with_offload` (it gates that on
+    # `isinstance(..., BaseSandbox)`). Every inherited shell/python3-script
+    # helper is overridden with a direct VFS implementation, and capture uses
+    # the native `output_file` tee: no wrapper script, `eval` or subshell, so
+    # `cd`/`export` still carry over and output beyond the in-memory stdout cap
+    # survives in the file.
+    class BashkitBackend(BaseSandbox):
         """Backend implementing SandboxBackendProtocol with Bashkit VFS.
 
         Provides execute, read, write, edit, delete, ls, glob, grep
@@ -226,6 +341,13 @@ if DEEPAGENTS_AVAILABLE:
             max_commands: int | None = None,
             max_loop_iterations: int | None = None,
             timeout_seconds: float | None = None,
+            python: bool = False,
+            typescript: bool = False,
+            env: dict[str, str] | None = None,
+            external_functions: list[str] | None = None,
+            external_handler: ExternalHandler | None = None,
+            typescript_external_functions: list[str] | None = None,
+            typescript_external_handler: TypeScriptExternalHandler | None = None,
         ):
             self._bash = NativeBashTool(
                 username=username,
@@ -233,6 +355,13 @@ if DEEPAGENTS_AVAILABLE:
                 max_commands=max_commands,
                 max_loop_iterations=max_loop_iterations,
                 timeout_seconds=timeout_seconds,
+                python=python,
+                typescript=typescript,
+                env=env,
+                external_functions=external_functions,
+                external_handler=external_handler,
+                typescript_external_functions=typescript_external_functions,
+                typescript_external_handler=typescript_external_handler,
             )
             self._id = f"bashkit-{uuid.uuid4().hex[:8]}"
             self._operation_timeout = (
@@ -255,10 +384,99 @@ if DEEPAGENTS_AVAILABLE:
         # parsing must never silently corrupt file contents or discovered paths.
         # Async protocol defaults dispatch these sync methods off the event loop.
 
-        # Deep Agents explicitly detects backends without per-call timeout support.
-        # Keep the keyword absent so the framework uses our constructor timeout.
-        def execute(self, command: str) -> ExecuteResponse:  # type: ignore[override]
-            result = self._bash.execute_sync(command)
+        # Decision: a per-call `timeout` only tightens the constructor
+        # `timeout_seconds` (native `ExecOptions::timeout` takes the minimum),
+        # so a model-chosen value can never extend the sandbox budget. `None`
+        # and `0` (Deep Agents' "no timeout" hint) both keep the configured
+        # limit.
+        @staticmethod
+        def _timeout_seconds(timeout: int | None) -> float | None:
+            if timeout is None or timeout <= 0:
+                return None
+            return float(timeout)
+
+        def execute(self, command: str, *, timeout: int | None = None) -> ExecuteResponse:
+            result = self._bash.execute_sync(command, timeout_seconds=self._timeout_seconds(timeout))
+            return self._execute_response(result)
+
+        async def aexecute(self, command: str, *, timeout: int | None = None) -> ExecuteResponse:  # noqa: ASYNC109
+            # Preserve caller-loop clients and ContextVars in runtime callbacks.
+            result = await self._bash.execute(command, timeout_seconds=self._timeout_seconds(timeout))
+            return self._execute_response(result)
+
+        enable_capture_offload = True
+
+        def execute_with_offload(
+            self,
+            command: str,
+            capture_path: str,
+            *,
+            max_inline_bytes: int,
+            max_capture_bytes: int | None = None,
+            timeout: int | None = None,
+        ) -> ExecuteOffloadResult:
+            """Run `command`, keeping its combined output in a VFS file when large."""
+            if not self.enable_capture_offload:
+                return ExecuteOffloadResult(offloaded=False, response=self.execute(command, timeout=timeout))
+            cap = self._prepare_capture(capture_path, max_capture_bytes)
+            result = self._bash.execute_sync(
+                command,
+                timeout_seconds=self._timeout_seconds(timeout),
+                output_file=capture_path,
+                max_output_file_bytes=cap,
+            )
+            return self._offload_result(result, capture_path, cap, max_inline_bytes)
+
+        async def aexecute_with_offload(
+            self,
+            command: str,
+            capture_path: str,
+            *,
+            max_inline_bytes: int,
+            max_capture_bytes: int | None = None,
+            timeout: int | None = None,  # noqa: ASYNC109
+        ) -> ExecuteOffloadResult:
+            """Async version of `execute_with_offload`."""
+            if not self.enable_capture_offload:
+                return ExecuteOffloadResult(offloaded=False, response=await self.aexecute(command, timeout=timeout))
+            cap = self._prepare_capture(capture_path, max_capture_bytes)
+            result = await self._bash.execute(
+                command,
+                timeout_seconds=self._timeout_seconds(timeout),
+                output_file=capture_path,
+                max_output_file_bytes=cap,
+            )
+            return self._offload_result(result, capture_path, cap, max_inline_bytes)
+
+        def _prepare_capture(self, capture_path: str, max_capture_bytes: int | None) -> int:
+            self._bash.mkdir(posixpath.dirname(capture_path), recursive=True)
+            return _CAPTURE_MAX_BYTES if max_capture_bytes is None else max(0, max_capture_bytes)
+
+        def _offload_result(self, result, capture_path: str, cap: int, max_inline_bytes: int) -> ExecuteOffloadResult:
+            try:
+                data = self._bash.fs().read_file(capture_path)
+            except (RuntimeError, ValueError):
+                # The tee never started (e.g. unusable path): report the
+                # in-memory result as complete output instead.
+                return ExecuteOffloadResult(offloaded=False, response=self._execute_response(result))
+            error = f"\nError: {result.error}" if result.error and result.error.encode() not in data else ""
+            if len(data) <= max_inline_bytes:
+                self._bash.remove(capture_path)
+                output = data.decode("utf-8", errors="replace") + error
+                return ExecuteOffloadResult(
+                    offloaded=False,
+                    response=ExecuteResponse(output=output, exit_code=result.exit_code, truncated=False),
+                )
+            capped = len(data) >= cap
+            preview, has_marker = _capture_preview(data, capped=capped)
+            return ExecuteOffloadResult(
+                offloaded=True,
+                response=ExecuteResponse(output=preview + error, exit_code=result.exit_code, truncated=capped),
+                preview_has_truncation_marker=has_marker,
+            )
+
+        @staticmethod
+        def _execute_response(result) -> ExecuteResponse:
             output = result.stdout + (result.stderr or "")
             if result.error and result.error not in output:
                 output += f"\nError: {result.error}"
@@ -304,6 +522,8 @@ if DEEPAGENTS_AVAILABLE:
             try:
                 path = self._path(file_path)
                 metadata = self._bash.stat(path)
+                if _get_backend_read_file_type(path) != "text":
+                    return self._read_binary(file_path, path, metadata["size"])
                 budget = self._budget(_cancelled)
                 self._charge(budget, files=1, size=metadata["size"])
                 selected = []
@@ -315,7 +535,13 @@ if DEEPAGENTS_AVAILABLE:
                         selected.append(line)
             except _BudgetExceeded:
                 return ReadResult(error="read resource budget exceeded")
+            except UnicodeDecodeError:
+                # Text-by-extension file holding non-UTF-8 bytes: return it as
+                # base64 like Deep Agents' own backends instead of failing.
+                return self._read_binary(file_path, path, metadata["size"])
             except (RuntimeError, ValueError) as exc:
+                if "utf-8" in str(exc).lower():
+                    return self._read_binary(file_path, path, metadata["size"])
                 return ReadResult(error=str(exc))
             start_line = end_line = total_lines = next_offset = None
             if selected:
@@ -330,6 +556,35 @@ if DEEPAGENTS_AVAILABLE:
                 total_lines=total_lines,
                 next_offset=next_offset,
             )
+
+        def _read_binary(self, file_path: str, path: str, size: int) -> ReadResult:
+            """Return a whole binary file base64-encoded (multimodal reads)."""
+            if size > _MAX_BINARY_READ_BYTES:
+                limit = _MAX_BINARY_READ_BYTES
+                return ReadResult(
+                    error=f"File '{file_path}': Binary file exceeds maximum preview size of {limit} bytes"
+                )
+            try:
+                raw = self._bash.fs().read_file(path)
+            except (RuntimeError, ValueError) as exc:
+                return ReadResult(error=str(exc))
+            return ReadResult(file_data={"content": base64.b64encode(raw).decode("ascii"), "encoding": "base64"})
+
+        # BaseSandbox's async helpers run shell scripts through `aexecute`;
+        # route them to the direct VFS implementations instead.
+        async def als(self, path: str) -> LsResult:
+            return await asyncio.to_thread(self.ls, path)
+
+        async def awrite(self, file_path: str, content: str) -> WriteResult:
+            return await asyncio.to_thread(self.write, file_path, content)
+
+        async def aedit(
+            self, file_path: str, old_string: str, new_string: str, replace_all: bool = False
+        ) -> EditResult:
+            return await asyncio.to_thread(self.edit, file_path, old_string, new_string, replace_all)
+
+        async def adelete(self, file_path: str) -> DeleteResult:
+            return await asyncio.to_thread(self.delete, file_path)
 
         async def aread(self, file_path: str, offset: int = 0, limit: int = 2000) -> ReadResult:
             return await self._run_cancellable(self.read, file_path, offset, limit)
@@ -475,7 +730,7 @@ if DEEPAGENTS_AVAILABLE:
                     content = self._bash.fs().read_file(self._path(path))
                     responses.append(FileDownloadResponse(path=path, content=content))
                 except (RuntimeError, ValueError) as exc:
-                    responses.append(FileDownloadResponse(path=path, error=str(exc)))
+                    responses.append(FileDownloadResponse(path=path, error=_file_error_code(exc)))
             return responses
 
         def upload_files(self, files: list[tuple[str, bytes]]) -> list[FileUploadResponse]:
@@ -487,7 +742,7 @@ if DEEPAGENTS_AVAILABLE:
                     self._bash.fs().write_file(absolute, content)
                     responses.append(FileUploadResponse(path=path))
                 except (RuntimeError, ValueError) as exc:
-                    responses.append(FileUploadResponse(path=path, error=str(exc)))
+                    responses.append(FileUploadResponse(path=path, error=_file_error_code(exc)))
             return responses
 
         # === Utility ===

@@ -27,6 +27,17 @@ pip install 'bashkit[pydantic-ai]'
 pip install 'bashkit[deepagents]'
 ```
 
+### Windows 11 Smart App Control
+
+If importing the native module fails with `An Application Control policy has
+blocked this file`, PondGuard's reported workaround is to pin
+`bashkit==0.20.0` and run tests with `python -m pytest`. Keep Smart App Control
+enabled. The pin was verified on the reporter's machine; both 0.20.0 and 0.20.1
+Windows modules lack embedded Authenticode signatures, so other machines may
+make a different trust decision. `python -m pytest` avoids a blocked launcher
+but cannot load a blocked native module. See the
+[Windows reproduction, evidence, and workaround guide](https://bashkit.sh/docs/start-python/#windows-11-smart-app-control).
+
 ## Quick Start
 
 ### Sync Execution
@@ -83,6 +94,28 @@ bash = Bash(
     python=False,
 )
 ```
+
+### Embedded Python and TypeScript
+
+Native wheels include both runtimes, disabled by default. Enable only those
+your application needs:
+
+```python
+from bashkit import BashTool
+
+# Python also requires host opt-in; scripts cannot set this permission.
+tool = BashTool(
+    python=True,
+    typescript=True,
+    env={"BASHKIT_ALLOW_INPROCESS_PYTHON": "1"},
+)
+assert tool.execute_sync("python -c 'print(42)'").stdout == "42\n"
+assert tool.execute_sync("ts -c '42'").stdout == "42\n"
+```
+
+LangChain's `BashkitTool` and deepagents' middleware/backend accept the same
+flags. Runtime flags survive `reset()`; supply them explicitly when restoring
+with `BashTool.from_snapshot()` or `BashTool.from_snapshot_keyed()`.
 
 ### Live Output
 
@@ -415,6 +448,87 @@ result = tool.execute_sync("echo 'Hello from BashTool'")
 print(result.stdout)
 ```
 
+## Python Function Calls
+
+Register host functions for code running in embedded Python. Both `Bash` and
+`BashTool` accept `external_functions` and an async `external_handler`:
+
+```python
+from bashkit import BashTool
+
+
+async def handler(name, args, kwargs):
+    if name == "lookup":
+        return {"value": args[0] * kwargs["multiplier"]}
+    raise ValueError(f"Unknown function: {name}")
+
+
+tool = BashTool(
+    python=True,
+    env={"BASHKIT_ALLOW_INPROCESS_PYTHON": "1"},
+    external_functions=["lookup"],
+    external_handler=handler,
+)
+result = await tool.execute("python -c 'print(lookup(21, multiplier=2)[\"value\"])'")
+assert result.stdout == "42\n"
+```
+
+LangChain's `create_bash_tool` / `BashkitTool` and deepagents' middleware/backend
+accept the same options. `ainvoke()` and `BashkitBackend.aexecute()` run callbacks
+on the caller's active asyncio loop, preserving loop-bound clients and request
+ContextVars. Use these async APIs in FastAPI async endpoints or notebook cells
+with top-level `await`.
+
+Synchronous execution works from ordinary threads, FastAPI sync endpoints, and
+notebook cells with an already-running loop. It drives callbacks on a dedicated
+private worker loop shared across synchronous calls to that instance. Clients
+bound to another loop must use the async API. ContextVars are captured for each
+execution; a shared instance serializes requests. Timeouts and cancellation
+cancel that execution's pending callback tasks.
+
+If another handler is already waiting on the current loop, synchronous access
+to that same interpreter fails immediately: blocking the loop would deadlock
+the handler. Use the async API or move the synchronous operation to
+`asyncio.to_thread()`.
+
+Callbacks are trusted host code: enforce service authorization and I/O limits
+there. They cannot re-enter their own interpreter or live filesystem handles;
+pass data through arguments/results or use another instance. Function names and
+handlers survive `reset()` and in-place restore. Snapshot bytes do not serialize
+callbacks: supply them again to `from_snapshot()` / `from_snapshot_keyed()`.
+
+Runnable notebook: [`runtime_external_functions.ipynb`](../../examples/runtime_external_functions.ipynb).
+
+### TypeScript Function Calls
+
+`BashTool` and its LangChain/deepagents adapters also accept separate
+`typescript_external_functions` / `typescript_external_handler` options:
+
+```python
+async def ts_handler(name, args):
+    return {"value": args[0] * args[1]["multiplier"]}
+
+
+tool = BashTool(
+    typescript=True,
+    typescript_external_functions=["lookup"],
+    typescript_external_handler=ts_handler,
+)
+result = await tool.execute("ts -c 'const r = await lookup(21, {multiplier: 2}); r.value'")
+assert result.stdout == "42\n"
+```
+
+TypeScript dispatch receives `(name, args)`; use an object argument for named
+options. Values cross as `None`/null, booleans, signed 64-bit integers, finite
+floats, strings, lists, and string-keyed dictionaries. `undefined` arguments map
+to `None`; function arguments, unsupported return objects, non-finite numbers,
+and nesting deeper than 64 levels are rejected. Python and TypeScript handlers
+can coexist, share the VFS, and use the same thread/loop/reset/snapshot rules.
+Native host handlers are unavailable in the Pyodide build.
+
+ZapCode currently loses `console.log()` output produced after an external call.
+Return the final expression as shown above, or write results into the VFS.
+
 ## Persistent Custom Builtins
 
 Use `custom_builtins={...}` on `Bash` or `BashTool` when you want
@@ -574,9 +688,24 @@ assert backend.grep("print", "/tmp", glob="*.py").matches[0]["line"] == 1
 middleware = backend.create_middleware()  # Shares the same virtual filesystem
 ```
 
-Uses the structured Deep Agents 0.7.13+ backend protocol. Shell execution reports
-native output truncation; file operations preserve exact VFS contents. Configure
-execution timeouts on the backend constructor.
+Uses the structured Deep Agents 0.7.32+ backend protocol. Shell execution reports
+native output truncation; file operations preserve exact VFS contents. The
+constructor `timeout_seconds` is the execution budget; a per-command `timeout`
+from the agent can shorten it but never extend it. Images, PDFs and other
+binary files are read as base64 (up to 500 KB) so multimodal models can see
+them, and upload/download failures use the protocol's error codes
+(`file_not_found`, `is_directory`, `permission_denied`, `invalid_path`).
+
+Large command output is kept in the virtual filesystem: when Deep Agents
+offloads an `execute` result, the full combined output (up to 10 MB, beyond the
+1 MB in-memory stdout cap) is written to `/large_tool_results/<id>` and the
+model gets a head/tail preview it can follow up with `grep` or `read_file`.
+Shell state (`cd`, `export`, functions) carries over between commands.
+
+`Bash`/`BashTool` `execute*` methods accept the same per-call cap directly:
+`execute_sync("make test", timeout_seconds=10)`. `execute`/`execute_sync` can
+also tee combined output to a VFS file:
+`execute_sync("pytest", output_file="/tmp/pytest.log", max_output_file_bytes=10_000_000)`.
 
 ## API Reference
 

@@ -335,13 +335,23 @@ impl Builtin for Cp {
         let mut stderr = String::new();
         for source in sources {
             let src_path = resolve_path(ctx.cwd, source);
+            // Path::file_name normalizes away a trailing dot, but cp treats
+            // source/. as the directory's contents, including with a final slash.
+            let contents_only = source
+                .rsplit(std::path::is_separator)
+                .find(|component| !component.is_empty())
+                == Some(".");
 
             let final_dest = if dest_is_dir {
                 // Copy into directory
-                let filename = Path::new(source)
-                    .file_name()
-                    .map(|s| s.to_string_lossy().to_string())
-                    .unwrap_or_else(|| source.to_string());
+                let filename = if contents_only {
+                    ".".to_string()
+                } else {
+                    Path::new(source)
+                        .file_name()
+                        .map(|s| s.to_string_lossy().to_string())
+                        .unwrap_or_else(|| source.to_string())
+                };
                 vfs_join(&dest_path, &filename)
             } else {
                 dest_path.clone()
@@ -361,10 +371,14 @@ impl Builtin for Cp {
                 }
                 if final_dest.starts_with(&src_path) {
                     let shown = if dest_is_dir {
-                        let name = Path::new(source.as_str())
-                            .file_name()
-                            .map(|s| s.to_string_lossy().into_owned())
-                            .unwrap_or_default();
+                        let name = if contents_only {
+                            ".".to_string()
+                        } else {
+                            Path::new(source.as_str())
+                                .file_name()
+                                .map(|s| s.to_string_lossy().into_owned())
+                                .unwrap_or_default()
+                        };
                         format!("{}/{name}", dest.trim_end_matches('/'))
                     } else {
                         dest.to_string()

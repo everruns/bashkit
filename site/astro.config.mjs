@@ -47,6 +47,7 @@ const DOC_LINKS = new Map([
   ["start-browser.md", "/docs/start-browser/"],
   ["start-pyodide.md", "/docs/start-pyodide/"],
   ["structured-data.md", "/docs/structured-data/"],
+  ["streaming.md", "/docs/streaming/"],
   ["targets.md", "/docs/start/"],
   ["terminal.md", "/docs/terminal/"],
   ["threat-model.md", "/docs/security/"],

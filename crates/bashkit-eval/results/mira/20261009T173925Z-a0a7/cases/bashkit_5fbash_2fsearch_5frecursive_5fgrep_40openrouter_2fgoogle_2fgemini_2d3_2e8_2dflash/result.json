@@ -1,0 +1,120 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "search_recursive_grep",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "Search all .py files under /project for functions that contain the word 'validate'. For each match, print the filename and line number in the format 'filename:linenum: matched_line'. Then count the total number of matches and print 'Total matches: N'."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "",
+    "iterations": 10,
+    "tool_calls_count": 10,
+    "tool_calls": [
+      "ls -la /project",
+      "find /project -name \"*.py\"",
+      "cat /project/app/auth.py\necho \"---\"\ncat /project/app/forms.py\necho \"---\"\ncat /project/app/utils.py\necho \"---\"\ncat /project/tests/test_auth.py",
+      "grep -rnE 'def [a-zA-Z0-9_]*validate' /project",
+      "grep -rn \"validate\" /project",
+      "grep -rn \"def .*validate\" /project --include=\"*.py\"",
+      "python3 -c \"\nimport glob, re\n\nmatches = []\n# Find all .py files under /project recursively\nfiles = sorted(glob.glob('/project/**/*.py', recursive=True))\nfor fpath in files:\n    with open(fpath) as f:\n        for idx, line in enumerate(f, 1):\n            if re.match(r'^\\s*def\\s+.*validate', line):\n                matches.append((fpath, idx, line.rstrip('\\n')))\n\nfor fpath, idx, line in matches:\n    print(f'{fpath}:{idx}: {line}')\nprint(f'Total matches: {len(matches)}')\n\"",
+      "grep -rn \"def .*validate\" /project --include=\"*.py\"\necho \"Total matches: $(grep -rc \"def .*validate\" /project --include=\"*.py\" | awk -F: '{s+=$2} END {print s}')\"",
+      "grep -n -E '^[[:space:]]*def .*validate' $(find /project -name \"*.py\" | sort) | sed -E 's/^([^:]+):([0-9]+):(.*)$/\\1:\\2: \\3/'",
+      "grep -H -n -E 'def .*validate' /project/app/*.py /project/tests/*.py"
+    ],
+    "usage": {
+      "input_tokens": 10531,
+      "output_tokens": 1012,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 37703
+    },
+    "metrics": {
+      "natural_stop": 0.0,
+      "tool_calls": 10.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 10.0,
+      "turns": 10.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /project",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "drwxr-xr-x        0 2026-10-09 17:43 app\ndrwxr-xr-x        0 2026-10-09 17:43 tests\n"
+          },
+          {
+            "commands": "find /project -name \"*.py\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/project/app/auth.py\n/project/app/forms.py\n/project/app/utils.py\n/project/tests/test_auth.py\n"
+          },
+          {
+            "commands": "cat /project/app/auth.py\necho \"---\"\ncat /project/app/forms.py\necho \"---\"\ncat /project/app/utils.py\necho \"---\"\ncat /project/tests/test_auth.py",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "def validate_token(token):\n    if not token:\n        return False\n    return len(token) > 10\n\ndef check_auth(request):\n    token = request.get('token')\n    return validate_token(token)\n---\ndef validate_email(email):\n    return '@' in email\n\ndef validate_name(name):\n    return len(name) > 0\n\ndef submit_form(data):\n    if validate_email(data['email']):\n        return True\n    return False\n---\ndef format_date(d):\n    return d.strftime('%Y-%m-%d')\n\ndef parse_int(s):\n    try:\n        return int(s)\n    except ValueError:\n        return None\n---\nfrom app.auth import validate_token\n\ndef test_validate_token():\n    assert validate_token('abcdefghijk')\n    assert not validate_token('')\n"
+          },
+          {
+            "commands": "grep -rnE 'def [a-zA-Z0-9_]*validate' /project",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/project/app/auth.py:1:def validate_token(token):\n/project/app/forms.py:1:def validate_email(email):\n/project/app/forms.py:4:def validate_name(name):\n/project/tests/test_auth.py:3:def test_validate_token():\n"
+          },
+          {
+            "commands": "grep -rn \"validate\" /project",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/project/app/auth.py:1:def validate_token(token):\n/project/app/auth.py:8:    return validate_token(token)\n/project/app/forms.py:1:def validate_email(email):\n/project/app/forms.py:4:def validate_name(name):\n/project/app/forms.py:8:    if validate_email(data['email']):\n/project/tests/test_auth.py:1:from app.auth import validate_token\n/project/tests/test_auth.py:3:def test_validate_token():\n/project/tests/test_auth.py:4:    assert validate_token('abcdefghijk')\n/project/tests/test_auth.py:5:    assert not validate_token('')\n"
+          },
+          {
+            "commands": "grep -rn \"def .*validate\" /project --include=\"*.py\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/project/app/auth.py:1:def validate_token(token):\n/project/app/forms.py:1:def validate_email(email):\n/project/app/forms.py:4:def validate_name(name):\n/project/tests/test_auth.py:3:def test_validate_token():\n"
+          },
+          {
+            "commands": "python3 -c \"\nimport glob, re\n\nmatches = []\n# Find all .py files under /project recursively\nfiles = sorted(glob.glob('/project/**/*.py', recursive=True))\nfor fpath in files:\n    with open(fpath) as f:\n        for idx, line in enumerate(f, 1):\n            if re.match(r'^\\s*def\\s+.*validate', line):\n                matches.append((fpath, idx, line.rstrip('\\n')))\n\nfor fpath, idx, line in matches:\n    print(f'{fpath}:{idx}: {line}')\nprint(f'Total matches: {len(matches)}')\n\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/project/app/auth.py:1: def validate_token(token):\n/project/app/forms.py:1: def validate_email(email):\n/project/app/forms.py:4: def validate_name(name):\n/project/tests/test_auth.py:3: def test_validate_token():\nTotal matches: 4\n"
+          },
+          {
+            "commands": "grep -rn \"def .*validate\" /project --include=\"*.py\"\necho \"Total matches: $(grep -rc \"def .*validate\" /project --include=\"*.py\" | awk -F: '{s+=$2} END {print s}')\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/project/app/auth.py:1:def validate_token(token):\n/project/app/forms.py:1:def validate_email(email):\n/project/app/forms.py:4:def validate_name(name):\n/project/tests/test_auth.py:3:def test_validate_token():\nTotal matches: 4\n"
+          },
+          {
+            "commands": "grep -n -E '^[[:space:]]*def .*validate' $(find /project -name \"*.py\" | sort) | sed -E 's/^([^:]+):([0-9]+):(.*)$/\\1:\\2: \\3/'",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/project/app/auth.py:1: def validate_token(token):\n/project/app/forms.py:1: def validate_email(email):\n/project/app/forms.py:4: def validate_name(name):\n/project/tests/test_auth.py:3: def test_validate_token():\n"
+          },
+          {
+            "commands": "grep -H -n -E 'def .*validate' /project/app/*.py /project/tests/*.py",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/project/app/auth.py:1:def validate_token(token):\n/project/app/forms.py:1:def validate_email(email):\n/project/app/forms.py:4:def validate_name(name):\n/project/tests/test_auth.py:3:def test_validate_token():\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

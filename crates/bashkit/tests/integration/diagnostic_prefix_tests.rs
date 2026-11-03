@@ -1,9 +1,10 @@
 //! Shell diagnostics carry bash's non-interactive `$0: line N: ` prefix.
 //!
-//! Every expected string below was checked against real bash 5.2 running the
+//! Standard diagnostic expectations were checked against real bash 5.2 running the
 //! same text as `bash SCRIPT` (so `$0` is `SCRIPT`) or `bash -c '...'` (so
 //! `$0` is `bash`). Coreutils-style builtins are external programs in bash and
-//! keep their own `cat: ...` form; usage lines stay unprefixed.
+//! keep their own `cat: ...` form; usage lines stay unprefixed. Resource tests
+//! also cover the intentional diagnostic-name cap and shared execution budget.
 
 use bashkit::{Bash, ExecOptions};
 use std::sync::{Arc, Mutex};
@@ -230,4 +231,259 @@ async fn interactive_mode_keeps_bare_prefix() {
     bash.set_interactive(true);
     let r = bash.exec("nocmd").await.unwrap();
     assert_eq!(r.stderr, "bash: nocmd: command not found\n");
+}
+
+// --- Arithmetic diagnostics stay inside the diagnostic budget (TM-INF-022) ---
+//
+// `$(( ))` echoes two attacker-controlled fragments into one line: the whole
+// expression, and the unparsed rest as the "error token". Both were unbounded,
+// so one bounded expression produced a diagnostic about twice its size.
+// `arithmetic_fuzz` (nightly fuzz run 270) found a 507-byte expression that
+// rendered 1,076 bytes of stderr, over the 1 KiB cap
+// `bashkit::testing::assert_no_leak` holds every builtin to.
+
+/// Same cap as `bashkit::testing::MAX_STDERR_BYTES`.
+const MAX_DIAG: usize = 1024;
+
+/// The reduced `arithmetic_fuzz` crash. The rejected `#` sits near the front,
+/// so the unparsed rest -- the "error token" -- is nearly as long as the
+/// expression echoed before it. That doubling is what went over the cap.
+fn long_bad_expression() -> String {
+    format!("~#{}", "~".repeat(500))
+}
+
+#[tokio::test]
+async fn long_arithmetic_expansion_diagnostic_is_bounded() {
+    let (err, code) = run_c(&format!("echo $(({}))", long_bad_expression())).await;
+    assert!(
+        err.len() <= MAX_DIAG,
+        "stderr is {} bytes:\n{err}",
+        err.len()
+    );
+    // Truncation keeps the part that says what went wrong.
+    assert!(err.starts_with("bash: line 1: "), "{err}");
+    assert!(err.contains("syntax error"), "{err}");
+    assert_eq!(code, 1);
+}
+
+#[tokio::test]
+async fn long_arithmetic_command_diagnostic_is_bounded() {
+    let (err, code) = run_c(&format!("(({}))", long_bad_expression())).await;
+    assert!(
+        err.len() <= MAX_DIAG,
+        "stderr is {} bytes:\n{err}",
+        err.len()
+    );
+    assert!(err.contains("syntax error"), "{err}");
+    assert_eq!(code, 1);
+}
+
+#[tokio::test]
+async fn long_let_diagnostic_is_bounded() {
+    let (err, code) = run_c(&format!("let '{}'", long_bad_expression())).await;
+    assert!(
+        err.len() <= MAX_DIAG,
+        "stderr is {} bytes:\n{err}",
+        err.len()
+    );
+    assert!(err.contains("syntax error"), "{err}");
+    assert_eq!(code, 1);
+}
+
+#[tokio::test]
+async fn long_cond_arithmetic_diagnostic_is_bounded() {
+    let (err, _) = run_c(&format!("[[ {} -eq 1 ]]", long_bad_expression())).await;
+    assert!(
+        err.len() <= MAX_DIAG,
+        "stderr is {} bytes:\n{err}",
+        err.len()
+    );
+    assert!(err.contains("syntax error"), "{err}");
+}
+
+#[tokio::test]
+async fn long_division_by_zero_diagnostic_is_bounded() {
+    // The error token here is the right-hand side, echoed from the source.
+    let (err, code) = run_c(&format!("echo $((1/(0{}) ))", "+0".repeat(400))).await;
+    assert!(
+        err.len() <= MAX_DIAG,
+        "stderr is {} bytes:\n{err}",
+        err.len()
+    );
+    assert!(err.contains("division by 0"), "{err}");
+    assert_eq!(code, 1);
+}
+
+#[tokio::test]
+async fn long_bad_number_diagnostic_is_bounded() {
+    let (err, code) = run_c(&format!("echo $((1{}x))", "9".repeat(600))).await;
+    assert!(
+        err.len() <= MAX_DIAG,
+        "stderr is {} bytes:\n{err}",
+        err.len()
+    );
+    assert_eq!(code, 1);
+}
+
+#[tokio::test]
+async fn short_arithmetic_diagnostics_are_not_truncated() {
+    // The common case stays byte for byte with bash 5.2.
+    let (err, code) = run_c("echo $((1/0))").await;
+    assert_eq!(
+        err,
+        "bash: line 1: 1/0: division by 0 (error token is \"0\")\n"
+    );
+    assert_eq!(code, 1);
+
+    let (err, code) = run_c("echo $((1/(0+0)))").await;
+    assert_eq!(
+        err,
+        "bash: line 1: 1/(0+0): division by 0 (error token is \"(0+0)\")\n"
+    );
+    assert_eq!(code, 1);
+
+    // An expression under the cap is still echoed whole, with no marker.
+    let expr = format!("{}#x", "~".repeat(100));
+    let (err, _) = run_c(&format!("echo $(({expr}))")).await;
+    assert!(err.contains(&expr), "{err}");
+    assert!(!err.contains("..."), "{err}");
+}
+
+/// Small-budget reproduction: the original stderr fits; repeating $0 does not.
+#[tokio::test]
+async fn diagnostic_prefix_amplification_hits_shared_memory_budget() {
+    for (redirect, streaming) in [
+        ("", false),
+        ("", true),
+        (" 2>/tmp/diagnostics", true),
+        (" 2>&1", true),
+        (" 2>/dev/null", true),
+    ] {
+        let mut bash = Bash::builder()
+            .limits(
+                bashkit::ExecutionLimits::new()
+                    .timeout(std::time::Duration::from_secs(600))
+                    .max_live_intermediate_bytes(8192)
+                    .max_stderr_bytes(64),
+            )
+            .build();
+        let seen = Arc::new(Mutex::new(String::new()));
+        let seen_cb = seen.clone();
+        let script = format!(
+            "bash -c 'unalias {{1..100}}' '{}'{}",
+            "x".repeat(128),
+            redirect
+        );
+        let options = if streaming {
+            ExecOptions::new().streaming(Box::new(move |stdout, stderr| {
+                let mut seen = seen_cb.lock().unwrap();
+                seen.push_str(stdout);
+                seen.push_str(stderr);
+            }))
+        } else {
+            ExecOptions::new()
+        };
+        let error = bash
+            .exec_with_options(&script, options)
+            .await
+            .expect_err("prefix amplification must fail before routing or capture");
+        assert!(
+            error.to_string().contains("live intermediate"),
+            "{redirect}: {error}"
+        );
+        assert!(seen.lock().unwrap().is_empty());
+        let recovered = bash.exec("echo recovered").await.unwrap();
+        assert_eq!(recovered.stdout, "recovered\n");
+    }
+}
+
+#[tokio::test]
+async fn diagnostic_name_is_bounded_utf8_without_changing_arg0() {
+    let name = "€".repeat(400);
+    let mut bash = Bash::new();
+    let script = format!("bash -c 'echo ${{#0}}; unalias absent' '{name}'");
+    let result = bash.exec(&script).await.unwrap();
+    assert_eq!(result.stdout, "400\n");
+    assert_eq!(
+        result.stderr,
+        format!("{}: line 1: unalias: absent: not found\n", "€".repeat(341))
+    );
+}
+
+/// Replace the `line N` counter with `line N*` so oracle comparisons hold
+/// across bash versions: bash 5.x numbers `bash -c` text from line 1 while the
+/// macOS bash 3.2 oracle numbers it from line 0. Our own output stays pinned
+/// to the bash 5.2 contract asserted below.
+fn normalize_line_numbers(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(idx) = rest.find("line ") {
+        let (head, tail) = rest.split_at(idx);
+        out.push_str(head);
+        let digits = tail[5..].chars().take_while(char::is_ascii_digit).count();
+        if digits == 0 {
+            out.push_str("line ");
+            rest = &tail[5..];
+        } else {
+            out.push_str("line N*");
+            rest = &tail[5 + digits..];
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+#[tokio::test]
+async fn diagnostic_prefix_matches_bash_and_redirect_keeps_full_output() {
+    let name = "child".repeat(24);
+    let body = "unalias first second third";
+    let oracle = std::process::Command::new("bash")
+        .env_clear()
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+        .args(["-c", body, &name])
+        .output()
+        .unwrap();
+    let script = format!("bash -c '{body}' '{name}'");
+    let mut bash = Bash::builder()
+        .limits(bashkit::ExecutionLimits::new().max_live_intermediate_bytes(8192))
+        .build();
+    let result = bash.exec(&script).await.unwrap();
+    let stderr = String::from_utf8_lossy(result.stderr.as_bytes()).into_owned();
+    let line1 = format!("{name}: line 1: unalias: ");
+    let expected = line1.clone()
+        + "first: not found\n"
+        + &line1
+        + "second: not found\n"
+        + &line1
+        + "third: not found\n";
+    assert_eq!(stderr, expected);
+    assert_eq!(
+        normalize_line_numbers(&stderr),
+        normalize_line_numbers(&String::from_utf8_lossy(&oracle.stderr))
+    );
+    assert_eq!(result.stdout.as_bytes(), oracle.stdout);
+    assert_eq!(Some(result.exit_code), oracle.status.code());
+
+    let mut bash = Bash::builder()
+        .limits(
+            bashkit::ExecutionLimits::new()
+                .max_live_intermediate_bytes(8192)
+                .max_stderr_bytes(64),
+        )
+        .build();
+    // Redirect the builtin before the child captures stderr. An outer
+    // redirect receives the child's already capped capture.
+    let result = bash
+        .exec(&format!(
+            "bash -c '{body} 2>/tmp/diagnostics' '{name}'; cat /tmp/diagnostics"
+        ))
+        .await
+        .unwrap();
+    assert!(result.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(result.stdout.as_bytes()).into_owned();
+    assert_eq!(stdout, expected);
+    assert_eq!(
+        normalize_line_numbers(&stdout),
+        normalize_line_numbers(&String::from_utf8_lossy(&oracle.stderr))
+    );
 }

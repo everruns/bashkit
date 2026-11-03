@@ -5,8 +5,76 @@
 //! cache; a miss returns [`Stop::Need`], the driver answers it (running a
 //! command or touching the VFS) and expansion starts over. Results are
 //! cached, so each query runs once and a restart is deterministic.
+//!
+//! Substitution admits its checked result size before construction. Generated
+//! text owns its capacity lease through parent copies and retained variables;
+//! immutable clones share the same storage and lease (TM-DOS-126).
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
+
+use crate::limits::{BudgetedString, ExecutionBudget, LimitExceeded};
+
+/// Immutable expansion storage; sharing a value must also share its lease.
+#[derive(Clone)]
+pub(super) struct Text(Arc<BudgetedString>);
+
+impl Text {
+    pub(super) fn from_buffer(buffer: BudgetedString) -> Self {
+        Self(Arc::new(buffer))
+    }
+
+    pub(super) fn copy(s: &str, budget: Option<&ExecutionBudget>) -> Result<Self, LimitExceeded> {
+        let mut out = BudgetedString::new(budget)?;
+        out.try_push_str(s)?;
+        Ok(Self(Arc::new(out)))
+    }
+}
+
+impl From<String> for Text {
+    fn from(s: String) -> Self {
+        Self(Arc::new(
+            BudgetedString::try_from_string(s, None).expect("unbudgeted text"),
+        ))
+    }
+}
+
+impl Default for Text {
+    fn default() -> Self {
+        String::new().into()
+    }
+}
+
+impl std::ops::Deref for Text {
+    type Target = str;
+    fn deref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::borrow::Borrow<str> for Text {
+    fn borrow(&self) -> &str {
+        self
+    }
+}
+
+impl std::fmt::Display for Text {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self)
+    }
+}
+
+impl std::fmt::Debug for Text {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(&**self, f)
+    }
+}
+
+impl PartialEq for Text {
+    fn eq(&self, other: &Self) -> bool {
+        **self == **other
+    }
+}
 
 /// Expansion nesting cap (recursive variables, nested calls).
 const MAX_DEPTH: usize = 200;
@@ -64,7 +132,7 @@ pub(super) enum Origin {
 
 #[derive(Debug, Clone)]
 pub(super) struct Var {
-    pub value: String,
+    pub value: Text,
     pub recursive: bool,
     pub origin: Origin,
 }
@@ -83,7 +151,8 @@ pub(super) struct Expander<'a> {
     target_vars: Option<&'a Vars>,
     oracle: &'a Oracle,
     /// Automatic variables, `$(call)` arguments, `$(foreach)` variables.
-    locals: Vec<HashMap<String, String>>,
+    locals: Vec<HashMap<String, Text>>,
+    budget: Option<&'a ExecutionBudget>,
     active: HashSet<String>,
     depth: usize,
     produced: usize,
@@ -140,6 +209,7 @@ impl<'a> Expander<'a> {
     ) -> Self {
         Self {
             vars,
+            budget: None,
             target_vars: None,
             oracle,
             locals: Vec::new(),
@@ -152,13 +222,51 @@ impl<'a> Expander<'a> {
         }
     }
 
+    pub(super) fn with_budget(mut self, budget: Option<&'a ExecutionBudget>) -> Self {
+        self.budget = budget;
+        self
+    }
+
+    fn limit(&self, error: LimitExceeded) -> Stop {
+        Stop::Fatal {
+            loc: self.loc.clone(),
+            msg: error.to_string(),
+        }
+    }
+
+    fn work(&self, bytes: usize) -> R<()> {
+        if let Some(budget) = self.budget {
+            budget
+                .consume_work(u64::try_from(bytes).unwrap_or(u64::MAX))
+                .map_err(|error| self.limit(error))?;
+        }
+        Ok(())
+    }
+
+    fn owned(&self, text: String) -> R<Text> {
+        BudgetedString::try_from_string(text, self.budget)
+            .map(|text| Text(Arc::new(text)))
+            .map_err(|error| self.limit(error))
+    }
+
+    fn copy(&self, text: &str) -> R<Text> {
+        self.work(text.len())?;
+        Text::copy(text, self.budget).map_err(|error| self.limit(error))
+    }
+
+    fn append(&self, out: &mut BudgetedString, text: &str) -> R<()> {
+        self.work(text.len())?;
+        out.try_push_str(text).map_err(|error| self.limit(error))
+    }
+
     pub(super) fn with_target_vars(mut self, tv: Option<&'a Vars>) -> Self {
         self.target_vars = tv;
         self
     }
 
     pub(super) fn with_locals(mut self, locals: HashMap<String, String>) -> Self {
-        self.locals.push(locals);
+        self.locals
+            .push(locals.into_iter().map(|(k, v)| (k, v.into())).collect());
         self
     }
 
@@ -175,29 +283,29 @@ impl<'a> Expander<'a> {
     }
 
     /// Expand `$` references in `s`.
-    pub(super) fn expand(&mut self, s: &str) -> R<String> {
+    pub(super) fn expand(&mut self, s: &str) -> R<Text> {
         if !s.contains('$') {
-            return Ok(s.to_string());
+            return self.copy(s);
         }
         self.depth += 1;
         if self.depth > MAX_DEPTH {
             return self.fatal("variable expansion nested too deeply");
         }
-        let mut out = String::new();
+        let mut out = BudgetedString::new(self.budget).map_err(|error| self.limit(error))?;
         let mut i = 0;
         while i < s.len() {
             let Some(off) = s[i..].find('$') else {
-                out.push_str(&s[i..]);
+                self.append(&mut out, &s[i..])?;
                 break;
             };
-            out.push_str(&s[i..i + off]);
+            self.append(&mut out, &s[i..i + off])?;
             i += off + 1;
             let Some(c) = s[i..].chars().next() else {
                 break;
             };
             match c {
                 '$' => {
-                    out.push('$');
+                    self.append(&mut out, "$")?;
                     i += 1;
                 }
                 '(' | '{' => {
@@ -208,22 +316,22 @@ impl<'a> Expander<'a> {
                     let inner = &s[i + 1..end];
                     let v = self.reference(inner)?;
                     self.charge(v.len())?;
-                    out.push_str(&v);
+                    self.append(&mut out, &v)?;
                     i = end + 1;
                 }
                 _ => {
                     let v = self.lookup(&c.to_string())?;
                     self.charge(v.len())?;
-                    out.push_str(&v);
+                    self.append(&mut out, &v)?;
                     i += c.len_utf8();
                 }
             }
         }
         self.depth -= 1;
-        Ok(out)
+        Ok(Text(Arc::new(out)))
     }
 
-    fn reference(&mut self, inner: &str) -> R<String> {
+    fn reference(&mut self, inner: &str) -> R<Text> {
         // Function call: `$(name args)`.
         if let Some(ws) = inner.find([' ', '\t']) {
             let name = &inner[..ws];
@@ -241,21 +349,23 @@ impl<'a> Expander<'a> {
             let to = self.expand(&inner[colon + 2 + eq..])?;
             let value = self.lookup(name.trim())?;
             let (from, to) = if from.contains('%') {
-                (from, to)
+                (from.to_string(), to.to_string())
             } else {
                 (format!("%{from}"), format!("%{to}"))
             };
-            return Ok(words(&value)
-                .map(|w| patsubst_word(&from, &to, w))
-                .collect::<Vec<_>>()
-                .join(" "));
+            return self.owned(
+                words(&value)
+                    .map(|w| patsubst_word(&from, &to, w))
+                    .collect::<Vec<_>>()
+                    .join(" "),
+            );
         }
         let name = self.expand(inner)?;
         self.lookup(&name)
     }
 
     /// Value of variable `name`, expanded if recursive.
-    pub(super) fn lookup(&mut self, name: &str) -> R<String> {
+    pub(super) fn lookup(&mut self, name: &str) -> R<Text> {
         for scope in self.locals.iter().rev() {
             if let Some(v) = scope.get(name) {
                 return Ok(v.clone());
@@ -268,17 +378,19 @@ impl<'a> Expander<'a> {
             && (b == 'D' || b == 'F')
         {
             let base = self.lookup(&a.to_string())?;
-            return Ok(words(&base)
-                .map(|w| if b == 'D' { dir_of(w) } else { notdir(w) })
-                .collect::<Vec<_>>()
-                .join(" "));
+            return self.owned(
+                words(&base)
+                    .map(|w| if b == 'D' { dir_of(w) } else { notdir(w) })
+                    .collect::<Vec<_>>()
+                    .join(" "),
+            );
         }
         let var = self
             .target_vars
             .and_then(|tv| tv.get(name))
             .or_else(|| self.vars.get(name));
         let Some(var) = var else {
-            return Ok(String::new());
+            return Ok(Text::default());
         };
         if !var.recursive {
             return Ok(var.value.clone());
@@ -294,7 +406,7 @@ impl<'a> Expander<'a> {
         r
     }
 
-    fn function(&mut self, name: &str, rest: &str) -> R<String> {
+    fn function(&mut self, name: &str, rest: &str) -> R<Text> {
         match name {
             "subst" => {
                 let a = self.args(rest, 3)?;
@@ -302,20 +414,25 @@ impl<'a> Expander<'a> {
                 if from.is_empty() {
                     return Ok(text);
                 }
-                Ok(text.replace(&from, &to))
+                self.subst(&from, &to, &text)
             }
             "patsubst" => {
                 let [pat, rep, text] = three(self.args(rest, 3)?);
-                Ok(words(&text)
-                    .map(|w| patsubst_word(&pat, &rep, w))
-                    .collect::<Vec<_>>()
-                    .join(" "))
+                self.owned(
+                    words(&text)
+                        .map(|w| patsubst_word(&pat, &rep, w))
+                        .collect::<Vec<_>>()
+                        .join(" "),
+                )
             }
-            "strip" => Ok(words(&self.expand(rest)?).collect::<Vec<_>>().join(" ")),
+            "strip" => {
+                let text = self.expand(rest)?;
+                self.owned(words(&text).collect::<Vec<_>>().join(" "))
+            }
             "findstring" => {
                 let [find, text, _] = three(self.args(rest, 2)?);
-                Ok(if text.contains(&find) {
-                    find
+                self.owned(if text.contains(&*find) {
+                    find.to_string()
                 } else {
                     String::new()
                 })
@@ -324,17 +441,19 @@ impl<'a> Expander<'a> {
                 let [pats, text, _] = three(self.args(rest, 2)?);
                 let pats: Vec<&str> = words(&pats).collect();
                 let keep = name == "filter";
-                Ok(words(&text)
-                    .filter(|w| pats.iter().any(|p| pattern_match(p, w).is_some()) == keep)
-                    .collect::<Vec<_>>()
-                    .join(" "))
+                self.owned(
+                    words(&text)
+                        .filter(|w| pats.iter().any(|p| pattern_match(p, w).is_some()) == keep)
+                        .collect::<Vec<_>>()
+                        .join(" "),
+                )
             }
             "sort" => {
                 let text = self.expand(rest)?;
                 let mut v: Vec<&str> = words(&text).collect();
                 v.sort_unstable();
                 v.dedup();
-                Ok(v.join(" "))
+                self.owned(v.join(" "))
             }
             "word" => {
                 let [n, text, _] = three(self.args(rest, 2)?);
@@ -342,7 +461,7 @@ impl<'a> Expander<'a> {
                 if n == 0 {
                     return self.fatal("first argument to 'word' function must be greater than 0");
                 }
-                Ok(words(&text).nth(n - 1).unwrap_or("").to_string())
+                self.owned(words(&text).nth(n - 1).unwrap_or("").to_string())
             }
             "wordlist" => {
                 let [s, e, text] = three(self.args(rest, 3)?);
@@ -351,49 +470,66 @@ impl<'a> Expander<'a> {
                 if s == 0 {
                     return self.fatal("invalid first argument to 'wordlist' function: '0'");
                 }
-                Ok(words(&text)
-                    .skip(s - 1)
-                    .take((e + 1).saturating_sub(s))
-                    .collect::<Vec<_>>()
-                    .join(" "))
+                self.owned(
+                    words(&text)
+                        .skip(s - 1)
+                        .take((e + 1).saturating_sub(s))
+                        .collect::<Vec<_>>()
+                        .join(" "),
+                )
             }
-            "words" => Ok(words(&self.expand(rest)?).count().to_string()),
-            "firstword" => Ok(words(&self.expand(rest)?).next().unwrap_or("").to_string()),
-            "lastword" => Ok(words(&self.expand(rest)?).last().unwrap_or("").to_string()),
+            "words" => {
+                let text = self.expand(rest)?;
+                self.owned(words(&text).count().to_string())
+            }
+            "firstword" => {
+                let text = self.expand(rest)?;
+                self.owned(words(&text).next().unwrap_or("").to_string())
+            }
+            "lastword" => {
+                let text = self.expand(rest)?;
+                self.owned(words(&text).last().unwrap_or("").to_string())
+            }
             "dir" | "notdir" | "suffix" | "basename" | "abspath" => {
                 let text = self.expand(rest)?;
-                Ok(words(&text)
-                    .filter_map(|w| match name {
-                        "dir" => Some(dir_with_slash(w)),
-                        "notdir" => Some(notdir(w)),
-                        "suffix" => suffix(w).map(str::to_string),
-                        "basename" => Some(basename(w).to_string()),
-                        _ => Some(abspath(self.curdir, w)),
-                    })
-                    .collect::<Vec<_>>()
-                    .join(" "))
+                self.owned(
+                    words(&text)
+                        .filter_map(|w| match name {
+                            "dir" => Some(dir_with_slash(w)),
+                            "notdir" => Some(notdir(w)),
+                            "suffix" => suffix(w).map(str::to_string),
+                            "basename" => Some(basename(w).to_string()),
+                            _ => Some(abspath(self.curdir, w)),
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" "),
+                )
             }
             "addsuffix" | "addprefix" => {
                 let [fix, text, _] = three(self.args(rest, 2)?);
-                Ok(words(&text)
-                    .map(|w| {
-                        if name == "addsuffix" {
-                            format!("{w}{fix}")
-                        } else {
-                            format!("{fix}{w}")
-                        }
-                    })
-                    .collect::<Vec<_>>()
-                    .join(" "))
+                self.owned(
+                    words(&text)
+                        .map(|w| {
+                            if name == "addsuffix" {
+                                format!("{w}{fix}")
+                            } else {
+                                format!("{fix}{w}")
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" "),
+                )
             }
             "join" => {
                 let [a, b, _] = three(self.args(rest, 2)?);
                 let a: Vec<&str> = words(&a).collect();
                 let b: Vec<&str> = words(&b).collect();
-                Ok((0..a.len().max(b.len()))
-                    .map(|i| format!("{}{}", a.get(i).unwrap_or(&""), b.get(i).unwrap_or(&"")))
-                    .collect::<Vec<_>>()
-                    .join(" "))
+                self.owned(
+                    (0..a.len().max(b.len()))
+                        .map(|i| format!("{}{}", a.get(i).unwrap_or(&""), b.get(i).unwrap_or(&"")))
+                        .collect::<Vec<_>>()
+                        .join(" "),
+                )
             }
             "wildcard" | "realpath" => {
                 let text = self.expand(rest)?;
@@ -409,7 +545,7 @@ impl<'a> Expander<'a> {
                         None => return Err(Stop::Need(Need::Glob(q))),
                     }
                 }
-                Ok(out.join(" "))
+                self.owned(out.join(" "))
             }
             "if" => {
                 let parts = split_args(rest, 3);
@@ -424,20 +560,20 @@ impl<'a> Expander<'a> {
                 for p in split_args(rest, usize::MAX) {
                     let v = self.expand(p)?;
                     if !v.trim().is_empty() {
-                        return Ok(v.trim().to_string());
+                        return self.copy(v.trim());
                     }
                 }
-                Ok(String::new())
+                Ok(Text::default())
             }
             "and" => {
-                let mut last = String::new();
+                let mut last = Text::default();
                 for p in split_args(rest, usize::MAX) {
                     last = self.expand(p)?;
                     if last.trim().is_empty() {
-                        return Ok(String::new());
+                        return Ok(Text::default());
                     }
                 }
-                Ok(last.trim().to_string())
+                self.copy(last.trim())
             }
             "foreach" => {
                 let parts = split_args(rest, 3);
@@ -450,24 +586,24 @@ impl<'a> Expander<'a> {
                 let mut out = Vec::new();
                 for w in words(&list) {
                     self.locals
-                        .push(HashMap::from([(var.clone(), w.to_string())]));
+                        .push(HashMap::from([(var.clone(), w.to_string().into())]));
                     let r = self.expand(parts[2]);
                     self.locals.pop();
                     out.push(r?);
                 }
-                Ok(out.join(" "))
+                self.owned(out.join(" "))
             }
             "call" => {
                 let parts = split_args(rest, usize::MAX);
                 let fname = self.expand(parts.first().copied().unwrap_or(""))?;
                 let fname = fname.trim().to_string();
-                let mut scope = HashMap::from([("0".to_string(), fname.clone())]);
+                let mut scope = HashMap::from([("0".to_string(), fname.clone().into())]);
                 for (i, p) in parts.iter().enumerate().skip(1) {
                     scope.insert(i.to_string(), self.expand(p)?);
                 }
                 // Unset higher-numbered arguments of an enclosing call.
                 for i in parts.len().max(1)..10 {
-                    scope.insert(i.to_string(), String::new());
+                    scope.insert(i.to_string(), Text::default());
                 }
                 let body = match self
                     .target_vars
@@ -475,7 +611,7 @@ impl<'a> Expander<'a> {
                     .or_else(|| self.vars.get(&fname))
                 {
                     Some(v) => v.value.clone(),
-                    None => return Ok(String::new()),
+                    None => return Ok(Text::default()),
                 };
                 self.depth += 1;
                 if self.depth > MAX_DEPTH {
@@ -503,25 +639,27 @@ impl<'a> Expander<'a> {
                     .target_vars
                     .and_then(|tv| tv.get(n))
                     .or_else(|| self.vars.get(n));
-                Ok(match (name, v) {
-                    ("origin", _) if local => "automatic",
-                    ("origin", None) | ("flavor", None) if !local => "undefined",
-                    ("flavor", None) => "simple",
-                    ("origin", Some(v)) => match v.origin {
-                        Origin::Default => "default",
-                        Origin::Environment => "environment",
-                        Origin::File => "file",
-                        Origin::CommandLine => "command line",
-                        Origin::Override => "override",
-                    },
-                    (_, Some(v)) if v.recursive => "recursive",
-                    _ => "simple",
-                }
-                .to_string())
+                self.owned(
+                    match (name, v) {
+                        ("origin", _) if local => "automatic",
+                        ("origin", None) | ("flavor", None) if !local => "undefined",
+                        ("flavor", None) => "simple",
+                        ("origin", Some(v)) => match v.origin {
+                            Origin::Default => "default",
+                            Origin::Environment => "environment",
+                            Origin::File => "file",
+                            Origin::CommandLine => "command line",
+                            Origin::Override => "override",
+                        },
+                        (_, Some(v)) if v.recursive => "recursive",
+                        _ => "simple",
+                    }
+                    .to_string(),
+                )
             }
             "error" => {
                 let msg = self.expand(rest)?;
-                self.fatal(msg)
+                self.fatal(msg.to_string())
             }
             "warning" => {
                 let msg = self.expand(rest)?;
@@ -530,18 +668,18 @@ impl<'a> Expander<'a> {
                     None => String::new(),
                 };
                 self.messages.push(Message::Err(format!("{prefix}{msg}\n")));
-                Ok(String::new())
+                Ok(Text::default())
             }
             "info" => {
                 let msg = self.expand(rest)?;
                 self.messages.push(Message::Out(format!("{msg}\n")));
-                Ok(String::new())
+                Ok(Text::default())
             }
             "shell" => {
                 let cmd = self.expand(rest)?;
-                match self.oracle.shell.get(&cmd) {
-                    Some(out) => Ok(out.clone()),
-                    None => Err(Stop::Need(Need::Shell(cmd))),
+                match self.oracle.shell.get(&*cmd) {
+                    Some(out) => self.copy(out),
+                    None => Err(Stop::Need(Need::Shell(cmd.to_string()))),
                 }
             }
             // WTF: `$(eval)` would let expansion define rules mid-parse;
@@ -550,7 +688,45 @@ impl<'a> Expander<'a> {
         }
     }
 
-    fn args(&mut self, rest: &str, n: usize) -> R<Vec<String>> {
+    // THREAT[TM-DOS-126]: Count and admit before allocating any replacement
+    // result. Both passes meter scanning/copying and poll the shared deadline.
+    fn subst(&self, from: &str, to: &str, text: &str) -> R<Text> {
+        self.work(text.len().saturating_add(from.len()))?;
+        let mut matches = 0usize;
+        for _ in text.match_indices(from) {
+            self.work(1)?;
+            matches = matches.checked_add(1).ok_or_else(|| Stop::Fatal {
+                loc: self.loc.clone(),
+                msg: "expansion exceeds 4 MiB".into(),
+            })?;
+        }
+        let remaining = MAX_EXPANSION_BYTES.saturating_sub(self.produced);
+        let size =
+            subst_size(text.len(), from.len(), to.len(), matches, remaining).ok_or_else(|| {
+                Stop::Fatal {
+                    loc: self.loc.clone(),
+                    msg: "expansion exceeds 4 MiB".into(),
+                }
+            })?;
+        let mut out = BudgetedString::new(self.budget).map_err(|error| self.limit(error))?;
+        self.work(text.len())?;
+        let mut end = 0;
+        for (start, matched) in text.match_indices(from) {
+            self.work(1)?;
+            for piece in [&text[end..start], to] {
+                self.work(piece.len())?;
+                out.try_push_str_with_limit(piece, size)
+                    .map_err(|error| self.limit(error))?;
+            }
+            end = start + matched.len();
+        }
+        self.work(text.len() - end)?;
+        out.try_push_str_with_limit(&text[end..], size)
+            .map_err(|error| self.limit(error))?;
+        Ok(Text(Arc::new(out)))
+    }
+
+    fn args(&mut self, rest: &str, n: usize) -> R<Vec<Text>> {
         split_args(rest, n)
             .into_iter()
             .map(|a| self.expand(a))
@@ -567,8 +743,21 @@ impl<'a> Expander<'a> {
     }
 }
 
-fn three(mut v: Vec<String>) -> [String; 3] {
-    v.resize(3, String::new());
+/// Numeric-only admission; rejected sizes never become allocations.
+fn subst_size(
+    text: usize,
+    from: usize,
+    to: usize,
+    matches: usize,
+    remaining: usize,
+) -> Option<usize> {
+    let unchanged = text.checked_sub(matches.checked_mul(from)?)?;
+    let size = unchanged.checked_add(matches.checked_mul(to)?)?;
+    (size <= remaining).then_some(size)
+}
+
+fn three(mut v: Vec<Text>) -> [Text; 3] {
+    v.resize(3, Text::default());
     let c = v.pop().unwrap_or_default();
     let b = v.pop().unwrap_or_default();
     let a = v.pop().unwrap_or_default();
@@ -711,7 +900,7 @@ mod tests {
 
     fn var(v: &str, recursive: bool) -> Var {
         Var {
-            value: v.to_string(),
+            value: v.to_string().into(),
             recursive,
             origin: Origin::File,
         }
@@ -721,7 +910,7 @@ mod tests {
         let oracle = Oracle::default();
         let mut e = Expander::new(vars, &oracle, "/w", None);
         match e.expand(s) {
-            Ok(v) => v,
+            Ok(v) => v.to_string(),
             Err(Stop::Fatal { msg, .. }) => format!("FATAL {msg}"),
             Err(Stop::Need(n)) => format!("NEED {n:?}"), // debug-ok: test-only
         }
@@ -795,6 +984,99 @@ mod tests {
         oracle.shell.insert("echo hi".into(), "hi".into());
         let mut e = Expander::new(&v, &oracle, "/w", None);
         assert_eq!(e.expand("[$(shell echo hi)]").ok().as_deref(), Some("[hi]"));
+    }
+
+    #[test]
+    fn subst_size_checked_without_allocating() {
+        assert_eq!(subst_size(6, 2, 3, 2, 8), Some(8));
+        assert_eq!(subst_size(6, 2, 3, 2, 7), None);
+        assert_eq!(subst_size(6, 2, 0, 2, 2), Some(2));
+        assert_eq!(subst_size(6, 2, 3, 0, 6), Some(6));
+        assert_eq!(subst_size(usize::MAX, 1, usize::MAX, 2, usize::MAX), None);
+        assert_eq!(
+            subst_size(usize::MAX, 1, 1, usize::MAX, usize::MAX),
+            Some(usize::MAX)
+        );
+        assert_eq!(subst_size(3, usize::MAX, 1, 2, usize::MAX), None);
+        assert_eq!(subst_size(3, 2, 1, 2, 3), None);
+    }
+
+    #[test]
+    fn subst_small_text_semantics() {
+        let vars = Vars::new();
+        for (expression, expected) in [
+            ("$(subst aa,z,aaa)", "za"),
+            ("$(subst é,🌱,café é)", "caf🌱 🌱"),
+            ("$(subst ,z,café)", "café"),
+            ("$(subst é,,café)", "caf"),
+            ("$(subst x,z,café)", "café"),
+            ("$(subst x,z,x,x)", "z,z"),
+        ] {
+            assert_eq!(exp(&vars, expression), expected);
+        }
+    }
+
+    fn budget(live: u64, work: u64) -> ExecutionBudget {
+        ExecutionBudget::new(
+            &crate::ExecutionLimits::new()
+                .max_live_intermediate_bytes(live)
+                .max_work_units(work),
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        )
+    }
+
+    #[test]
+    fn subst_result_lease_survives_expander_and_shared_clones() {
+        let vars = Vars::new();
+        let oracle = Oracle::default();
+        let budget = budget(5, 100);
+        let value = {
+            let e = Expander::new(&vars, &oracle, "/w", None).with_budget(Some(&budget));
+            e.subst("x", "ab", "xx").unwrap()
+        };
+        let shared = value.clone();
+        drop(value);
+        let spare = budget.lease_bytes(1).unwrap();
+        drop(shared);
+        let restored = budget.lease_bytes(4).unwrap();
+        drop((spare, restored));
+        assert!(budget.lease_bytes(5).is_ok());
+
+        let budget = self::budget(4, 100);
+        let e = Expander::new(&vars, &oracle, "/w", None).with_budget(Some(&budget));
+        let value = e.subst("x", "ab", "xx").unwrap();
+        assert_eq!(&*value, "abab");
+        assert!(budget.lease_bytes(1).is_err());
+    }
+
+    #[test]
+    fn subst_checks_tiny_live_work_and_cancel_budgets() {
+        let vars = Vars::new();
+        let oracle = Oracle::default();
+        for budget in [budget(3, 100), budget(100, 4)] {
+            let e = Expander::new(&vars, &oracle, "/w", None).with_budget(Some(&budget));
+            assert!(matches!(e.subst("x", "ab", "xx"), Err(Stop::Fatal { .. })));
+            assert!(budget.check().is_err());
+        }
+        let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let budget = ExecutionBudget::new(&crate::ExecutionLimits::new(), cancelled);
+        let e = Expander::new(&vars, &oracle, "/w", None).with_budget(Some(&budget));
+        assert!(matches!(e.subst("x", "ab", "xx"), Err(Stop::Fatal { .. })));
+    }
+
+    #[test]
+    fn subst_admits_remaining_bytes_before_construction() {
+        let vars = Vars::new();
+        let oracle = Oracle::default();
+        let mut e = Expander::new(&vars, &oracle, "/w", None);
+        // Only the counter approaches the cap; the actual input/output is tiny.
+        e.produced = MAX_EXPANSION_BYTES - 3;
+        assert!(matches!(
+            e.function("subst", "x,ab,xx"),
+            Err(Stop::Fatal { msg, .. }) if msg == "expansion exceeds 4 MiB"
+        ));
+        e.produced = MAX_EXPANSION_BYTES - 4;
+        assert_eq!(e.function("subst", "x,ab,xx").ok().as_deref(), Some("abab"));
     }
 
     #[test]

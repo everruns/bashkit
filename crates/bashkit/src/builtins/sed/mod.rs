@@ -426,7 +426,9 @@ impl Builtin for Sed {
         let execution_budget = ctx
             .execution_budget()
             .and_then(|budget| budget.try_with(ExecutionBudget::clone).ok());
-        let mut machine = Machine::new(
+        // A dead budget fails the machine itself (fail closed) rather
+        // than running pattern/hold uncharged.
+        let mut machine = match Machine::new(
             &program,
             &names,
             &read_files,
@@ -434,7 +436,12 @@ impl Builtin for Sed {
             opts.line_length,
             sep,
             execution_budget,
-        );
+        ) {
+            Ok(machine) => machine,
+            Err(error) => {
+                return Ok(ExecResult::err(format!("sed: {error}\n"), 1));
+            }
+        };
 
         let mut stdout = String::new();
         let mut edits: Vec<(usize, String, String)> = Vec::new();

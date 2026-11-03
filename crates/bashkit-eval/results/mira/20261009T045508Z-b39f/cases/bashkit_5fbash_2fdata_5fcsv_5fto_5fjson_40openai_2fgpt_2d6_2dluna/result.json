@@ -1,0 +1,57 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "data_csv_to_json",
+  "target": "openai/gpt-6-luna",
+  "input": [
+    "Convert /data/users.csv to a JSON array where each row becomes an object with the column headers as keys. Print the resulting JSON to stdout."
+  ],
+  "passed": false,
+  "aggregate": 0.8,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 0.8,
+      "pass": false,
+      "reason": "4/5 checks passed (weighted rate 80%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "[\n  {\n    \"name\": \"alice\",\n    \"age\": \"30\",\n    \"city\": \"seattle\"\n  },\n  {\n    \"name\": \"bob\",\n    \"age\": \"25\",\n    \"city\": \"portland\"\n  },\n  {\n    \"name\": \"charlie\",\n    \"age\": \"35\",\n    \"city\": \"denver\"\n  }\n]",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "ls -la /data && cat /data/users.csv"
+    ],
+    "usage": {
+      "input_tokens": 483,
+      "output_tokens": 180,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 3142
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /data && cat /data/users.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       65 2026-10-09 04:56 users.csv\nname,age,city\nalice,30,seattle\nbob,25,portland\ncharlie,35,denver\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

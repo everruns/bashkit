@@ -36,6 +36,15 @@ use crate::time_compat::Instant;
 // embedders request a higher logical recursion limit.
 const HARD_MAX_FUNCTION_DEPTH: usize = 16;
 
+// Self-delivered trap handlers re-enter the interpreter synchronously, so a
+// small dedicated nesting cap trips before native frames can exhaust small
+// host stacks, independent of the shared function/source budget below.
+pub(crate) const HARD_MAX_TRAP_NESTING: usize = 3;
+
+// Prompt reparses poll recursively on the host stack, even with shallow ASTs.
+// THREAT[TM-DOS-133]: No configurable AST limit may remove this stack ceiling.
+const HARD_MAX_PROMPT_DEPTH: usize = 8;
+
 #[cfg(feature = "failpoints")]
 use fail::fail_point;
 
@@ -72,7 +81,7 @@ pub struct ExecutionLimits {
     /// Default: 1,000,000
     pub max_total_loop_iterations: usize,
 
-    /// Maximum function call depth (recursion limit)
+    /// Maximum shared function, source, child-shell, and trap-handler depth
     /// Default: 16; values above 16 are capped for host stack safety.
     pub max_function_depth: usize,
 
@@ -94,6 +103,7 @@ pub struct ExecutionLimits {
     /// Maximum AST nesting depth during parsing
     /// Default: 100
     /// Protects against stack overflow from deeply nested scripts (V4 in threat model).
+    /// Also bounds cumulative prompt expansion depth, with a hard ceiling of 8.
     pub max_ast_depth: usize,
 
     /// Maximum parser operations (fuel model for parsing)
@@ -154,7 +164,8 @@ pub struct ExecutionLimits {
 
     // THREAT[TM-DOS-122]: each `&` job holds a forked shell state and a
     // pending future until it finishes or is killed.
-    /// Maximum background jobs running at once; past it `&` fails.
+    /// Maximum concurrent background jobs and retained pipeline producers.
+    /// Past it `&` fails or a streaming pipeline returns a resource-limit error.
     /// Default: 64
     pub max_background_jobs: usize,
 
@@ -239,7 +250,7 @@ impl ExecutionLimits {
         }
     }
 
-    /// Set the maximum number of background jobs running at once.
+    /// Set the maximum concurrent background jobs and retained pipeline producers.
     pub fn max_background_jobs(mut self, count: usize) -> Self {
         self.max_background_jobs = count;
         self
@@ -267,8 +278,8 @@ impl ExecutionLimits {
         self
     }
 
-    /// Set maximum function depth.
-    /// A value of 0 is a valid strict limit that prevents function calls.
+    /// Set the shared function, source, child-shell, and trap-handler depth.
+    /// A value of 0 prevents entry into any of these execution frames.
     pub fn max_function_depth(mut self, depth: usize) -> Self {
         self.max_function_depth = depth;
         self
@@ -475,6 +486,9 @@ pub struct ExecutionCounters {
     /// Current explicit subshell nesting depth.
     pub subshell_depth: usize,
 
+    /// Current prompt expansion nesting depth (including descendant shells).
+    pub prompt_depth: usize,
+
     // THREAT[TM-DOS-059]: Session-level cumulative counters.
     // These persist across exec() calls (never reset by reset_for_execution).
     /// Total commands across all exec() calls in this session.
@@ -497,11 +511,12 @@ impl ExecutionCounters {
         self.commands = 0;
         self.loop_iterations.clear();
         self.total_loop_iterations = 0;
-        // function_depth/subst_depth/subshell_depth should already be 0 between
+        // Recursion depths should already be 0 between
         // exec() calls, but reset defensively to avoid stuck state.
         self.function_depth = 0;
         self.subst_depth = 0;
         self.subshell_depth = 0;
+        self.prompt_depth = 0;
     }
 
     /// Increment command counter, returns error if limit exceeded
@@ -684,6 +699,20 @@ impl ExecutionCounters {
     pub fn pop_subshell(&mut self) {
         self.subshell_depth = self.subshell_depth.saturating_sub(1);
     }
+
+    /// Enter a prompt reparse under the AST policy and native stack ceiling.
+    pub(crate) fn push_prompt(&mut self, limits: &ExecutionLimits) -> Result<(), LimitExceeded> {
+        let max_depth = limits.max_ast_depth.min(HARD_MAX_PROMPT_DEPTH);
+        if self.prompt_depth >= max_depth {
+            return Err(LimitExceeded::MaxPromptDepth(max_depth));
+        }
+        self.prompt_depth += 1;
+        Ok(())
+    }
+
+    pub(crate) fn pop_prompt(&mut self) {
+        self.prompt_depth = self.prompt_depth.saturating_sub(1);
+    }
 }
 
 /// Error returned when a resource limit is exceeded
@@ -709,6 +738,14 @@ pub enum LimitExceeded {
 
     #[error("maximum subshell depth exceeded ({0})")]
     MaxSubshellDepth(usize),
+
+    #[error("maximum prompt expansion depth exceeded ({0})")]
+    MaxPromptDepth(usize),
+    #[error("maximum trap nesting depth exceeded ({0})")]
+    MaxTrapDepth(usize),
+
+    #[error("maximum concurrent jobs exceeded ({0})")]
+    MaxConcurrentJobs(usize),
 
     #[error("maximum file descriptors exceeded ({0})")]
     MaxFileDescriptors(usize),
@@ -962,7 +999,7 @@ impl ExecutionBudget {
     }
 
     #[cfg(test)]
-    fn live_bytes_for_test(&self) -> u64 {
+    pub(crate) fn live_bytes_for_test(&self) -> u64 {
         self.inner.live_bytes.load(Ordering::Relaxed)
     }
 }
@@ -1155,6 +1192,10 @@ impl<T> BudgetedVec<T> {
         self.inner.pop()
     }
 
+    pub(crate) fn truncate(&mut self, len: usize) {
+        self.inner.truncate(len);
+    }
+
     pub(crate) fn into_parts(self) -> (Vec<T>, Option<ExecutionBudgetLease>) {
         (self.inner, self.lease)
     }
@@ -1162,12 +1203,26 @@ impl<T> BudgetedVec<T> {
 
 impl<T: Clone> BudgetedVec<T> {
     pub(crate) fn try_extend_from_slice(&mut self, values: &[T]) -> Result<(), LimitExceeded> {
+        self.try_extend_from_slice_with_limit(values, usize::MAX)
+    }
+
+    /// Bound logical length and geometric capacity before allocation.
+    pub(crate) fn try_extend_from_slice_with_limit(
+        &mut self,
+        values: &[T],
+        limit: usize,
+    ) -> Result<(), LimitExceeded> {
         let required = self
             .inner
             .len()
             .checked_add(values.len())
             .ok_or_else(|| LimitExceeded::Memory("intermediate buffer size overflow".into()))?;
-        let capacity = self.growth_capacity(required)?;
+        if required > limit {
+            return Err(LimitExceeded::Memory(
+                "intermediate buffer size limit exceeded".into(),
+            ));
+        }
+        let capacity = self.growth_capacity(required)?.min(limit);
         self.try_reserve_capacity(capacity)?;
         self.inner.extend_from_slice(values);
         Ok(())
@@ -1208,6 +1263,17 @@ pub(crate) struct BudgetedString {
 }
 
 impl BudgetedString {
+    /// Adopt existing storage without copying, retaining its capacity charge.
+    pub(crate) fn try_from_string(
+        inner: String,
+        budget: Option<&ExecutionBudget>,
+    ) -> Result<Self, LimitExceeded> {
+        let lease = budget
+            .map(|budget| budget.lease_bytes(inner.capacity()))
+            .transpose()?;
+        Ok(Self { inner, lease })
+    }
+
     pub(crate) fn new(budget: Option<&ExecutionBudget>) -> Result<Self, LimitExceeded> {
         Ok(Self {
             inner: String::new(),
@@ -1252,12 +1318,26 @@ impl BudgetedString {
     }
 
     pub(crate) fn try_push_str(&mut self, value: &str) -> Result<(), LimitExceeded> {
+        self.try_push_str_with_limit(value, usize::MAX)
+    }
+
+    /// Bound both logical size and geometric capacity growth before allocation.
+    pub(crate) fn try_push_str_with_limit(
+        &mut self,
+        value: &str,
+        limit: usize,
+    ) -> Result<(), LimitExceeded> {
         let required = self
             .inner
             .len()
             .checked_add(value.len())
             .ok_or_else(|| LimitExceeded::Memory("intermediate string size overflow".into()))?;
-        let capacity = self.growth_capacity(required)?;
+        if required > limit {
+            return Err(LimitExceeded::Memory(
+                "intermediate string size limit exceeded".into(),
+            ));
+        }
+        let capacity = self.growth_capacity(required)?.min(limit);
         self.try_reserve_capacity(capacity)?;
         self.inner.push_str(value);
         Ok(())
@@ -1846,6 +1926,7 @@ mod tests {
         counters.function_depth = 3;
         counters.subst_depth = 2;
         counters.subshell_depth = 2;
+        counters.prompt_depth = 2;
 
         // Reset should restore all counters
         counters.reset_for_execution();
@@ -1855,6 +1936,7 @@ mod tests {
         assert_eq!(counters.function_depth, 0);
         assert_eq!(counters.subst_depth, 0);
         assert_eq!(counters.subshell_depth, 0);
+        assert_eq!(counters.prompt_depth, 0);
 
         // Should be able to tick commands again
         assert!(counters.tick_command(&limits).is_ok());
@@ -2096,6 +2178,21 @@ mod tests {
             ))
         ));
         assert_eq!(&*bytes, b"1234", "failed growth must not mutate");
+    }
+
+    #[test]
+    fn budgeted_vec_length_cap_also_bounds_geometric_capacity() {
+        let limits = ExecutionLimits::new().max_live_intermediate_bytes(5);
+        let budget = ExecutionBudget::new(&limits, Arc::new(AtomicBool::new(false)));
+        let mut bytes = BudgetedBytes::new(Some(&budget)).unwrap();
+        bytes.try_extend_from_slice_with_limit(b"abc", 5).unwrap();
+        bytes.try_extend_from_slice_with_limit(b"d", 5).unwrap();
+        assert_eq!(budget.live_bytes_for_test(), 5);
+        assert!(bytes.try_extend_from_slice_with_limit(b"ef", 5).is_err());
+        assert_eq!(&*bytes, b"abcd");
+        assert_eq!(budget.live_bytes_for_test(), 5);
+        drop(bytes);
+        assert_eq!(budget.live_bytes_for_test(), 0);
     }
 
     #[test]

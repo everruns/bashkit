@@ -15,6 +15,8 @@
 //! Supports: `ts -c "code"`, `ts script.ts`, stdin piping, and
 //! `node`/`deno`/`bun` aliases.
 
+#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+use crate::zapcode_browser as zapcode_core;
 use async_trait::async_trait;
 use std::future::Future;
 use std::path::{Path, PathBuf};

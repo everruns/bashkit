@@ -41,7 +41,6 @@ pub(super) struct JqArgs<'a> {
     pub raw_input: bool,
     pub raw_output: bool,
     pub join_output: bool,
-    pub compact_output: bool,
     pub null_input: bool,
     pub slurp: bool,
     pub sort_keys: bool,
@@ -55,6 +54,10 @@ pub(super) struct JqArgs<'a> {
     pub stream: bool,
     /// `-e` flag — set exit status from output.
     pub exit_status: bool,
+    /// Output shape, set by `-c`/`--compact-output`, `--tab` and
+    /// `--indent N`. One field rather than a compact flag beside an indent
+    /// width, because real jq lets the last of those three on the command
+    /// line win: `jq --indent 4 -c` is compact and `jq -c --indent 4` is not.
     pub indent: Indent,
     pub file_args: Vec<&'a str>,
     /// Named string/JSON variables: `(name_with_$, value)`.
@@ -147,7 +150,6 @@ pub(super) fn parse<'a>(args: &'a [String]) -> ParseOutcome<'a> {
         raw_input: false,
         raw_output: false,
         join_output: false,
-        compact_output: false,
         null_input: false,
         slurp: false,
         ascii_output: false,
@@ -212,7 +214,7 @@ pub(super) fn parse<'a>(args: &'a [String]) -> ParseOutcome<'a> {
         match arg.as_str() {
             "--raw-output" => out.raw_output = true,
             "--raw-input" => out.raw_input = true,
-            "--compact-output" => out.compact_output = true,
+            "--compact-output" => out.indent = Indent::Compact,
             "--null-input" => out.null_input = true,
             "--sort-keys" => out.sort_keys = true,
             "--slurp" => out.slurp = true,
@@ -230,9 +232,7 @@ pub(super) fn parse<'a>(args: &'a [String]) -> ParseOutcome<'a> {
             "--indent" => match args.get(i + 1) {
                 Some(n) => match n.parse::<u8>() {
                     Ok(n) if n <= MAX_JQ_INDENT => {
-                        if !matches!(out.indent, Indent::Tab) {
-                            out.indent = Indent::Spaces(n);
-                        }
+                        out.indent = Indent::Spaces(n);
                         i += 2;
                         continue;
                     }
@@ -338,7 +338,7 @@ pub(super) fn parse<'a>(args: &'a [String]) -> ParseOutcome<'a> {
                         'f' => takes_file = true,
                         'r' => out.raw_output = true,
                         'R' => out.raw_input = true,
-                        'c' => out.compact_output = true,
+                        'c' => out.indent = Indent::Compact,
                         'n' => out.null_input = true,
                         'S' => out.sort_keys = true,
                         's' => out.slurp = true,

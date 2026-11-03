@@ -8,6 +8,7 @@
 pub mod agent;
 pub mod checks;
 pub mod dataset;
+pub mod generate;
 pub mod mira_study;
 pub mod provider;
 pub mod reference;

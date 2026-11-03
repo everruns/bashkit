@@ -21,6 +21,50 @@ const result = bash.executeSync('echo "Hello, World!"');
 console.log(result.stdout);
 ```
 
+## Python and TypeScript host functions
+
+Enable either embedded runtime and register named host functions. The same options
+work with `Bash`, `BashTool`, and the LangChain, OpenAI, Anthropic and Vercel AI adapters.
+
+```typescript
+const bash = new Bash({
+  python: true,
+  externalFunctions: ["lookup"],
+  externalHandler: async (name, args, kwargs, { signal }) => {
+    const response = await fetch(`https://api.example.com/items/${encodeURIComponent(String(args[0]))}`, { signal });
+    return response.json();
+  },
+  typescript: true,
+  typescriptExternalFunctions: ["double"],
+  typescriptExternalHandler: (_name, args) => Number(args[0]) * 2,
+});
+await bash.execute(`python -c 'print(lookup(21))'`);
+console.log((await bash.execute(`ts -c 'await double(21)'`)).stdout); // 42
+```
+
+Use `execute()` for scripts that invoke JavaScript handlers. `executeSync()`
+returns a script error for such calls because it blocks the JavaScript event loop.
+Handlers may return a value or a promise. Python receives positional arguments and
+keyword arguments separately; TypeScript receives positional arguments.
+
+Values use the JSON subset: null, booleans, finite numbers, strings, arrays, and
+objects with string keys, with nesting limited to 64. Integral values must fit
+JavaScript's safe integer range. Python tuples become arrays; TypeScript
+`undefined` and an omitted host return become null. Bytes, functions, arbitrary
+class instances and cyclic values produce script errors.
+
+Each execution captures the caller's `AsyncLocalStorage` context before queuing.
+Its handler signal aborts on cancellation, timeout or completion; pass it to host
+I/O. A callback cannot reenter its own interpreter or live filesystem. Use another
+instance for nested execution. Independent asynchronous requests can share an
+instance and queue safely. Synchronous access during asynchronous execution fails
+promptly. Independent workers may own instances, including workers stopped with
+a pending host function. Callbacks survive reset; supply the options again when restoring a
+snapshot, since host code and request context are never serialized.
+
+Host functions run trusted application code. Enforce service authorization and
+I/O limits there; registering a function explicitly grants scripts that capability.
+
 ## Persistent state
 
 A `Bash` instance keeps its environment and virtual filesystem across calls:

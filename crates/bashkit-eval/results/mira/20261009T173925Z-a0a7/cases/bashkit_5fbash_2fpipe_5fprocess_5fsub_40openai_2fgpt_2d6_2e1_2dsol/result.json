@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "pipe_process_sub",
+  "target": "openai/gpt-6.1-sol",
+  "input": [
+    "Use process substitution to compare two sorted lists without creating temporary files. /data/installed.txt contains currently installed packages. /data/required.txt contains required packages. Use diff with process substitution (diff <(sort file1) <(sort file2)) to find: 1) packages in installed but not required (to remove), 2) packages in required but not installed (to install). Print 'To install:' followed by missing packages, and 'To remove:' followed by extra packages."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "To install:\n```text\nnodejs\nredis\n```\n\nTo remove:\n```text\nnginx\nvim\n```\n\nBash command used (no temporary files):\n```bash\ndiff <(sort /data/installed.txt) <(sort /data/required.txt) |\nawk '\n  /^> / { install = install substr($0, 3) \"\\n\" }\n  /^< / { remove = remove substr($0, 3) \"\\n\" }\n  END { printf \"To install:\\n%sTo remove:\\n%s\", install, remove }\n'\n```",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "diff --old-line-format='REMOVE %L' --new-line-format='INSTALL %L' --unchanged-line-format='' <(sort /data/installed.txt) <(sort /data/required.txt) | awk '/^INSTALL / { installs = installs substr($0, 9) \"\\n\" } /^REMOVE / { removes = removes substr($0, 8) \"\\n\" } END { printf \"To install:\\n%sTo remove:\\n%s\", installs, removes }'",
+      "diff <(sort /data/installed.txt) <(sort /data/required.txt) | awk '/^> / { installs = installs substr($0, 3) \"\\n\" } /^< / { removes = removes substr($0, 3) \"\\n\" } END { printf \"To install:\\n%sTo remove:\\n%s\", installs, removes }'"
+    ],
+    "usage": {
+      "input_tokens": 1862,
+      "output_tokens": 354,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 9499
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "diff --old-line-format='REMOVE %L' --new-line-format='INSTALL %L' --unchanged-line-format='' <(sort /data/installed.txt) <(sort /data/required.txt) | awk '/^INSTALL / { installs = installs substr($0, 9) \"\\n\" } /^REMOVE / { removes = removes substr($0, 8) \"\\n\" } END { printf \"To install:\\n%sTo remove:\\n%s\", installs, removes }'",
+            "exit_code": 0,
+            "stderr": "diff: unrecognized option '--old-line-format=REMOVE %L'\n",
+            "stdout": "To install:\nTo remove:\n"
+          },
+          {
+            "commands": "diff <(sort /data/installed.txt) <(sort /data/required.txt) | awk '/^> / { installs = installs substr($0, 3) \"\\n\" } /^< / { removes = removes substr($0, 3) \"\\n\" } END { printf \"To install:\\n%sTo remove:\\n%s\", installs, removes }'",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "To install:\nnodejs\nredis\nTo remove:\nnginx\nvim\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

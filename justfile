@@ -296,32 +296,44 @@ bench-wasm-coreutils:
 # study binary the `mira` host CLI spawns over stdio; mira owns the model
 # matrix, scheduling, and reporting. Install the host once:
 #   cargo install mira-cli      # provides the `mira` binary
-# Targets are gated on ANTHROPIC_API_KEY / OPENAI_API_KEY — set the keys for
+# Targets are gated on ANTHROPIC_API_KEY / OPENAI_API_KEY / OPENROUTER_API_KEY — set the keys for
 # the models you want to run; unkeyed targets are skipped. See knowledge/operations/eval.md.
 
 # List advertised evals, samples, scorers, and targets
 eval-list:
-    mira --bin bashkit-eval list
+    mira list --study-bin bashkit-eval
 
 # Run the bash agent eval. Pass extra mira flags through, e.g. (--targets takes
-# exact labels, comma-separated — globs are not supported):
-#   just eval --targets anthropic/claude-opus-4-8 --tag json_processing --format html --out report.html
+# comma-separated label globs, e.g. 'anthropic/*'):
+#   just eval --targets anthropic/claude-opus-5-5 --tag json_processing --format html --out report.html
 eval *ARGS:
-    mira --bin bashkit-eval run bashkit_bash {{ARGS}}
+    mira run --study-bin bashkit-eval bashkit_bash {{ARGS}}
 
 # Quick 3-task smoke eval
 eval-smoke *ARGS:
-    mira --bin bashkit-eval run bashkit_smoke {{ARGS}}
+    mira run --study-bin bashkit-eval bashkit_smoke {{ARGS}}
 
-# Repo-workflow eval: multi-turn fixture repos (make test, fix, commit). Every
-# task's reference solution also runs offline in `cargo test -p bashkit-eval`.
+# Slices of bashkit_bash by tag (difficulty=repo / hard). Reference solutions
+# for these run offline in `cargo test -p bashkit-eval`.
 eval-repo *ARGS:
-    mira --bin bashkit-eval run bashkit_repo {{ARGS}}
+    mira run --study-bin bashkit-eval bashkit_bash --tag repo {{ARGS}}
+
+eval-hard *ARGS:
+    mira run --study-bin bashkit-eval bashkit_bash --tag hard {{ARGS}}
+
+# One-shot generation eval: one reply, one script run, no feedback. Slice with
+# `--tag basic` / `--tag hard`; references run in `cargo test -p bashkit-eval`.
+eval-generate *ARGS:
+    mira run --study-bin bashkit-eval bashkit_generate {{ARGS}}
+
+# mode=runtime slice: python3 (CPython) / sqlite3 scripts, state across calls
+eval-runtime *ARGS:
+    mira run --study-bin bashkit-eval bashkit_bash --tag runtime {{ARGS}}
 
 # Scripting-tool eval. The `mode` axis compares scripted vs baseline; select one
 # with `--axis mode=scripted` (omit to run both).
 eval-scripting *ARGS:
-    mira --bin bashkit-eval run bashkit_scripting {{ARGS}}
+    mira run --study-bin bashkit-eval bashkit_scripting {{ARGS}}
 
 # Gap telemetry: replay every recorded eval tool call on the current bashkit,
 # save results/gaps/gaps-<ts>.{json,md}, refresh /benches data. No model or
@@ -419,65 +431,12 @@ release-check:
     # Check nightly CI jobs (last 3 runs must be green)
     just check-nightly
 
-    # Monty is a registry dependency, so verify the exact package that CI
-    # publishes. Rewriting manifests here can hide real packaging failures.
+    # Cargo stages selected workspace packages in a temporary registry, so
+    # verification builds the exact new graph before any internal crate is live.
     echo ""
-    echo "Dry-run publish bashkit..."
-    cargo publish -p bashkit --dry-run --allow-dirty
-
-    echo ""
-    echo "Dry-run publish bashkit-cli..."
-    # bashkit-cli verifies against the registry package of bashkit.
-    # Before the matching bashkit release is published, local dry-run cannot
-    # resolve that package. Package a disposable workspace against the latest
-    # published core as a structural proxy. The real workflow publishes and
-    # verifies the matching core before publishing the CLI.
-    CLI_VERIFY_ROOT=$(mktemp -d)
-    trap 'rm -rf "$CLI_VERIFY_ROOT"' EXIT
-    # tar, not rsync: rsync is absent from some cloud release sandboxes.
-    mkdir -p "$CLI_VERIFY_ROOT/workspace"
-    tar -c --exclude .git --exclude node_modules --exclude target . \
-        | tar -x -C "$CLI_VERIFY_ROOT/workspace"
-    LATEST_CORE=$(cargo search bashkit --limit 1 | sed -n 's/^bashkit = "\([^"]*\)".*/\1/p')
-    if [ -z "$LATEST_CORE" ]; then
-        echo "Error: could not determine latest published bashkit version"
-        exit 1
-    fi
-    WORKSPACE_VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
-    CLI_TOML="$CLI_VERIFY_ROOT/workspace/crates/bashkit-cli/Cargo.toml"
-    sed -i.bak \
-        "s/version = \"$WORKSPACE_VERSION\"/version = \"$LATEST_CORE\"/" \
-        "$CLI_TOML"
-    rm "$CLI_TOML.bak"
-    # The proxy resolves the core from crates.io, so it can only request
-    # features the published core already has. Features added in this release
-    # cycle (and Python, which the published core predates) are dropped in the
-    # disposable copy only; the exact new core package dry-run above validates
-    # them. Failing here means real packaging drift, not a missing feature.
-    python3 scripts/cli_publish_proxy.py "$CLI_TOML" "$LATEST_CORE"
-    cargo publish \
-        --manifest-path "$CLI_VERIFY_ROOT/workspace/Cargo.toml" \
-        -p bashkit-cli \
-        --dry-run \
-        --allow-dirty \
-        --no-verify
-
-    echo ""
-    echo "Dry-run publish bashkit-scripted-tool..."
-    # Same structural proxy as the CLI: point the copy's core pin at the latest
-    # published bashkit. Every core feature it forwards (bash_tool, jq, python,
-    # typescript) is already on crates.io.
-    ST_TOML="$CLI_VERIFY_ROOT/workspace/crates/bashkit-scripted-tool/Cargo.toml"
-    sed -i.bak \
-        "s/version = \"$WORKSPACE_VERSION\"/version = \"$LATEST_CORE\"/" \
-        "$ST_TOML"
-    rm "$ST_TOML.bak"
-    cargo publish \
-        --manifest-path "$CLI_VERIFY_ROOT/workspace/Cargo.toml" \
-        -p bashkit-scripted-tool \
-        --dry-run \
-        --allow-dirty \
-        --no-verify
+    echo "Dry-run publish all release crates..."
+    cargo publish --dry-run --allow-dirty \
+        -p bashkit-cpython-wasm -p bashkit-coreutils-wasm -p bashkit -p bashkit-cli -p bashkit-scripted-tool
 
     echo ""
     echo "All release checks passed!"

@@ -1,0 +1,71 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "text_hostname_replace",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "In the file /etc/app.conf, replace all occurrences of 'localhost' with 'db.prod.internal'. Write the result back to the same file and verify the change."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "4/4 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "All occurrences of `localhost` have been replaced with `db.prod.internal` in `/etc/app.conf`.\n\n### Verification\nContent of `/etc/app.conf`:\n```ini\ndb_host=db.prod.internal\ndb_port=5432\ndb_name=myapp\ncache_host=db.prod.internal\nlog_level=info\n```\n\nConfirmed that no occurrences of `localhost` remain in the file.",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "cat /etc/app.conf",
+      "sed -i 's/localhost/db.prod.internal/g' /etc/app.conf && cat /etc/app.conf",
+      "grep 'localhost' /etc/app.conf || echo \"No occurrences of localhost found\""
+    ],
+    "usage": {
+      "input_tokens": 1069,
+      "output_tokens": 327,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 8553
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 3.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat /etc/app.conf",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "db_host=localhost\ndb_port=5432\ndb_name=myapp\ncache_host=localhost\nlog_level=info\n"
+          },
+          {
+            "commands": "sed -i 's/localhost/db.prod.internal/g' /etc/app.conf && cat /etc/app.conf",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "db_host=db.prod.internal\ndb_port=5432\ndb_name=myapp\ncache_host=db.prod.internal\nlog_level=info\n"
+          },
+          {
+            "commands": "grep 'localhost' /etc/app.conf || echo \"No occurrences of localhost found\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "No occurrences of localhost found\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

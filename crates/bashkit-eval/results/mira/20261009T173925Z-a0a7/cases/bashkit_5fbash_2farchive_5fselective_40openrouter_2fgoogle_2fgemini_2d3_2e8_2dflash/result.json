@@ -1,0 +1,71 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "archive_selective",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "Create files: /tmp/notes.txt with 'remember this', /tmp/data.csv with 'a,b,c', /tmp/script.sh with '#!/bin/bash'. Create a tar.gz archive /tmp/bundle.tar.gz containing all three files. Then list the archive contents. Finally extract only notes.txt to /output/ directory."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "3/3 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "The requested files have been created, archived, listed, and extracted.\n\n### Actions Performed:\n1. Created the files in `/tmp`:\n   - `/tmp/notes.txt` (`remember this`)\n   - `/tmp/data.csv` (`a,b,c`)\n   - `/tmp/script.sh` (`#!/bin/bash`)\n2. Created the archive `/tmp/bundle.tar.gz` containing all three files.\n3. Listed the archive contents:\n   ```\n   notes.txt\n   data.csv\n   script.sh\n   ```\n4. Extracted only `notes.txt` to `/output/notes.txt`.",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "# Ensure /output exists\nmkdir -p /output\n\n# Create the three files\necho -n 'remember this' > /tmp/notes.txt\n# Or check if trailing newline is expected or standard echo. Usually echo \"remember this\" or echo -n. Let's see prompt phrasing:\n# with 'remember this', with 'a,b,c', with '#!/bin/bash'\n# standard echo is fine, or does it matter?\n",
+      "which tar\necho \"remember this\" > /tmp/notes.txt\necho \"a,b,c\" > /tmp/data.csv\necho '#!/bin/bash' > /tmp/script.sh\n\n# Let's see how tar works when creating bundle\ntar -czf /tmp/bundle.tar.gz -C /tmp notes.txt data.csv script.sh\ntar -ztvf /tmp/bundle.tar.gz\n",
+      "# Extract only notes.txt to /output/\ntar -xzf /tmp/bundle.tar.gz -C /output notes.txt\nls -la /output\ncat /output/notes.txt\n"
+    ],
+    "usage": {
+      "input_tokens": 2483,
+      "output_tokens": 616,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 8748
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 3.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "# Ensure /output exists\nmkdir -p /output\n\n# Create the three files\necho -n 'remember this' > /tmp/notes.txt\n# Or check if trailing newline is expected or standard echo. Usually echo \"remember this\" or echo -n. Let's see prompt phrasing:\n# with 'remember this', with 'a,b,c', with '#!/bin/bash'\n# standard echo is fine, or does it matter?\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "which tar\necho \"remember this\" > /tmp/notes.txt\necho \"a,b,c\" > /tmp/data.csv\necho '#!/bin/bash' > /tmp/script.sh\n\n# Let's see how tar works when creating bundle\ntar -czf /tmp/bundle.tar.gz -C /tmp notes.txt data.csv script.sh\ntar -ztvf /tmp/bundle.tar.gz\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/usr/bin/tar\n-rw-r--r--       14 notes.txt\n-rw-r--r--        6 data.csv\n-rw-r--r--       12 script.sh\n"
+          },
+          {
+            "commands": "# Extract only notes.txt to /output/\ntar -xzf /tmp/bundle.tar.gz -C /output notes.txt\nls -la /output\ncat /output/notes.txt\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       14 2026-10-09 17:41 notes.txt\nremember this\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

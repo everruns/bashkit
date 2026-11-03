@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "script_assoc_array",
+  "target": "openrouter/meta/muse-spark-1.3-contributor",
+  "input": [
+    "Use a bash associative array (declare -A) to build a country-code lookup. Map: US='United States', GB='United Kingdom', DE='Germany', JP='Japan', FR='France'. Then read /data/visitors.csv (columns: name,country_code) and for each row, look up the full country name and print 'name visited from FULL_COUNTRY_NAME'. At the end, print a count per country sorted by count descending as 'FULL_NAME: N visitors'."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Used a bash associative array (`declare -A`) for the country-code lookup and processed `/data/visitors.csv`:\n\n**Per-visitor output:**\n```\nAlice visited from United States\nBob visited from United Kingdom\nCarol visited from United States\nDave visited from Japan\nEve visited from Germany\nFrank visited from United States\nGrace visited from United Kingdom\n```\n\n**Count per country sorted by count descending:**\n```\nUnited States: 3 visitors\nUnited Kingdom: 2 visitors\nGermany: 1 visitors\nJapan: 1 visitors\n```\n\nScript used:\n```bash\ndeclare -A countries\ncountries[US]='United States'\ncountries[GB]='United Kingdom'\ncountries[DE]='Germany'\ncountries[JP]='Japan'\ncountries[FR]='France'\n\ndeclare -A counts\n\nwhile IFS=, read -r name country_code; do\n  country_code=$(echo \"$country_code\" | tr -d '\\r' | xargs)\n  name=$(echo \"$name\" | tr -d '\\r' | xargs)\n  [[ -z \"$name\" ]] && continue\n  full=\"${countries[$country_code]}\"\n  echo \"$name visited from $full\"\n  counts[\"$full\"]=$((${counts[\"$full\"]:-0} + 1))\ndone < <(tail -n +2 /data/visitors.csv)\n\nfor full in \"${!counts[@]}\"; do\n  printf \"%d|%s\\n\" \"${counts[$full]}\" \"$full\"\ndone | sort -t'|' -k1,1nr -k2,2 | while IFS='|' read -r n full; do\n  echo \"$full: $n visitors\"\ndone\n```\n",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cat /data/visitors.csv; echo \"---\"; ls -l /data/",
+      "declare -A countries\ncountries[US]='United States'\ncountries[GB]='United Kingdom'\ncountries[DE]='Germany'\ncountries[JP]='Japan'\ncountries[FR]='France'\n\ndeclare -A counts\n\n# skip header, read rows\nwhile IFS=, read -r name country_code; do\n  # trim possible carriage return / whitespace\n  country_code=$(echo \"$country_code\" | tr -d '\\r' | xargs)\n  name=$(echo \"$name\" | tr -d '\\r' | xargs)\n  # skip empty lines\n  [[ -z \"$name\" ]] && continue\n  full=\"${countries[$country_code]}\"\n  echo \"$name visited from $full\"\n  # increment count keyed by full name\n  counts[\"$full\"]=$((${counts[\"$full\"]:-0} + 1))\ndone < <(tail -n +2 /data/visitors.csv)\n\n# print counts sorted by count descending\nfor full in \"${!counts[@]}\"; do\n  printf \"%d|%s\\n\" \"${counts[$full]}\" \"$full\"\ndone | sort -t'|' -k1,1nr -k2,2 | while IFS='|' read -r n full; do\n  echo \"$full: $n visitors\"\ndone\n"
+    ],
+    "usage": {
+      "input_tokens": 3083,
+      "output_tokens": 2003,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 23927
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat /data/visitors.csv; echo \"---\"; ls -l /data/",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "name,country_code\nAlice,US\nBob,GB\nCarol,US\nDave,JP\nEve,DE\nFrank,US\nGrace,GB\n---\n-rw-r--r--       76 2026-10-09 05:02 visitors.csv\n"
+          },
+          {
+            "commands": "declare -A countries\ncountries[US]='United States'\ncountries[GB]='United Kingdom'\ncountries[DE]='Germany'\ncountries[JP]='Japan'\ncountries[FR]='France'\n\ndeclare -A counts\n\n# skip header, read rows\nwhile IFS=, read -r name country_code; do\n  # trim possible carriage return / whitespace\n  country_code=$(echo \"$country_code\" | tr -d '\\r' | xargs)\n  name=$(echo \"$name\" | tr -d '\\r' | xargs)\n  # skip empty lines\n  [[ -z \"$name\" ]] && continue\n  full=\"${countries[$country_code]}\"\n  echo \"$name visited from $full\"\n  # increment count keyed by full name\n  counts[\"$full\"]=$((${counts[\"$full\"]:-0} + 1))\ndone < <(tail -n +2 /data/visitors.csv)\n\n# print counts sorted by count descending\nfor full in \"${!counts[@]}\"; do\n  printf \"%d|%s\\n\" \"${counts[$full]}\" \"$full\"\ndone | sort -t'|' -k1,1nr -k2,2 | while IFS='|' read -r n full; do\n  echo \"$full: $n visitors\"\ndone\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Alice visited from United States\nBob visited from United Kingdom\nCarol visited from United States\nDave visited from Japan\nEve visited from Germany\nFrank visited from United States\nGrace visited from United Kingdom\nUnited States: 3 visitors\nUnited Kingdom: 2 visitors\nGermany: 1 visitors\nJapan: 1 visitors\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

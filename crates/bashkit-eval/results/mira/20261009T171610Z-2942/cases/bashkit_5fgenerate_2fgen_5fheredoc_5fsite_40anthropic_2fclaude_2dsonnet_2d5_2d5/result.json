@@ -1,0 +1,63 @@
+{
+  "eval": "bashkit_generate",
+  "sample": "gen_heredoc_site",
+  "target": "anthropic/claude-sonnet-5-5",
+  "input": [
+    "Write a bash script that generates an HTML page from settings.\n\nStarting files:\n--- /home/eval/site.env ---\nTITLE=Release Notes\nVERSION=2.4.1\n--- end ---\n\nNote the values are not shell-quoted (TITLE contains a space).\n\nCreate /home/eval/site/index.html (the directory does not exist) whose content is exactly the following, where `Release Notes` and `2.4.1` come from TITLE and VERSION in site.env, and the two lines inside `<pre>` appear literally, character for character (no expansion):\n```\n<html>\n<head><title>Release Notes 2.4.1</title></head>\n<body>\n<h1>Release Notes</h1>\n<p>Version 2.4.1</p>\n<pre>\nexport PATH=\"$HOME/bin:$PATH\"\necho \"built: $(date +%F)\"\n</pre>\n</body>\n</html>\n```\nExit 0."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "The script parses site.env without sourcing it, because the values aren't shell-quoted. It then writes the HTML with a quoted here-doc for the literal part and `printf` for the parts that come from the settings.\n\n```bash\n#!/bin/bash\nset -e\n\nenvfile=/home/eval/site.env\nTITLE=\"\"\nVERSION=\"\"\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  line=\"${line%$'\\r'}\"\n  case \"$line\" in\n    TITLE=*) TITLE=\"${line#TITLE=}\" ;;\n    VERSION=*) VERSION=\"${line#VERSION=}\" ;;\n  esac\ndone < \"$envfile\"\n\nmkdir -p /home/eval/site\nout=/home/eval/site/index.html\n\n{\n  printf '<html>\\n'\n  printf '<head><title>%s %s</title></head>\\n' \"$TITLE\" \"$VERSION\"\n  printf '<body>\\n'\n  printf '<h1>%s</h1>\\n' \"$TITLE\"\n  printf '<p>Version %s</p>\\n' \"$VERSION\"\n  cat <<'EOF'\n<pre>\nexport PATH=\"$HOME/bin:$PATH\"\necho \"built: $(date +%F)\"\n</pre>\n</body>\n</html>\nEOF\n} > \"$out\"\n\nexit 0\n```",
+    "iterations": 1,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "#!/bin/bash\nset -e\n\nenvfile=/home/eval/site.env\nTITLE=\"\"\nVERSION=\"\"\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  line=\"${line%$'\\r'}\"\n  case \"$line\" in\n    TITLE=*) TITLE=\"${line#TITLE=}\" ;;\n    VERSION=*) VERSION=\"${line#VERSION=}\" ;;\n  esac\ndone < \"$envfile\"\n\nmkdir -p /home/eval/site\nout=/home/eval/site/index.html\n\n{\n  printf '<html>\\n'\n  printf '<head><title>%s %s</title></head>\\n' \"$TITLE\" \"$VERSION\"\n  printf '<body>\\n'\n  printf '<h1>%s</h1>\\n' \"$TITLE\"\n  printf '<p>Version %s</p>\\n' \"$VERSION\"\n  cat <<'EOF'\n<pre>\nexport PATH=\"$HOME/bin:$PATH\"\necho \"built: $(date +%F)\"\n</pre>\n</body>\n</html>\nEOF\n} > \"$out\"\n\nexit 0\n"
+    ],
+    "usage": {
+      "input_tokens": 747,
+      "output_tokens": 444,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 3365
+    },
+    "metrics": {
+      "exec_ms": 3.0,
+      "exit_code": 0.0,
+      "extracted": 1.0,
+      "generate_ms": 3362.0,
+      "script_bytes": 631.0,
+      "script_found": 1.0,
+      "timed_out": 0.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "#!/bin/bash\nset -e\n\nenvfile=/home/eval/site.env\nTITLE=\"\"\nVERSION=\"\"\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  line=\"${line%$'\\r'}\"\n  case \"$line\" in\n    TITLE=*) TITLE=\"${line#TITLE=}\" ;;\n    VERSION=*) VERSION=\"${line#VERSION=}\" ;;\n  esac\ndone < \"$envfile\"\n\nmkdir -p /home/eval/site\nout=/home/eval/site/index.html\n\n{\n  printf '<html>\\n'\n  printf '<head><title>%s %s</title></head>\\n' \"$TITLE\" \"$VERSION\"\n  printf '<body>\\n'\n  printf '<h1>%s</h1>\\n' \"$TITLE\"\n  printf '<p>Version %s</p>\\n' \"$VERSION\"\n  cat <<'EOF'\n<pre>\nexport PATH=\"$HOME/bin:$PATH\"\necho \"built: $(date +%F)\"\n</pre>\n</body>\n</html>\nEOF\n} > \"$out\"\n\nexit 0\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          }
+        ]
+      },
+      "generate": {
+        "extraction": "fenced",
+        "timed_out": false
+      }
+    }
+  },
+  "skipped": false
+}

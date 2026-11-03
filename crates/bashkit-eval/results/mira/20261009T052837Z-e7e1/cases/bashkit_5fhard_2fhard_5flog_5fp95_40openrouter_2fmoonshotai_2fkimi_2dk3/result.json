@@ -1,0 +1,99 @@
+{
+  "eval": "bashkit_hard",
+  "sample": "hard_log_p95",
+  "target": "openrouter/moonshotai/kimi-k3",
+  "input": [
+    "/home/eval/logs/access.log is an HTTP access log. Each well-formed line is: <timestamp> <method> <path> <status> <latency>ms, separated by single spaces. Produce /home/eval/logs/out/report.tsv with per-endpoint latency statistics.\n\nRules:\n- Skip lines that do not have exactly those 5 fields or whose latency is not a number followed by \"ms\" (e.g. truncation markers, or \"-\" for timed-out requests).\n- endpoint = path with any query string (\"?...\" onwards) removed, then a trailing \"/\" removed (unless the path is just \"/\").\n- Exclude /healthz and every path under /static/.\n- For each endpoint: count = number of requests, p50 and p95 = latency percentiles in ms using the nearest-rank method (sort latencies ascending; the p-th percentile is the value at 1-based position ceil(p/100 * count)), err_permille = floor(1000 * (requests with status >= 500) / count).\n- Output: tab-separated, a header line `endpoint\tcount\tp50\tp95\terr_permille`, then the top 5 endpoints ordered by p95 descending, then count descending, then endpoint ascending (byte order). Integers only, no padding."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "4/4 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Done. `/home/eval/logs/out/report.tsv` contains:\n\n```\nendpoint\tcount\tp50\tp95\terr_permille\n/api/items\t381\t270\t640\t41\n/api/search\t381\t210\t500\t62\n/api/login\t371\t240\t480\t37\n/api/orders\t371\t290\t480\t43\n/api/users\t379\t230\t430\t47\n```\n\n**How it was processed** (script saved at `/home/eval/logs/report.awk`):\n- **Filtering**: kept only lines with exactly 5 fields where field 5 matches `^[0-9]+ms$` — this dropped the 7 `-- log truncated --` markers and 10 timed-out lines with `-`.\n- **Endpoint normalization**: stripped `?...` query strings, removed trailing `/` (except for `/`), and excluded `/healthz` and `/static/*` (e.g. `/static/app.js`). Note that 504-timeout lines for `/static/app.js` were also dropped by the latency rule anyway.\n- **Stats per endpoint**: latencies sorted ascending; p50/p95 via nearest-rank (`ceil(p/100·n)`, computed with integer math `(p·n+99)/100`); `err_permille = floor(1000·errors/count)` where errors are statuses ≥ 500.\n- **Ranking**: sorted by p95 descending, then count descending, then endpoint ascending byte order — implemented with a sortable key of zero-padded inverted numerics followed by the endpoint, and verified independently with `sort -n`/`sed` extraction per endpoint, which produced identical counts, percentiles, and error rates. The tie between `/api/login` and `/api/orders` (both p95=480, count=371) breaks correctly by byte order.\n\n2,260 well-formed, non-excluded requests were aggregated into 6 endpoints, with `/api/cart` (p95=430, count=377) just missing the top 5 cut.",
+    "iterations": 7,
+    "tool_calls_count": 7,
+    "tool_calls": [
+      "ls -la /home/eval/logs/ && wc -l /home/eval/logs/access.log && head -20 /home/eval/logs/access.log",
+      "tail -20 /home/eval/logs/access.log; echo \"---\"; grep -c \"ms\" /home/eval/logs/access.log",
+      "awk 'NF != 5' /home/eval/logs/access.log | head -20; echo \"---\"; awk 'NF == 5 && $5 !~ /^[0-9]+ms$/' /home/eval/logs/access.log | head -20",
+      "mkdir -p /home/eval/logs/out && cat > /home/eval/logs/report.awk <<'EOF'\nNF == 5 && $5 ~ /^[0-9]+ms$/ {\n    path = $3\n    sub(/\\?.*$/, \"\", path)                 # strip query string\n    if (path != \"/\") sub(/\\/$/, \"\", path)  # strip trailing slash (unless just \"/\")\n    if (path == \"/healthz\") next\n    if (path ~ /^\\/static\\//) next\n    lat = $5 + 0\n    cnt[path]++\n    latn[path, cnt[path]] = lat\n    if ($4 + 0 >= 500) err[path]++\n}\nEND {\n    out = \"/home/eval/logs/out/report.tsv\"\n    printf \"endpoint\\tcount\\tp50\\tp95\\terr_permille\\n\" > out\n    for (e in cnt) {\n        n = cnt[e]\n        # insertion sort of this endpoint's latencies\n        for (i = 2; i <= n; i++) {\n            v = latn[e, i]; j = i - 1\n            while (j >= 1 && latn[e, j] > v) { latn[e, j+1] = latn[e, j]; j-- }\n            latn[e, j+1] = v\n        }\n        r50 = int((50 * n + 99) / 100); if (r50 < 1) r50 = 1\n        r95 = int((95 * n + 99) / 100); if (r95 < 1) r95 = 1\n        p50 = latn[e, r50]; p95 = latn[e, r95]\n        ep = int(1000 * err[e] / n)\n        # sort key: p95 desc, count desc, endpoint asc (byte order)\n        k = sprintf(\"%012d\\t%012d\\t%s\", 999999999999 - p95, 999999999999 - n, e)\n        keys[k] = e \"\\t\" n \"\\t\" p50 \"\\t\" p95 \"\\t\" ep\n    }\n    m = asort(keys, sk)\n    lim = (m < 5 ? m : 5)\n    for (i = 1; i <= lim; i++) print keys[sk[i]] > out\n    close(out)\n}\nEOF\ngawk -f /home/eval/logs/report.awk /home/eval/logs/access.log && cat /home/eval/logs/out/report.tsv",
+      "cat > /home/eval/logs/report.awk <<'EOF'\nNF == 5 && $5 ~ /^[0-9]+ms$/ {\n    path = $3\n    sub(/\\?.*$/, \"\", path)                 # strip query string\n    if (path != \"/\") sub(/\\/$/, \"\", path)  # strip trailing slash (unless just \"/\")\n    if (path == \"/healthz\") next\n    if (path ~ /^\\/static\\//) next\n    lat = $5 + 0\n    cnt[path]++\n    latn[path, cnt[path]] = lat\n    if ($4 + 0 >= 500) err[path]++\n}\nEND {\n    out = \"/home/eval/logs/out/report.tsv\"\n    printf \"endpoint\\tcount\\tp50\\tp95\\terr_permille\\n\" > out\n    for (e in cnt) {\n        n = cnt[e]\n        for (i = 2; i <= n; i++) {          # insertion sort of latencies\n            v = latn[e, i]; j = i - 1\n            while (j >= 1 && latn[e, j] > v) { latn[e, j+1] = latn[e, j]; j-- }\n            latn[e, j+1] = v\n        }\n        r50 = int((50 * n + 99) / 100); if (r50 < 1) r50 = 1\n        r95 = int((95 * n + 99) / 100); if (r95 < 1) r95 = 1\n        p50 = latn[e, r50]; p95 = latn[e, r95]\n        ep = int(1000 * err[e] / n)\n        # value: sort keys (p95 desc, count desc) then data; endpoint asc via byte order of full string\n        lines[++nk] = sprintf(\"%012d\\t%012d\\t\", 999999999999 - p95, 999999999999 - n) \\\n                      e \"\\t\" n \"\\t\" p50 \"\\t\" p95 \"\\t\" ep\n    }\n    m = asort(lines, sk)\n    lim = (m < 5 ? m : 5)\n    for (i = 1; i <= lim; i++) {\n        split(sk[i], f, \"\\t\")\n        printf \"%s\\t%s\\t%s\\t%s\\t%s\\n\", f[3], f[4], f[5], f[6], f[7] > out\n    }\n    close(out)\n}\nEOF\ngawk -f /home/eval/logs/report.awk /home/eval/logs/access.log && cat /home/eval/logs/out/report.tsv",
+      "cd /home/eval/logs\n# Build normalized TSV: endpoint \\t latency \\t status, applying all filters\nawk 'NF==5 && $5 ~ /^[0-9]+ms$/ { p=$3; sub(/\\?.*$/,\"\",p); if(p!=\"/\") sub(/\\/$/,\"\",p);\n  if(p==\"/healthz\" || p ~ /^\\/static\\//) next;\n  print p \"\\t\" ($5+0) \"\\t\" $4 }' access.log > /tmp/norm.tsv\nwc -l /tmp/norm.tsv\nfor ep in /api/items /api/search /api/login /api/orders /api/users /api/cart; do\n  awk -F'\\t' -v e=\"$ep\" '$1==e{print $2}' /tmp/norm.tsv | sort -n > /tmp/lat.txt\n  n=$(wc -l < /tmp/lat.txt)\n  r50=$(( (50*n + 99)/100 )); r95=$(( (95*n + 99)/100 ))\n  p50=$(sed -n \"${r50}p\" /tmp/lat.txt); p95=$(sed -n \"${r95}p\" /tmp/lat.txt)\n  e500=$(awk -F'\\t' -v e=\"$ep\" '$1==e && $3>=500{c++} END{print c+0}' /tmp/norm.tsv)\n  perm=$(( 1000*e500/n ))\n  echo \"$ep count=$n p50=$p50 p95=$p95 err_permille=$perm\"\ndone\necho \"--- full endpoint ranking (p95 desc, count desc, name asc) ---\"\nfor ep in $(cut -f1 /tmp/norm.tsv | sort -u); do\n  awk -F'\\t' -v e=\"$ep\" '$1==e{print $2}' /tmp/norm.tsv | sort -n > /tmp/lat.txt\n  n=$(wc -l < /tmp/lat.txt); r95=$(( (95*n + 99)/100 ))\n  echo -e \"$(sed -n \"${r95}p\" /tmp/lat.txt)\\t$n\\t$ep\"\ndone | sort -t$'\\t' -k1,1nr -k2,2nr -k3,3 | head -6",
+      "cat -A /home/eval/logs/out/report.tsv; echo \"---\"; wc -l /home/eval/logs/out/report.tsv"
+    ],
+    "usage": {
+      "input_tokens": 19178,
+      "output_tokens": 3219,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 25955
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 7.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 7.0,
+      "turns": 7.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /home/eval/logs/ && wc -l /home/eval/logs/access.log && head -20 /home/eval/logs/access.log",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--   139624 2026-10-09 05:32 access.log\n3000 /home/eval/logs/access.log\n2026-10-09T10:00:00 GET /api/orders 200 150ms\n2026-10-09T10:00:01 GET /api/items 200 70ms\n2026-10-09T10:00:02 GET /healthz 200 20ms\n2026-10-09T10:00:03 DELETE /api/users 404 120ms\n2026-10-09T10:00:04 POST /api/items 200 240ms\n2026-10-09T10:00:05 DELETE /api/search 503 190ms\n2026-10-09T10:00:06 GET /api/orders 404 160ms\n2026-10-09T10:00:07 GET /api/items 200 70ms\n2026-10-09T10:00:08 DELETE /api/items 200 320ms\n2026-10-09T10:00:09 GET /api/items 200 400ms\n2026-10-09T10:00:10 POST /static/app.js 200 280ms\n2026-10-09T10:00:11 DELETE /api/cart 200 280ms\n2026-10-09T10:00:12 PUT /api/items 200 430ms\n2026-10-09T10:00:13 PUT /api/cart 200 420ms\n2026-10-09T10:00:14 DELETE /static/app.js 200 30ms\n2026-10-09T10:00:15 PUT /api/users 200 40ms\n2026-10-09T10:00:16 GET /healthz 200 100ms\n2026-10-09T10:00:17 DELETE /api/users 404 240ms\n2026-10-09T10:00:18 PUT /api/search 200 230ms\n2026-10-09T10:00:19 DELETE /api/users/ 200 420ms\n"
+          },
+          {
+            "commands": "tail -20 /home/eval/logs/access.log; echo \"---\"; grep -c \"ms\" /home/eval/logs/access.log",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "2026-10-09T10:49:40 GET /api/orders 200 400ms\n2026-10-09T10:49:41 GET /api/items 200 80ms\n2026-10-09T10:49:42 POST /api/orders 200 460ms\n2026-10-09T10:49:43 GET /api/login 200 440ms\n2026-10-09T10:49:44 GET /api/search?page=0 404 280ms\n2026-10-09T10:49:45 DELETE /api/cart 200 130ms\n2026-10-09T10:49:46 GET /healthz 200 310ms\n2026-10-09T10:49:47 DELETE /api/items?page=0 404 20ms\n2026-10-09T10:49:48 GET /api/orders 200 490ms\n2026-10-09T10:49:49 PUT /api/search 200 350ms\n2026-10-09T10:49:50 GET /api/users 200 150ms\n2026-10-09T10:49:51 GET /api/search 200 90ms\n2026-10-09T10:49:52 GET /api/cart 200 150ms\n2026-10-09T10:49:53 GET /api/orders 200 100ms\n2026-10-09T10:49:54 DELETE /api/items/ 200 170ms\n2026-10-09T10:49:55 GET /api/cart/ 200 360ms\n2026-10-09T10:49:56 GET /api/search 503 700ms\n2026-10-09T10:49:57 DELETE /healthz 503 290ms\n2026-10-09T10:49:58 GET /healthz 200 240ms\n2026-10-09T10:49:59 POST /static/app.js 404 330ms\n---\n2983\n"
+          },
+          {
+            "commands": "awk 'NF != 5' /home/eval/logs/access.log | head -20; echo \"---\"; awk 'NF == 5 && $5 !~ /^[0-9]+ms$/' /home/eval/logs/access.log | head -20",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-- log truncated --\n-- log truncated --\n-- log truncated --\n-- log truncated --\n-- log truncated --\n-- log truncated --\n-- log truncated --\n---\n2026-10-09T10:04:10 GET /api/orders 504 -\n2026-10-09T10:08:21 GET /static/app.js 504 -\n2026-10-09T10:12:32 GET /api/users?page=0 504 -\n2026-10-09T10:16:43 GET /static/app.js 504 -\n2026-10-09T10:20:54 PUT /api/cart 504 -\n2026-10-09T10:25:05 DELETE /api/items 504 -\n2026-10-09T10:29:16 GET /api/orders 504 -\n2026-10-09T10:33:27 GET /api/cart 504 -\n2026-10-09T10:37:38 GET /api/users 504 -\n2026-10-09T10:41:49 GET /api/search 504 -\n2026-10-09T10:46:00 GET /static/app.js 504 -\n"
+          },
+          {
+            "commands": "mkdir -p /home/eval/logs/out && cat > /home/eval/logs/report.awk <<'EOF'\nNF == 5 && $5 ~ /^[0-9]+ms$/ {\n    path = $3\n    sub(/\\?.*$/, \"\", path)                 # strip query string\n    if (path != \"/\") sub(/\\/$/, \"\", path)  # strip trailing slash (unless just \"/\")\n    if (path == \"/healthz\") next\n    if (path ~ /^\\/static\\//) next\n    lat = $5 + 0\n    cnt[path]++\n    latn[path, cnt[path]] = lat\n    if ($4 + 0 >= 500) err[path]++\n}\nEND {\n    out = \"/home/eval/logs/out/report.tsv\"\n    printf \"endpoint\\tcount\\tp50\\tp95\\terr_permille\\n\" > out\n    for (e in cnt) {\n        n = cnt[e]\n        # insertion sort of this endpoint's latencies\n        for (i = 2; i <= n; i++) {\n            v = latn[e, i]; j = i - 1\n            while (j >= 1 && latn[e, j] > v) { latn[e, j+1] = latn[e, j]; j-- }\n            latn[e, j+1] = v\n        }\n        r50 = int((50 * n + 99) / 100); if (r50 < 1) r50 = 1\n        r95 = int((95 * n + 99) / 100); if (r95 < 1) r95 = 1\n        p50 = latn[e, r50]; p95 = latn[e, r95]\n        ep = int(1000 * err[e] / n)\n        # sort key: p95 desc, count desc, endpoint asc (byte order)\n        k = sprintf(\"%012d\\t%012d\\t%s\", 999999999999 - p95, 999999999999 - n, e)\n        keys[k] = e \"\\t\" n \"\\t\" p50 \"\\t\" p95 \"\\t\" ep\n    }\n    m = asort(keys, sk)\n    lim = (m < 5 ? m : 5)\n    for (i = 1; i <= lim; i++) print keys[sk[i]] > out\n    close(out)\n}\nEOF\ngawk -f /home/eval/logs/report.awk /home/eval/logs/access.log && cat /home/eval/logs/out/report.tsv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "endpoint\tcount\tp50\tp95\terr_permille\n\n\n\n\n\n"
+          },
+          {
+            "commands": "cat > /home/eval/logs/report.awk <<'EOF'\nNF == 5 && $5 ~ /^[0-9]+ms$/ {\n    path = $3\n    sub(/\\?.*$/, \"\", path)                 # strip query string\n    if (path != \"/\") sub(/\\/$/, \"\", path)  # strip trailing slash (unless just \"/\")\n    if (path == \"/healthz\") next\n    if (path ~ /^\\/static\\//) next\n    lat = $5 + 0\n    cnt[path]++\n    latn[path, cnt[path]] = lat\n    if ($4 + 0 >= 500) err[path]++\n}\nEND {\n    out = \"/home/eval/logs/out/report.tsv\"\n    printf \"endpoint\\tcount\\tp50\\tp95\\terr_permille\\n\" > out\n    for (e in cnt) {\n        n = cnt[e]\n        for (i = 2; i <= n; i++) {          # insertion sort of latencies\n            v = latn[e, i]; j = i - 1\n            while (j >= 1 && latn[e, j] > v) { latn[e, j+1] = latn[e, j]; j-- }\n            latn[e, j+1] = v\n        }\n        r50 = int((50 * n + 99) / 100); if (r50 < 1) r50 = 1\n        r95 = int((95 * n + 99) / 100); if (r95 < 1) r95 = 1\n        p50 = latn[e, r50]; p95 = latn[e, r95]\n        ep = int(1000 * err[e] / n)\n        # value: sort keys (p95 desc, count desc) then data; endpoint asc via byte order of full string\n        lines[++nk] = sprintf(\"%012d\\t%012d\\t\", 999999999999 - p95, 999999999999 - n) \\\n                      e \"\\t\" n \"\\t\" p50 \"\\t\" p95 \"\\t\" ep\n    }\n    m = asort(lines, sk)\n    lim = (m < 5 ? m : 5)\n    for (i = 1; i <= lim; i++) {\n        split(sk[i], f, \"\\t\")\n        printf \"%s\\t%s\\t%s\\t%s\\t%s\\n\", f[3], f[4], f[5], f[6], f[7] > out\n    }\n    close(out)\n}\nEOF\ngawk -f /home/eval/logs/report.awk /home/eval/logs/access.log && cat /home/eval/logs/out/report.tsv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "endpoint\tcount\tp50\tp95\terr_permille\n/api/items\t381\t270\t640\t41\n/api/search\t381\t210\t500\t62\n/api/login\t371\t240\t480\t37\n/api/orders\t371\t290\t480\t43\n/api/users\t379\t230\t430\t47\n"
+          },
+          {
+            "commands": "cd /home/eval/logs\n# Build normalized TSV: endpoint \\t latency \\t status, applying all filters\nawk 'NF==5 && $5 ~ /^[0-9]+ms$/ { p=$3; sub(/\\?.*$/,\"\",p); if(p!=\"/\") sub(/\\/$/,\"\",p);\n  if(p==\"/healthz\" || p ~ /^\\/static\\//) next;\n  print p \"\\t\" ($5+0) \"\\t\" $4 }' access.log > /tmp/norm.tsv\nwc -l /tmp/norm.tsv\nfor ep in /api/items /api/search /api/login /api/orders /api/users /api/cart; do\n  awk -F'\\t' -v e=\"$ep\" '$1==e{print $2}' /tmp/norm.tsv | sort -n > /tmp/lat.txt\n  n=$(wc -l < /tmp/lat.txt)\n  r50=$(( (50*n + 99)/100 )); r95=$(( (95*n + 99)/100 ))\n  p50=$(sed -n \"${r50}p\" /tmp/lat.txt); p95=$(sed -n \"${r95}p\" /tmp/lat.txt)\n  e500=$(awk -F'\\t' -v e=\"$ep\" '$1==e && $3>=500{c++} END{print c+0}' /tmp/norm.tsv)\n  perm=$(( 1000*e500/n ))\n  echo \"$ep count=$n p50=$p50 p95=$p95 err_permille=$perm\"\ndone\necho \"--- full endpoint ranking (p95 desc, count desc, name asc) ---\"\nfor ep in $(cut -f1 /tmp/norm.tsv | sort -u); do\n  awk -F'\\t' -v e=\"$ep\" '$1==e{print $2}' /tmp/norm.tsv | sort -n > /tmp/lat.txt\n  n=$(wc -l < /tmp/lat.txt); r95=$(( (95*n + 99)/100 ))\n  echo -e \"$(sed -n \"${r95}p\" /tmp/lat.txt)\\t$n\\t$ep\"\ndone | sort -t$'\\t' -k1,1nr -k2,2nr -k3,3 | head -6",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "2260 /tmp/norm.tsv\n/api/items count=381 p50=270 p95=640 err_permille=41\n/api/search count=381 p50=210 p95=500 err_permille=62\n/api/login count=371 p50=240 p95=480 err_permille=37\n/api/orders count=371 p50=290 p95=480 err_permille=43\n/api/users count=379 p50=230 p95=430 err_permille=47\n/api/cart count=377 p50=240 p95=430 err_permille=39\n--- full endpoint ranking (p95 desc, count desc, name asc) ---\n640\t381\t/api/items\n500\t381\t/api/search\n480\t371\t/api/login\n480\t371\t/api/orders\n430\t379\t/api/users\n430\t377\t/api/cart\n"
+          },
+          {
+            "commands": "cat -A /home/eval/logs/out/report.tsv; echo \"---\"; wc -l /home/eval/logs/out/report.tsv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "endpoint^Icount^Ip50^Ip95^Ierr_permille$\n/api/items^I381^I270^I640^I41$\n/api/search^I381^I210^I500^I62$\n/api/login^I371^I240^I480^I37$\n/api/orders^I371^I290^I480^I43$\n/api/users^I379^I230^I430^I47$\n---\n6 /home/eval/logs/out/report.tsv\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

@@ -1,0 +1,225 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "rt_state_csvq_tool",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "Build a reusable command-line tool `csvq` in Python at /home/eval/bin/csvq. It must be executable and runnable as plain `csvq ...` once /home/eval/bin is on PATH (it will be used again later on other files).\n\nUsage: csvq [--where COL=VALUE]... [--select COL,COL,...] [--sort COL [--numeric] [--desc]] FILE\n- FILE is CSV with a header row; fields may be quoted (including embedded commas, quotes and newlines).\n- --where may repeat; keep rows where every COL equals VALUE exactly (split at the first '=').\n- --select picks and orders the output columns (default: all columns in file order).\n- --sort orders rows by COL as text; with --numeric, by numeric value, and rows whose value is not a number (including empty) go last in their original order. --desc sorts descending (non-numeric rows still go last). The sort is stable: equal keys keep their input order, also with --desc.\n- Output: CSV on stdout with the header row, '\\n' line endings, fields quoted only when they contain a comma, quote or newline.\n- If any option names a column not in the header, print `csvq: unknown column: NAME` to stderr, print nothing on stdout and exit 2.\n\nThen use csvq on /data/staff.csv to write /out/eng_top.csv (dept eng; columns name,salary; sorted by salary numerically, highest first) and /out/by_city.csv (columns city,name sorted by city)."
+  ],
+  "passed": false,
+  "aggregate": 0.3333333333333333,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 0.3333333333333333,
+      "pass": false,
+      "reason": "1/3 checks passed (weighted rate 33%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "",
+    "iterations": 25,
+    "tool_calls_count": 25,
+    "tool_calls": [
+      "ls -la /data; mkdir -p /home/eval/bin /out",
+      "cat /data/staff.csv",
+      "echo \"$PATH\"",
+      "python3 -c \"import sys; print(sys.executable)\"",
+      "which python python3",
+      "head -n 1 /usr/bin/python3",
+      "cat /usr/bin/python3",
+      "cat << 'EOF' > /home/eval/bin/test_script\n#!/usr/bin/env python3\nimport sys\nprint(\"hello\", sys.argv)\nEOF\nchmod +x /home/eval/bin/test_script\n/home/eval/bin/test_script foo bar",
+      "rm /home/eval/bin/test_script",
+      "cat << 'EOF' > /home/eval/bin/csvq\n#!/usr/bin/env python3\nimport sys\nimport csv\nimport argparse\n\ndef parse_args():\n    # We can use argparse or custom parser.\n    # Note: args can be anywhere before FILE or after?\n    # Spec: Usage: csvq [--where COL=VALUE]... [--select COL,COL,...] [--sort COL [--numeric] [--desc]] FILE\n    # Let's inspect argparse behavior.\n    parser = argparse.ArgumentParser(prog='csvq', add_help=False)\n    parser.add_argument('--where', action='append', default=[], help='Filter rows COL=VALUE')\n    parser.add_argument('--select', default=None, help='Select columns COL,COL,...')\n    parser.add_argument('--sort', default=None, help='Sort column')\n    parser.add_argument('--numeric', action='store_true', default=False, help='Sort numerically')\n    parser.add_argument('--desc', action='store_true', default=False, help='Sort descending')\n    parser.add_argument('file', help='CSV file')\n    return parser.parse_args()\n\ndef try_float(val):\n    try:\n        # Check if valid float (supports ints, floats, scientific notation etc.)\n        # Note: strip or raw? In CSV, strings might have spaces or not. float(\" 123 \") works.\n        # But wait: does float(\"nan\") or float(\"inf\") count?\n        # Usually float(val) works. What about empty string? float(\"\") raises ValueError.\n        # Wait, if val is empty or not a number, ValueError is raised.\n        return float(val)\n    except (ValueError, TypeError):\n        return None\n\ndef main():\n    try:\n        args = parse_args()\n    except SystemExit:\n        sys.exit(2)\n\n    filename = args.file\n\n    # Parse --where arguments\n    where_conditions = []\n    for w in args.where:\n        if '=' not in w:\n            # what if no '='? split at first '='\n            col, val = w, \"\"\n        else:\n            col, val = w.split('=', 1)\n        where_conditions.append((col, val))\n\n    # Parse --select\n    selected_cols = None\n    if args.select is not None:\n        selected_cols = [c for c in args.select.split(',')]\n\n    # Read CSV\n    try:\n        with open(filename, 'r', newline='', encoding='utf-8') as f:\n            reader = csv.reader(f)\n            try:\n                header = next(reader)\n            except StopIteration:\n                header = []\n            rows = list(reader)\n    except Exception as e:\n        sys.stderr.write(f\"csvq: error opening file: {e}\\n\")\n        sys.exit(1)\n\n    # Validate columns\n    header_set = set(header)\n    col_to_idx = {name: idx for idx, name in enumerate(header)}\n\n    # Check unknown columns in options: --where, --select, --sort\n    # If any option names a column not in the header, print `csvq: unknown column: NAME` to stderr, print nothing on stdout and exit 2.\n    # Order of check: --where, --select, --sort (or whichever is found first)\n    for col, _ in where_conditions:\n        if col not in col_to_idx:\n            sys.stderr.write(f\"csvq: unknown column: {col}\\n\")\n            sys.exit(2)\n\n    if selected_cols is not None:\n        for col in selected_cols:\n            if col not in col_to_idx:\n                sys.stderr.write(f\"csvq: unknown column: {col}\\n\")\n                sys.exit(2)\n\n    if args.sort is not None:\n        if args.sort not in col_to_idx:\n            sys.stderr.write(f\"csvq: unknown column: {args.sort}\\n\")\n            sys.exit(2)\n\n    # Filter rows (--where)\n    filtered_rows = []\n    for row in rows:\n        match = True\n        for col, val in where_conditions:\n            idx = col_to_idx[col]\n            row_val = row[idx] if idx < len(row) else \"\"\n            if row_val != val:\n                match = False\n                break\n        if match:\n            filtered_rows.append(row)\n\n    # Sort rows\n    if args.sort is not None:\n        sort_idx = col_to_idx[args.sort]\n        if args.numeric:\n            valid_rows = []\n            invalid_rows = []\n            for r in filtered_rows:\n                val_str = r[sort_idx] if sort_idx < len(r) else \"\"\n                val_num = try_float(val_str)\n                if val_num is not None:\n                    valid_rows.append((val_num, r))\n                else:\n                    invalid_rows.append(r)\n            # Python's sort is Timsort, which is stable.\n            # When sorting descending, Python's list.sort(reverse=True) is also stable!\n            valid_rows.sort(key=lambda x: x[0], reverse=args.desc)\n            filtered_rows = [r for _, r in valid_rows] + invalid_rows\n        else:\n            filtered_rows.sort(key=lambda r: r[sort_idx] if sort_idx < len(r) else \"\", reverse=args.desc)\n\n    # Project columns (--select)\n    out_cols = selected_cols if selected_cols is not None else header\n    out_indices = [col_to_idx[c] for c in out_cols]\n\n    # Output CSV\n    # csv.writer with lineterminator='\\n', quoting=csv.QUOTE_MINIMAL\n    writer = csv.writer(sys.stdout, lineterminator='\\n', quoting=csv.QUOTE_MINIMAL)\n    writer.writerow(out_cols)\n    for r in filtered_rows:\n        out_row = [r[idx] if idx < len(r) else \"\" for idx in out_indices]\n        writer.writerow(out_row)\n\nif __name__ == '__main__':\n    main()\nEOF\nchmod +x /home/eval/bin/csvq",
+      "python3 -c \"\nimport sys, io, csv\ns = io.StringIO()\nw = csv.writer(s, lineterminator='\\n', quoting=csv.QUOTE_MINIMAL)\nw.writerow(['a', 'b,c', 'd\\\"e', 'f\\ng', 'plain'])\nprint(repr(s.getvalue()))\n\"",
+      "python3 -c \"\nitems = [(10, 'first_10'), (10, 'second_10'), (5, 'five')]\nitems.sort(key=lambda x: x[0], reverse=True)\nprint(items)\n\"",
+      "export PATH=\"/home/eval/bin:$PATH\"\ncsvq --where dept=eng --select name,salary --sort salary --numeric --desc /data/staff.csv",
+      "csvq --select city,name --sort city /data/staff.csv",
+      "cat << 'EOF' > /tmp/test.csv\ncolA,colB,colC\n1,foo,10\n2,bar,\n3,baz,nan\n4,qux,5\n5,corge,inf\n6,grault,-100\n7,garply,not_a_num\nEOF\ncsvq --sort colC --numeric --desc /tmp/test.csv",
+      "python3 -c \"\nimport math\ndef is_number(val):\n    try:\n        f = float(val)\n        return not (math.isnan(f) or math.isinf(f))\n    except (ValueError, TypeError):\n        return False\nprint('nan:', is_number('nan'))\nprint('inf:', is_number('inf'))\nprint('-inf:', is_number('-inf'))\nprint('123:', is_number('123'))\nprint('123.45:', is_number('123.45'))\nprint('-12.3e-4:', is_number('-12.3e-4'))\n\"",
+      "cat << 'EOF' > /home/eval/bin/csvq\n#!/usr/bin/env python3\nimport sys\nimport csv\nimport math\n\ndef parse_cli(argv):\n    where_args = []\n    select_arg = None\n    sort_arg = None\n    numeric_flag = False\n    desc_flag = False\n    file_arg = None\n\n    i = 0\n    while i < len(argv):\n        arg = argv[i]\n        if arg == '--where':\n            i += 1\n            if i >= len(argv):\n                sys.stderr.write(\"csvq: option --where requires an argument\\n\")\n                sys.exit(2)\n            where_args.append(argv[i])\n        elif arg.startswith('--where='):\n            where_args.append(arg[len('--where='):])\n        elif arg == '--select':\n            i += 1\n            if i >= len(argv):\n                sys.stderr.write(\"csvq: option --select requires an argument\\n\")\n                sys.exit(2)\n            select_arg = argv[i]\n        elif arg.startswith('--select='):\n            select_arg = arg[len('--select='):]\n        elif arg == '--sort':\n            i += 1\n            if i >= len(argv):\n                sys.stderr.write(\"csvq: option --sort requires an argument\\n\")\n                sys.exit(2)\n            sort_arg = argv[i]\n        elif arg.startswith('--sort='):\n            sort_arg = arg[len('--sort='):]\n        elif arg == '--numeric':\n            numeric_flag = True\n        elif arg == '--desc':\n            desc_flag = True\n        elif arg.startswith('-') and arg != '-':\n            sys.stderr.write(f\"csvq: unrecognized option '{arg}'\\n\")\n            sys.exit(2)\n        else:\n            if file_arg is None:\n                file_arg = arg\n            else:\n                sys.stderr.write(f\"csvq: unexpected argument '{arg}'\\n\")\n                sys.exit(2)\n        i += 1\n\n    if file_arg is None:\n        sys.stderr.write(\"csvq: missing FILE argument\\n\")\n        sys.exit(2)\n\n    return where_args, select_arg, sort_arg, numeric_flag, desc_flag, file_arg\n\ndef try_numeric(val):\n    try:\n        f = float(val)\n        if math.isnan(f) or math.isinf(f):\n            return None\n        return f\n    except (ValueError, TypeError):\n        return None\n\ndef main():\n    where_args, select_arg, sort_arg, numeric_flag, desc_flag, file_arg = parse_cli(sys.argv[1:])\n\n    # Parse --where arguments: split at first '='\n    where_conditions = []\n    for w in where_args:\n        if '=' in w:\n            col, val = w.split('=', 1)\n        else:\n            col, val = w, \"\"\n        where_conditions.append((col, val))\n\n    # Parse --select\n    selected_cols = None\n    if select_arg is not None:\n        selected_cols = select_arg.split(',')\n\n    # Read CSV\n    try:\n        with open(file_arg, 'r', newline='', encoding='utf-8') as f:\n            reader = csv.reader(f)\n            try:\n                header = next(reader)\n            except StopIteration:\n                header = []\n            rows = list(reader)\n    except Exception as e:\n        sys.stderr.write(f\"csvq: {e}\\n\")\n        sys.exit(1)\n\n    col_to_idx = {name: idx for idx, name in enumerate(header)}\n\n    # Validate column names in options\n    for col, _ in where_conditions:\n        if col not in col_to_idx:\n            sys.stderr.write(f\"csvq: unknown column: {col}\\n\")\n            sys.exit(2)\n\n    if selected_cols is not None:\n        for col in selected_cols:\n            if col not in col_to_idx:\n                sys.stderr.write(f\"csvq: unknown column: {col}\\n\")\n                sys.exit(2)\n\n    if sort_arg is not None:\n        if sort_arg not in col_to_idx:\n            sys.stderr.write(f\"csvq: unknown column: {sort_arg}\\n\")\n            sys.exit(2)\n\n    # Filter rows (--where)\n    filtered_rows = []\n    for row in rows:\n        match = True\n        for col, val in where_conditions:\n            idx = col_to_idx[col]\n            row_val = row[idx] if idx < len(row) else \"\"\n            if row_val != val:\n                match = False\n                break\n        if match:\n            filtered_rows.append(row)\n\n    # Sort rows (--sort)\n    if sort_arg is not None:\n        sort_idx = col_to_idx[sort_arg]\n        if numeric_flag:\n            valid_rows = []\n            invalid_rows = []\n            for r in filtered_rows:\n                val_str = r[sort_idx] if sort_idx < len(r) else \"\"\n                val_num = try_numeric(val_str)\n                if val_num is not None:\n                    valid_rows.append((val_num, r))\n                else:\n                    invalid_rows.append(r)\n            # Timsort is stable\n            valid_rows.sort(key=lambda x: x[0], reverse=desc_flag)\n            filtered_rows = [r for _, r in valid_rows] + invalid_rows\n        else:\n            filtered_rows.sort(key=lambda r: r[sort_idx] if sort_idx < len(r) else \"\", reverse=desc_flag)\n\n    # Project columns (--select)\n    out_cols = selected_cols if selected_cols is not None else header\n    out_indices = [col_to_idx[c] for c in out_cols]\n\n    # Output CSV\n    writer = csv.writer(sys.stdout, lineterminator='\\n', quoting=csv.QUOTE_MINIMAL)\n    writer.writerow(out_cols)\n    for r in filtered_rows:\n        out_row = [r[idx] if idx < len(r) else \"\" for idx in out_indices]\n        writer.writerow(out_row)\n\nif __name__ == '__main__':\n    main()\nEOF\nchmod +x /home/eval/bin/csvq",
+      "csvq --sort colC --numeric --desc /tmp/test.csv",
+      "csvq --sort colC --numeric /tmp/test.csv",
+      "csvq --sort missing /tmp/test.csv; echo \"exit: $?\"",
+      "csvq --where missing=1 /tmp/test.csv; echo \"exit: $?\"",
+      "csvq --select colA,missing /tmp/test.csv; echo \"exit: $?\"",
+      "cat << 'EOF' > /tmp/quoted.csv\n\"col 1\",\"col,2\",\"col\"\"3\"\n\"hello\",\"world, with comma\",\"plain\"\n\"line1\nline2\",\"simple\",\"has\"\"quotes\"\nEOF\ncsvq /tmp/quoted.csv",
+      "csvq --where \"col,2=world, with comma\" /tmp/quoted.csv",
+      "csvq --where \"col\\\"\\\"3=has\\\"quotes\" /tmp/quoted.csv"
+    ],
+    "usage": {
+      "input_tokens": 71580,
+      "output_tokens": 4893,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 66128
+    },
+    "metrics": {
+      "natural_stop": 0.0,
+      "tool_calls": 25.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 24.0,
+      "turns": 25.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 2,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /data; mkdir -p /home/eval/bin /out",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--      171 2026-10-09 18:13 staff.csv\n"
+          },
+          {
+            "commands": "cat /data/staff.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "name,dept,city,salary\nAva,eng,Berlin,120000\nBen,ops,Lisbon,70000\nCara,eng,Austin,135000\nDev,eng,Berlin,99000\nEve,sales,Austin,80000\nFinn,eng,Lisbon,135000\nGia,ops,Berlin,\n"
+          },
+          {
+            "commands": "echo \"$PATH\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/usr/local/bin:/usr/bin:/bin\n"
+          },
+          {
+            "commands": "python3 -c \"import sys; print(sys.executable)\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "\n"
+          },
+          {
+            "commands": "which python python3",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/usr/bin/python\n/usr/bin/python3\n"
+          },
+          {
+            "commands": "head -n 1 /usr/bin/python3",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "#!/bin/sh\n"
+          },
+          {
+            "commands": "cat /usr/bin/python3",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "#!/bin/sh\n# bashkit builtin: python3\nexec python3 \"$@\"\n"
+          },
+          {
+            "commands": "cat << 'EOF' > /home/eval/bin/test_script\n#!/usr/bin/env python3\nimport sys\nprint(\"hello\", sys.argv)\nEOF\nchmod +x /home/eval/bin/test_script\n/home/eval/bin/test_script foo bar",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "hello ['/home/eval/bin/test_script', 'foo', 'bar']\n"
+          },
+          {
+            "commands": "rm /home/eval/bin/test_script",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "cat << 'EOF' > /home/eval/bin/csvq\n#!/usr/bin/env python3\nimport sys\nimport csv\nimport argparse\n\ndef parse_args():\n    # We can use argparse or custom parser.\n    # Note: args can be anywhere before FILE or after?\n    # Spec: Usage: csvq [--where COL=VALUE]... [--select COL,COL,...] [--sort COL [--numeric] [--desc]] FILE\n    # Let's inspect argparse behavior.\n    parser = argparse.ArgumentParser(prog='csvq', add_help=False)\n    parser.add_argument('--where', action='append', default=[], help='Filter rows COL=VALUE')\n    parser.add_argument('--select', default=None, help='Select columns COL,COL,...')\n    parser.add_argument('--sort', default=None, help='Sort column')\n    parser.add_argument('--numeric', action='store_true', default=False, help='Sort numerically')\n    parser.add_argument('--desc', action='store_true', default=False, help='Sort descending')\n    parser.add_argument('file', help='CSV file')\n    return parser.parse_args()\n\ndef try_float(val):\n    try:\n        # Check if valid float (supports ints, floats, scientific notation etc.)\n        # Note: strip or raw? In CSV, strings might have spaces or not. float(\" 123 \") works.\n        # But wait: does float(\"nan\") or float(\"inf\") count?\n        # Usually float(val) works. What about empty string? float(\"\") raises ValueError.\n        # Wait, if val is empty or not a number, ValueError is raised.\n        return float(val)\n    except (ValueError, TypeError):\n        return None\n\ndef main():\n    try:\n        args = parse_args()\n    except SystemExit:\n        sys.exit(2)\n\n    filename = args.file\n\n    # Parse --where arguments\n    where_conditions = []\n    for w in args.where:\n        if '=' not in w:\n            # what if no '='? split at first '='\n            col, val = w, \"\"\n        else:\n            col, val = w.split('=', 1)\n        where_conditions.append((col, val))\n\n    # Parse --select\n    selected_cols = None\n    if args.select is not None:\n        selected_cols = [c for c in args.select.split(',')]\n\n    # Read CSV\n    try:\n        with open(filename, 'r', newline='', encoding='utf-8') as f:\n            reader = csv.reader(f)\n            try:\n                header = next(reader)\n            except StopIteration:\n                header = []\n            rows = list(reader)\n    except Exception as e:\n        sys.stderr.write(f\"csvq: error opening file: {e}\\n\")\n        sys.exit(1)\n\n    # Validate columns\n    header_set = set(header)\n    col_to_idx = {name: idx for idx, name in enumerate(header)}\n\n    # Check unknown columns in options: --where, --select, --sort\n    # If any option names a column not in the header, print `csvq: unknown column: NAME` to stderr, print nothing on stdout and exit 2.\n    # Order of check: --where, --select, --sort (or whichever is found first)\n    for col, _ in where_conditions:\n        if col not in col_to_idx:\n            sys.stderr.write(f\"csvq: unknown column: {col}\\n\")\n            sys.exit(2)\n\n    if selected_cols is not None:\n        for col in selected_cols:\n            if col not in col_to_idx:\n                sys.stderr.write(f\"csvq: unknown column: {col}\\n\")\n                sys.exit(2)\n\n    if args.sort is not None:\n        if args.sort not in col_to_idx:\n            sys.stderr.write(f\"csvq: unknown column: {args.sort}\\n\")\n            sys.exit(2)\n\n    # Filter rows (--where)\n    filtered_rows = []\n    for row in rows:\n        match = True\n        for col, val in where_conditions:\n            idx = col_to_idx[col]\n            row_val = row[idx] if idx < len(row) else \"\"\n            if row_val != val:\n                match = False\n                break\n        if match:\n            filtered_rows.append(row)\n\n    # Sort rows\n    if args.sort is not None:\n        sort_idx = col_to_idx[args.sort]\n        if args.numeric:\n            valid_rows = []\n            invalid_rows = []\n            for r in filtered_rows:\n                val_str = r[sort_idx] if sort_idx < len(r) else \"\"\n                val_num = try_float(val_str)\n                if val_num is not None:\n                    valid_rows.append((val_num, r))\n                else:\n                    invalid_rows.append(r)\n            # Python's sort is Timsort, which is stable.\n            # When sorting descending, Python's list.sort(reverse=True) is also stable!\n            valid_rows.sort(key=lambda x: x[0], reverse=args.desc)\n            filtered_rows = [r for _, r in valid_rows] + invalid_rows\n        else:\n            filtered_rows.sort(key=lambda r: r[sort_idx] if sort_idx < len(r) else \"\", reverse=args.desc)\n\n    # Project columns (--select)\n    out_cols = selected_cols if selected_cols is not None else header\n    out_indices = [col_to_idx[c] for c in out_cols]\n\n    # Output CSV\n    # csv.writer with lineterminator='\\n', quoting=csv.QUOTE_MINIMAL\n    writer = csv.writer(sys.stdout, lineterminator='\\n', quoting=csv.QUOTE_MINIMAL)\n    writer.writerow(out_cols)\n    for r in filtered_rows:\n        out_row = [r[idx] if idx < len(r) else \"\" for idx in out_indices]\n        writer.writerow(out_row)\n\nif __name__ == '__main__':\n    main()\nEOF\nchmod +x /home/eval/bin/csvq",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "python3 -c \"\nimport sys, io, csv\ns = io.StringIO()\nw = csv.writer(s, lineterminator='\\n', quoting=csv.QUOTE_MINIMAL)\nw.writerow(['a', 'b,c', 'd\\\"e', 'f\\ng', 'plain'])\nprint(repr(s.getvalue()))\n\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "'a,\"b,c\",\"d\"\"e\",\"f\\ng\",plain\\n'\n"
+          },
+          {
+            "commands": "python3 -c \"\nitems = [(10, 'first_10'), (10, 'second_10'), (5, 'five')]\nitems.sort(key=lambda x: x[0], reverse=True)\nprint(items)\n\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "[(10, 'first_10'), (10, 'second_10'), (5, 'five')]\n"
+          },
+          {
+            "commands": "export PATH=\"/home/eval/bin:$PATH\"\ncsvq --where dept=eng --select name,salary --sort salary --numeric --desc /data/staff.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "name,salary\nCara,135000\nFinn,135000\nAva,120000\nDev,99000\n"
+          },
+          {
+            "commands": "csvq --select city,name --sort city /data/staff.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "city,name\nAustin,Cara\nAustin,Eve\nBerlin,Ava\nBerlin,Dev\nBerlin,Gia\nLisbon,Ben\nLisbon,Finn\n"
+          },
+          {
+            "commands": "cat << 'EOF' > /tmp/test.csv\ncolA,colB,colC\n1,foo,10\n2,bar,\n3,baz,nan\n4,qux,5\n5,corge,inf\n6,grault,-100\n7,garply,not_a_num\nEOF\ncsvq --sort colC --numeric --desc /tmp/test.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "colA,colB,colC\n3,baz,nan\n5,corge,inf\n1,foo,10\n4,qux,5\n6,grault,-100\n2,bar,\n7,garply,not_a_num\n"
+          },
+          {
+            "commands": "python3 -c \"\nimport math\ndef is_number(val):\n    try:\n        f = float(val)\n        return not (math.isnan(f) or math.isinf(f))\n    except (ValueError, TypeError):\n        return False\nprint('nan:', is_number('nan'))\nprint('inf:', is_number('inf'))\nprint('-inf:', is_number('-inf'))\nprint('123:', is_number('123'))\nprint('123.45:', is_number('123.45'))\nprint('-12.3e-4:', is_number('-12.3e-4'))\n\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "nan: False\ninf: False\n-inf: False\n123: True\n123.45: True\n-12.3e-4: True\n"
+          },
+          {
+            "commands": "cat << 'EOF' > /home/eval/bin/csvq\n#!/usr/bin/env python3\nimport sys\nimport csv\nimport math\n\ndef parse_cli(argv):\n    where_args = []\n    select_arg = None\n    sort_arg = None\n    numeric_flag = False\n    desc_flag = False\n    file_arg = None\n\n    i = 0\n    while i < len(argv):\n        arg = argv[i]\n        if arg == '--where':\n            i += 1\n            if i >= len(argv):\n                sys.stderr.write(\"csvq: option --where requires an argument\\n\")\n                sys.exit(2)\n            where_args.append(argv[i])\n        elif arg.startswith('--where='):\n            where_args.append(arg[len('--where='):])\n        elif arg == '--select':\n            i += 1\n            if i >= len(argv):\n                sys.stderr.write(\"csvq: option --select requires an argument\\n\")\n                sys.exit(2)\n            select_arg = argv[i]\n        elif arg.startswith('--select='):\n            select_arg = arg[len('--select='):]\n        elif arg == '--sort':\n            i += 1\n            if i >= len(argv):\n                sys.stderr.write(\"csvq: option --sort requires an argument\\n\")\n                sys.exit(2)\n            sort_arg = argv[i]\n        elif arg.startswith('--sort='):\n            sort_arg = arg[len('--sort='):]\n        elif arg == '--numeric':\n            numeric_flag = True\n        elif arg == '--desc':\n            desc_flag = True\n        elif arg.startswith('-') and arg != '-':\n            sys.stderr.write(f\"csvq: unrecognized option '{arg}'\\n\")\n            sys.exit(2)\n        else:\n            if file_arg is None:\n                file_arg = arg\n            else:\n                sys.stderr.write(f\"csvq: unexpected argument '{arg}'\\n\")\n                sys.exit(2)\n        i += 1\n\n    if file_arg is None:\n        sys.stderr.write(\"csvq: missing FILE argument\\n\")\n        sys.exit(2)\n\n    return where_args, select_arg, sort_arg, numeric_flag, desc_flag, file_arg\n\ndef try_numeric(val):\n    try:\n        f = float(val)\n        if math.isnan(f) or math.isinf(f):\n            return None\n        return f\n    except (ValueError, TypeError):\n        return None\n\ndef main():\n    where_args, select_arg, sort_arg, numeric_flag, desc_flag, file_arg = parse_cli(sys.argv[1:])\n\n    # Parse --where arguments: split at first '='\n    where_conditions = []\n    for w in where_args:\n        if '=' in w:\n            col, val = w.split('=', 1)\n        else:\n            col, val = w, \"\"\n        where_conditions.append((col, val))\n\n    # Parse --select\n    selected_cols = None\n    if select_arg is not None:\n        selected_cols = select_arg.split(',')\n\n    # Read CSV\n    try:\n        with open(file_arg, 'r', newline='', encoding='utf-8') as f:\n            reader = csv.reader(f)\n            try:\n                header = next(reader)\n            except StopIteration:\n                header = []\n            rows = list(reader)\n    except Exception as e:\n        sys.stderr.write(f\"csvq: {e}\\n\")\n        sys.exit(1)\n\n    col_to_idx = {name: idx for idx, name in enumerate(header)}\n\n    # Validate column names in options\n    for col, _ in where_conditions:\n        if col not in col_to_idx:\n            sys.stderr.write(f\"csvq: unknown column: {col}\\n\")\n            sys.exit(2)\n\n    if selected_cols is not None:\n        for col in selected_cols:\n            if col not in col_to_idx:\n                sys.stderr.write(f\"csvq: unknown column: {col}\\n\")\n                sys.exit(2)\n\n    if sort_arg is not None:\n        if sort_arg not in col_to_idx:\n            sys.stderr.write(f\"csvq: unknown column: {sort_arg}\\n\")\n            sys.exit(2)\n\n    # Filter rows (--where)\n    filtered_rows = []\n    for row in rows:\n        match = True\n        for col, val in where_conditions:\n            idx = col_to_idx[col]\n            row_val = row[idx] if idx < len(row) else \"\"\n            if row_val != val:\n                match = False\n                break\n        if match:\n            filtered_rows.append(row)\n\n    # Sort rows (--sort)\n    if sort_arg is not None:\n        sort_idx = col_to_idx[sort_arg]\n        if numeric_flag:\n            valid_rows = []\n            invalid_rows = []\n            for r in filtered_rows:\n                val_str = r[sort_idx] if sort_idx < len(r) else \"\"\n                val_num = try_numeric(val_str)\n                if val_num is not None:\n                    valid_rows.append((val_num, r))\n                else:\n                    invalid_rows.append(r)\n            # Timsort is stable\n            valid_rows.sort(key=lambda x: x[0], reverse=desc_flag)\n            filtered_rows = [r for _, r in valid_rows] + invalid_rows\n        else:\n            filtered_rows.sort(key=lambda r: r[sort_idx] if sort_idx < len(r) else \"\", reverse=desc_flag)\n\n    # Project columns (--select)\n    out_cols = selected_cols if selected_cols is not None else header\n    out_indices = [col_to_idx[c] for c in out_cols]\n\n    # Output CSV\n    writer = csv.writer(sys.stdout, lineterminator='\\n', quoting=csv.QUOTE_MINIMAL)\n    writer.writerow(out_cols)\n    for r in filtered_rows:\n        out_row = [r[idx] if idx < len(r) else \"\" for idx in out_indices]\n        writer.writerow(out_row)\n\nif __name__ == '__main__':\n    main()\nEOF\nchmod +x /home/eval/bin/csvq",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "csvq --sort colC --numeric --desc /tmp/test.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "colA,colB,colC\n1,foo,10\n4,qux,5\n6,grault,-100\n2,bar,\n3,baz,nan\n5,corge,inf\n7,garply,not_a_num\n"
+          },
+          {
+            "commands": "csvq --sort colC --numeric /tmp/test.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "colA,colB,colC\n6,grault,-100\n4,qux,5\n1,foo,10\n2,bar,\n3,baz,nan\n5,corge,inf\n7,garply,not_a_num\n"
+          },
+          {
+            "commands": "csvq --sort missing /tmp/test.csv; echo \"exit: $?\"",
+            "exit_code": 0,
+            "stderr": "csvq: unknown column: missing\n",
+            "stdout": "exit: 2\n"
+          },
+          {
+            "commands": "csvq --where missing=1 /tmp/test.csv; echo \"exit: $?\"",
+            "exit_code": 0,
+            "stderr": "csvq: unknown column: missing\n",
+            "stdout": "exit: 2\n"
+          },
+          {
+            "commands": "csvq --select colA,missing /tmp/test.csv; echo \"exit: $?\"",
+            "exit_code": 0,
+            "stderr": "csvq: unknown column: missing\n",
+            "stdout": "exit: 2\n"
+          },
+          {
+            "commands": "cat << 'EOF' > /tmp/quoted.csv\n\"col 1\",\"col,2\",\"col\"\"3\"\n\"hello\",\"world, with comma\",\"plain\"\n\"line1\nline2\",\"simple\",\"has\"\"quotes\"\nEOF\ncsvq /tmp/quoted.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "col 1,\"col,2\",\"col\"\"3\"\nhello,\"world, with comma\",plain\n\"line1\nline2\",simple,\"has\"\"quotes\"\n"
+          },
+          {
+            "commands": "csvq --where \"col,2=world, with comma\" /tmp/quoted.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "col 1,\"col,2\",\"col\"\"3\"\nhello,\"world, with comma\",plain\n"
+          },
+          {
+            "commands": "csvq --where \"col\\\"\\\"3=has\\\"quotes\" /tmp/quoted.csv",
+            "exit_code": 2,
+            "stderr": "csvq: unknown column: col\"\"3\n",
+            "stdout": ""
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

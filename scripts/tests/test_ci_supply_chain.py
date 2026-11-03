@@ -166,3 +166,53 @@ class SecretHandlingTests(unittest.TestCase):
                     if travels is not None:
                         self.assertLess(masked, travels,
                                         f'${variable} escapes the fetch step before it is masked')
+
+
+class VetFirstPartyPolicyTests(unittest.TestCase):
+    """Every crate this repo publishes needs a `policy.*` entry in cargo-vet.
+
+    cargo-vet decides first-party by provenance: a workspace member is
+    first-party because it was not fetched from crates.io. Once that same
+    name and version is also *on* crates.io, the two descriptions collide
+    and `cargo vet` refuses to run at all -- 'Some non-crates.io-fetched
+    packages match published crates.io versions' -- until a
+    `policy.<name>.audit-as-crates-io` entry says which one to believe.
+
+    The failure is quiet in the one place that matters. CI runs
+    `cargo vet --locked`, which never reaches the collision check, so the
+    Audit job stays green while the command is broken for every developer
+    and, worse, for `cargo vet` itself: refreshing `supply-chain/imports.lock`
+    (publisher facts for `[[trusted.*]]` crates, imported audits) needs the
+    non-locked run. A dependency bump that relies on publisher trust then
+    cannot be made to pass. bashkit-scripted-tool reached crates.io in
+    0.20.0 with no entry, and nothing failed until #2790 needed tokio's.
+
+    The published set is derived from the `release-check` recipe rather than
+    listed here: that recipe is what actually stages the packages.
+    """
+
+    def published_crates(self):
+        recipe = (ROOT / 'justfile').read_text().split('\nrelease-check:\n', 1)[1]
+        recipe = recipe.split('\n# Create and push', 1)[0]
+        # Fold shell line continuations so the whole command is one line.
+        publish = re.search(r'cargo publish --dry-run[^\n]*',
+                            re.sub(r'\\\n\s*', ' ', recipe))
+        self.assertIsNotNone(publish, 'release-check no longer dry-run publishes')
+        crates = re.findall(r'-p\s+([A-Za-z0-9_-]+)', publish.group(0))
+        self.assertIn('bashkit', crates)
+        return crates
+
+    def test_every_published_crate_has_a_first_party_vet_policy(self):
+        config = (ROOT / 'supply-chain/config.toml').read_text()
+        for crate in self.published_crates():
+            with self.subTest(crate=crate):
+                entry = re.search(
+                    rf'^\[policy\.{re.escape(crate)}\]$(.*?)(?=^\[|\Z)',
+                    config, re.M | re.S)
+                self.assertIsNotNone(
+                    entry,
+                    f'{crate} is published to crates.io but has no [policy.{crate}] '
+                    'entry, so `cargo vet` cannot run once that version is live')
+                self.assertIn(
+                    'audit-as-crates-io = false', entry.group(1),
+                    f'[policy.{crate}] must mark the workspace copy first-party')

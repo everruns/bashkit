@@ -1,0 +1,71 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "db_csv_join_aggregate",
+  "target": "openrouter/meta/muse-spark-1.3-contributor",
+  "input": [
+    "Join /data/orders.csv and /data/products.csv on product_id. For each category, compute the total revenue (quantity * price). Print 'category: total_revenue' sorted by revenue descending."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "electronics: 450\nhardware: 165",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "cat /data/orders.csv | head -n 20; echo \"---\"; cat /data/products.csv | head -n 20\nls -l /data/",
+      "wc -l /data/orders.csv /data/products.csv; cat /data/orders.csv; echo \"===\"; cat /data/products.csv",
+      "python3 -c \"\nimport csv\n\n# Load products: product_id -> (category, price)\nproducts = {}\nwith open('/data/products.csv', newline='') as f:\n    r = csv.DictReader(f)\n    for row in r:\n        products[row['product_id'].strip()] = (row['category'].strip(), float(row['price']))\n\n# Accumulate revenue per category\nfrom collections import defaultdict\nrev = defaultdict(float)\nwith open('/data/orders.csv', newline='') as f:\n    r = csv.DictReader(f)\n    for row in r:\n        pid = row['product_id'].strip()\n        qty = float(row['quantity'])\n        if pid in products:\n            cat, price = products[pid]\n            rev[cat] += qty * price\n\n# Sort by revenue descending\nfor cat, total in sorted(rev.items(), key=lambda x: x[1], reverse=True):\n    # print as int if whole number\n    if total.is_integer():\n        total = int(total)\n    print(f'{cat}: {total}')\n\""
+    ],
+    "usage": {
+      "input_tokens": 5132,
+      "output_tokens": 1342,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 9464
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 3.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat /data/orders.csv | head -n 20; echo \"---\"; cat /data/products.csv | head -n 20\nls -l /data/",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "order_id,product_id,quantity\n1,101,3\n2,102,5\n3,101,2\n4,103,1\n5,102,4\n6,103,3\n---\nproduct_id,name,category,price\n101,Widget,hardware,25\n102,Gadget,electronics,50\n103,Bolt,hardware,10\n-rw-r--r--       77 2026-10-09 17:46 orders.csv\n-rw-r--r--      101 2026-10-09 17:46 products.csv\n"
+          },
+          {
+            "commands": "wc -l /data/orders.csv /data/products.csv; cat /data/orders.csv; echo \"===\"; cat /data/products.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "  7 /data/orders.csv\n  4 /data/products.csv\n 11 total\norder_id,product_id,quantity\n1,101,3\n2,102,5\n3,101,2\n4,103,1\n5,102,4\n6,103,3\n===\nproduct_id,name,category,price\n101,Widget,hardware,25\n102,Gadget,electronics,50\n103,Bolt,hardware,10\n"
+          },
+          {
+            "commands": "python3 -c \"\nimport csv\n\n# Load products: product_id -> (category, price)\nproducts = {}\nwith open('/data/products.csv', newline='') as f:\n    r = csv.DictReader(f)\n    for row in r:\n        products[row['product_id'].strip()] = (row['category'].strip(), float(row['price']))\n\n# Accumulate revenue per category\nfrom collections import defaultdict\nrev = defaultdict(float)\nwith open('/data/orders.csv', newline='') as f:\n    r = csv.DictReader(f)\n    for row in r:\n        pid = row['product_id'].strip()\n        qty = float(row['quantity'])\n        if pid in products:\n            cat, price = products[pid]\n            rev[cat] += qty * price\n\n# Sort by revenue descending\nfor cat, total in sorted(rev.items(), key=lambda x: x[1], reverse=True):\n    # print as int if whole number\n    if total.is_integer():\n        total = int(total)\n    print(f'{cat}: {total}')\n\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "electronics: 450\nhardware: 165\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

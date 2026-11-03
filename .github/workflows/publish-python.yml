@@ -6,6 +6,8 @@
 # Prerequisites:
 #   - PyPI trusted publisher configured for this repo + workflow
 #   - GitHub environment "release-python" created in repo settings
+#   - "release-windows-signing" environment restricted to release tags
+#   - Validated Public Trust profile + profile-scoped OIDC signer permission
 
 name: Publish Python
 
@@ -34,7 +36,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
 
@@ -45,7 +47,7 @@ jobs:
           rust-toolchain: stable
           working-directory: crates/bashkit-python
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: pypi_files-sdist
           path: crates/bashkit-python/dist
@@ -99,7 +101,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
 
@@ -115,9 +117,10 @@ jobs:
           docker-options: -e CI
           working-directory: crates/bashkit-python
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: pypi_files-${{ matrix.os }}-${{ matrix.target }}-${{ matrix.manylinux || 'manylinux' }}
+          # Unsigned Windows wheels must never match the publisher's glob.
+          name: ${{ matrix.os == 'windows' && 'pypi_unsigned' || 'pypi_files' }}-${{ matrix.os }}-${{ matrix.target }}-${{ matrix.manylinux || 'manylinux' }}
           path: crates/bashkit-python/dist
 
   # Reduced-feature Pyodide/Emscripten wheel (browser / JupyterLite).
@@ -141,7 +144,7 @@ jobs:
       # Python 3.13 -> pyodide-build's modern config (Pyodide 0.29.x, Emscripten
       # 4.0.9), whose binaryen understands modern LLVM's wasm target-features and
       # whose runtime supports wasm exception handling. See knowledge/runtimes/emscripten-wheels.md.
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.13"
 
@@ -168,7 +171,7 @@ jobs:
           RUSTUP_TOOLCHAIN: ${{ env.RUST_NIGHTLY }}
         run: pyodide build --outdir dist
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: pypi_files-emscripten
           path: crates/bashkit-python/dist
@@ -211,10 +214,16 @@ jobs:
           fi
           echo "Publish source verified: $SOURCE_SHA at v$TAG_VERSION"
 
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           pattern: pypi_files-*
           merge-multiple: true
+          path: dist
+
+      - name: Download unsigned Windows wheel for inspection
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: pypi_unsigned-windows-x86_64-manylinux
           path: dist
 
       - name: List dist files
@@ -223,8 +232,21 @@ jobs:
           echo "---"
           echo "Total files: $(ls -1 dist/ | wc -l)"
 
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
       - run: uvx twine check dist/*
+
+  # Only this shared signer can turn unsigned build outputs into publishable
+  # Windows wheels. It also checks the immutable tag before accessing Azure.
+  sign-windows:
+    name: Sign Windows wheel
+    needs: [inspect]
+    uses: ./.github/workflows/sign-windows-wheel.yml
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      unsigned-artifact-name: pypi_unsigned-windows-x86_64-manylinux
+      signed-artifact-name: pypi_files-windows-x86_64-manylinux
 
   # Smoke-test the single cp39-abi3 wheel on every targeted Python version.
   # With abi3 there is one wheel per platform, so this is the check that it
@@ -233,26 +255,29 @@ jobs:
   # the include entries only map each os to its runner.
   test-builds:
     name: Test wheel on ${{ matrix.os }} (Python ${{ matrix.python-version }})
-    needs: [build]
+    needs: [build, sign-windows]
     strategy:
       fail-fast: false
       matrix:
         os: [linux, macos, windows]
         python-version: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
         include:
+          # linux is pinned rather than `ubuntu-latest` because Ubuntu 26.04
+          # ships no hosted 3.9 build; see the note on `python.yml`'s `test`
+          # job, which is pinned for the same reason.
           - os: linux
-            runs-on: ubuntu-latest
+            runs-on: ubuntu-24.04
           - os: macos
             runs-on: macos-latest
           - os: windows
             runs-on: windows-latest
     runs-on: ${{ matrix.runs-on }}
     steps:
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: ${{ matrix.python-version }}
 
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           pattern: pypi_files-${{ matrix.os }}-*
           merge-multiple: true
@@ -267,7 +292,7 @@ jobs:
   # Publish to PyPI using trusted publishing (OIDC)
   publish:
     name: Publish to PyPI
-    needs: [inspect, test-builds]
+    needs: [inspect, sign-windows, test-builds]
     if: success()
     runs-on: ubuntu-latest
 
@@ -278,7 +303,7 @@ jobs:
       id-token: write
 
     steps:
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           pattern: pypi_files-*
           merge-multiple: true
@@ -287,7 +312,7 @@ jobs:
       - name: List dist files
         run: ls -lhR dist/
 
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
 
       - name: Publish to PyPI
         run: uv publish --trusted-publishing always dist/*

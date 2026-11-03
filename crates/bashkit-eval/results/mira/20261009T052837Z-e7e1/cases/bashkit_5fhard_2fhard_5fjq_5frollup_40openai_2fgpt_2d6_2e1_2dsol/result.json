@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_hard",
+  "sample": "hard_jq_rollup",
+  "target": "openai/gpt-6.1-sol",
+  "input": [
+    "/home/eval/shop/data/orders.json is an array of shop orders. Build per-customer rollups with jq.\n\nRules:\n- Customer key: .customer.id. Orders whose customer is null or missing belong to the key \"guest\".\n- Only orders with status \"paid\" count towards paid_orders, revenue_cents, by_month and top_skus (refunded and pending orders are ignored there), but every customer key that appears in any order gets a file.\n- Line revenue in cents = floor(qty * unit_cents * (100 - discount_pct) / 100), where a null or missing discount_pct means 0.\n- name = .customer.name on that customer's most recent order of any status (by .placed); null for \"guest\".\n\nWrite one file per customer key, /home/eval/shop/out/customers/<key>.json, containing one object with exactly these keys in this order:\n  customer (the key), name, paid_orders (number of paid orders), revenue_cents (integer sum of line revenue over paid orders), by_month (object mapping \"YYYY-MM\" of .placed to that month's revenue, keys ascending, only months with paid orders), top_skus (array of up to 3 skus with the highest revenue over paid orders, ties broken by sku ascending)\nAlso write /home/eval/shop/out/summary.json: an array of {\"customer\": <key>, \"revenue_cents\": <int>} for every customer key, sorted by revenue_cents descending then customer ascending.\n\nFormat every file exactly as `jq .` pretty-prints it (2-space indent, one trailing newline). Numbers must be integers (no 12.0)."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Created all six customer rollups in `/home/eval/shop/out/customers/` and the sorted `/home/eval/shop/out/summary.json`.\n\nAll files use `jq` pretty-print formatting and follow the specified revenue, naming, ordering, and paid-order rules.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "ls -l /home/eval/shop/data/orders.json; jq '.[0:4]' /home/eval/shop/data/orders.json; command -v jq",
+      "set -euo pipefail\nmkdir -p /home/eval/shop/out/customers\nwork=$(mktemp -d)\ntrap 'rm -rf \"$work\"' EXIT\ncat > \"$work/rollups.jq\" <<'JQ'\ndef customer_key:\n  if .customer == null then \"guest\" else .customer.id end;\ndef line_revenue:\n  (.qty * .unit_cents * (100 - (.discount_pct // 0)) / 100 | floor);\ndef order_revenue:\n  ([.items[] | line_revenue] | add // 0);\ngroup_by(customer_key)\n| map(\n    . as $orders\n    | ($orders[0] | customer_key) as $key\n    | [$orders[] | select(.status == \"paid\")] as $paid\n    | {\n        customer: $key,\n        name: (if $key == \"guest\" then null else ($orders | max_by(.placed) | .customer.name) end),\n        paid_orders: ($paid | length),\n        revenue_cents: ([$paid[] | order_revenue] | add // 0),\n        by_month: (\n          $paid\n          | group_by(.placed[0:7])\n          | map({key: .[0].placed[0:7], value: (map(order_revenue) | add // 0)})\n          | sort_by(.key)\n          | from_entries\n        ),\n        top_skus: (\n          [$paid[] | .items[] | {sku: .sku, revenue: line_revenue}]\n          | group_by(.sku)\n          | map({sku: .[0].sku, revenue: (map(.revenue) | add // 0)})\n          | sort_by([(-.revenue), .sku])\n          | .[0:3]\n          | map(.sku)\n        )\n      }\n  )\nJQ\njq -f \"$work/rollups.jq\" /home/eval/shop/data/orders.json > \"$work/rollups.json\"\nwhile IFS= read -r key; do\n  jq --arg key \"$key\" '.[] | select(.customer == $key)' \"$work/rollups.json\" > \"/home/eval/shop/out/customers/$key.json\"\ndone < <(jq -r '.[].customer' \"$work/rollups.json\")\njq 'map({customer, revenue_cents}) | sort_by([(-.revenue_cents), .customer])' \"$work/rollups.json\" > /home/eval/shop/out/summary.json\ncat /home/eval/shop/out/summary.json\nls /home/eval/shop/out/customers"
+    ],
+    "usage": {
+      "input_tokens": 3639,
+      "output_tokens": 788,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 16966
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -l /home/eval/shop/data/orders.json; jq '.[0:4]' /home/eval/shop/data/orders.json; command -v jq",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--    10397 2026-10-09 05:31 /home/eval/shop/data/orders.json\n[\n  {\n    \"id\": \"o-1000\",\n    \"placed\": \"2026-07-01T08:00:00Z\",\n    \"status\": \"paid\",\n    \"items\": [\n      {\n        \"sku\": \"sku-cheese\",\n        \"qty\": 2,\n        \"unit_cents\": 899\n      }\n    ],\n    \"customer\": null\n  },\n  {\n    \"id\": \"o-1001\",\n    \"placed\": \"2026-07-04T09:07:00Z\",\n    \"status\": \"paid\",\n    \"items\": [\n      {\n        \"sku\": \"sku-eggs\",\n        \"qty\": 4,\n        \"unit_cents\": 299\n      },\n      {\n        \"sku\": \"sku-apple\",\n        \"qty\": 1,\n        \"unit_cents\": 120\n      },\n      {\n        \"sku\": \"sku-cheese\",\n        \"qty\": 2,\n        \"unit_cents\": 899\n      }\n    ],\n    \"customer\": {\n      \"id\": \"c-bob\",\n      \"name\": \"Bob Stone\"\n    }\n  },\n  {\n    \"id\": \"o-1002\",\n    \"placed\": \"2026-07-07T10:14:00Z\",\n    \"status\": \"pending\",\n    \"items\": [\n      {\n        \"sku\": \"sku-apple\",\n        \"qty\": 4,\n        \"unit_cents\": 120\n      },\n      {\n        \"sku\": \"sku-bread\",\n        \"qty\": 4,\n        \"unit_cents\": 350,\n        \"discount_pct\": null\n      },\n      {\n        \"sku\": \"sku-cheese\",\n        \"qty\": 3,\n        \"unit_cents\": 899\n      }\n    ],\n    \"customer\": {\n      \"id\": \"c-eve\",\n      \"name\": \"Eve Adams\"\n    }\n  },\n  {\n    \"id\": \"o-1003\",\n    \"placed\": \"2026-07-10T11:21:00Z\",\n    \"status\": \"refunded\",\n    \"items\": [\n      {\n        \"sku\": \"sku-cheese\",\n        \"qty\": 2,\n        \"unit_cents\": 899,\n        \"discount_pct\": 5\n      },\n      {\n        \"sku\": \"sku-bread\",\n        \"qty\": 1,\n        \"unit_cents\": 350,\n        \"discount_pct\": 5\n      }\n    ],\n    \"customer\": {\n      \"id\": \"c-bob\",\n      \"name\": \"Bob Stone\"\n    }\n  }\n]\n/usr/bin/jq\n"
+          },
+          {
+            "commands": "set -euo pipefail\nmkdir -p /home/eval/shop/out/customers\nwork=$(mktemp -d)\ntrap 'rm -rf \"$work\"' EXIT\ncat > \"$work/rollups.jq\" <<'JQ'\ndef customer_key:\n  if .customer == null then \"guest\" else .customer.id end;\ndef line_revenue:\n  (.qty * .unit_cents * (100 - (.discount_pct // 0)) / 100 | floor);\ndef order_revenue:\n  ([.items[] | line_revenue] | add // 0);\ngroup_by(customer_key)\n| map(\n    . as $orders\n    | ($orders[0] | customer_key) as $key\n    | [$orders[] | select(.status == \"paid\")] as $paid\n    | {\n        customer: $key,\n        name: (if $key == \"guest\" then null else ($orders | max_by(.placed) | .customer.name) end),\n        paid_orders: ($paid | length),\n        revenue_cents: ([$paid[] | order_revenue] | add // 0),\n        by_month: (\n          $paid\n          | group_by(.placed[0:7])\n          | map({key: .[0].placed[0:7], value: (map(order_revenue) | add // 0)})\n          | sort_by(.key)\n          | from_entries\n        ),\n        top_skus: (\n          [$paid[] | .items[] | {sku: .sku, revenue: line_revenue}]\n          | group_by(.sku)\n          | map({sku: .[0].sku, revenue: (map(.revenue) | add // 0)})\n          | sort_by([(-.revenue), .sku])\n          | .[0:3]\n          | map(.sku)\n        )\n      }\n  )\nJQ\njq -f \"$work/rollups.jq\" /home/eval/shop/data/orders.json > \"$work/rollups.json\"\nwhile IFS= read -r key; do\n  jq --arg key \"$key\" '.[] | select(.customer == $key)' \"$work/rollups.json\" > \"/home/eval/shop/out/customers/$key.json\"\ndone < <(jq -r '.[].customer' \"$work/rollups.json\")\njq 'map({customer, revenue_cents}) | sort_by([(-.revenue_cents), .customer])' \"$work/rollups.json\" > /home/eval/shop/out/summary.json\ncat /home/eval/shop/out/summary.json\nls /home/eval/shop/out/customers",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "[\n  {\n    \"customer\": \"guest\",\n    \"revenue_cents\": 14137\n  },\n  {\n    \"customer\": \"c-cy\",\n    \"revenue_cents\": 9911\n  },\n  {\n    \"customer\": \"c-bob\",\n    \"revenue_cents\": 9251\n  },\n  {\n    \"customer\": \"c-ann\",\n    \"revenue_cents\": 5037\n  },\n  {\n    \"customer\": \"c-dee\",\n    \"revenue_cents\": 1781\n  },\n  {\n    \"customer\": \"c-eve\",\n    \"revenue_cents\": 0\n  }\n]\nc-ann.json\nc-bob.json\nc-cy.json\nc-dee.json\nc-eve.json\nguest.json\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

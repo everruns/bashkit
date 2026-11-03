@@ -1,0 +1,57 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "search_recursive_grep",
+  "target": "openai/gpt-6-luna",
+  "input": [
+    "Search all .py files under /project for functions that contain the word 'validate'. For each match, print the filename and line number in the format 'filename:linenum: matched_line'. Then count the total number of matches and print 'Total matches: N'."
+  ],
+  "passed": false,
+  "aggregate": 0.8571428571428571,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 0.8571428571428571,
+      "pass": false,
+      "reason": "6/7 checks passed (weighted rate 86%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "/project/app/auth.py:1: def validate_token(token):\n/project/app/forms.py:1: def validate_email(email):\n/project/app/forms.py:4: def validate_name(name):\n/project/tests/test_auth.py:3: def test_validate_token():\nTotal matches: 4",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "find /project -type f -name '*.py' -print0 | xargs -0 grep -nE '^\\s*(async\\s+)?def\\s+[^ (]*validate[^ (]*'"
+    ],
+    "usage": {
+      "input_tokens": 974,
+      "output_tokens": 385,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 5333
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "find /project -type f -name '*.py' -print0 | xargs -0 grep -nE '^\\s*(async\\s+)?def\\s+[^ (]*validate[^ (]*'",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/project/app/auth.py:1:def validate_token(token):\n/project/app/forms.py:1:def validate_email(email):\n/project/app/forms.py:4:def validate_name(name):\n/project/tests/test_auth.py:3:def test_validate_token():\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

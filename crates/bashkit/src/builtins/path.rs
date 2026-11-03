@@ -127,13 +127,18 @@ impl Builtin for Dirname {
         ) {
             return Ok(r);
         }
-        if ctx.args.is_empty() {
+        // A leading `--` ends options (`dirname -- "$path"`); it is no operand.
+        let operands = match ctx.args.first() {
+            Some(first) if first == "--" => &ctx.args[1..],
+            _ => ctx.args,
+        };
+        if operands.is_empty() {
             return Ok(ExecResult::err("dirname: missing operand\n".to_string(), 1));
         }
 
         let mut output = String::new();
 
-        for (i, arg) in ctx.args.iter().enumerate() {
+        for (i, arg) in operands.iter().enumerate() {
             if i > 0 {
                 output.push('\n');
             }

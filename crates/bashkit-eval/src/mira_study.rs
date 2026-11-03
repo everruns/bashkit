@@ -33,33 +33,48 @@ use crate::snapshot::{Snapshot, SnapshotTargets, ToolOutput, snapshot_fs, snapsh
 /// Default agent-turn budget per task (matches the original harness).
 pub const MAX_TURNS: usize = 10;
 
-/// Turn budget for `bashkit_repo`: repo tasks are multi-step by design
-/// (explore, run tests, fix, re-run, commit), so they get twice the default.
-pub const REPO_MAX_TURNS: usize = 20;
-
 /// Default model matrix. Each target is gated on its provider's API-key env var,
 /// so an offline run skips them all (CI stays green) and a keyed run lights up
 /// the subset whose credentials are present. Select subsets with
-/// `mira run --targets anthropic/claude-opus-4-8` (exact labels, comma-separated).
+/// `mira run --targets 'anthropic/*'` (comma-separated label globs).
+///
+/// Decision: Anthropic and OpenAI go direct. Models without a bashkit provider
+/// (Kimi, Meta Muse, Gemini) go through OpenRouter's Chat Completions API;
+/// Gemini too because its own host is unreachable from the eval environment.
+/// GPT-6 models reject function tools on Chat Completions while reasoning is
+/// on, so OpenAI targets use the Responses API. Lineup chosen 2026-10-09.
 pub fn default_targets() -> Vec<Target> {
     vec![
-        Target::anthropic("claude-opus-4-8"),
-        Target::anthropic("claude-haiku-4-5"),
-        Target::anthropic("claude-sonnet-4-6"),
-        Target::openai("gpt-5.5"),
-        // Codex models require the OpenAI Responses API; route on a custom
-        // provider id our subject understands, gated on the OpenAI key.
-        Target::cloud("openresponses", "gpt-5.3-codex", "OPENAI_API_KEY"),
+        Target::anthropic("claude-opus-5-5"),
+        Target::anthropic("claude-sonnet-5-5"),
+        openai_responses("gpt-6.1-sol"),
+        openai_responses("gpt-6-luna"),
+        openrouter("google/gemini-3.8-flash"),
+        openrouter("moonshotai/kimi-k3"),
+        openrouter("meta/muse-spark-1.3-contributor"),
     ]
+}
+
+/// An OpenAI model on the Responses API (custom provider id our subject
+/// understands), labelled `openai/<model>` so reports read like the provider.
+fn openai_responses(model: &str) -> Target {
+    Target::cloud("openresponses", model, "OPENAI_API_KEY").label(format!("openai/{model}"))
+}
+
+/// An OpenRouter target; `model` is the vendor-prefixed OpenRouter id, so the
+/// label reads `openrouter/openai/gpt-5.6-sol`.
+fn openrouter(model: &str) -> Target {
+    Target::cloud("openrouter", model, "OPENROUTER_API_KEY")
 }
 
 /// Map a mira `Target` to a bashkit `Provider`. Errors surface as infra errors
 /// (the case scores N/A rather than failing the model).
-fn provider_for(target: &Target) -> Result<Box<dyn Provider>, String> {
+pub(crate) fn provider_for(target: &Target) -> Result<Box<dyn Provider>, String> {
     let model = target.model.as_str();
     let provider: Box<dyn Provider> = match target.provider.as_str() {
         "anthropic" => Box::new(AnthropicProvider::new(model).map_err(|e| e.to_string())?),
         "openai" => Box::new(OpenAiProvider::new(model).map_err(|e| e.to_string())?),
+        "openrouter" => Box::new(OpenAiProvider::openrouter(model).map_err(|e| e.to_string())?),
         "openresponses" => {
             Box::new(OpenAiResponsesProvider::new(model).map_err(|e| e.to_string())?)
         }
@@ -88,7 +103,7 @@ fn last_assistant_text(messages: &[Message]) -> String {
 }
 
 /// Read the per-sample expectation list the scorer evaluates.
-fn expectations_from_sample(sample: &Sample) -> Vec<(String, f64)> {
+pub(crate) fn expectations_from_sample(sample: &Sample) -> Vec<(String, f64)> {
     sample
         .metadata
         .get("expectations")
@@ -120,12 +135,16 @@ fn expectations_value(expectations: &[crate::dataset::Expectation]) -> serde_jso
 // ---------------------------------------------------------------------------
 
 /// Build the samples for a bash eval dataset (parsed JSONL text).
-fn bash_samples(jsonl: &str) -> Vec<Sample> {
+pub(crate) fn bash_samples(jsonl: &str) -> Vec<Sample> {
     parse_jsonl::<EvalTask>(jsonl)
         .into_iter()
         .map(|task| {
             let mut sample = Sample::new(&task.id, &task.prompt)
                 .tag(&task.category)
+                .tag(&task.mode)
+                .tag(&task.difficulty)
+                .meta("mode", task.mode.clone())
+                .meta("difficulty", task.difficulty.clone())
                 .meta("category", task.category.clone())
                 .meta("description", task.description.clone())
                 .meta("expectations", expectations_value(&task.expectations))
@@ -156,10 +175,11 @@ fn bash_subject() -> impl Subject {
             Err(e) => return Transcript::infra_error(e),
         };
 
-        let (trace, bash) = match run_agent_loop(&*provider, &task, cx.max_turns).await {
-            Ok(x) => x,
-            Err(e) => return Transcript::infra_error(format!("agent loop failed: {e:#}")),
-        };
+        let (trace, bash) =
+            match run_agent_loop(&*provider, &task, task.max_turns.unwrap_or(cx.max_turns)).await {
+                Ok(x) => x,
+                Err(e) => return Transcript::infra_error(format!("agent loop failed: {e:#}")),
+            };
 
         let expectations = expectations_from_sample(&sample);
         let targets = SnapshotTargets::from_expectations(&expectations);
@@ -394,19 +414,23 @@ fn parse_jsonl<T: serde::de::DeserializeOwned>(text: &str) -> Vec<T> {
 /// Embedded datasets (no runtime path dependence — robust under any cwd).
 const EVAL_TASKS: &str = include_str!("../data/eval-tasks.jsonl");
 const SMOKE_TASKS: &str = include_str!("../data/smoke-test.jsonl");
-const REPO_TASKS: &str = include_str!("../data/repo-workflow.jsonl");
 const SCRIPTING_MANY_TOOLS: &str = include_str!("../data/scripting-tool/many-tools.jsonl");
 const SCRIPTING_DISCOVERY: &str = include_str!("../data/scripting-tool/discovery.jsonl");
 const SCRIPTING_PAGINATED: &str = include_str!("../data/scripting-tool/paginated.jsonl");
 const SCRIPTING_LARGE_OUTPUT: &str = include_str!("../data/scripting-tool/large-output.jsonl");
 
-/// The main bash agent eval: 58 hand-curated tasks across 15 categories.
-/// Select a category with `mira run --tag json_processing`. The `#[eval]`
-/// registration wrapper lives in `main.rs` (the bin crate) so the inventory
-/// submission is guaranteed to link into the host binary.
+/// The main eval: one tagged dataset of agent-loop tasks. Tags: category,
+/// `mode` (`agent` | `runtime`) and `difficulty` (`basic` | `repo` | `hard`);
+/// slice with `mira run --tag hard`. Repo and hard tasks carry their own turn
+/// budget (`max_turns`). Decision (2026-10-09): one dataset with tags rather
+/// than one eval per kind; a separate eval only where scoring differs. The
+/// `#[eval]` registration wrapper lives in `main.rs` (the bin crate) so the
+/// inventory submission is guaranteed to link into the host binary.
 pub fn bash_eval() -> Eval {
     let mut b = Eval::new("bashkit_bash")
-        .describe("LLM bash-tool usage across 15 task categories (bashkit VFS)")
+        .describe(
+            "Agent-loop tasks tagged by mode (agent/runtime) and difficulty (basic/repo/hard)",
+        )
         .subject(bash_subject())
         .scorer(expectations_scorer())
         .max_turns(MAX_TURNS)
@@ -426,23 +450,6 @@ pub fn smoke_eval() -> Eval {
         .max_turns(MAX_TURNS)
         .targets(default_targets());
     for sample in bash_samples(SMOKE_TASKS) {
-        b = b.add_sample(sample);
-    }
-    b.build()
-}
-
-/// Repo-shaped, multi-turn tasks (`repo_workflow`): a fixture git repo built
-/// by the task's `setup`, then run `make test`, fix, commit. Kept out of
-/// `bashkit_bash` so its 58-task scores stay comparable across runs. Every
-/// task has a reference solution checked in CI (`reference.rs`).
-pub fn repo_eval() -> Eval {
-    let mut b = Eval::new("bashkit_repo")
-        .describe("Multi-turn repo workflows: make test, fix, commit (symlinks, PATH, jobs, git)")
-        .subject(bash_subject())
-        .scorer(expectations_scorer())
-        .max_turns(REPO_MAX_TURNS)
-        .targets(default_targets());
-    for sample in bash_samples(REPO_TASKS) {
         b = b.add_sample(sample);
     }
     b.build()
@@ -471,14 +478,46 @@ pub fn scripting_eval() -> Eval {
     b.build()
 }
 
+/// One-shot generation tasks (`bashkit_generate`); own file because scoring
+/// differs (one script, one run, no feedback). See `generate.rs`.
+const GENERATE_TASKS: &str = include_str!("../data/generate-tasks.jsonl");
+
+/// The one-shot script generation eval: the model writes ONE bash script from
+/// the task + a fixed sandbox description, bashkit runs it once, and the
+/// shared expectations scorer scores the result. Tags: category, `generate`,
+/// difficulty (`basic` | `hard`).
+pub fn generate_eval() -> Eval {
+    let mut b = Eval::new("bashkit_generate")
+        .describe("One-shot bash script generation: one reply, one run, no feedback")
+        .subject(crate::generate::generate_subject())
+        .scorer(expectations_scorer())
+        .max_turns(1)
+        .targets(default_targets());
+    for sample in bash_samples(GENERATE_TASKS) {
+        b = b.add_sample(sample);
+    }
+    b.build()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
+    fn generate_samples_load_and_build() {
+        let samples = bash_samples(GENERATE_TASKS);
+        assert!(samples.len() >= 15);
+        for s in &samples {
+            assert!(s.tags.contains(&"generate".to_string()), "{}", s.id);
+            assert!(!expectations_from_sample(s).is_empty(), "{}", s.id);
+        }
+        let _ = generate_eval();
+    }
+
+    #[test]
     fn bash_samples_load_all_tasks_with_expectations() {
         let samples = bash_samples(EVAL_TASKS);
-        assert_eq!(samples.len(), 58);
+        assert!(samples.len() >= 76);
         for s in &samples {
             assert!(
                 !expectations_from_sample(s).is_empty(),
@@ -499,14 +538,38 @@ mod tests {
     }
 
     #[test]
-    fn repo_samples_load_with_setup() {
-        let samples = bash_samples(REPO_TASKS);
-        assert_eq!(samples.len(), 8);
+    fn tags_cover_modes_and_difficulties() {
+        let samples = bash_samples(EVAL_TASKS);
+        let mut by_difficulty = std::collections::BTreeMap::<String, usize>::new();
         for s in &samples {
             let task: EvalTask = serde_json::from_value(s.metadata["task"].clone()).unwrap();
-            assert_eq!(task.category, "repo_workflow", "{}", s.id);
-            assert!(task.setup.is_some(), "{} has no fixture setup", s.id);
+            assert!(
+                ["agent", "runtime"].contains(&task.mode.as_str()),
+                "{}",
+                s.id
+            );
+            assert!(
+                ["basic", "repo", "hard"].contains(&task.difficulty.as_str()),
+                "{}",
+                s.id
+            );
+            assert!(s.tags.contains(&task.mode) && s.tags.contains(&task.difficulty));
+            if task.difficulty != "basic" {
+                assert!(task.max_turns.is_some(), "{} needs a turn budget", s.id);
+            }
+            *by_difficulty
+                .entry(format!("{}/{}", task.mode, task.difficulty))
+                .or_default() += 1;
         }
+        assert_eq!(by_difficulty["agent/basic"], 58);
+        assert_eq!(by_difficulty["agent/repo"], 8);
+        assert!(by_difficulty["agent/hard"] >= 10);
+        let runtime: usize = by_difficulty
+            .iter()
+            .filter(|(k, _)| k.starts_with("runtime/"))
+            .map(|(_, n)| n)
+            .sum();
+        assert!(runtime >= 12);
     }
 
     #[test]
@@ -530,7 +593,6 @@ mod tests {
         // Smoke: the eval builders produce valid Evals without panicking.
         let _ = bash_eval();
         let _ = smoke_eval();
-        let _ = repo_eval();
         let _ = scripting_eval();
     }
 }

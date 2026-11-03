@@ -41,8 +41,16 @@ See `crates/bashkit/src/lib.rs` for the full public API surface.
 ### Per-invocation exec state
 
 `ExecOptions` carries everything scoped to a single `exec_with_options`
-call: streaming callback, builtin extensions, `arg0`, `positional`, and
-`stdin`. All of it is per-call by construction, not session state.
+call: streaming callback, builtin extensions, `arg0`, `positional`,
+`stdin`, and `timeout`. All of it is per-call by construction, not session
+state.
+
+- `timeout` only tightens `ExecutionLimits::timeout`: the call runs under
+  the smaller of the two, enforced by the same host-backed wrapper and
+  reported as the same `LimitExceeded::Timeout`, so a caller-chosen value
+  (an LLM tool argument) can never extend the sandbox budget. The
+  `ExecutionDeadline` extension handed to builtins carries the effective
+  value.
 
 - Positional parameters exist only inside a call frame, so the host
   boundary pushes a synthetic top-level frame before
@@ -66,6 +74,15 @@ and bindings use `as_bytes()`/`into_bytes()`; text-oriented consumers cross an
 explicit UTF-8 boundary with `text()` or `text_lossy()`.
 Line-oriented consumers locate delimiters and split the authoritative byte buffer
 before lossy decoding; offsets into the cached lossy view are never byte offsets.
+
+`Execution::output_file(path, max_bytes)` tees combined stdout+stderr, in
+arrival order, into a VFS file created/truncated before the script runs. The
+file is bounded by its own `max_bytes` and `FsLimits`, not by
+`max_stdout_bytes`/`max_stderr_bytes`: the bytes stay in the sandbox like a
+`{ script; } > file 2>&1` redirect, while `capture` and sinks keep the
+in-memory caps. A filesystem error stops the tee without failing the call. It
+runs in the current shell, so hosts get full output for later `grep` with no
+wrapper script, `eval`, or subshell, and shell state carries over.
 
 Shell words and variables remain text. Command substitution therefore removes
 NUL bytes, as Bash does because variables cannot contain NUL, then decodes the
@@ -91,6 +108,35 @@ dropping a suspended handle aborts the driver and drops the session. This is
 process-local scheduling, not a serializable continuation; snapshots still
 capture state only between executions. See [Builtin Commands](builtins.md) and
 [Snapshot History](snapshot-history.md).
+
+### Arithmetic expansion budget
+
+Arithmetic's synchronous evaluator owns one depth/fuel budget per top-level
+expression. Dollar expansion checks and charges original text before
+recursing into array subscripts or nested `$((...))`. Read-only child
+evaluators borrow that budget while discarding writes; siblings cannot
+restart fuel. Nameref and associative-key lookups stay in the same budget.
+Recursive bare-variable evaluation and syntax parsing share the depth
+counter. Expansion errors propagate to the arithmetic boundary; later host
+executions receive fresh state. Regression and Bash differential coverage:
+`crates/bashkit/tests/integration/arithmetic_resource_tests.rs` (TM-DOS-026).
+### Trap nesting
+
+Self-sent signals run handlers inline. Every handler entered through
+`run_trap_command` charges the existing function-depth counter, also used by
+functions, source, and child shells; its hard ceiling is 16. A dedicated
+trap-nesting cap of 3 trips first on small stacks: exactly three nested
+handler executions are admitted, and the fourth entry is skipped with a
+diagnostic on the handler stderr. This preserves finite nested signal
+delivery while bounding direct, mutual, and mixed cycles without relying on
+command fuel or per-handler AST depth. The first trip is surfaced as a
+resource-limit error at the `exec` boundary; unparsable or failing handlers
+still never disturb the interrupted command (TM-DOS-030). The signal path
+boxes the handler future to keep each native frame small. Trap state and depth are restored on every path. DEBUG,
+ERR, and RETURN retain their reentrancy suppression and existing error
+handling.
+See [Threat Model](../security/threat-model.md), TM-DOS-020, and
+`signal_trap_depth_tests` plus CLI small-stack regression coverage.
 
 ### Shared execution budget
 
@@ -122,6 +168,38 @@ the allocator or producer fails, and release it with the buffer. Archive and
 compression paths use these builders because their expansion ratios and nested
 buffers make post-hoc leasing unsafe. Atomic compare/exchange admission keeps
 concurrent descendants from wrapping or temporarily exceeding the shared cap.
+
+Command-local input redirections admit canonical VFS metadata/device read
+ceilings before loading bytes, including before the empty open for `<>`.
+Backend capacity beyond its reported size is charged before decoding. Cached
+lossy text and fd copies use the existing owning builders; byte/text leases
+travel with both the numbered-fd slot and surviving stdin. Reopening a numbered
+fd replaces its old storage, without refunding aggregate input consumption.
+An input not needed for stdin moves into the fd table instead of being copied.
+Budget and cancellation errors abort the request; ordinary backend I/O errors
+remain shell command failures. A custom VFS must report reliable read sizes;
+the legacy `read_file` trait cannot prevent allocations inside a backend that
+underreports or concurrently changes those sizes. Persistent/coprocess fd
+storage remains a separate ownership boundary.
+
+Shell diagnostic names are truncated to 1,024 UTF-8 bytes before copying,
+without changing positional `$0`. Builtin diagnostic prefix rewriting uses
+`BudgetedBytes` and fallible `StreamData` text construction under the same
+request budget. Both storage leases survive through redirection and hooks;
+input scanning and every emitted line charge work and check the shared
+cancellation/deadline. Capture caps remain downstream of a command's own
+redirections, so command-local redirected diagnostics retain full content.
+A child shell captures uncaught stderr before an outer redirect on the
+`bash -c` invocation sees it; that outer redirect receives the child's capped
+capture. Put the redirect on the child command to bypass capture.
+Tilde expansion uses the same owning string builder before each append; it
+borrows `HOME`/`PWD`/`OLDPWD` instead of cloning the directory on each prefix.
+Scan and copy work polls the shared deadline and cancellation flag. Assignment
+preprocessing retains leases for expanded literal buffers and their word copies
+through consumption; mixed-word segments retain leases through field splitting.
+The synchronous operand pipeline records a refused reservation in the existing
+sticky resource-error slot, checked before the completed word is returned.
+Retained-variable admission remains a separate check after expansion.
 
 ### `set -e` contexts
 

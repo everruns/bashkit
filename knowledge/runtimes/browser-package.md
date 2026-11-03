@@ -90,7 +90,7 @@ matches awaiting it, and `send`/`takeOutput`/`resize` stay callable while a
 command such as `sleep` is in flight.
 
 Absent (need sockets, threads, or a host FS the browser sandbox lacks):
-`http_client` (`curl`/`wget`), `ssh`, `sqlite`, embedded `python`, `realfs`
+`http_client` (`curl`/`wget`), `ssh`, `sqlite`, `realfs`
 mounts, and native `interop`. Reach the network from a custom builtin that calls
 the app's own `fetch` instead.
 
@@ -102,6 +102,49 @@ UTC and handing back a wrong time that looks right. `TZ=UTC`, unset, and empty
 are unaffected. Embedders who need named zones should build their own wasm
 target with the `tzdata` feature on. See
 [Dependency Policy](../operations/dependencies.md).
+
+## Optional embedded runtimes
+
+The default import stays slim. `@everruns/bashkit-wasm/runtimes` loads a separate
+single-threaded binary with Python/Monty and TypeScript/ZapCode. Both runtimes
+remain explicit constructor opt-ins. Cargo features `python` and `typescript`
+can also be selected independently. Build the slim bundle first, then use
+`BASHKIT_WASM_VARIANT=runtimes BASHKIT_WASM_FEATURES=terminal,python,typescript`
+with `scripts/build.sh`; CI and publication include both in one npm archive.
+
+Bash accepts the native JS SDK's function-name/dispatcher options. Dispatchers
+receive JSON-subset values (depth 64, finite/safe JS numbers, string-key objects),
+Python kwargs, and an execution-local AbortSignal. Host code grants service
+access explicitly and owns its authorization and I/O limits. Per-execution
+capabilities revoke pending dispatch on completion, timeout or cancellation;
+JS sessions abort host I/O and never serialize callbacks into persisted state.
+A per-execution promise mailbox receives calls in the original caller's async
+context before launching them concurrently. This avoids context leakage through
+wasm-bindgen's shared task wakeup queue, without importing Node APIs. A real WASM
+regression verifies independent AsyncLocalStorage contexts when hosted in Node.
+
+One execution runs per browser instance. Concurrent/reentrant execution rejects
+promptly; reset rejects active work without replacing its cancellation token.
+Calls needing host functions use `execute`; synchronous host calls fail clearly.
+Live filesystem handles access the VFS directly without the interpreter lock.
+The interactive Terminal accepts pure runtimes but rejects external function
+names: it does not expose Bash's execution-local callback session.
+
+Python external waits use the portable core timer, not Tokio's native timer.
+Monty-types already uses web-time; its getrandom 0.3 backend needs an explicit
+wasm_js selection. ZapCode 1.5.1 has unsupported std clocks, so browser-only
+source is vendored with clock reads redirected through Bashkit's platform shim.
+Native builds retain the registry crate and its public value types. See
+[ZapCode Runtime](zapcode-runtime.md) for the recorded-source drift check.
+
+Verification includes real wasm under Node, CPU and pending-I/O deadlines,
+cancellation/reuse, JSON failures, VFS/reset/checkout, independent worker
+instances, npm archive contents and actual Chromium fetch/module workers served
+without COOP/COEP. The existing slim package semantics and size gates still run.
+
+### Runtime callbacks with live I/O
+
+Buffered and live executions install the same runtime session through `ExecOptions`. Live byte sinks, bounded capture and commands retain the execution-local host dispatcher. AbortSignal cancellation revokes host work and clears its cancellation token for reuse; manual cancellation remains sticky. Combined runtime tests cover sink completion/deadlines, cancellation/reuse, reset-preserved commands and caller context. Legacy text observers reject mixed live options before execution.
 
 ## Host-backed filesystem (`new Bash({ fs })`)
 
@@ -186,7 +229,7 @@ core already gates off under `cfg(target_family = "wasm")` (see
   loads from a CDN, a bundler, or a plain `<script type="module">`.
 - `package.json`, the published `@everruns/bashkit-wasm` manifest (copied into
   `pkg/` at build time).
-- `scripts/build.sh`, `cargo build` → `wasm-bindgen --target web` → optional
+- `scripts/build.sh`, `cargo build --profile wasm-release` → `wasm-bindgen --target web` → optional
   `wasm-opt -Oz`, emitting `pkg/`.
 - `src/hostfs.rs`, the `FsBackend` bridge behind the `fs` option.
 - `__test__/host-fs.test.mjs`, host-filesystem suite (async fake host).
@@ -221,6 +264,33 @@ tracking whatever binaryen the runner image's Ubuntu carries, which matters
 because that artifact is what ships to npm. Bump the version and checksum
 together in `scripts/install-binaryen.sh`.
 
+### Transfer-size profile and release identity
+
+The build script maps `release` to Cargo's `wasm-release` profile: `opt-level =
+"s"`, fat LTO, inheriting the native release panic/safety policy. This changes
+code generation only; no builtin, `jq`, `Terminal`, or runtime limit is removed.
+The native `release` profile remains throughput-oriented. `-Oz` alone did not
+solve transfer size; size-oriented LLVM code generation is the larger lever.
+The more aggressive `opt-level = "z"` was rejected because representative
+arithmetic slowed about 50%, despite a larger download saving.
+
+CI and publication run the same bounded GNU Bash regression sample and raw /
+gzip / Brotli size budgets under `crates/bashkit-wasm/bench/`, in addition to
+all package integration tests. Browser wall-clock results are recorded, not
+gated, because host load, browser caches, and network emulation make them noisy.
+See the [benchmark methodology](../../crates/bashkit-wasm/bench/README.md) and
+[measured report](../../crates/bashkit-wasm/bench/results/wasm-startup-2026-10-15.md).
+
+`build-info.json` is included in the npm archive and records source revision,
+dirty state, compiler/bindgen/Binaryen versions, profile/features, and the final
+WASM SHA-256. Source archives without Git identity record null fields. Release
+checkouts must have verifiable Git identity; the package tests check it and the
+archive's required runtime files. Version equality alone is not source parity:
+0.18.2's npm `gitHead` is the September 22 release commit, while brush-web's
+source comparison uses `491c3281`, 269 commits newer. Both distributions use the
+same build path; the reported compatibility gap is unreleased interpreter work,
+not evidence of a divergent published feature selection.
+
 `--target web` output is a bundler-agnostic ES module; the consumer calls
 `initBashkit()` once before constructing `Bash`.
 
@@ -229,7 +299,7 @@ together in `scripts/install-binaryen.sh`.
 Version tracks the workspace `Cargo.toml` (currently synced by the release
 prepare step, same as the other packages). `publish-wasm.yml` triggers on release
 published, builds `pkg/`, runs the smoke test, and `npm publish`es
-`@everruns/bashkit-wasm` with provenance (`NPM_TOKEN`, `id-token: write`), same
+`@everruns/bashkit-wasm` via npm trusted publishing (GitHub OIDC, `id-token: write`), same
 pattern as `publish-js.yml`. Browser example smoke testing writes a file under
 `/home/user`, reloads the page, and verifies `browserLocal` restores it from
 `localStorage`. The text-only example adapter commits only a complete traversal;
@@ -282,7 +352,7 @@ Decisions and constraints:
   native `getrandom` backend, so `--cfg getrandom_backend="wasm_js"` must not be
   set there.
 - **Feature surface matches the browser package**, and for the same reasons:
-  no sockets (`http_client`, `ssh`), no host FS (`realfs`), no `python`.
+  no sockets (`http_client`, `ssh`) and no host FS (`realfs`).
   `sqlite` additionally fails to build on WASI (tokio feature selection), so it
   stays out until that is resolved.
 - **Single-threaded**, same inline-execution consequences as the browser build.

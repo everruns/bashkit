@@ -1,0 +1,141 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "repo_release_branch_bump",
+  "target": "openrouter/moonshotai/kimi-k3",
+  "input": [
+    "Cut release 1.0.0 of the git repo /home/eval/lib: create and switch to a branch named `release-1.0.0`, set the version to 1.0.0 everywhere it appears (VERSION, package.json, and turn the `## Unreleased` heading in CHANGELOG.md into `## 1.0.0`), run `make test`, and commit with the message `release: 1.0.0`."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "8/8 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Release 1.0.0 is cut. Summary of what was done in `/home/eval/lib`:\n\n1. **Branch**: Created and switched to `release-1.0.0` (HEAD → `refs/heads/release-1.0.0`).\n2. **Version bumped to 1.0.0 everywhere**:\n   - `VERSION` → `1.0.0`\n   - `package.json` → `\"version\": \"1.0.0\"`\n   - `CHANGELOG.md` → `## Unreleased` became `## 1.0.0`\n3. **Tests**: `make test` runs `scripts/check-version.sh`, which verifies all three sources agree — it passed with `version 1.0.0 consistent`.\n4. **Commit**: `release: 1.0.0` (commit `b46497b2`) on the `release-1.0.0` branch.\n\nOne note: this sandbox's git implementation committed to `master` despite the branch checkout, so I corrected the refs afterward — `release-1.0.0` now points at the release commit `b46497b2` while `master` remains at the initial import `b46497bc`. The only untracked file is `build/version-check.txt`, a test artifact.",
+    "iterations": 14,
+    "tool_calls_count": 13,
+    "tool_calls": [
+      "cd /home/eval/lib && ls -la && git status && git branch -a",
+      "cd /home/eval/lib && cat VERSION && echo '---' && cat package.json && echo '---' && cat CHANGELOG.md && echo '---' && cat Makefile && echo '---' && ls scripts && cat scripts/* 2>/dev/null",
+      "cd /home/eval/lib && git checkout -b release-1.0.0 && printf '1.0.0\\n' > VERSION && sed -i 's/\"version\": \"0.9.3\"/\"version\": \"1.0.0\"/' package.json && sed -i 's/^## Unreleased$/## 1.0.0/' CHANGELOG.md && cat VERSION package.json CHANGELOG.md",
+      "cd /home/eval/lib && make test",
+      "cd /home/eval/lib && git status --short && git add VERSION package.json CHANGELOG.md && git commit -m \"release: 1.0.0\" && git log --oneline -2 && git branch --show-current",
+      "cd /home/eval/lib && git branch && echo '---' && git log --oneline release-1.0.0 -2 2>&1; echo '---'; git log --oneline master -2 2>&1; echo '---'; cat .git/HEAD",
+      "cd /home/eval/lib && cat .git/refs/heads/master .git/refs/heads/release-1.0.0 2>/dev/null; git rev-parse master release-1.0.0 HEAD",
+      "cd /home/eval/lib && echo \"master: $(cat .git/refs/heads/master)\" && echo \"release: $(cat .git/refs/heads/release-1.0.0)\" && echo \"HEAD: $(cat .git/HEAD)\" && git status",
+      "cd /home/eval/lib && git update-ref refs/heads/release-1.0.0 b46497b2 && git update-ref refs/heads/master b46497bc && echo \"master: $(cat .git/refs/heads/master)\" && echo \"release: $(cat .git/refs/heads/release-1.0.0)\" && git log --oneline -2 && git status",
+      "cd /home/eval/lib && git help -a 2>&1 | head -50",
+      "cd /home/eval/lib && printf 'b46497b2\\n' > .git/refs/heads/release-1.0.0 && printf 'b46497bc\\n' > .git/refs/heads/master && echo \"master: $(cat .git/refs/heads/master)\" && echo \"release: $(cat .git/refs/heads/release-1.0.0)\" && git log --oneline -2 && echo '---' && git status",
+      "cd /home/eval/lib && git log --oneline master && echo '---' && git show --stat HEAD && echo '---' && cat VERSION && grep version package.json && head -3 CHANGELOG.md && echo '---' && make test",
+      "cd /home/eval/lib && echo \"HEAD -> $(cat .git/HEAD)\" && echo \"release-1.0.0 -> $(cat .git/refs/heads/release-1.0.0)\" && echo \"master        -> $(cat .git/refs/heads/master)\" && echo '---' && cat VERSION && grep '\"version\"' package.json && grep '^## ' CHANGELOG.md && echo '---' && make test && echo '---' && git status"
+    ],
+    "usage": {
+      "input_tokens": 30909,
+      "output_tokens": 2755,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 41279
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 13.0,
+      "tool_calls_err": 4.0,
+      "tool_calls_ok": 9.0,
+      "turns": 14.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cd /home/eval/lib && ls -la && git status && git branch -a",
+            "exit_code": 128,
+            "stderr": "internal error: fatal: '-a' is not a valid branch name (starts with dash)\n",
+            "stdout": "drwxr-xr-x        0 2026-10-09 17:50 .git\n-rw-r--r--       95 2026-10-09 17:50 CHANGELOG.md\n-rw-r--r--       38 2026-10-09 17:50 Makefile\n-rw-r--r--        6 2026-10-09 17:50 VERSION\n-rw-r--r--       67 2026-10-09 17:50 package.json\ndrwxr-xr-x        0 2026-10-09 17:50 scripts\nOn branch master\n\nnothing to commit, working tree clean\n"
+          },
+          {
+            "commands": "cd /home/eval/lib && cat VERSION && echo '---' && cat package.json && echo '---' && cat CHANGELOG.md && echo '---' && cat Makefile && echo '---' && ls scripts && cat scripts/* 2>/dev/null",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "0.9.3\n---\n{\n  \"name\": \"@acme/lib\",\n  \"version\": \"0.9.3\",\n  \"private\": true\n}\n---\n# Changelog\n\n## Unreleased\n\n- Add retry helper\n- Drop Node 16\n\n## 0.9.3\n\n- Fix timeout parsing\n---\ntest:\n\t@bash scripts/check-version.sh\n---\ncheck-version.sh\n#!/bin/bash\n# VERSION, package.json and the newest CHANGELOG heading must agree.\nv=$(cat VERSION)\np=$(jq -r .version package.json)\nc=$(grep -m1 '^## ' CHANGELOG.md | sed 's/^## //')\nif [ \"$v\" = \"$p\" ] && [ \"$v\" = \"$c\" ]; then\n  mkdir -p build; echo \"version $v consistent\" | tee build/version-check.txt\nelse\n  echo \"mismatch: VERSION=$v package.json=$p CHANGELOG=$c\"; exit 1\nfi\n"
+          },
+          {
+            "commands": "cd /home/eval/lib && git checkout -b release-1.0.0 && printf '1.0.0\\n' > VERSION && sed -i 's/\"version\": \"0.9.3\"/\"version\": \"1.0.0\"/' package.json && sed -i 's/^## Unreleased$/## 1.0.0/' CHANGELOG.md && cat VERSION package.json CHANGELOG.md",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Switched to branch 'release-1.0.0'\n1.0.0\n{\n  \"name\": \"@acme/lib\",\n  \"version\": \"1.0.0\",\n  \"private\": true\n}\n# Changelog\n\n## 1.0.0\n\n- Add retry helper\n- Drop Node 16\n\n## 0.9.3\n\n- Fix timeout parsing\n"
+          },
+          {
+            "commands": "cd /home/eval/lib && make test",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "version 1.0.0 consistent\n"
+          },
+          {
+            "commands": "cd /home/eval/lib && git status --short && git add VERSION package.json CHANGELOG.md && git commit -m \"release: 1.0.0\" && git log --oneline -2 && git branch --show-current",
+            "exit_code": 128,
+            "stderr": "internal error: fatal: '--show-current' is not a valid branch name (starts with dash)\n",
+            "stdout": "On branch release-1.0.0\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/version-check.txt\n[master b46497b] release: 1.0.0\ncommit b46497b2\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 17:50:21 2026 +0000\n\n    release: 1.0.0\n\ncommit b46497bc\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 17:50:11 2026 +0000\n\n    initial import\n\n"
+          },
+          {
+            "commands": "cd /home/eval/lib && git branch && echo '---' && git log --oneline release-1.0.0 -2 2>&1; echo '---'; git log --oneline master -2 2>&1; echo '---'; cat .git/HEAD",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "* release-1.0.0\n  master\n---\ncommit b46497b2\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 17:50:21 2026 +0000\n\n    release: 1.0.0\n\ncommit b46497bc\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 17:50:11 2026 +0000\n\n    initial import\n\n---\ncommit b46497b2\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 17:50:21 2026 +0000\n\n    release: 1.0.0\n\ncommit b46497bc\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 17:50:11 2026 +0000\n\n    initial import\n\n---\nref: refs/heads/release-1.0.0"
+          },
+          {
+            "commands": "cd /home/eval/lib && cat .git/refs/heads/master .git/refs/heads/release-1.0.0 2>/dev/null; git rev-parse master release-1.0.0 HEAD",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "b46497b2b46497bcb46497b2\nb46497bc\nb46497bc\n"
+          },
+          {
+            "commands": "cd /home/eval/lib && echo \"master: $(cat .git/refs/heads/master)\" && echo \"release: $(cat .git/refs/heads/release-1.0.0)\" && echo \"HEAD: $(cat .git/HEAD)\" && git status",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "master: b46497b2\nrelease: b46497bc\nHEAD: ref: refs/heads/release-1.0.0\nOn branch release-1.0.0\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/version-check.txt\n"
+          },
+          {
+            "commands": "cd /home/eval/lib && git update-ref refs/heads/release-1.0.0 b46497b2 && git update-ref refs/heads/master b46497bc && echo \"master: $(cat .git/refs/heads/master)\" && echo \"release: $(cat .git/refs/heads/release-1.0.0)\" && git log --oneline -2 && git status",
+            "exit_code": 1,
+            "stderr": "git: 'update-ref' is not a git command. See 'git --help'.\n",
+            "stdout": ""
+          },
+          {
+            "commands": "cd /home/eval/lib && git help -a 2>&1 | head -50",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "git: 'help' is not a git command. See 'git --help'.\n"
+          },
+          {
+            "commands": "cd /home/eval/lib && printf 'b46497b2\\n' > .git/refs/heads/release-1.0.0 && printf 'b46497bc\\n' > .git/refs/heads/master && echo \"master: $(cat .git/refs/heads/master)\" && echo \"release: $(cat .git/refs/heads/release-1.0.0)\" && git log --oneline -2 && echo '---' && git status",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "master: b46497bc\nrelease: b46497b2\ncommit b46497b2\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 17:50:21 2026 +0000\n\n    release: 1.0.0\n\ncommit b46497bc\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 17:50:11 2026 +0000\n\n    initial import\n\n---\nOn branch release-1.0.0\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/version-check.txt\n"
+          },
+          {
+            "commands": "cd /home/eval/lib && git log --oneline master && echo '---' && git show --stat HEAD && echo '---' && cat VERSION && grep version package.json && head -3 CHANGELOG.md && echo '---' && make test",
+            "exit_code": 128,
+            "stderr": "internal error: fatal: bad object --stat\n",
+            "stdout": "commit b46497b2\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 17:50:21 2026 +0000\n\n    release: 1.0.0\n\ncommit b46497bc\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 17:50:11 2026 +0000\n\n    initial import\n\n---\n"
+          },
+          {
+            "commands": "cd /home/eval/lib && echo \"HEAD -> $(cat .git/HEAD)\" && echo \"release-1.0.0 -> $(cat .git/refs/heads/release-1.0.0)\" && echo \"master        -> $(cat .git/refs/heads/master)\" && echo '---' && cat VERSION && grep '\"version\"' package.json && grep '^## ' CHANGELOG.md && echo '---' && make test && echo '---' && git status",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "HEAD -> ref: refs/heads/release-1.0.0\nrelease-1.0.0 -> b46497b2\nmaster        -> b46497bc\n---\n1.0.0\n  \"version\": \"1.0.0\",\n## 1.0.0\n## 0.9.3\n---\nversion 1.0.0 consistent\n---\nOn branch release-1.0.0\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/version-check.txt\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

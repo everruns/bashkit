@@ -4,12 +4,15 @@
 //! blanks (leading blanks ignored) and output uses one space; with `-t C`
 //! every `C` separates and output uses `C`. Equal keys pair as a cartesian
 //! product. `-e` fills missing fields only where `-o` names them, as in GNU.
+//! Decisions: generated output and parsed rows own shared-budget capacity;
+//! scans and emissions charge work before copying, including suppressed rows.
 
 use async_trait::async_trait;
 
 use super::{Builtin, Context, resolve_path};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
+use crate::limits::{BudgetedString, BudgetedVec, ExecutionBudget};
 
 /// The join builtin command.
 ///
@@ -148,148 +151,222 @@ impl Builtin for Join {
             return Ok(ExecResult::err("join: missing operand\n".to_string(), 1));
         }
 
-        let content1 = read_input(
-            ctx.fs.as_ref(),
-            ctx.cwd,
-            files[0],
-            ctx.stdin.map(|stdin| &**stdin),
-        )
-        .await?;
-        let content2 = read_input(ctx.fs.as_ref(), ctx.cwd, files[1], None).await?;
+        let budget = ctx
+            .execution_budget()
+            .map(|budget| {
+                budget
+                    .try_with(Clone::clone)
+                    .map_err(|_| crate::Error::Cancelled)
+            })
+            .transpose()?;
+        let budget = budget.as_ref();
+        let content1 = read_input(&ctx, files[0], ctx.stdin.map(|stdin| &**stdin), budget).await?;
+        let content2 = read_input(&ctx, files[1], None, budget).await?;
 
-        Ok(ExecResult::ok(join_text(&opts, &content1, &content2)))
+        let out = join_text(&opts, &content1, &content2, budget)?;
+        let (stdout, _storage) = crate::StreamData::from_budgeted_string(out, budget)?;
+        Ok(ExecResult::ok(stdout))
     }
 }
 
-fn split_fields(line: &str, sep: Option<char>) -> Vec<&str> {
-    match sep {
-        Some(c) => line.split(c).collect(),
-        None => line.split([' ', '\t']).filter(|f| !f.is_empty()).collect(),
+fn split_fields<'a>(
+    line: &'a str,
+    sep: Option<char>,
+    budget: Option<&ExecutionBudget>,
+) -> Result<BudgetedVec<&'a str>> {
+    let mut fields = BudgetedVec::new(budget)?;
+    for field in line.split(|c| sep.map_or(c == ' ' || c == '\t', |sep| c == sep)) {
+        work(budget, 1 + field.len() as u64)?;
+        if sep.is_some() || !field.is_empty() {
+            fields.try_push(field)?;
+        }
     }
+    Ok(fields)
 }
 
 struct Line<'a> {
-    fields: Vec<&'a str>,
-    key: String,
+    fields: BudgetedVec<&'a str>,
+    key: BudgetedString,
 }
 
-fn parse_lines<'a>(text: &'a str, field: usize, opts: &JoinOptions) -> Vec<Line<'a>> {
-    text.lines()
-        .map(|l| {
-            let fields = split_fields(l, opts.separator);
-            let key = fields.get(field - 1).copied().unwrap_or("");
-            let key = if opts.ignore_case {
-                key.to_lowercase()
-            } else {
-                key.to_string()
-            };
-            Line { fields, key }
-        })
-        .collect()
+fn work(budget: Option<&ExecutionBudget>, units: u64) -> Result<()> {
+    if let Some(budget) = budget {
+        budget.consume_work(units)?;
+    }
+    Ok(())
 }
 
-fn join_text(opts: &JoinOptions, text1: &str, text2: &str) -> String {
-    let mut lines1 = parse_lines(text1, opts.field1, opts);
-    let mut lines2 = parse_lines(text2, opts.field2, opts);
+fn parse_lines<'a>(
+    text: &'a str,
+    field: usize,
+    opts: &JoinOptions,
+    budget: Option<&ExecutionBudget>,
+) -> Result<BudgetedVec<Line<'a>>> {
+    let mut lines = BudgetedVec::new(budget)?;
+    for line in text.lines() {
+        work(budget, 1)?;
+        let fields = split_fields(line, opts.separator, budget)?;
+        let source = fields.get(field - 1).copied().unwrap_or("");
+        let mut key = BudgetedString::new(budget)?;
+        if opts.ignore_case {
+            // Preserve contextual Unicode lowercasing (for example final sigma).
+            // Unicode mapping expands by at most 3x; reserve another 2x for
+            // String's geometric growth and its minimum allocation capacity.
+            work(budget, 1 + source.len() as u64)?;
+            let capacity = source
+                .len()
+                .checked_mul(6)
+                .ok_or_else(|| crate::LimitExceeded::Memory("join: key size overflow".into()))?
+                .max(32);
+            let _lower_lease = budget.map(|b| b.lease_bytes(capacity)).transpose()?;
+            key = BudgetedString::try_from_string(source.to_lowercase(), budget)?;
+        } else {
+            key.try_push_str(source)?;
+        }
+        lines.try_push(Line { fields, key })?;
+    }
+    Ok(lines)
+}
+
+// THREAT[TM-DOS-138]: admit every output append and poll synchronous join work.
+fn join_text(
+    opts: &JoinOptions,
+    text1: &str,
+    text2: &str,
+    budget: Option<&ExecutionBudget>,
+) -> Result<BudgetedString> {
+    let lines1 = parse_lines(text1, opts.field1, opts, budget)?;
+    let lines2 = parse_lines(text2, opts.field2, opts, budget)?;
     let out_sep = opts.separator.unwrap_or(' ');
     let fields = [opts.field1, opts.field2];
     // `-o auto`: the join field, then every other field of each file's first line.
-    let format = opts.format.clone().or_else(|| {
-        opts.auto_format.then(|| {
-            let mut f = vec![OutField::Key];
-            for (n, first) in [lines1.first(), lines2.first()].into_iter().enumerate() {
-                let count = first.map_or(0, |l| l.fields.len());
-                f.extend(
-                    (1..=count)
-                        .filter(|&m| m != fields[n])
-                        .map(|m| OutField::Field(n + 1, m)),
-                );
+    let mut auto_format = BudgetedVec::new(budget)?;
+    if opts.format.is_none() && opts.auto_format {
+        auto_format.try_push(OutField::Key)?;
+        for (n, first) in [lines1.first(), lines2.first()].into_iter().enumerate() {
+            let count = first.map_or(0, |l| l.fields.len());
+            for m in 1..=count {
+                work(budget, 1)?;
+                if m != fields[n] {
+                    auto_format.try_push(OutField::Field(n + 1, m))?;
+                }
             }
-            f
-        })
-    });
+        }
+    }
+    let format = opts
+        .format
+        .as_deref()
+        .or_else(|| opts.auto_format.then_some(&*auto_format));
 
-    let mut out = String::new();
-    let emit = |out: &mut String, l1: Option<&Line>, l2: Option<&Line>| {
+    let mut out = BudgetedString::new(budget)?;
+    let emit = |out: &mut BudgetedString, l1: Option<&Line>, l2: Option<&Line>| -> Result<()> {
+        work(budget, 1)?;
         let key = l1.or(l2).map_or("", |l| {
             let f = if l1.is_some() { fields[0] } else { fields[1] };
             l.fields.get(f - 1).copied().unwrap_or("")
         });
-        let mut parts: Vec<&str> = Vec::new();
+        let mut first = true;
+        let mut append = |part: &str| -> Result<()> {
+            work(budget, 1 + part.len() as u64)?;
+            if !first {
+                out.try_push(out_sep)?;
+            }
+            first = false;
+            out.try_push_str(part)?;
+            Ok(())
+        };
         let empty = opts.empty.as_deref().unwrap_or("");
-        match &format {
+        match format {
             Some(format) => {
                 for item in format {
-                    parts.push(match *item {
+                    append(match *item {
                         OutField::Key => key,
                         OutField::Field(n, m) => {
                             let side = if n == 1 { l1 } else { l2 };
                             side.and_then(|l| l.fields.get(m - 1).copied())
                                 .unwrap_or(empty)
                         }
-                    });
+                    })?;
                 }
             }
             None => {
-                parts.push(key);
+                append(key)?;
                 for (n, side) in [l1, l2].into_iter().enumerate() {
                     if let Some(l) = side {
-                        parts.extend(
-                            l.fields
-                                .iter()
-                                .enumerate()
-                                .filter(|(i, _)| *i + 1 != fields[n])
-                                .map(|(_, f)| *f),
-                        );
+                        for (i, field) in l.fields.iter().enumerate() {
+                            if i + 1 != fields[n] {
+                                append(field)?;
+                            }
+                        }
                     }
                 }
             }
         }
-        for (i, p) in parts.iter().enumerate() {
-            if i > 0 {
-                out.push(out_sep);
-            }
-            out.push_str(p);
-        }
-        out.push('\n');
+        out.try_push('\n')?;
+        Ok(())
     };
 
     if opts.header {
-        let h1 = (!lines1.is_empty()).then(|| lines1.remove(0));
-        let h2 = (!lines2.is_empty()).then(|| lines2.remove(0));
+        let h1 = lines1.first();
+        let h2 = lines2.first();
         if h1.is_some() || h2.is_some() {
-            emit(&mut out, h1.as_ref(), h2.as_ref());
+            emit(&mut out, h1, h2)?;
         }
     }
 
-    let (mut i, mut j) = (0, 0);
+    let (mut i, mut j) = if opts.header {
+        (
+            usize::from(!lines1.is_empty()),
+            usize::from(!lines2.is_empty()),
+        )
+    } else {
+        (0, 0)
+    };
     while i < lines1.len() || j < lines2.len() {
+        work(budget, 1)?;
         let ord = match (lines1.get(i), lines2.get(j)) {
-            (Some(a), Some(b)) => a.key.cmp(&b.key),
+            (Some(a), Some(b)) => {
+                work(budget, 1 + a.key.len().min(b.key.len()) as u64)?;
+                (*a.key).cmp(&*b.key)
+            }
             (Some(_), None) => std::cmp::Ordering::Less,
             _ => std::cmp::Ordering::Greater,
         };
         match ord {
             std::cmp::Ordering::Less => {
                 if opts.unpaired[0] {
-                    emit(&mut out, Some(&lines1[i]), None);
+                    emit(&mut out, Some(&lines1[i]), None)?;
                 }
                 i += 1;
             }
             std::cmp::Ordering::Greater => {
                 if opts.unpaired[1] {
-                    emit(&mut out, None, Some(&lines2[j]));
+                    emit(&mut out, None, Some(&lines2[j]))?;
                 }
                 j += 1;
             }
             std::cmp::Ordering::Equal => {
-                let key = lines1[i].key.clone();
-                let end1 = i + lines1[i..].iter().take_while(|l| l.key == key).count();
-                let end2 = j + lines2[j..].iter().take_while(|l| l.key == key).count();
+                let key = &*lines1[i].key;
+                let mut end1 = i;
+                while end1 < lines1.len() {
+                    work(budget, 1 + key.len().min(lines1[end1].key.len()) as u64)?;
+                    if &*lines1[end1].key != key {
+                        break;
+                    }
+                    end1 += 1;
+                }
+                let mut end2 = j;
+                while end2 < lines2.len() {
+                    work(budget, 1 + key.len().min(lines2[end2].key.len()) as u64)?;
+                    if &*lines2[end2].key != key {
+                        break;
+                    }
+                    end2 += 1;
+                }
                 if !opts.only_unpaired {
                     for a in &lines1[i..end1] {
                         for b in &lines2[j..end2] {
-                            emit(&mut out, Some(a), Some(b));
+                            emit(&mut out, Some(a), Some(b))?;
                         }
                     }
                 }
@@ -298,7 +375,7 @@ fn join_text(opts: &JoinOptions, text1: &str, text2: &str) -> String {
             }
         }
     }
-    out
+    Ok(out)
 }
 
 fn parse_field_number(option: &str, value: &str) -> std::result::Result<usize, String> {
@@ -310,18 +387,34 @@ fn parse_field_number(option: &str, value: &str) -> std::result::Result<usize, S
 }
 
 async fn read_input(
-    fs: &dyn crate::fs::FileSystem,
-    cwd: &std::path::Path,
+    ctx: &Context<'_>,
     file: &str,
     stdin: Option<&str>,
-) -> Result<String> {
+    budget: Option<&ExecutionBudget>,
+) -> Result<BudgetedString> {
+    let mut text = BudgetedString::new(budget)?;
     if file == "-" {
-        Ok(stdin.unwrap_or("").to_string())
+        let stdin = stdin.unwrap_or("");
+        work(budget, 1 + stdin.len() as u64)?;
+        text.try_push_str(stdin)?;
     } else {
-        let path = resolve_path(cwd, file);
-        let bytes = fs.read_file(&path).await?;
-        Ok(String::from_utf8_lossy(&bytes).to_string())
+        let path = resolve_path(ctx.cwd, file);
+        let size = usize::try_from(ctx.fs.stat(&path).await?.size)
+            .map_err(|_| crate::LimitExceeded::Memory("join: input size overflow".into()))?;
+        ctx.consume_budget_input(size)?;
+        let _read_lease = ctx.lease_budget_bytes(size)?;
+        let bytes = ctx.fs.read_file(&path).await?;
+        ctx.consume_budget_input(bytes.len().saturating_sub(size))?;
+        let _extra_lease = ctx.lease_budget_bytes(bytes.capacity().saturating_sub(size))?;
+        for chunk in bytes.utf8_chunks() {
+            work(budget, 1 + chunk.valid().len() as u64)?;
+            text.try_push_str(chunk.valid())?;
+            if !chunk.invalid().is_empty() {
+                text.try_push('\u{fffd}')?;
+            }
+        }
     }
+    Ok(text)
 }
 
 #[cfg(test)]
@@ -331,6 +424,70 @@ mod tests {
     use std::collections::HashMap;
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
+
+    fn options() -> JoinOptions {
+        JoinOptions {
+            field1: 1,
+            field2: 1,
+            separator: None,
+            unpaired: [false; 2],
+            only_unpaired: false,
+            empty: None,
+            format: None,
+            auto_format: false,
+            ignore_case: false,
+            header: false,
+        }
+    }
+
+    #[test]
+    fn ordinary_join_output_growth_requires_admission() {
+        // Parsed storage fits; the final output capacity growth does not.
+        let parsed = 4 * std::mem::size_of::<Line>() + 8 * std::mem::size_of::<&str>() + 4;
+        let budget = ExecutionBudget::new(
+            &crate::ExecutionLimits::new().max_live_intermediate_bytes((parsed + 23) as u64),
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        );
+        let error = join_text(&options(), "a 1\na 2\n", "a x\na y\n", Some(&budget)).unwrap_err();
+        assert!(error.to_string().contains("live intermediate"), "{error}");
+    }
+
+    #[test]
+    fn ordinary_join_preserves_contextual_unicode_lowercasing() {
+        let mut opts = options();
+        opts.ignore_case = true;
+        let out = join_text(&opts, "ΟΣ 1\n", "ος x\n", None).unwrap();
+        assert_eq!(&*out, "ΟΣ 1 x\n");
+    }
+
+    #[test]
+    fn ordinary_join_emissions_consume_work() {
+        let budget = ExecutionBudget::new(
+            &crate::ExecutionLimits::new().max_work_units(40),
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        );
+        let error = join_text(&options(), "a 1\na 2\n", "a x\na y\n", Some(&budget)).unwrap_err();
+        assert!(error.to_string().contains("work units"), "{error}");
+    }
+
+    #[test]
+    fn ordinary_join_polls_cancelled_and_expired_budgets() {
+        let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let budget = ExecutionBudget::new(&crate::ExecutionLimits::new(), cancelled.clone());
+        cancelled.store(true, std::sync::atomic::Ordering::Relaxed);
+        let error = join_text(&options(), "a 1\n", "a x\n", Some(&budget)).unwrap_err();
+        assert!(error.to_string().contains("cancel"), "{error}");
+        let budget = ExecutionBudget::new(
+            &crate::ExecutionLimits::new().timeout(std::time::Duration::ZERO),
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        );
+        std::thread::sleep(std::time::Duration::from_millis(120));
+        let error = join_text(&options(), "a 1\n", "a x\n", Some(&budget)).unwrap_err();
+        assert!(matches!(
+            error,
+            crate::Error::ResourceLimit(crate::LimitExceeded::Timeout(_))
+        ));
+    }
 
     async fn run_join(args: &[&str], fs: Arc<dyn FileSystem>) -> ExecResult {
         let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();

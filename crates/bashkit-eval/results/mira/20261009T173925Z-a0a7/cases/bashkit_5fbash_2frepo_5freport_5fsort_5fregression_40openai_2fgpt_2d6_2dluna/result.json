@@ -1,0 +1,85 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "repo_report_sort_regression",
+  "target": "openai/gpt-6-luna",
+  "input": [
+    "`make test` fails in the git repo /home/eval/report: the top-customers report no longer matches the golden file tests/expected.txt. The golden file is correct. Fix the report script, make sure `make test` passes, and commit with a message starting with `fix:`."
+  ],
+  "passed": false,
+  "aggregate": 0.75,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 0.75,
+      "pass": false,
+      "reason": "3/4 checks passed (weighted rate 75%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Fixed the report to sort totals numerically, so the highest-spending customers appear first. `make test` passes.\n\nCommitted as `b460920` — `fix: sort customer totals numerically`.",
+    "iterations": 6,
+    "tool_calls_count": 5,
+    "tool_calls": [
+      "cd /home/eval/report && ls -la && git status --short && find . -maxdepth 3 -type f | sort | head -100 && make test",
+      "cd /home/eval/report && cat Makefile && printf '\\n--- script ---\\n' && cat bin/top-customers && printf '\\n--- data ---\\n' && cat data/orders.csv && printf '\\n--- expected ---\\n' && cat tests/expected.txt && printf '\\n--- status/log ---\\n' && git log --oneline -5",
+      "cd /home/eval/report && python3 - <<'PY'\np='bin/top-customers'\ns=open(p).read()\ns=s.replace('sort -t, -k2 -r', 'sort -t, -k2,2nr')\nopen(p,'w').write(s)\nPY\nmake test && git diff --check && git diff && git add bin/top-customers && git commit -m 'fix: sort customer totals numerically' && git status --short",
+      "cd /home/eval/report && chmod +x bin/top-customers && make test && git diff --check && git diff --summary && git diff && git add bin/top-customers && git commit -m 'fix: sort customer totals numerically' && git status --short",
+      "cd /home/eval/report && cat bin/top-customers && git status --short && git diff -- bin/top-customers && git ls-files -s bin/top-customers && git log --oneline --all -3 && rm -rf build && git status --short"
+    ],
+    "usage": {
+      "input_tokens": 6846,
+      "output_tokens": 863,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 14116
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 5.0,
+      "tool_calls_err": 2.0,
+      "tool_calls_ok": 3.0,
+      "turns": 6.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cd /home/eval/report && ls -la && git status --short && find . -maxdepth 3 -type f | sort | head -100 && make test",
+            "exit_code": 2,
+            "stderr": "make: *** [Makefile:4: test] Error 1\n",
+            "stdout": "drwxr-xr-x        0 2026-10-12 18:54 .git\n-rw-r--r--      146 2026-10-12 18:54 Makefile\ndrwxr-xr-x        0 2026-10-12 18:54 bin\ndrwxr-xr-x        0 2026-10-12 18:54 data\ndrwxr-xr-x        0 2026-10-12 18:54 tests\nOn branch master\n\nnothing to commit, working tree clean\n./.git/HEAD\n./.git/commits\n./.git/config\n./.git/index\n./.git/tracked\n./Makefile\n./bin/top-customers\n./data/orders.csv\n./tests/expected.txt\n--- tests/expected.txt\n+++ build/actual.txt\n@@ -1,3 +1,3 @@\n+hooli,99\n+umbrella,95\n globex,1240\n-acme,1200\n-initech,1100\n"
+          },
+          {
+            "commands": "cd /home/eval/report && cat Makefile && printf '\\n--- script ---\\n' && cat bin/top-customers && printf '\\n--- data ---\\n' && cat data/orders.csv && printf '\\n--- expected ---\\n' && cat tests/expected.txt && printf '\\n--- status/log ---\\n' && git log --oneline -5",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "test:\n\t@mkdir -p build\n\t@bin/top-customers data/orders.csv 3 > build/actual.txt\n\t@diff -u tests/expected.txt build/actual.txt && echo 'report OK'\n\n--- script ---\n#!/bin/bash\n# usage: top-customers ORDERS.csv N -> top N customers by total spend\nawk -F, 'NR > 1 { total[$2] += $3 } END { for (c in total) print c \",\" total[c] }' \"$1\" \\\n  | sort -t, -k2 -r \\\n  | head -n \"$2\"\n\n--- data ---\nid,customer,amount\n1,acme,900\n2,globex,1200\n3,initech,450\n4,acme,300\n5,umbrella,95\n6,globex,40\n7,initech,650\n8,hooli,99\n\n--- expected ---\nglobex,1240\nacme,1200\ninitech,1100\n\n--- status/log ---\ncommit b460920f\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Mon Oct 12 18:54:24 2026 +0000\n\n    initial import\n\n"
+          },
+          {
+            "commands": "cd /home/eval/report && python3 - <<'PY'\np='bin/top-customers'\ns=open(p).read()\ns=s.replace('sort -t, -k2 -r', 'sort -t, -k2,2nr')\nopen(p,'w').write(s)\nPY\nmake test && git diff --check && git diff && git add bin/top-customers && git commit -m 'fix: sort customer totals numerically' && git status --short",
+            "exit_code": 2,
+            "stderr": "sh: line 1: bin/top-customers: Permission denied\nmake: *** [Makefile:3: test] Error 126\n",
+            "stdout": ""
+          },
+          {
+            "commands": "cd /home/eval/report && chmod +x bin/top-customers && make test && git diff --check && git diff --summary && git diff && git add bin/top-customers && git commit -m 'fix: sort customer totals numerically' && git status --short",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "report OK\n# Diff output (simplified in virtual mode)\n# Diff output (simplified in virtual mode)\n# Diff output (simplified in virtual mode)\n[master b460920] fix: sort customer totals numerically\nOn branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/actual.txt\n"
+          },
+          {
+            "commands": "cd /home/eval/report && cat bin/top-customers && git status --short && git diff -- bin/top-customers && git ls-files -s bin/top-customers && git log --oneline --all -3 && rm -rf build && git status --short",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "#!/bin/bash\n# usage: top-customers ORDERS.csv N -> top N customers by total spend\nawk -F, 'NR > 1 { total[$2] += $3 } END { for (c in total) print c \",\" total[c] }' \"$1\" \\\n  | sort -t, -k2,2nr \\\n  | head -n \"$2\"\nOn branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/actual.txt\n# Diff output (simplified in virtual mode)\nMakefile\nbin/top-customers\ndata/orders.csv\ntests/expected.txt\ncommit b4609207\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Mon Oct 12 18:54:32 2026 +0000\n\n    fix: sort customer totals numerically\n\ncommit b460920f\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Mon Oct 12 18:54:24 2026 +0000\n\n    initial import\n\nOn branch master\n\nnothing to commit, working tree clean\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

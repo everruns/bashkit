@@ -20,7 +20,7 @@
 //! Run: `cargo bench --bench python --features python,cpython` or
 //! `just bench-python` (saves results).
 
-use bashkit::{Bash, CPython, SessionLimits};
+use bashkit::{Bash, SessionLimits};
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use tokio::runtime::Runtime;
 
@@ -81,7 +81,7 @@ fn verify(rt: &Runtime) {
 
 fn bench_call(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
-    CPython::warm_up().unwrap();
+    bashkit::warm_up().unwrap();
     verify(&rt);
     let mut group = c.benchmark_group("python_call");
     for runtime in RUNTIMES {
@@ -107,7 +107,7 @@ const IMPORTS: &[(&str, &str)] = &[
 
 fn bench_import(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
-    CPython::warm_up().unwrap();
+    bashkit::warm_up().unwrap();
     let mut group = c.benchmark_group("python_import");
     group.sample_size(10);
     let bash = tokio::sync::Mutex::new(make_bash("cpython"));
@@ -124,7 +124,7 @@ fn bench_import(c: &mut Criterion) {
 
 fn bench_session(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
-    CPython::warm_up().unwrap();
+    bashkit::warm_up().unwrap();
     let mut group = c.benchmark_group("python_session");
     for runtime in RUNTIMES {
         group.bench_function(BenchmarkId::new(*runtime, "new_bash_print"), |b| {
@@ -141,7 +141,7 @@ fn bench_session(c: &mut Criterion) {
 
 fn bench_compute(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
-    CPython::warm_up().unwrap();
+    bashkit::warm_up().unwrap();
     let mut group = c.benchmark_group("python_compute");
     group.sample_size(10);
     for runtime in RUNTIMES {
@@ -160,7 +160,7 @@ fn bench_parallel(c: &mut Criterion) {
         .enable_all()
         .build()
         .unwrap();
-    CPython::warm_up().unwrap();
+    bashkit::warm_up().unwrap();
     let mut group = c.benchmark_group("python_parallel");
     group.sample_size(10);
     for runtime in RUNTIMES {

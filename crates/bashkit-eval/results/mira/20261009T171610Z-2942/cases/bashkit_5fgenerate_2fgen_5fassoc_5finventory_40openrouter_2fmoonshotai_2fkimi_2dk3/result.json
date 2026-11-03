@@ -1,0 +1,63 @@
+{
+  "eval": "bashkit_generate",
+  "sample": "gen_assoc_inventory",
+  "target": "openrouter/moonshotai/kimi-k3",
+  "input": [
+    "Write a bash script (use bash associative arrays) that aggregates an inventory.\n\nStarting files:\n--- /home/eval/data/inventory.txt ---\n# warehouse sku qty\nberlin bolt 120\nparis nut 40\nberlin nut 15\nlyon bolt 30\nparis  bolt 5\nberlin washer 300\nlyon nut 0\n--- end ---\n\nLines starting with `#` are comments; fields are separated by one or more spaces.\n\n1. Write /home/eval/data/sku_totals.txt: one line `SKU TOTAL_QTY` per SKU, sorted by SKU.\n2. Write /home/eval/data/warehouses.txt: one line `WAREHOUSE N` per warehouse, sorted by warehouse, where N is the number of distinct SKUs that warehouse holds with qty > 0.\nExit 0."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "3/3 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "```bash\n#!/usr/bin/env bash\nset -euo pipefail\n\ninput=/home/eval/data/inventory.txt\nsku_out=/home/eval/data/sku_totals.txt\nwh_out=/home/eval/data/warehouses.txt\n\nmkdir -p /home/eval/data\n\ndeclare -A sku_totals=()   # sku -> total qty\ndeclare -A wh_count=()     # warehouse -> distinct sku count (qty > 0)\ndeclare -A wh_sku_seen=()  # \"warehouse|sku\" -> 1 (dedupe set)\n\nwhile IFS= read -r line || [[ -n $line ]]; do\n    # skip blank lines and comment lines\n    [[ $line =~ ^[[:space:]]*$ ]] && continue\n    [[ $line =~ ^[[:space:]]*# ]] && continue\n\n    # fields separated by one or more spaces; read collapses them\n    read -r warehouse sku qty _rest <<< \"$line\"\n    [[ -z ${warehouse:-} || -z ${sku:-} ]] && continue\n    qty=${qty:-0}\n\n    # 1) aggregate total quantity per SKU\n    sku_totals[$sku]=$(( ${sku_totals[$sku]:-0} + qty ))\n\n    # ensure every warehouse appears in the count map\n    if [[ -z ${wh_count[$warehouse]+_} ]]; then\n        wh_count[$warehouse]=0\n    fi\n\n    # 2) count distinct SKUs with qty > 0 per warehouse\n    if (( qty > 0 )); then\n        key=\"$warehouse|$sku\"\n        if [[ -z ${wh_sku_seen[$key]+_} ]]; then\n            wh_sku_seen[$key]=1\n            wh_count[$warehouse]=$(( wh_count[$warehouse] + 1 ))\n        fi\n    fi\ndone < \"$input\"\n\n# write SKU totals, sorted by SKU\n{\n    for sku in \"${!sku_totals[@]}\"; do\n        printf '%s %d\\n' \"$sku\" \"${sku_totals[$sku]}\"\n    done\n} | LC_ALL=C sort > \"$sku_out\"\n\n# write warehouse distinct-SKU counts, sorted by warehouse\n{\n    for wh in \"${!wh_count[@]}\"; do\n        printf '%s %d\\n' \"$wh\" \"${wh_count[$wh]}\"\n    done\n} | LC_ALL=C sort > \"$wh_out\"\n\nexit 0\n```",
+    "iterations": 1,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "#!/usr/bin/env bash\nset -euo pipefail\n\ninput=/home/eval/data/inventory.txt\nsku_out=/home/eval/data/sku_totals.txt\nwh_out=/home/eval/data/warehouses.txt\n\nmkdir -p /home/eval/data\n\ndeclare -A sku_totals=()   # sku -> total qty\ndeclare -A wh_count=()     # warehouse -> distinct sku count (qty > 0)\ndeclare -A wh_sku_seen=()  # \"warehouse|sku\" -> 1 (dedupe set)\n\nwhile IFS= read -r line || [[ -n $line ]]; do\n    # skip blank lines and comment lines\n    [[ $line =~ ^[[:space:]]*$ ]] && continue\n    [[ $line =~ ^[[:space:]]*# ]] && continue\n\n    # fields separated by one or more spaces; read collapses them\n    read -r warehouse sku qty _rest <<< \"$line\"\n    [[ -z ${warehouse:-} || -z ${sku:-} ]] && continue\n    qty=${qty:-0}\n\n    # 1) aggregate total quantity per SKU\n    sku_totals[$sku]=$(( ${sku_totals[$sku]:-0} + qty ))\n\n    # ensure every warehouse appears in the count map\n    if [[ -z ${wh_count[$warehouse]+_} ]]; then\n        wh_count[$warehouse]=0\n    fi\n\n    # 2) count distinct SKUs with qty > 0 per warehouse\n    if (( qty > 0 )); then\n        key=\"$warehouse|$sku\"\n        if [[ -z ${wh_sku_seen[$key]+_} ]]; then\n            wh_sku_seen[$key]=1\n            wh_count[$warehouse]=$(( wh_count[$warehouse] + 1 ))\n        fi\n    fi\ndone < \"$input\"\n\n# write SKU totals, sorted by SKU\n{\n    for sku in \"${!sku_totals[@]}\"; do\n        printf '%s %d\\n' \"$sku\" \"${sku_totals[$sku]}\"\n    done\n} | LC_ALL=C sort > \"$sku_out\"\n\n# write warehouse distinct-SKU counts, sorted by warehouse\n{\n    for wh in \"${!wh_count[@]}\"; do\n        printf '%s %d\\n' \"$wh\" \"${wh_count[$wh]}\"\n    done\n} | LC_ALL=C sort > \"$wh_out\"\n\nexit 0\n"
+    ],
+    "usage": {
+      "input_tokens": 553,
+      "output_tokens": 2972,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 43294
+    },
+    "metrics": {
+      "exec_ms": 13.0,
+      "exit_code": 0.0,
+      "extracted": 1.0,
+      "generate_ms": 43281.0,
+      "script_bytes": 1627.0,
+      "script_found": 1.0,
+      "timed_out": 0.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "#!/usr/bin/env bash\nset -euo pipefail\n\ninput=/home/eval/data/inventory.txt\nsku_out=/home/eval/data/sku_totals.txt\nwh_out=/home/eval/data/warehouses.txt\n\nmkdir -p /home/eval/data\n\ndeclare -A sku_totals=()   # sku -> total qty\ndeclare -A wh_count=()     # warehouse -> distinct sku count (qty > 0)\ndeclare -A wh_sku_seen=()  # \"warehouse|sku\" -> 1 (dedupe set)\n\nwhile IFS= read -r line || [[ -n $line ]]; do\n    # skip blank lines and comment lines\n    [[ $line =~ ^[[:space:]]*$ ]] && continue\n    [[ $line =~ ^[[:space:]]*# ]] && continue\n\n    # fields separated by one or more spaces; read collapses them\n    read -r warehouse sku qty _rest <<< \"$line\"\n    [[ -z ${warehouse:-} || -z ${sku:-} ]] && continue\n    qty=${qty:-0}\n\n    # 1) aggregate total quantity per SKU\n    sku_totals[$sku]=$(( ${sku_totals[$sku]:-0} + qty ))\n\n    # ensure every warehouse appears in the count map\n    if [[ -z ${wh_count[$warehouse]+_} ]]; then\n        wh_count[$warehouse]=0\n    fi\n\n    # 2) count distinct SKUs with qty > 0 per warehouse\n    if (( qty > 0 )); then\n        key=\"$warehouse|$sku\"\n        if [[ -z ${wh_sku_seen[$key]+_} ]]; then\n            wh_sku_seen[$key]=1\n            wh_count[$warehouse]=$(( wh_count[$warehouse] + 1 ))\n        fi\n    fi\ndone < \"$input\"\n\n# write SKU totals, sorted by SKU\n{\n    for sku in \"${!sku_totals[@]}\"; do\n        printf '%s %d\\n' \"$sku\" \"${sku_totals[$sku]}\"\n    done\n} | LC_ALL=C sort > \"$sku_out\"\n\n# write warehouse distinct-SKU counts, sorted by warehouse\n{\n    for wh in \"${!wh_count[@]}\"; do\n        printf '%s %d\\n' \"$wh\" \"${wh_count[$wh]}\"\n    done\n} | LC_ALL=C sort > \"$wh_out\"\n\nexit 0\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          }
+        ]
+      },
+      "generate": {
+        "extraction": "fenced",
+        "timed_out": false
+      }
+    }
+  },
+  "skipped": false
+}

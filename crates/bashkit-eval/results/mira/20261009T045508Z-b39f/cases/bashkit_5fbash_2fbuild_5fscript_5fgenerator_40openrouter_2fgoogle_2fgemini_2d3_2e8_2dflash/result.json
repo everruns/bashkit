@@ -1,0 +1,120 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "build_script_generator",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "Read /project/deps.txt which lists build targets and their dependencies (format: 'target: dep1 dep2'). Generate /project/build.sh that builds targets in correct dependency order (dependencies before dependents). Then run the build script, which should create each target as a file in /project/out/ containing 'built: <target>'. Print the build order."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "",
+    "iterations": 10,
+    "tool_calls_count": 10,
+    "tool_calls": [
+      "ls -la /project\ncat /project/deps.txt",
+      "which tsort awk sed python python3 perl",
+      "echo \"a b\" | tsort\necho -e \"core lib\\ncore utils\\nlib app\\nutils app\" | tsort",
+      "awk -F: '\n{\n    target = $1;\n    gsub(/^[ \\t]+|[ \\t]+$/, \"\", target);\n    n = split($2, deps, /[ \\t]+/);\n    has_deps = 0;\n    for (i = 1; i <= n; i++) {\n        if (deps[i] != \"\") {\n            print deps[i], target;\n            has_deps = 1;\n        }\n    }\n    if (!has_deps) {\n        print target, target;\n    }\n}\n' /project/deps.txt | tsort",
+      "ls -la /project/src",
+      "head /project/src/*",
+      "cat << 'EOF' > /project/build.sh\n#!/bin/bash\nset -e\n\nmkdir -p /project/out\n\n# Topological sort of dependencies from /project/deps.txt\n# tsort takes pairs \"dep target\" meaning dep comes before target\ntargets=$(awk -F: '\n{\n    target = $1;\n    gsub(/^[ \\t]+|[ \\t]+$/, \"\", target);\n    n = split($2, deps, /[ \\t]+/);\n    has_deps = 0;\n    for (i = 1; i <= n; i++) {\n        if (deps[i] != \"\") {\n            print deps[i], target;\n            has_deps = 1;\n        }\n    }\n    if (!has_deps && target != \"\") {\n        print target, target;\n    }\n}\n' /project/deps.txt | tsort)\n\nfor t in $targets; do\n    echo \"built: $t\" > \"/project/out/$t\"\n    echo \"$t\"\ndone\nEOF\nchmod +x /project/build.sh",
+      "/project/build.sh",
+      "ls -la /project/out\nhead /project/out/*",
+      "/project/build.sh"
+    ],
+    "usage": {
+      "input_tokens": 6759,
+      "output_tokens": 939,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 19391
+    },
+    "metrics": {
+      "natural_stop": 0.0,
+      "tool_calls": 10.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 9.0,
+      "turns": 10.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /project\ncat /project/deps.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       43 2026-10-09 05:04 deps.txt\ndrwxr-xr-x        0 2026-10-09 05:04 src\napp: lib utils\nlib: core\nutils: core\ncore:\n"
+          },
+          {
+            "commands": "which tsort awk sed python python3 perl",
+            "exit_code": 1,
+            "stderr": "",
+            "stdout": "/usr/bin/tsort\n/usr/bin/awk\n/usr/bin/sed\n"
+          },
+          {
+            "commands": "echo \"a b\" | tsort\necho -e \"core lib\\ncore utils\\nlib app\\nutils app\" | tsort",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "a\nb\ncore\nutils\nlib\napp\n"
+          },
+          {
+            "commands": "awk -F: '\n{\n    target = $1;\n    gsub(/^[ \\t]+|[ \\t]+$/, \"\", target);\n    n = split($2, deps, /[ \\t]+/);\n    has_deps = 0;\n    for (i = 1; i <= n; i++) {\n        if (deps[i] != \"\") {\n            print deps[i], target;\n            has_deps = 1;\n        }\n    }\n    if (!has_deps) {\n        print target, target;\n    }\n}\n' /project/deps.txt | tsort",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "core\nutils\nlib\napp\n"
+          },
+          {
+            "commands": "ls -la /project/src",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       11 2026-10-09 05:04 app\n-rw-r--r--       12 2026-10-09 05:04 core\n-rw-r--r--       11 2026-10-09 05:04 lib\n-rw-r--r--       13 2026-10-09 05:04 utils\n"
+          },
+          {
+            "commands": "head /project/src/*",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "==> /project/src/app <==\napp source\n\n==> /project/src/core <==\ncore source\n\n==> /project/src/lib <==\nlib source\n\n==> /project/src/utils <==\nutils source\n"
+          },
+          {
+            "commands": "cat << 'EOF' > /project/build.sh\n#!/bin/bash\nset -e\n\nmkdir -p /project/out\n\n# Topological sort of dependencies from /project/deps.txt\n# tsort takes pairs \"dep target\" meaning dep comes before target\ntargets=$(awk -F: '\n{\n    target = $1;\n    gsub(/^[ \\t]+|[ \\t]+$/, \"\", target);\n    n = split($2, deps, /[ \\t]+/);\n    has_deps = 0;\n    for (i = 1; i <= n; i++) {\n        if (deps[i] != \"\") {\n            print deps[i], target;\n            has_deps = 1;\n        }\n    }\n    if (!has_deps && target != \"\") {\n        print target, target;\n    }\n}\n' /project/deps.txt | tsort)\n\nfor t in $targets; do\n    echo \"built: $t\" > \"/project/out/$t\"\n    echo \"$t\"\ndone\nEOF\nchmod +x /project/build.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "/project/build.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "core\nutils\nlib\napp\n"
+          },
+          {
+            "commands": "ls -la /project/out\nhead /project/out/*",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       11 2026-10-09 05:05 app\n-rw-r--r--       12 2026-10-09 05:05 core\n-rw-r--r--       11 2026-10-09 05:05 lib\n-rw-r--r--       13 2026-10-09 05:05 utils\n==> /project/out/app <==\nbuilt: app\n\n==> /project/out/core <==\nbuilt: core\n\n==> /project/out/lib <==\nbuilt: lib\n\n==> /project/out/utils <==\nbuilt: utils\n"
+          },
+          {
+            "commands": "/project/build.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "core\nutils\nlib\napp\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

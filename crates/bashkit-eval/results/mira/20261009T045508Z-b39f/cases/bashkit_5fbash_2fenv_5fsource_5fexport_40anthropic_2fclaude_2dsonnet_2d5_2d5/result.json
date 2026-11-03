@@ -1,0 +1,57 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "env_source_export",
+  "target": "anthropic/claude-sonnet-5-5",
+  "input": [
+    "Create /etc/env.conf with variable assignments: APP_ENV=production, APP_DEBUG=false, APP_SECRET=s3cret123. Source this file. Export all three variables. Then write a script /scripts/check_env.sh that reads these environment variables and prints them as 'APP_ENV=<value>' (one per line). Run the script with bash and verify the environment variables propagated correctly. Also run 'env | grep APP_' to list all APP_ prefixed env vars."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "6/6 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I created and sourced `/etc/env.conf`, exported the three variables, and wrote `/scripts/check_env.sh`. Running the script with `bash` showed that the variables reached the child process.\n\n- **`/etc/env.conf`** holds `APP_ENV=production`, `APP_DEBUG=false` and `APP_SECRET=s3cret123`.\n- **`/scripts/check_env.sh`** prints each variable as `NAME=<value>`, one per line. I made it executable.\n- **Script output** was `APP_ENV=production`, `APP_DEBUG=false` and `APP_SECRET=s3cret123`.\n- **`env | grep APP_`** listed the same three variables with the same values. `APP_DEBUG` came first, which is just the order `env` returned them in.",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "mkdir -p /etc /scripts\ncat > /etc/env.conf <<'EOF'\nAPP_ENV=production\nAPP_DEBUG=false\nAPP_SECRET=s3cret123\nEOF\nsource /etc/env.conf\nexport APP_ENV APP_DEBUG APP_SECRET\ncat > /scripts/check_env.sh <<'EOF'\n#!/bin/bash\necho \"APP_ENV=${APP_ENV}\"\necho \"APP_DEBUG=${APP_DEBUG}\"\necho \"APP_SECRET=${APP_SECRET}\"\nEOF\nchmod +x /scripts/check_env.sh\necho \"--- script output\"; bash /scripts/check_env.sh\necho \"--- env | grep\"; env | grep APP_"
+    ],
+    "usage": {
+      "input_tokens": 1916,
+      "output_tokens": 621,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 7112
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "mkdir -p /etc /scripts\ncat > /etc/env.conf <<'EOF'\nAPP_ENV=production\nAPP_DEBUG=false\nAPP_SECRET=s3cret123\nEOF\nsource /etc/env.conf\nexport APP_ENV APP_DEBUG APP_SECRET\ncat > /scripts/check_env.sh <<'EOF'\n#!/bin/bash\necho \"APP_ENV=${APP_ENV}\"\necho \"APP_DEBUG=${APP_DEBUG}\"\necho \"APP_SECRET=${APP_SECRET}\"\nEOF\nchmod +x /scripts/check_env.sh\necho \"--- script output\"; bash /scripts/check_env.sh\necho \"--- env | grep\"; env | grep APP_",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "--- script output\nAPP_ENV=production\nAPP_DEBUG=false\nAPP_SECRET=s3cret123\n--- env | grep\nAPP_DEBUG=false\nAPP_ENV=production\nAPP_SECRET=s3cret123\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "json_package_update",
+  "target": "anthropic/claude-sonnet-5-5",
+  "input": [
+    "Update /app/package.json: bump the version from '1.2.3' to '2.0.0', add a new dependency 'lodash' with version '^4.17.21' to the dependencies object, and change the 'main' field from 'src/index.js' to 'dist/index.js'. Save the updated JSON back to /app/package.json and print it."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I updated `/app/package.json` with the three changes and saved it. The file now reads:\n\n```json\n{\n  \"name\": \"my-service\",\n  \"version\": \"2.0.0\",\n  \"main\": \"dist/index.js\",\n  \"scripts\": {\n    \"build\": \"tsc\",\n    \"test\": \"jest\"\n  },\n  \"dependencies\": {\n    \"express\": \"^4.18.0\",\n    \"cors\": \"^2.8.5\",\n    \"lodash\": \"^4.17.21\"\n  },\n  \"devDependencies\": {\n    \"typescript\": \"^5.0.0\",\n    \"jest\": \"^29.0.0\"\n  }\n}\n```\n\n- **Version:** bumped from `1.2.3` to `2.0.0`.\n- **Main:** changed from `src/index.js` to `dist/index.js`.\n- **Dependencies:** added `lodash` at `^4.17.21`.\n\nThe original file was a single line. I rewrote it with 2-space indentation, so the whole file will show as changed in a diff.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cat /app/package.json",
+      "cd /app && python3 -c \"\nimport json\nd=json.load(open('package.json'))\nd['version']='2.0.0'\nd['main']='dist/index.js'\nd['dependencies']['lodash']='^4.17.21'\njson.dump(d,open('package.json','w'),indent=2)\nopen('package.json','a').write('\\n')\n\"\ncat package.json"
+    ],
+    "usage": {
+      "input_tokens": 3869,
+      "output_tokens": 536,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 6196
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat /app/package.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "{\"name\":\"my-service\",\"version\":\"1.2.3\",\"main\":\"src/index.js\",\"scripts\":{\"build\":\"tsc\",\"test\":\"jest\"},\"dependencies\":{\"express\":\"^4.18.0\",\"cors\":\"^2.8.5\"},\"devDependencies\":{\"typescript\":\"^5.0.0\",\"jest\":\"^29.0.0\"}}"
+          },
+          {
+            "commands": "cd /app && python3 -c \"\nimport json\nd=json.load(open('package.json'))\nd['version']='2.0.0'\nd['main']='dist/index.js'\nd['dependencies']['lodash']='^4.17.21'\njson.dump(d,open('package.json','w'),indent=2)\nopen('package.json','a').write('\\n')\n\"\ncat package.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "{\n  \"name\": \"my-service\",\n  \"version\": \"2.0.0\",\n  \"main\": \"dist/index.js\",\n  \"scripts\": {\n    \"build\": \"tsc\",\n    \"test\": \"jest\"\n  },\n  \"dependencies\": {\n    \"express\": \"^4.18.0\",\n    \"cors\": \"^2.8.5\",\n    \"lodash\": \"^4.17.21\"\n  },\n  \"devDependencies\": {\n    \"typescript\": \"^5.0.0\",\n    \"jest\": \"^29.0.0\"\n  }\n}\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

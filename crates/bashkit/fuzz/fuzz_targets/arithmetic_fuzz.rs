@@ -28,6 +28,27 @@ fuzz_target!(|data: &[u8]| {
             return;
         }
 
+        // Reject inputs that themselves contain banned substrings. An
+        // arithmetic error names the expression and the unparsed rest
+        // verbatim, so the script's own text comes back in stderr -- real bash
+        // does the same. An echoed user-controlled string that happens to
+        // contain e.g. `Tok::` is not a TM-INF-022 leak: the tokenizer's enum
+        // is never formatted. Run 271 found `:A>>=::TTA:::Tok::::`, whose
+        // diagnostic reads `... (error token is ":A>>=::TTA:::Tok::::")`.
+        // The arithmetic diagnostic is not one of the real-shell templates
+        // `strip_real_shell_error_lines` recognizes, so filter at the input
+        // layer, as `glob_fuzz` and `cpython_fuzz` do, and keep the leak
+        // detector strict for genuine internals.
+        //
+        // The shape need not be in the input at all. The diagnostic renders
+        // `{expr}: {msg}`, so run 295's `wZTok:` gained the separator's colon
+        // and read `bash: line 1: wZTok:: syntax error in expression`,
+        // spelling `Tok::` across the join. `input_echo_would_trip` renders
+        // the slot before matching, so the gate sees those too.
+        if bashkit::testing::input_echo_would_trip(input) {
+            return;
+        }
+
         // Wrap input in arithmetic expansion context
         let script = format!("echo $(({}))", input);
 

@@ -1,0 +1,47 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "file_path_organizer",
+  "target": "openai/gpt-6-luna",
+  "input": [
+    "Under /uploads there are files with various extensions. Write a script that: 1) For each file, determines its extension and moves it into a subdirectory named after that extension (e.g., .txt files go to /uploads/txt/, .csv files go to /uploads/csv/). Create the subdirectories as needed. 2) Print each move as 'moved: FILENAME -> EXTENSION_DIR/'. 3) After all moves, print a summary of how many files per extension as 'EXT: N files'. Handle the case where a file has no extension by putting it in /uploads/other/."
+  ],
+  "passed": false,
+  "aggregate": 0.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": -0.0,
+      "pass": false,
+      "reason": "0/8 checks passed (weighted rate -0%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "```bash\n#!/usr/bin/env bash\n\nshopt -s dotglob nullglob\ndeclare -A counts\n\nfor file in /uploads/*; do\n  [[ -f \"$file\" ]] || continue\n\n  name=${file##*/}\n  if [[ \"$name\" == *.* && \"$name\" != .* && \"$name\" != *. ]]; then\n    ext=${name##*.}\n  else\n    ext=other\n  fi\n\n  dest_dir=\"/uploads/$ext\"\n  mkdir -p \"$dest_dir\"\n\n  if mv -- \"$file\" \"$dest_dir/\"; then\n    printf 'moved: %s -> %s/\\n' \"$name\" \"$dest_dir\"\n    ((counts[\"$ext\"] += 1))\n  fi\ndone\n\nfor ext in \"${!counts[@]}\"; do\n  printf '%s: %d files\\n' \"$ext\" \"${counts[$ext]}\"\ndone\n```\n\nThis processes files directly inside `/uploads` (not files already in its subdirectories). A dotfile such as `.env` is treated as having no extension and goes into `other/`.",
+    "iterations": 1,
+    "tool_calls_count": 0,
+    "usage": {
+      "input_tokens": 292,
+      "output_tokens": 1513,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 14885
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 0.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 0.0,
+      "turns": 1.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": null,
+        "links": {},
+        "tool_outputs": []
+      }
+    }
+  },
+  "skipped": false
+}

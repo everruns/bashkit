@@ -1,5 +1,8 @@
 """Exercise the real Deep Agents protocol against Bashkit's native VFS."""
 
+import base64
+import time
+
 import pytest
 
 pytest.importorskip("deepagents")
@@ -7,6 +10,10 @@ pytest.importorskip("deepagents")
 from deepagents.backends.protocol import GrepResult, ReadResult, SandboxBackendProtocol  # noqa: E402
 
 from bashkit.deepagents import BashkitBackend  # noqa: E402
+
+_PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+)
 
 
 @pytest.fixture
@@ -160,6 +167,8 @@ def test_framework_filesystem_tools(backend):
         ("glob", {"pattern": "*.py", "path": "/tmp"}),
         ("ls", {"path": "/tmp"}),
         ("execute", {"command": "echo framework-execute"}),
+        ("execute", {"command": "sleep 5; echo late", "timeout": 1}),
+        ("read_file", {"file_path": "/tmp/pixel.png"}),
     ]
     model = ScriptedModel(
         responses=[
@@ -168,17 +177,25 @@ def test_framework_filesystem_tools(backend):
         ]
         + [AIMessage(content="done")]
     )
+    backend.upload_files([("/tmp/pixel.png", _PNG)])
     agent = create_deep_agent(model=model, backend=backend)
     response = agent.invoke({"messages": [{"role": "user", "content": "Exercise filesystem tools"}]})
     messages = [message for message in response["messages"] if message.type == "tool"]
     assert len(messages) == len(calls)
-    assert all(message.status == "success" for message in messages)
+    assert all(message.status == "success" for message in messages[:6])
     assert "needle" in str(messages[1].content)
     assert "/tmp/protocol.py" in str(messages[2].content)
-    assert "framework-execute" in str(messages[-1].content)
+    assert "framework-execute" in str(messages[5].content)
+    # Per-call timeout is honored, not rejected as unsupported.
+    assert "per-command timeout" not in str(messages[6].content)
+    assert "late" not in str(messages[6].content)
+    assert "timeout" in str(messages[6].content)
+    # Images reach the model as multimodal content, not a UTF-8 error.
+    assert "Invalid UTF-8" not in str(messages[7].content)
+    assert "image" in str(messages[7].content)
     from deepagents.backends.protocol import execute_accepts_timeout
 
-    assert not execute_accepts_timeout(type(backend))
+    assert execute_accepts_timeout(type(backend))
 
 
 def test_binary_transfers_and_large_exact_file(backend):
@@ -195,3 +212,116 @@ def test_binary_transfers_and_large_exact_file(backend):
     assert backend.read("/tmp/large.txt").file_data["content"] == text
     assert backend.edit("/tmp/large.txt", text, "short").error is None
     assert backend.download_files(["/tmp/large.txt"])[0].content == b"short"
+
+
+def test_execute_per_call_timeout_only_tightens():
+    backend = BashkitBackend(timeout_seconds=0.5)
+    started = time.monotonic()
+    response = backend.execute("export KEPT=1; sleep 5; echo late", timeout=60)
+    # The model's larger value cannot extend the configured 0.5 s budget.
+    assert time.monotonic() - started < 3
+    assert "late" not in response.output and response.exit_code != 0
+    assert "timeout" in response.output
+    started = time.monotonic()
+    response = BashkitBackend().execute("sleep 5; echo late", timeout=1)
+    assert time.monotonic() - started < 3 and "late" not in response.output
+    # 0 / None keep the configured limit; state survives a timed-out call.
+    assert backend.execute("echo $KEPT", timeout=0).output == "1\n"
+    assert backend.execute("echo ok", timeout=None).output == "ok\n"
+
+
+async def test_aexecute_per_call_timeout(backend):
+    response = await backend.aexecute("sleep 5; echo late", timeout=1)
+    assert "late" not in response.output and response.exit_code != 0
+    assert (await backend.aexecute("echo ok", timeout=5)).output == "ok\n"
+
+
+def test_read_binary_files_as_base64(backend):
+    assert backend.upload_files([("/tmp/pixel.png", _PNG)])[0].error is None
+    result = backend.read("/tmp/pixel.png")
+    assert result.error is None
+    assert result.file_data == {"content": base64.b64encode(_PNG).decode("ascii"), "encoding": "base64"}
+    # Text-by-extension file with invalid UTF-8 falls back to base64.
+    backend.upload_files([("/tmp/latin1.txt", b"caf\xe9")])
+    assert backend.read("/tmp/latin1.txt").file_data["encoding"] == "base64"
+    # Oversized binaries return an error instead of a huge payload.
+    backend.upload_files([("/tmp/big.png", b"\x89" * (500 * 1024 + 1))])
+    assert "exceeds maximum preview size" in backend.read("/tmp/big.png").error
+    assert backend.read("/tmp/missing.png").error
+
+
+def test_transfer_errors_use_protocol_codes(backend):
+    assert backend.download_files(["/missing"])[0].error == "file_not_found"
+    assert backend.download_files(["/tmp"])[0].error == "is_directory"
+    assert backend.upload_files([("/tmp", b"no")])[0].error == "is_directory"
+
+
+def test_backend_is_base_sandbox_for_capture_offload(backend):
+    from deepagents.backends.sandbox import BaseSandbox
+
+    assert isinstance(backend, BaseSandbox) and backend.enable_capture_offload
+
+
+def test_execute_with_offload_keeps_large_output_in_vfs(backend):
+    command = (
+        "export KEPT=1; cd /tmp; "
+        "for i in $(seq 1 30); do head -c 100000 /dev/zero | tr '\\0' x; echo; done; echo END >&2"
+    )
+    result = backend.execute_with_offload(command, "/large_tool_results/call_1", max_inline_bytes=80_000)
+    assert result.offloaded and result.response.exit_code == 0
+    assert result.preview_has_truncation_marker
+    assert "lines truncated" in result.response.output
+    assert len(result.response.output) < 10_000
+    # The full 3 MB survives in the VFS, past the 1 MB in-memory stdout cap.
+    saved = backend.download_files(["/large_tool_results/call_1"])[0].content
+    assert len(saved) == 30 * 100_001 + 4 and saved.endswith(b"END\n")
+    assert backend.grep("END", "/large_tool_results").matches
+    # No subshell: shell state carries over to the next command.
+    assert backend.execute("echo $KEPT $PWD").output == "1 /tmp\n"
+
+
+def test_execute_with_offload_inline_and_capped(backend):
+    small = backend.execute_with_offload(
+        "echo hi; echo err >&2; exit 3", "/large_tool_results/c2", max_inline_bytes=1000
+    )
+    assert not small.offloaded
+    assert small.response.output == "hi\nerr\n" and small.response.exit_code == 3
+    assert backend.download_files(["/large_tool_results/c2"])[0].error == "file_not_found"
+    capped = backend.execute_with_offload(
+        "head -c 50000 /dev/zero | tr '\\0' y", "/large_tool_results/c3", max_inline_bytes=100, max_capture_bytes=5000
+    )
+    assert capped.offloaded and capped.response.truncated
+    assert "capture stopped at its 5000-byte limit" in capped.response.output
+    assert len(backend.download_files(["/large_tool_results/c3"])[0].content) == 5000
+
+
+async def test_aexecute_with_offload_and_timeout(backend):
+    result = await backend.aexecute_with_offload(
+        "seq 1 50000; sleep 5", "/large_tool_results/c4", max_inline_bytes=1000, timeout=1
+    )
+    assert result.offloaded and result.response.exit_code != 0
+    assert "timeout" in result.response.output
+
+
+def test_framework_offloads_large_execute_output(backend):
+    from deepagents import create_deep_agent
+    from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
+    from langchain_core.messages import AIMessage
+
+    class ScriptedModel(FakeMessagesListChatModel):
+        def bind_tools(self, tools, **kwargs):
+            return self
+
+    command = "for i in $(seq 1 20); do head -c 100000 /dev/zero | tr '\\0' z; echo; done"
+    model = ScriptedModel(
+        responses=[
+            AIMessage(content="", tool_calls=[{"name": "execute", "args": {"command": command}, "id": "big"}]),
+            AIMessage(content="done"),
+        ]
+    )
+    agent = create_deep_agent(model=model, backend=backend)
+    response = agent.invoke({"messages": [{"role": "user", "content": "run"}]})
+    tool = next(message for message in response["messages"] if message.type == "tool")
+    assert "large_tool_results" in str(tool.content)
+    files = backend.glob("**", "/large_tool_results").matches
+    assert files and files[0]["size"] == 20 * 100_001

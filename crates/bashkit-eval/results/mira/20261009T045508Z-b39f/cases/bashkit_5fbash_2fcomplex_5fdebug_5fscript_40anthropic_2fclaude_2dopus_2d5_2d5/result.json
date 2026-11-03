@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "complex_debug_script",
+  "target": "anthropic/claude-opus-5-5",
+  "input": [
+    "The script /scripts/broken.sh has bugs. Run it first to see the errors. Then examine the script, identify the bugs, fix them, and run the fixed version. The script should compute the factorial of 5 and print 'factorial(5) = 120'. The script should exit 0. Write the fixed version back to /scripts/broken.sh."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "3/3 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I fixed the script and saved it back to `/scripts/broken.sh`. It now prints `factorial(5) = 120` and exits with code 0.\n\n**What went wrong:** At first the script failed with exit code 2 and this error:\n```\nline 13: syntax error: unterminated command substitution\n```\n\n**The bug:** Line 13 was missing its closing parenthesis:\n```bash\nresult=$(factorial 5      # before\nresult=$(factorial 5)     # after\n```\n\nThis was the only bug. The `factorial` function itself was already correct, so nothing else needed to change.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cat -A /scripts/broken.sh; echo ---; bash /scripts/broken.sh; echo \"exit=$?\"",
+      "sed -i 's/^result=\\$(factorial 5$/result=$(factorial 5)/' /scripts/broken.sh; cat /scripts/broken.sh; echo ---; bash /scripts/broken.sh; echo \"exit=$?\""
+    ],
+    "usage": {
+      "input_tokens": 2947,
+      "output_tokens": 434,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 5724
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat -A /scripts/broken.sh; echo ---; bash /scripts/broken.sh; echo \"exit=$?\"",
+            "exit_code": 0,
+            "stderr": "/scripts/broken.sh: line 13: syntax error: unterminated command substitution\n",
+            "stdout": "#!/bin/bash$\n$\nfactorial() {$\n  local n=$1$\n  if [ $n -le 1 ]; then$\n    echo 1$\n  else$\n    local sub=$(factorial $((n-1)))$\n    echo $((n * sub))$\n  fi$\n}$\n$\nresult=$(factorial 5$\necho \"factorial(5) = $result\"$\nexit 0$\n---\nexit=2\n"
+          },
+          {
+            "commands": "sed -i 's/^result=\\$(factorial 5$/result=$(factorial 5)/' /scripts/broken.sh; cat /scripts/broken.sh; echo ---; bash /scripts/broken.sh; echo \"exit=$?\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "#!/bin/bash\n\nfactorial() {\n  local n=$1\n  if [ $n -le 1 ]; then\n    echo 1\n  else\n    local sub=$(factorial $((n-1)))\n    echo $((n * sub))\n  fi\n}\n\nresult=$(factorial 5)\necho \"factorial(5) = $result\"\nexit 0\n---\nfactorial(5) = 120\nexit=0\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

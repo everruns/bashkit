@@ -1,0 +1,57 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "complex_todo_app",
+  "target": "openai/gpt-6-luna",
+  "input": [
+    "Build a command-line TODO app. Create /app/todo.sh that supports these subcommands: 'add <task>' appends a task to /app/tasks.txt, 'list' prints all tasks with line numbers, 'done <number>' removes that line from the file. Then demonstrate: add 'Buy groceries', add 'Write tests', add 'Deploy app', list all tasks, mark task 1 as done, list again to show remaining tasks."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Created executable `/app/todo.sh` with `add`, `list`, and `done` subcommands. Demonstration:\n\n```text\nTasks after adding:\n1. Buy groceries\n2. Write tests\n3. Deploy app\n\nTasks after marking task 1 done:\n1. Write tests\n2. Deploy app\n```",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "mkdir -p /app\ncat > /app/todo.sh <<'EOF'\n#!/usr/bin/env bash\nset -euo pipefail\n\nTASKS_FILE=/app/tasks.txt\n\nusage() {\n  echo \"Usage: $0 add <task> | list | done <number>\" >&2\n  exit 2\n}\n\ncase \"${1-}\" in\n  add)\n    shift\n    (($# > 0)) || usage\n    task=\"$*\"\n    printf '%s\\n' \"$task\" >> \"$TASKS_FILE\"\n    ;;\n  list)\n    (($# == 1)) || usage\n    if [[ -f \"$TASKS_FILE\" ]]; then\n      awk '{ printf \"%d. %s\\n\", NR, $0 }' \"$TASKS_FILE\"\n    fi\n    ;;\n  done)\n    shift\n    (($# == 1)) || usage\n    number=$1\n    [[ \"$number\" =~ ^[1-9][0-9]*$ ]] || { echo \"Task number must be a positive integer.\" >&2; exit 2; }\n    [[ -f \"$TASKS_FILE\" ]] || { echo \"No tasks found.\" >&2; exit 1; }\n    total=$(wc -l < \"$TASKS_FILE\")\n    ((number <= total)) || { echo \"Task $number does not exist.\" >&2; exit 1; }\n    tmp=$(mktemp /app/tasks.XXXXXX)\n    awk -v n=\"$number\" 'NR != n' \"$TASKS_FILE\" > \"$tmp\"\n    mv \"$tmp\" \"$TASKS_FILE\"\n    ;;\n  *)\n    usage\n    ;;\nesac\nEOF\nchmod +x /app/todo.sh\n: > /app/tasks.txt\n/app/todo.sh add 'Buy groceries'\n/app/todo.sh add 'Write tests'\n/app/todo.sh add 'Deploy app'\nprintf '%s\\n' 'Tasks after adding:'\n/app/todo.sh list\n/app/todo.sh done 1\nprintf '%s\\n' 'Tasks after marking task 1 done:'\n/app/todo.sh list"
+    ],
+    "usage": {
+      "input_tokens": 1058,
+      "output_tokens": 656,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 6056
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "mkdir -p /app\ncat > /app/todo.sh <<'EOF'\n#!/usr/bin/env bash\nset -euo pipefail\n\nTASKS_FILE=/app/tasks.txt\n\nusage() {\n  echo \"Usage: $0 add <task> | list | done <number>\" >&2\n  exit 2\n}\n\ncase \"${1-}\" in\n  add)\n    shift\n    (($# > 0)) || usage\n    task=\"$*\"\n    printf '%s\\n' \"$task\" >> \"$TASKS_FILE\"\n    ;;\n  list)\n    (($# == 1)) || usage\n    if [[ -f \"$TASKS_FILE\" ]]; then\n      awk '{ printf \"%d. %s\\n\", NR, $0 }' \"$TASKS_FILE\"\n    fi\n    ;;\n  done)\n    shift\n    (($# == 1)) || usage\n    number=$1\n    [[ \"$number\" =~ ^[1-9][0-9]*$ ]] || { echo \"Task number must be a positive integer.\" >&2; exit 2; }\n    [[ -f \"$TASKS_FILE\" ]] || { echo \"No tasks found.\" >&2; exit 1; }\n    total=$(wc -l < \"$TASKS_FILE\")\n    ((number <= total)) || { echo \"Task $number does not exist.\" >&2; exit 1; }\n    tmp=$(mktemp /app/tasks.XXXXXX)\n    awk -v n=\"$number\" 'NR != n' \"$TASKS_FILE\" > \"$tmp\"\n    mv \"$tmp\" \"$TASKS_FILE\"\n    ;;\n  *)\n    usage\n    ;;\nesac\nEOF\nchmod +x /app/todo.sh\n: > /app/tasks.txt\n/app/todo.sh add 'Buy groceries'\n/app/todo.sh add 'Write tests'\n/app/todo.sh add 'Deploy app'\nprintf '%s\\n' 'Tasks after adding:'\n/app/todo.sh list\n/app/todo.sh done 1\nprintf '%s\\n' 'Tasks after marking task 1 done:'\n/app/todo.sh list",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Tasks after adding:\n1. Buy groceries\n2. Write tests\n3. Deploy app\nTasks after marking task 1 done:\n1. Write tests\n2. Deploy app\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

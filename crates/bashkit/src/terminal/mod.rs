@@ -339,7 +339,9 @@ impl Terminal {
     pub fn screen_rows(&self) -> Vec<String> {
         self.tty.with_screen(|s| {
             let (_, cols) = s.size();
-            s.rows(0, cols).map(|r| r.trim_end().to_string()).collect()
+            s.rows(0, cols.get())
+                .map(|r| r.trim_end().to_string())
+                .collect()
         })
     }
 
@@ -396,7 +398,10 @@ impl Terminal {
         Some(self.tty.with_screen(|s| {
             let (row, col) = s.cursor_position();
             let (_, cols) = s.size();
-            let text = s.rows(0, cols).nth(usize::from(row)).unwrap_or_default();
+            let text = s
+                .rows(0, cols.get())
+                .nth(usize::from(row))
+                .unwrap_or_default();
             text.chars().take(usize::from(col)).collect::<String>()
         }))
     }

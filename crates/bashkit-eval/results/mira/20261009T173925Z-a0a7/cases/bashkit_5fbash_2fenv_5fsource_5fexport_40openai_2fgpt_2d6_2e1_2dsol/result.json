@@ -1,0 +1,57 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "env_source_export",
+  "target": "openai/gpt-6.1-sol",
+  "input": [
+    "Create /etc/env.conf with variable assignments: APP_ENV=production, APP_DEBUG=false, APP_SECRET=s3cret123. Source this file. Export all three variables. Then write a script /scripts/check_env.sh that reads these environment variables and prints them as 'APP_ENV=<value>' (one per line). Run the script with bash and verify the environment variables propagated correctly. Also run 'env | grep APP_' to list all APP_ prefixed env vars."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "6/6 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Created `/etc/env.conf`, sourced it, and exported all three variables. Created `/scripts/check_env.sh` and ran it with `bash`, confirming the variables propagated:\n\n```text\nAPP_ENV=production\nAPP_DEBUG=false\nAPP_SECRET=s3cret123\n```\n\n`env | grep APP_` returned:\n\n```text\nAPP_DEBUG=false\nAPP_ENV=production\nAPP_SECRET=s3cret123\n```",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "mkdir -p /etc /scripts\ncat > /etc/env.conf <<'EOF'\nAPP_ENV=production\nAPP_DEBUG=false\nAPP_SECRET=s3cret123\nEOF\nsource /etc/env.conf\nexport APP_ENV APP_DEBUG APP_SECRET\ncat > /scripts/check_env.sh <<'EOF'\n#!/usr/bin/env bash\nprintf 'APP_ENV=%s\\n' \"$APP_ENV\"\nprintf 'APP_DEBUG=%s\\n' \"$APP_DEBUG\"\nprintf 'APP_SECRET=%s\\n' \"$APP_SECRET\"\nEOF\nbash /scripts/check_env.sh\nif [[ \"$APP_ENV\" == production && \"$APP_DEBUG\" == false && \"$APP_SECRET\" == s3cret123 ]]; then\n  printf 'Parent environment values verified.\\n'\nfi\nprintf '\\nExported APP_ variables:\\n'\nenv | grep APP_"
+    ],
+    "usage": {
+      "input_tokens": 1181,
+      "output_tokens": 287,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 6996
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "mkdir -p /etc /scripts\ncat > /etc/env.conf <<'EOF'\nAPP_ENV=production\nAPP_DEBUG=false\nAPP_SECRET=s3cret123\nEOF\nsource /etc/env.conf\nexport APP_ENV APP_DEBUG APP_SECRET\ncat > /scripts/check_env.sh <<'EOF'\n#!/usr/bin/env bash\nprintf 'APP_ENV=%s\\n' \"$APP_ENV\"\nprintf 'APP_DEBUG=%s\\n' \"$APP_DEBUG\"\nprintf 'APP_SECRET=%s\\n' \"$APP_SECRET\"\nEOF\nbash /scripts/check_env.sh\nif [[ \"$APP_ENV\" == production && \"$APP_DEBUG\" == false && \"$APP_SECRET\" == s3cret123 ]]; then\n  printf 'Parent environment values verified.\\n'\nfi\nprintf '\\nExported APP_ variables:\\n'\nenv | grep APP_",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "APP_ENV=production\nAPP_DEBUG=false\nAPP_SECRET=s3cret123\nParent environment values verified.\n\nExported APP_ variables:\nAPP_DEBUG=false\nAPP_ENV=production\nAPP_SECRET=s3cret123\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

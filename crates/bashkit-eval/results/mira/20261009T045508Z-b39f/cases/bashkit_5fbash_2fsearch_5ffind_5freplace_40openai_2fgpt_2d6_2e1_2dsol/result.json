@@ -1,0 +1,57 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "search_find_replace",
+  "target": "openai/gpt-6.1-sol",
+  "input": [
+    "Search all .js files under /src for the string 'console.log'. Replace every occurrence with 'logger.info' in-place. Print each modified filename and how many replacements were made per file. At the end, print 'Files modified: N' with the total count of files changed."
+  ],
+  "passed": false,
+  "aggregate": 0.3333333333333333,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 0.3333333333333333,
+      "pass": false,
+      "reason": "2/6 checks passed (weighted rate 33%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Files modified: 0 — no occurrences of `console.log` were found in `.js` files under `/src`.",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "count=0\nwhile IFS= read -r -d '' file; do\n  replacements=$(LC_ALL=C grep -oF 'console.log' \"$file\" | wc -l)\n  if (( replacements > 0 )); then\n    if sed -i 's/console\\.log/logger.info/g' \"$file\"; then\n      printf '%s: %d replacements\\n' \"$file\" \"$replacements\"\n      ((count+=1))\n    else\n      printf 'Failed to modify: %s\\n' \"$file\" >&2\n    fi\n  fi\ndone < <(find /src -type f -name '*.js' -print0)\nprintf 'Files modified: %d\\n' \"$count\""
+    ],
+    "usage": {
+      "input_tokens": 646,
+      "output_tokens": 211,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 7302
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "count=0\nwhile IFS= read -r -d '' file; do\n  replacements=$(LC_ALL=C grep -oF 'console.log' \"$file\" | wc -l)\n  if (( replacements > 0 )); then\n    if sed -i 's/console\\.log/logger.info/g' \"$file\"; then\n      printf '%s: %d replacements\\n' \"$file\" \"$replacements\"\n      ((count+=1))\n    else\n      printf 'Failed to modify: %s\\n' \"$file\" >&2\n    fi\n  fi\ndone < <(find /src -type f -name '*.js' -print0)\nprintf 'Files modified: %d\\n' \"$count\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Files modified: 0\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

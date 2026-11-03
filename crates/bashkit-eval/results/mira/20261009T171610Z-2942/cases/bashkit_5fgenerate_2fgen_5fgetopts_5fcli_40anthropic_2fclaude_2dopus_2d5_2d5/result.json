@@ -1,0 +1,63 @@
+{
+  "eval": "bashkit_generate",
+  "sample": "gen_getopts_cli",
+  "target": "anthropic/claude-opus-5-5",
+  "input": [
+    "Write a bash script that creates a small command-line tool and runs it.\n\nNo relevant files exist yet; /home/eval/bin and /home/eval/out do not exist.\n\n1. Create the executable script /home/eval/bin/greet (with a `#!/bin/bash` line) that parses options with getopts:\n   - `-n NAME`: a name to greet; may be given several times; at least one is required.\n   - `-u`: print names in uppercase.\n   - `-c COUNT`: repeat the whole greeting COUNT times (default 1); COUNT must be a positive integer.\n   - `-h`: print `usage: greet [-u] [-c COUNT] -n NAME...` to stdout and exit 0.\n   - Any unknown option, missing option argument, missing `-n`, or invalid COUNT: print that same usage line to stderr and exit 2.\n   Output: for each repetition, for each name in the order given, the line `Hello, NAME!`.\n2. Then run exactly these commands:\n   ```\n   mkdir -p /home/eval/out\n   /home/eval/bin/greet -u -n alice -c 2 -n bob > /home/eval/out/run1.txt\n   /home/eval/bin/greet -n 'Mary Ann' > /home/eval/out/run2.txt\n   /home/eval/bin/greet -x -n a 2> /home/eval/out/run3.err; echo $? > /home/eval/out/run3.code\n   /home/eval/bin/greet -c zero -n a 2>/dev/null; echo $? > /home/eval/out/run4.code\n   /home/eval/bin/greet -u 2>/dev/null; echo $? > /home/eval/out/run5.code\n   ```\n3. Exit 0."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "8/8 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "The script below writes `greet` to `/home/eval/bin`, runs the five commands exactly as given, and exits 0.\n\n- **Option errors:** `getopts` runs in silent mode (leading `:` in the option string). This lets the script print its own usage line for unknown options and missing arguments, instead of bash's default error messages.\n- **Validating `-c`:** COUNT must start with 1–9 and contain only digits after that, so `zero`, `0` and `-1` are all rejected.\n- **Uppercasing:** `-u` converts names with `tr` rather than `${var^^}`, because `tr` is the safer choice in this sandbox.\n\n```bash\n#!/bin/bash\nmkdir -p /home/eval/bin\ncat > /home/eval/bin/greet <<'EOF'\n#!/bin/bash\nusage_line='usage: greet [-u] [-c COUNT] -n NAME...'\nbad() { printf '%s\\n' \"$usage_line\" >&2; exit 2; }\n\nnames=()\nupper=0\ncount=1\nOPTIND=1\nwhile getopts ':n:uc:h' opt; do\n  case \"$opt\" in\n    n) names+=(\"$OPTARG\") ;;\n    u) upper=1 ;;\n    c) count=\"$OPTARG\" ;;\n    h) printf '%s\\n' \"$usage_line\"; exit 0 ;;\n    *) bad ;;\n  esac\ndone\nshift $((OPTIND - 1))\n\nif [[ ! \"$count\" =~ ^[1-9][0-9]*$ ]]; then\n  bad\nfi\nif [ \"${#names[@]}\" -eq 0 ]; then\n  bad\nfi\n\ni=0\nwhile [ \"$i\" -lt \"$count\" ]; do\n  for name in \"${names[@]}\"; do\n    if [ \"$upper\" -eq 1 ]; then\n      name=$(printf '%s' \"$name\" | tr '[:lower:]' '[:upper:]')\n    fi\n    printf 'Hello, %s!\\n' \"$name\"\n  done\n  i=$((i + 1))\ndone\nexit 0\nEOF\nchmod +x /home/eval/bin/greet\n\nmkdir -p /home/eval/out\n/home/eval/bin/greet -u -n alice -c 2 -n bob > /home/eval/out/run1.txt\n/home/eval/bin/greet -n 'Mary Ann' > /home/eval/out/run2.txt\n/home/eval/bin/greet -x -n a 2> /home/eval/out/run3.err; echo $? > /home/eval/out/run3.code\n/home/eval/bin/greet -c zero -n a 2>/dev/null; echo $? > /home/eval/out/run4.code\n/home/eval/bin/greet -u 2>/dev/null; echo $? > /home/eval/out/run5.code\nexit 0\n```",
+    "iterations": 1,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "#!/bin/bash\nmkdir -p /home/eval/bin\ncat > /home/eval/bin/greet <<'EOF'\n#!/bin/bash\nusage_line='usage: greet [-u] [-c COUNT] -n NAME...'\nbad() { printf '%s\\n' \"$usage_line\" >&2; exit 2; }\n\nnames=()\nupper=0\ncount=1\nOPTIND=1\nwhile getopts ':n:uc:h' opt; do\n  case \"$opt\" in\n    n) names+=(\"$OPTARG\") ;;\n    u) upper=1 ;;\n    c) count=\"$OPTARG\" ;;\n    h) printf '%s\\n' \"$usage_line\"; exit 0 ;;\n    *) bad ;;\n  esac\ndone\nshift $((OPTIND - 1))\n\nif [[ ! \"$count\" =~ ^[1-9][0-9]*$ ]]; then\n  bad\nfi\nif [ \"${#names[@]}\" -eq 0 ]; then\n  bad\nfi\n\ni=0\nwhile [ \"$i\" -lt \"$count\" ]; do\n  for name in \"${names[@]}\"; do\n    if [ \"$upper\" -eq 1 ]; then\n      name=$(printf '%s' \"$name\" | tr '[:lower:]' '[:upper:]')\n    fi\n    printf 'Hello, %s!\\n' \"$name\"\n  done\n  i=$((i + 1))\ndone\nexit 0\nEOF\nchmod +x /home/eval/bin/greet\n\nmkdir -p /home/eval/out\n/home/eval/bin/greet -u -n alice -c 2 -n bob > /home/eval/out/run1.txt\n/home/eval/bin/greet -n 'Mary Ann' > /home/eval/out/run2.txt\n/home/eval/bin/greet -x -n a 2> /home/eval/out/run3.err; echo $? > /home/eval/out/run3.code\n/home/eval/bin/greet -c zero -n a 2>/dev/null; echo $? > /home/eval/out/run4.code\n/home/eval/bin/greet -u 2>/dev/null; echo $? > /home/eval/out/run5.code\nexit 0\n"
+    ],
+    "usage": {
+      "input_tokens": 1017,
+      "output_tokens": 1229,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 10981
+    },
+    "metrics": {
+      "exec_ms": 20.0,
+      "exit_code": 0.0,
+      "extracted": 1.0,
+      "generate_ms": 10961.0,
+      "script_bytes": 1217.0,
+      "script_found": 1.0,
+      "timed_out": 0.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "#!/bin/bash\nmkdir -p /home/eval/bin\ncat > /home/eval/bin/greet <<'EOF'\n#!/bin/bash\nusage_line='usage: greet [-u] [-c COUNT] -n NAME...'\nbad() { printf '%s\\n' \"$usage_line\" >&2; exit 2; }\n\nnames=()\nupper=0\ncount=1\nOPTIND=1\nwhile getopts ':n:uc:h' opt; do\n  case \"$opt\" in\n    n) names+=(\"$OPTARG\") ;;\n    u) upper=1 ;;\n    c) count=\"$OPTARG\" ;;\n    h) printf '%s\\n' \"$usage_line\"; exit 0 ;;\n    *) bad ;;\n  esac\ndone\nshift $((OPTIND - 1))\n\nif [[ ! \"$count\" =~ ^[1-9][0-9]*$ ]]; then\n  bad\nfi\nif [ \"${#names[@]}\" -eq 0 ]; then\n  bad\nfi\n\ni=0\nwhile [ \"$i\" -lt \"$count\" ]; do\n  for name in \"${names[@]}\"; do\n    if [ \"$upper\" -eq 1 ]; then\n      name=$(printf '%s' \"$name\" | tr '[:lower:]' '[:upper:]')\n    fi\n    printf 'Hello, %s!\\n' \"$name\"\n  done\n  i=$((i + 1))\ndone\nexit 0\nEOF\nchmod +x /home/eval/bin/greet\n\nmkdir -p /home/eval/out\n/home/eval/bin/greet -u -n alice -c 2 -n bob > /home/eval/out/run1.txt\n/home/eval/bin/greet -n 'Mary Ann' > /home/eval/out/run2.txt\n/home/eval/bin/greet -x -n a 2> /home/eval/out/run3.err; echo $? > /home/eval/out/run3.code\n/home/eval/bin/greet -c zero -n a 2>/dev/null; echo $? > /home/eval/out/run4.code\n/home/eval/bin/greet -u 2>/dev/null; echo $? > /home/eval/out/run5.code\nexit 0\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          }
+        ]
+      },
+      "generate": {
+        "extraction": "fenced",
+        "timed_out": false
+      }
+    }
+  },
+  "skipped": false
+}

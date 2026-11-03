@@ -1,0 +1,63 @@
+{
+  "eval": "bashkit_generate",
+  "sample": "gen_path_parts",
+  "target": "openrouter/meta/muse-spark-1.3-contributor",
+  "input": [
+    "Write a bash script that splits file paths into parts.\n\nStarting files:\n--- /home/eval/data/paths.txt ---\n/var/log/nginx/access.log\n/home/eval/archive.tar.gz\n/etc/hosts\nrelative/dir/README\n/home/eval/.bashrc\n/opt/app/v1.2/run.sh\n--- end ---\n\nFor each path, in order, write one line `DIR|BASE|STEM|EXT` to /home/eval/data/parts.txt:\n- DIR: everything before the last `/` (every path here contains a `/`);\n- BASE: everything after the last `/`;\n- EXT: the text after the last `.` in BASE, or empty when BASE has no `.` other than a leading one (e.g. `.bashrc` has no extension);\n- STEM: BASE without `.EXT` (BASE itself when EXT is empty).\nExit 0."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "```bash\n#!/bin/bash\ninput=\"/home/eval/data/paths.txt\"\noutput=\"/home/eval/data/parts.txt\"\nmkdir -p \"$(dirname \"$output\")\"\n: > \"$output\"\nwhile IFS= read -r path || [[ -n $path ]]; do\n  path=${path%$'\\r'}\n  # map each input line to output; skip only if file had no content? keep 1-1 mapping\n  # but ignore a completely empty line that is not a path only if you want strict mapping:\n  # to preserve order and count, process empty lines as well; uncomment next 2 lines to skip blanks\n  # if [[ -z $path ]]; then continue; fi\n  dir=\"${path%/*}\"\n  base=\"${path##*/}\"\n  stripped=\"${base#.}\"\n  if [[ $stripped == *.* ]]; then\n    ext=\"${base##*.}\"\n    if [[ -n $ext ]]; then\n      stem=\"${base%.*}\"\n    else\n      ext=\"\"\n      stem=\"$base\"\n    fi\n  else\n    ext=\"\"\n    stem=\"$base\"\n  fi\n  printf '%s|%s|%s|%s\\n' \"$dir\" \"$base\" \"$stem\" \"$ext\" >> \"$output\"\ndone < \"$input\"\nexit 0\n```",
+    "iterations": 1,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "#!/bin/bash\ninput=\"/home/eval/data/paths.txt\"\noutput=\"/home/eval/data/parts.txt\"\nmkdir -p \"$(dirname \"$output\")\"\n: > \"$output\"\nwhile IFS= read -r path || [[ -n $path ]]; do\n  path=${path%$'\\r'}\n  # map each input line to output; skip only if file had no content? keep 1-1 mapping\n  # but ignore a completely empty line that is not a path only if you want strict mapping:\n  # to preserve order and count, process empty lines as well; uncomment next 2 lines to skip blanks\n  # if [[ -z $path ]]; then continue; fi\n  dir=\"${path%/*}\"\n  base=\"${path##*/}\"\n  stripped=\"${base#.}\"\n  if [[ $stripped == *.* ]]; then\n    ext=\"${base##*.}\"\n    if [[ -n $ext ]]; then\n      stem=\"${base%.*}\"\n    else\n      ext=\"\"\n      stem=\"$base\"\n    fi\n  else\n    ext=\"\"\n    stem=\"$base\"\n  fi\n  printf '%s|%s|%s|%s\\n' \"$dir\" \"$base\" \"$stem\" \"$ext\" >> \"$output\"\ndone < \"$input\"\nexit 0\n"
+    ],
+    "usage": {
+      "input_tokens": 487,
+      "output_tokens": 4178,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 41000
+    },
+    "metrics": {
+      "exec_ms": 15.0,
+      "exit_code": 0.0,
+      "extracted": 1.0,
+      "generate_ms": 40985.0,
+      "script_bytes": 861.0,
+      "script_found": 1.0,
+      "timed_out": 0.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "#!/bin/bash\ninput=\"/home/eval/data/paths.txt\"\noutput=\"/home/eval/data/parts.txt\"\nmkdir -p \"$(dirname \"$output\")\"\n: > \"$output\"\nwhile IFS= read -r path || [[ -n $path ]]; do\n  path=${path%$'\\r'}\n  # map each input line to output; skip only if file had no content? keep 1-1 mapping\n  # but ignore a completely empty line that is not a path only if you want strict mapping:\n  # to preserve order and count, process empty lines as well; uncomment next 2 lines to skip blanks\n  # if [[ -z $path ]]; then continue; fi\n  dir=\"${path%/*}\"\n  base=\"${path##*/}\"\n  stripped=\"${base#.}\"\n  if [[ $stripped == *.* ]]; then\n    ext=\"${base##*.}\"\n    if [[ -n $ext ]]; then\n      stem=\"${base%.*}\"\n    else\n      ext=\"\"\n      stem=\"$base\"\n    fi\n  else\n    ext=\"\"\n    stem=\"$base\"\n  fi\n  printf '%s|%s|%s|%s\\n' \"$dir\" \"$base\" \"$stem\" \"$ext\" >> \"$output\"\ndone < \"$input\"\nexit 0\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          }
+        ]
+      },
+      "generate": {
+        "extraction": "fenced",
+        "timed_out": false
+      }
+    }
+  },
+  "skipped": false
+}

@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "db_csv_group_by",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "Read /data/sales.csv with columns: region, product, amount. Compute total amount per region (like SQL GROUP BY region, SUM(amount)). Print results as 'region: total' sorted by total descending."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Here is the computed total amount per region from `/data/sales.csv`, sorted by total descending:\n\n```\nnorth: 850\nsouth: 750\neast: 650\n```",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "python3 -c \"\nimport csv\n\ntotals = {}\nwith open('/data/sales.csv', mode='r', newline='', encoding='utf-8') as f:\n    reader = csv.DictReader(f)\n    for row in reader:\n        region = row['region'].strip()\n        amount_str = row['amount'].strip()\n        # amount might be int or float\n        try:\n            amount = float(amount_str)\n        except ValueError:\n            continue\n        totals[region] = totals.get(region, 0.0) + amount\n\n# Check if amounts are ints or floats\nsorted_totals = sorted(totals.items(), key=lambda x: x[1], reverse=True)\nfor r, t in sorted_totals:\n    # Check formatting: int vs float or as is\n    if t.is_integer():\n        print(f'{r}: {int(t)}')\n    else:\n        print(f'{r}: {t}')\n\"",
+      "cat /data/sales.csv"
+    ],
+    "usage": {
+      "input_tokens": 1795,
+      "output_tokens": 385,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 7841
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "python3 -c \"\nimport csv\n\ntotals = {}\nwith open('/data/sales.csv', mode='r', newline='', encoding='utf-8') as f:\n    reader = csv.DictReader(f)\n    for row in reader:\n        region = row['region'].strip()\n        amount_str = row['amount'].strip()\n        # amount might be int or float\n        try:\n            amount = float(amount_str)\n        except ValueError:\n            continue\n        totals[region] = totals.get(region, 0.0) + amount\n\n# Check if amounts are ints or floats\nsorted_totals = sorted(totals.items(), key=lambda x: x[1], reverse=True)\nfor r, t in sorted_totals:\n    # Check formatting: int vs float or as is\n    if t.is_integer():\n        print(f'{r}: {int(t)}')\n    else:\n        print(f'{r}: {t}')\n\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "north: 850\nsouth: 750\neast: 650\n"
+          },
+          {
+            "commands": "cat /data/sales.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "region,product,amount\nnorth,widgets,500\nsouth,gadgets,300\nnorth,bolts,200\neast,widgets,400\nsouth,widgets,350\nnorth,gadgets,150\neast,bolts,250\nsouth,bolts,100\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

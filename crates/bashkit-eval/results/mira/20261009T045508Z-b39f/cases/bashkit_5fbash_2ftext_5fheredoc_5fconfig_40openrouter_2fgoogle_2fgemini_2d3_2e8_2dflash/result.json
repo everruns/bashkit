@@ -1,0 +1,57 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "text_heredoc_config",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "Set these variables: APP_NAME='myservice', APP_PORT=8080, DB_HOST='db.prod.internal', DB_PORT=5432, LOG_LEVEL='warn'. Then use a heredoc (cat <<EOF) to generate /etc/app/config.yaml with these variables interpolated into a YAML structure with sections 'app:' (name, port), 'database:' (host, port), and 'logging:' (level). Print the generated file contents."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "8/8 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Here are the commands executed to set the variables, generate `/etc/app/config.yaml` using a heredoc, and print its contents:\n\n```bash\nmkdir -p /etc/app\nAPP_NAME='myservice'\nAPP_PORT=8080\nDB_HOST='db.prod.internal'\nDB_PORT=5432\nLOG_LEVEL='warn'\n\ncat <<EOF > /etc/app/config.yaml\napp:\n  name: ${APP_NAME}\n  port: ${APP_PORT}\ndatabase:\n  host: ${DB_HOST}\n  port: ${DB_PORT}\nlogging:\n  level: ${LOG_LEVEL}\nEOF\n\ncat /etc/app/config.yaml\n```\n\n### Generated File Contents (`/etc/app/config.yaml`):\n\n```yaml\napp:\n  name: myservice\n  port: 8080\ndatabase:\n  host: db.prod.internal\n  port: 5432\nlogging:\n  level: warn\n```",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "mkdir -p /etc/app\nAPP_NAME='myservice'\nAPP_PORT=8080\nDB_HOST='db.prod.internal'\nDB_PORT=5432\nLOG_LEVEL='warn'\n\ncat <<EOF > /etc/app/config.yaml\napp:\n  name: ${APP_NAME}\n  port: ${APP_PORT}\ndatabase:\n  host: ${DB_HOST}\n  port: ${DB_PORT}\nlogging:\n  level: ${LOG_LEVEL}\nEOF\n\ncat /etc/app/config.yaml"
+    ],
+    "usage": {
+      "input_tokens": 678,
+      "output_tokens": 568,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 6193
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "mkdir -p /etc/app\nAPP_NAME='myservice'\nAPP_PORT=8080\nDB_HOST='db.prod.internal'\nDB_PORT=5432\nLOG_LEVEL='warn'\n\ncat <<EOF > /etc/app/config.yaml\napp:\n  name: ${APP_NAME}\n  port: ${APP_PORT}\ndatabase:\n  host: ${DB_HOST}\n  port: ${DB_PORT}\nlogging:\n  level: ${LOG_LEVEL}\nEOF\n\ncat /etc/app/config.yaml",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "app:\n  name: myservice\n  port: 8080\ndatabase:\n  host: db.prod.internal\n  port: 5432\nlogging:\n  level: warn\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

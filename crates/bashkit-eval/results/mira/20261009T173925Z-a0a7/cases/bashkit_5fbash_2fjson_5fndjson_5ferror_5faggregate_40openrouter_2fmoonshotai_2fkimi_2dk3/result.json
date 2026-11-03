@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "json_ndjson_error_aggregate",
+  "target": "openrouter/moonshotai/kimi-k3",
+  "input": [
+    "Read /var/log/services.jsonl which contains newline-delimited JSON log entries. Each line is a JSON object with fields: timestamp, service, level, message. Count how many ERROR-level entries each service has. Print results as 'service: count' lines, sorted by count descending."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Done. The ERROR-level counts per service are:\n\n```\nauth: 3\npayments: 2\napi: 1\n```\n\n**How it works:**\n1. Read `/var/log/services.jsonl` line by line (9 entries total)\n2. Parse each line as JSON and filter for `level == \"ERROR\"`\n3. Tally counts per service with a `Counter`\n4. Sort by count descending (with service name as a tiebreaker) and print as `service: count`\n\nThe `auth` service has the most errors (3), followed by `payments` (2) and `api` (1).",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "wc -l /var/log/services.jsonl && head -3 /var/log/services.jsonl",
+      "python3 - <<'EOF'\nimport json\nfrom collections import Counter\n\ncounts = Counter()\nwith open('/var/log/services.jsonl') as f:\n    for line in f:\n        line = line.strip()\n        if not line:\n            continue\n        entry = json.loads(line)\n        if entry.get('level') == 'ERROR':\n            counts[entry['service']] += 1\n\nfor service, count in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0])):\n    print(f\"{service}: {count}\")\nEOF"
+    ],
+    "usage": {
+      "input_tokens": 2286,
+      "output_tokens": 408,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 5114
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "wc -l /var/log/services.jsonl && head -3 /var/log/services.jsonl",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "9 /var/log/services.jsonl\n{\"timestamp\":\"2024-01-01T10:00:00Z\",\"service\":\"auth\",\"level\":\"ERROR\",\"message\":\"token expired\"}\n{\"timestamp\":\"2024-01-01T10:00:01Z\",\"service\":\"api\",\"level\":\"INFO\",\"message\":\"request received\"}\n{\"timestamp\":\"2024-01-01T10:00:02Z\",\"service\":\"auth\",\"level\":\"ERROR\",\"message\":\"invalid credentials\"}\n"
+          },
+          {
+            "commands": "python3 - <<'EOF'\nimport json\nfrom collections import Counter\n\ncounts = Counter()\nwith open('/var/log/services.jsonl') as f:\n    for line in f:\n        line = line.strip()\n        if not line:\n            continue\n        entry = json.loads(line)\n        if entry.get('level') == 'ERROR':\n            counts[entry['service']] += 1\n\nfor service, count in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0])):\n    print(f\"{service}: {count}\")\nEOF",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "auth: 3\npayments: 2\napi: 1\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

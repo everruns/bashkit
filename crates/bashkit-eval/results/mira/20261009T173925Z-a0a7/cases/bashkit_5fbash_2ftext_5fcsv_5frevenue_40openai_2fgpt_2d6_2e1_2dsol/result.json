@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "text_csv_revenue",
+  "target": "openai/gpt-6.1-sol",
+  "input": [
+    "Read /data/sales.csv (columns: product,price,quantity). Compute total revenue (sum of price*quantity for each row, skip the header). Print only the final total number."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "329",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "python - <<'PY'\nimport csv\nfrom decimal import Decimal\nwith open('/data/sales.csv', newline='') as f:\n    total = sum((Decimal(r['price']) * Decimal(r['quantity']) for r in csv.DictReader(f)), Decimal(0))\nprint(total)\nPY be",
+      "python - <<'PY'\nimport csv\nfrom decimal import Decimal\nwith open('/data/sales.csv', newline='') as f:\n    total = sum((Decimal(r['price']) * Decimal(r['quantity']) for r in csv.DictReader(f)), Decimal(0))\nprint(total)\nPY"
+    ],
+    "usage": {
+      "input_tokens": 1585,
+      "output_tokens": 180,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 7326
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 1.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "python - <<'PY'\nimport csv\nfrom decimal import Decimal\nwith open('/data/sales.csv', newline='') as f:\n    total = sum((Decimal(r['price']) * Decimal(r['quantity']) for r in csv.DictReader(f)), Decimal(0))\nprint(total)\nPY be",
+            "exit_code": 1,
+            "stderr": "  File \"<stdin>\", line 6\n    PY be\n       ^^\nSyntaxError: invalid syntax\n",
+            "stdout": ""
+          },
+          {
+            "commands": "python - <<'PY'\nimport csv\nfrom decimal import Decimal\nwith open('/data/sales.csv', newline='') as f:\n    total = sum((Decimal(r['price']) * Decimal(r['quantity']) for r in csv.DictReader(f)), Decimal(0))\nprint(total)\nPY",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "329\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

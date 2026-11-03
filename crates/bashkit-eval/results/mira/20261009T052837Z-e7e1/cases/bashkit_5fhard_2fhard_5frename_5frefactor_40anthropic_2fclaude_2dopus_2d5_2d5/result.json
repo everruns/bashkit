@@ -1,0 +1,99 @@
+{
+  "eval": "bashkit_hard",
+  "sample": "hard_rename_refactor",
+  "target": "anthropic/claude-opus-5-5",
+  "input": [
+    "In the git repository /home/eval/cfgtool, rename the shell function get_cfg to config_get everywhere it is used as code under lib/ and bin/: its definition, every call (including calls inside $(...) and inside double-quoted strings), and anywhere the name is used to refer to the function. Do not rename the different functions get_cfg_path, get_cfg_or and forget_cfg (keep their names; their bodies must call config_get). Text that is printed to users (echo/printf messages, usage text) is frozen because log parsers depend on it: keep it byte-for-byte, even where it mentions get_cfg. Do not edit docs/ or tests/; the tests already use the new name. Make `make test` pass, then commit with a message starting with `refactor:`."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "17/17 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I renamed `get_cfg` to `config_get` in the code under `lib/` and `bin/`. `make test` passes, and the change is committed as `refactor: rename get_cfg to config_get`.\n\n**What changed:**\n- **`lib/config.sh`:** the function definition and its header comment. `get_cfg_path` and `get_cfg_or` now call `config_get`, and the comment on `get_cfg_path` now says \"like config_get\".\n- **`lib/db.sh`:** the `if ! config_get db_file` check in `db_check`.\n- **`lib/net.sh`:** the call in `net_port` and both calls inside `$(...)` in `net_url`.\n- **`bin/app`:** the handler table entry is now `[get]=config_get`, since that string is the name of the function that gets run.\n- **`bin/doctor`:** the `command -v config_get` check.\n\n**Left as they were, on purpose:**\n- **Functions not being renamed:** `get_cfg_path`, `get_cfg_or` and `forget_cfg` keep their names.\n- **User-facing text:** these messages are byte-for-byte unchanged and still say `get_cfg`:\n  - `get_cfg: missing key …`\n  - `db: get_cfg failed for db_file`\n  - the usage line in `bin/app` (`(get uses get_cfg)`)\n  - `doctor: get_cfg available`\n- **`docs/` and `tests/`:** not edited.\n\nI checked the committed copies of the edited files against the working tree and they match. The test run left an untracked file, `build/test-report.txt`, which I didn't include in the commit.",
+    "iterations": 8,
+    "tool_calls_count": 7,
+    "tool_calls": [
+      "cd /home/eval/cfgtool && git status && ls -R lib bin tests docs Makefile && cat Makefile && grep -rn \"get_cfg\" lib bin",
+      "cd /home/eval/cfgtool && cat lib/*.sh bin/* && cat tests/test_config.sh; grep -rn \"get_cfg\\|config_get\" docs tests",
+      "cd /home/eval/cfgtool && \nsed -i -e '4s/^# get_cfg KEY/# config_get KEY/' -e '5s/^get_cfg()/config_get()/' -e '11s/like get_cfg,/like config_get,/' -e '15s/\\$(get_cfg \"/$(config_get \"/' -e '23s/{ get_cfg \"/{ config_get \"/' lib/config.sh\nsed -i '8s/! get_cfg db_file/! config_get db_file/' lib/db.sh\nsed -i 's/\\bget_cfg \\(port\\|host\\)/config_get \\1/g' lib/net.sh\nsed -i 's/\\[get\\]=get_cfg /[get]=config_get /' bin/app\nsed -i 's/command -v get_cfg >/command -v config_get >/' bin/doctor\ngit diff; grep -rnw \"get_cfg\" lib bin; make test",
+      "cd /home/eval/cfgtool && grep -rn \"config_get\" lib bin; git status --short; cat .gitignore 2>/dev/null",
+      "cd /home/eval/cfgtool && git add lib bin && git status && git commit -m \"refactor: rename get_cfg to config_get\" && git log --oneline | head -3 && git status",
+      "cd /home/eval/cfgtool && git show --stat HEAD 2>&1 | head; git show HEAD:lib/net.sh 2>&1; git log --oneline",
+      "cd /home/eval/cfgtool && for f in lib/config.sh lib/db.sh bin/app bin/doctor; do git show HEAD:$f | diff - $f && echo \"$f ok\"; done"
+    ],
+    "usage": {
+      "input_tokens": 35589,
+      "output_tokens": 1859,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 20904
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 7.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 6.0,
+      "turns": 8.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cd /home/eval/cfgtool && git status && ls -R lib bin tests docs Makefile && cat Makefile && grep -rn \"get_cfg\" lib bin",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "On branch master\n\nnothing to commit, working tree clean\nMakefile\n\nlib:\nconfig.sh\ndb.sh\nnet.sh\n\nbin:\napp\ndoctor\n\ntests:\nassert.sh\nfixtures\ntest_config.sh\n\ntests/fixtures:\napp.conf\nempty.conf\nnodb.conf\n\ndocs:\nCHANGELOG.md\ntest:\n\t@mkdir -p build\n\t@bash tests/test_config.sh\n\n.PHONY: test\nlib/config.sh:4:# get_cfg KEY: print the value of KEY (exit 1 + message if missing)\nlib/config.sh:5:get_cfg() {\nlib/config.sh:7:  line=$(grep -m1 \"^$1=\" \"$CFG_FILE\") || { echo \"get_cfg: missing key $1\" >&2; return 1; }\nlib/config.sh:11:# get_cfg_path KEY: like get_cfg, but resolves a relative value against the\nlib/config.sh:13:get_cfg_path() {\nlib/config.sh:15:  v=$(get_cfg \"$1\") || return 1\nlib/config.sh:22:# get_cfg_or KEY DEFAULT\nlib/config.sh:23:get_cfg_or() { get_cfg \"$1\" 2>/dev/null || echo \"$2\"; }\nlib/config.sh:25:# forget_cfg: drop the configured file name\nlib/config.sh:26:forget_cfg() { unset CFG_FILE; }\nlib/db.sh:4:  path=$(get_cfg_path db_file) || return 1\nlib/db.sh:5:  echo \"sqlite://$path?user=$(get_cfg_or db_user app)\"\nlib/db.sh:8:  if ! get_cfg db_file >/dev/null; then\nlib/db.sh:9:    echo 'db: get_cfg failed for db_file' >&2\nlib/net.sh:2:net_port() { get_cfg port; }\nlib/net.sh:3:net_url() { echo \"http://$(get_cfg host):$(get_cfg port)/\"; }\nbin/app:5:declare -A handlers=([get]=get_cfg [path]=get_cfg_path [url]=net_url [dsn]=db_dsn [check]=db_check)\nbin/app:6:usage() { echo \"usage: app get|path|url|dsn|check [KEY]  (get uses get_cfg)\" >&2; exit 2; }\nbin/doctor:5:  printf '%-8s %s\\n' \"$k\" \"$(get_cfg_or \"$k\" '<unset>')\"\nbin/doctor:7:command -v get_cfg >/dev/null && echo \"doctor: get_cfg available\"\n"
+          },
+          {
+            "commands": "cd /home/eval/cfgtool && cat lib/*.sh bin/* && cat tests/test_config.sh; grep -rn \"get_cfg\\|config_get\" docs tests",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# config.sh: key=value config access\nCFG_FILE=${CFG_FILE:-etc/app.conf}\n\n# get_cfg KEY: print the value of KEY (exit 1 + message if missing)\nget_cfg() {\n  local line\n  line=$(grep -m1 \"^$1=\" \"$CFG_FILE\") || { echo \"get_cfg: missing key $1\" >&2; return 1; }\n  echo \"${line#*=}\"\n}\n\n# get_cfg_path KEY: like get_cfg, but resolves a relative value against the\n# directory of the config file\nget_cfg_path() {\n  local v\n  v=$(get_cfg \"$1\") || return 1\n  case $v in\n    /*) echo \"$v\" ;;\n    *) echo \"$(dirname \"$CFG_FILE\")/$v\" ;;\n  esac\n}\n\n# get_cfg_or KEY DEFAULT\nget_cfg_or() { get_cfg \"$1\" 2>/dev/null || echo \"$2\"; }\n\n# forget_cfg: drop the configured file name\nforget_cfg() { unset CFG_FILE; }\n. lib/config.sh\ndb_dsn() {\n  local path\n  path=$(get_cfg_path db_file) || return 1\n  echo \"sqlite://$path?user=$(get_cfg_or db_user app)\"\n}\ndb_check() {\n  if ! get_cfg db_file >/dev/null; then\n    echo 'db: get_cfg failed for db_file' >&2\n    return 1\n  fi\n}\n. lib/config.sh\nnet_port() { get_cfg port; }\nnet_url() { echo \"http://$(get_cfg host):$(get_cfg port)/\"; }\n#!/bin/bash\ncd \"$(dirname \"$0\")/..\" || exit 2\n. lib/net.sh\n. lib/db.sh\ndeclare -A handlers=([get]=get_cfg [path]=get_cfg_path [url]=net_url [dsn]=db_dsn [check]=db_check)\nusage() { echo \"usage: app get|path|url|dsn|check [KEY]  (get uses get_cfg)\" >&2; exit 2; }\n[ $# -gt 0 ] || usage\nh=${handlers[$1]:-}\n[ -n \"$h\" ] || usage\nshift\n\"$h\" \"$@\"\n#!/bin/bash\ncd \"$(dirname \"$0\")/..\" || exit 2\n. lib/config.sh\nfor k in host port db_file; do\n  printf '%-8s %s\\n' \"$k\" \"$(get_cfg_or \"$k\" '<unset>')\"\ndone\ncommand -v get_cfg >/dev/null && echo \"doctor: get_cfg available\"\n#!/bin/bash\n# The suite was updated for the get_cfg -> config_get rename.\ncd \"$(dirname \"$0\")/..\" || exit 2\n. tests/assert.sh\nexport CFG_FILE=tests/fixtures/app.conf\n(\n  . lib/config.sh\n  if declare -F get_cfg >/dev/null; then echo \"get_cfg must no longer be defined\"; exit 1; fi\n  assert_eq 8080 \"$(config_get port)\" 'config_get port'\n  assert_eq 'tests/fixtures/data/app.db' \"$(get_cfg_path db_file)\" 'get_cfg_path'\n  assert_eq fallback \"$(get_cfg_or nope fallback)\" 'get_cfg_or'\n  assert_eq 'get_cfg: missing key nope' \"$(config_get nope 2>&1)\" 'missing-key message'\n  forget_cfg\n  [ -z \"${CFG_FILE+x}\" ] || { echo 'forget_cfg must unset CFG_FILE'; exit 1; }\n) || exit 1\nassert_eq 8080 \"$(bash bin/app get port)\" 'app get'\nassert_eq 'tests/fixtures/data/app.db' \"$(bash bin/app path db_file)\" 'app path'\nassert_eq 'http://localhost:8080/' \"$(bash bin/app url)\" 'app url'\nassert_eq 'sqlite://tests/fixtures/data/app.db?user=app' \"$(bash bin/app dsn)\" 'app dsn'\nassert_eq 'usage: app get|path|url|dsn|check [KEY]  (get uses get_cfg)' \"$(bash bin/app 2>&1)\" 'usage text'\nassert_eq \"$(printf 'get_cfg: missing key db_file\\ndb: get_cfg failed for db_file')\" \"$(CFG_FILE=tests/fixtures/empty.conf bash bin/app check 2>&1)\" 'db_check messages'\nassert_eq \"$(printf 'host     localhost\\nport     8080\\ndb_file  <unset>\\ndoctor: get_cfg available')\" \"$(CFG_FILE=tests/fixtures/nodb.conf bash bin/doctor)\" 'doctor'\necho \"PASS\" | tee build/test-report.txt\ndocs/CHANGELOG.md:5:- get_cfg now fails with `get_cfg: missing key KEY` instead of printing nothing.\ndocs/CHANGELOG.md:6:- added get_cfg_path and get_cfg_or.\ntests/test_config.sh:2:# The suite was updated for the get_cfg -> config_get rename.\ntests/test_config.sh:8:  if declare -F get_cfg >/dev/null; then echo \"get_cfg must no longer be defined\"; exit 1; fi\ntests/test_config.sh:9:  assert_eq 8080 \"$(config_get port)\" 'config_get port'\ntests/test_config.sh:10:  assert_eq 'tests/fixtures/data/app.db' \"$(get_cfg_path db_file)\" 'get_cfg_path'\ntests/test_config.sh:11:  assert_eq fallback \"$(get_cfg_or nope fallback)\" 'get_cfg_or'\ntests/test_config.sh:12:  assert_eq 'get_cfg: missing key nope' \"$(config_get nope 2>&1)\" 'missing-key message'\ntests/test_config.sh:13:  forget_cfg\ntests/test_config.sh:14:  [ -z \"${CFG_FILE+x}\" ] || { echo 'forget_cfg must unset CFG_FILE'; exit 1; }\ntests/test_config.sh:20:assert_eq 'usage: app get|path|url|dsn|check [KEY]  (get uses get_cfg)' \"$(bash bin/app 2>&1)\" 'usage text'\ntests/test_config.sh:21:assert_eq \"$(printf 'get_cfg: missing key db_file\\ndb: get_cfg failed for db_file')\" \"$(CFG_FILE=tests/fixtures/empty.conf bash bin/app check 2>&1)\" 'db_check messages'\ntests/test_config.sh:22:assert_eq \"$(printf 'host     localhost\\nport     8080\\ndb_file  <unset>\\ndoctor: get_cfg available')\" \"$(CFG_FILE=tests/fixtures/nodb.conf bash bin/doctor)\" 'doctor'\n"
+          },
+          {
+            "commands": "cd /home/eval/cfgtool && \nsed -i -e '4s/^# get_cfg KEY/# config_get KEY/' -e '5s/^get_cfg()/config_get()/' -e '11s/like get_cfg,/like config_get,/' -e '15s/\\$(get_cfg \"/$(config_get \"/' -e '23s/{ get_cfg \"/{ config_get \"/' lib/config.sh\nsed -i '8s/! get_cfg db_file/! config_get db_file/' lib/db.sh\nsed -i 's/\\bget_cfg \\(port\\|host\\)/config_get \\1/g' lib/net.sh\nsed -i 's/\\[get\\]=get_cfg /[get]=config_get /' bin/app\nsed -i 's/command -v get_cfg >/command -v config_get >/' bin/doctor\ngit diff; grep -rnw \"get_cfg\" lib bin; make test",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# Diff output (simplified in virtual mode)\nlib/config.sh:7:  line=$(grep -m1 \"^$1=\" \"$CFG_FILE\") || { echo \"get_cfg: missing key $1\" >&2; return 1; }\nlib/db.sh:9:    echo 'db: get_cfg failed for db_file' >&2\nbin/app:6:usage() { echo \"usage: app get|path|url|dsn|check [KEY]  (get uses get_cfg)\" >&2; exit 2; }\nbin/doctor:7:command -v config_get >/dev/null && echo \"doctor: get_cfg available\"\nPASS\n"
+          },
+          {
+            "commands": "cd /home/eval/cfgtool && grep -rn \"config_get\" lib bin; git status --short; cat .gitignore 2>/dev/null",
+            "exit_code": 1,
+            "stderr": "",
+            "stdout": "lib/config.sh:4:# config_get KEY: print the value of KEY (exit 1 + message if missing)\nlib/config.sh:5:config_get() {\nlib/config.sh:11:# get_cfg_path KEY: like config_get, but resolves a relative value against the\nlib/config.sh:15:  v=$(config_get \"$1\") || return 1\nlib/config.sh:23:get_cfg_or() { config_get \"$1\" 2>/dev/null || echo \"$2\"; }\nlib/db.sh:8:  if ! config_get db_file >/dev/null; then\nlib/net.sh:2:net_port() { config_get port; }\nlib/net.sh:3:net_url() { echo \"http://$(config_get host):$(config_get port)/\"; }\nbin/app:5:declare -A handlers=([get]=config_get [path]=get_cfg_path [url]=net_url [dsn]=db_dsn [check]=db_check)\nbin/doctor:7:command -v config_get >/dev/null && echo \"doctor: get_cfg available\"\nOn branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/test-report.txt\n"
+          },
+          {
+            "commands": "cd /home/eval/cfgtool && git add lib bin && git status && git commit -m \"refactor: rename get_cfg to config_get\" && git log --oneline | head -3 && git status",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "On branch master\n\nChanges to be committed:\n  (use \"git restore --staged <file>...\" to unstage)\n\tnew file:   bin\n\tnew file:   lib\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/test-report.txt\n[master b465c2b] refactor: rename get_cfg to config_get\ncommit b465c2b7\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 05:32:08 2026 +0000\nOn branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/test-report.txt\n"
+          },
+          {
+            "commands": "cd /home/eval/cfgtool && git show --stat HEAD 2>&1 | head; git show HEAD:lib/net.sh 2>&1; git log --oneline",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "internal error: fatal: bad object --stat\n. lib/config.sh\nnet_port() { config_get port; }\nnet_url() { echo \"http://$(config_get host):$(config_get port)/\"; }\ncommit b465c2b7\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 05:32:08 2026 +0000\n\n    refactor: rename get_cfg to config_get\n\ncommit b465c2a3\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 05:31:56 2026 +0000\n\n    initial import\n\n"
+          },
+          {
+            "commands": "cd /home/eval/cfgtool && for f in lib/config.sh lib/db.sh bin/app bin/doctor; do git show HEAD:$f | diff - $f && echo \"$f ok\"; done",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "lib/config.sh ok\nlib/db.sh ok\nbin/app ok\nbin/doctor ok\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

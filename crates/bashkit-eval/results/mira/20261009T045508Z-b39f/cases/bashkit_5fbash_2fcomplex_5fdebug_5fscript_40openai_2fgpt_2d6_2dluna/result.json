@@ -1,0 +1,71 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "complex_debug_script",
+  "target": "openai/gpt-6-luna",
+  "input": [
+    "The script /scripts/broken.sh has bugs. Run it first to see the errors. Then examine the script, identify the bugs, fix them, and run the fixed version. The script should compute the factorial of 5 and print 'factorial(5) = 120'. The script should exit 0. Write the fixed version back to /scripts/broken.sh."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "3/3 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Fixed `/scripts/broken.sh` and ran it successfully. It prints `factorial(5) = 120` and exits with code 0.",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "bash /scripts/broken.sh",
+      "cat -n /scripts/broken.sh; ls -l /scripts/broken.sh",
+      "cat > /scripts/broken.sh <<'EOF'\n#!/bin/bash\n\nfactorial() {\n  local n=\"$1\"\n  if [ \"$n\" -le 1 ]; then\n    echo 1\n  else\n    local sub\n    sub=$(factorial \"$((n - 1))\")\n    echo \"$((n * sub))\"\n  fi\n}\n\nresult=$(factorial 5)\necho \"factorial(5) = $result\"\nexit 0\nEOF\nchmod +x /scripts/broken.sh\nbash /scripts/broken.sh\nstatus=$?\nprintf 'Exit code: %s\\n' \"$status\"\n"
+    ],
+    "usage": {
+      "input_tokens": 1772,
+      "output_tokens": 326,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 10747
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 2.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "bash /scripts/broken.sh",
+            "exit_code": 2,
+            "stderr": "/scripts/broken.sh: line 13: syntax error: unterminated command substitution\n",
+            "stdout": ""
+          },
+          {
+            "commands": "cat -n /scripts/broken.sh; ls -l /scripts/broken.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "     1\t#!/bin/bash\n     2\t\n     3\tfactorial() {\n     4\t  local n=$1\n     5\t  if [ $n -le 1 ]; then\n     6\t    echo 1\n     7\t  else\n     8\t    local sub=$(factorial $((n-1)))\n     9\t    echo $((n * sub))\n    10\t  fi\n    11\t}\n    12\t\n    13\tresult=$(factorial 5\n    14\techo \"factorial(5) = $result\"\n    15\texit 0\n-rw-r--r--      206 2026-10-09 05:03 /scripts/broken.sh\n"
+          },
+          {
+            "commands": "cat > /scripts/broken.sh <<'EOF'\n#!/bin/bash\n\nfactorial() {\n  local n=\"$1\"\n  if [ \"$n\" -le 1 ]; then\n    echo 1\n  else\n    local sub\n    sub=$(factorial \"$((n - 1))\")\n    echo \"$((n * sub))\"\n  fi\n}\n\nresult=$(factorial 5)\necho \"factorial(5) = $result\"\nexit 0\nEOF\nchmod +x /scripts/broken.sh\nbash /scripts/broken.sh\nstatus=$?\nprintf 'Exit code: %s\\n' \"$status\"\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "factorial(5) = 120\nExit code: 0\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

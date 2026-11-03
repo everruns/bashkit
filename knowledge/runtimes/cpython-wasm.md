@@ -62,6 +62,19 @@ call:
 3. **Zero-copy load**: the `.cwasm` is embedded 64 KiB-aligned and loaded with
    `Module::deserialize_raw`; wasmtime registers code by address, so only the
    first load in a process maps in place, later loads copy (`load_module`).
+   Mach-O linking/ASLR only preserves host-page alignment, so Apple targets
+   embed a byte slice rather than an over-aligned Rust reference. If its runtime
+   address is not 64 KiB aligned, one immutable padded `Vec` copy is cached for
+   the process lifetime; retaining the allocation preserves the chosen aligned
+   offset. Windows uses the same plain-slice path: COFF cannot encode 64 KiB
+   static alignment (Rust 1.96.0 traps during object generation). Reducing
+   the runtime alignment to COFF's 8 KiB limit would violate Wasmtime's
+   requirements. ELF hosts retain the aligned static fast path. The original
+   64 KiB pointer assertion plus byte-preservation tests cover this contract;
+   `scripts/tests/test_cpython_embedding.py` compiles the real embedding with
+   a tiny payload and checks object generation, byte preservation, alignment
+   and process-lifetime caching, including concurrent access. CI runs it and
+   actual module loading/Python execution on Windows, Apple and ELF hosts.
 4. **Copy-on-write instances**: `memory_init_cow` +
    `memory_guaranteed_dense_image_size(128 MB)` map the ~40 MB snapshot heap
    instead of copying it (without the dense image every instantiation copied
@@ -119,7 +132,7 @@ Still nothing is compiled at run time and it is still one crate; the trade:
   3.7 ms, `import http.client` 34 ms vs 461 ms, `fib(20)` 6.4 ms vs 69 ms.
 - **Executable memory** is required at run time; Pulley needs none.
 - **First load copies** the module into executable memory (native code
-  cannot run from the binary's read-only static): `CPython::warm_up()` takes
+  cannot run from the binary's read-only static): `bashkit::warm_up()` takes
   ~47 ms instead of ~15 ms. Call it at startup.
 - **Baseline ISA**: compiled for the target triple with no host CPU feature
   detection, so a binary built on one machine runs on any CPU of that
@@ -234,6 +247,14 @@ the dependency on stdlib http.client/email.
 
 - **No runtime opt-in env var**: unlike Monty, no native interpreter runs in
   the host, so `BashBuilder::cpython()` is the opt-in.
+- **Executable scripts**: a file with `#!/usr/bin/env python3` (or any
+  `#!.../python3`) run by path or `$PATH` runs CPython with the script path
+  as `argv[0]`, like `python3 FILE` (interpreter shebang dispatch, see
+  [Builtins](../foundations/builtins.md)). Before 2026-10-09 the content ran
+  as bash and failed with a parse error.
+- **sqlite3 module interop**: the guest SQLite has no WAL, so it can only
+  open databases the `sqlite` builtin wrote because the builtin persists
+  them in rollback-journal mode (see [SQLite Builtin](sqlite-builtin.md)).
 - **Only exported variables** reach `os.environ`, plus `PWD`; `__BASHKIT_*`
   names are filtered (the recursion limit is passed as one and removed by the
   guest).
@@ -293,7 +314,7 @@ snapshots, smoke-tests with the reference runtime and rewrites `artifacts/`
 three together. Changing `engine_config()` or the wasmtime version requires
 no guest rebuild; `build.rs` recompiles the `.cwasm`.
 
-wasmtime is pinned (`=48.0.5`): a `.cwasm` loads only into the version and
+wasmtime is pinned (`=48.0.8`): a `.cwasm` loads only into the version and
 compile-affecting configuration that produced it. 49.x needs rustc 1.96.
 
 ## Known gaps

@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "json_order_totals",
+  "target": "openrouter/moonshotai/kimi-k3",
+  "input": [
+    "Read /data/orders.json containing an array of order objects with fields: customer, product, amount. Group orders by customer and compute the total amount spent per customer. Print each result as 'customer: total' with one line per customer, sorted by total descending."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "The task is complete. Using `jq`, I grouped the orders by customer, summed the amounts, and sorted by total descending:\n\n```\nglobex: 500\nacme: 325\ninitech: 75\n```\n\n**Command used:**\n```bash\njq -r 'group_by(.customer) | map({customer: .[0].customer, total: (map(.amount) | add)}) | sort_by(-.total) | .[] | \"\\(.customer): \\(.total)\"' /data/orders.json\n```\n\n**How it works:**\n1. `group_by(.customer)` — groups order objects by the customer field\n2. `map({customer: .[0].customer, total: (map(.amount) | add)})` — for each group, takes the customer name and sums all amounts\n3. `sort_by(-.total)` — sorts descending by total (negated value)\n4. `\"\\(.customer): \\(.total)\"` with `-r` — prints each result in the required `customer: total` format",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cat /data/orders.json; echo \"---\"; which jq node awk",
+      "jq -r 'group_by(.customer) | map({customer: .[0].customer, total: (map(.amount) | add)}) | sort_by(-.total) | .[] | \"\\(.customer): \\(.total)\"' /data/orders.json"
+    ],
+    "usage": {
+      "input_tokens": 1612,
+      "output_tokens": 595,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 6865
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 1.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat /data/orders.json; echo \"---\"; which jq node awk",
+            "exit_code": 1,
+            "stderr": "",
+            "stdout": "[{\"customer\":\"acme\",\"product\":\"widgets\",\"amount\":150},{\"customer\":\"globex\",\"product\":\"gadgets\",\"amount\":200},{\"customer\":\"acme\",\"product\":\"bolts\",\"amount\":75},{\"customer\":\"initech\",\"product\":\"paper\",\"amount\":50},{\"customer\":\"globex\",\"product\":\"widgets\",\"amount\":300},{\"customer\":\"acme\",\"product\":\"nuts\",\"amount\":100},{\"customer\":\"initech\",\"product\":\"staples\",\"amount\":25}]---\n/usr/bin/jq\n/usr/bin/awk\n"
+          },
+          {
+            "commands": "jq -r 'group_by(.customer) | map({customer: .[0].customer, total: (map(.amount) | add)}) | sort_by(-.total) | .[] | \"\\(.customer): \\(.total)\"' /data/orders.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "globex: 500\nacme: 325\ninitech: 75\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

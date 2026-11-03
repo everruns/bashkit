@@ -163,6 +163,7 @@ pub(crate) enum LoopAction {
 ///
 /// Eliminates duplicated tracking in for, arithmetic-for, and while/until loops.
 pub(crate) struct LoopAccumulator {
+    retain_output: bool,
     pub stdout: crate::StreamData,
     pub stderr: crate::StreamData,
     pub exit_code: i32,
@@ -170,8 +171,9 @@ pub(crate) struct LoopAccumulator {
 }
 
 impl LoopAccumulator {
-    pub fn new() -> Self {
+    pub fn new(retain_output: bool) -> Self {
         Self {
+            retain_output,
             stdout: crate::StreamData::new(),
             stderr: crate::StreamData::new(),
             exit_code: 0,
@@ -185,8 +187,10 @@ impl LoopAccumulator {
     /// For multi-level break/continue or return, builds a propagation
     /// `ExecResult` and returns `LoopAction::Exit`.
     pub fn accumulate(&mut self, result: ExecResult) -> LoopAction {
-        self.stdout.append(&result.stdout);
-        self.stderr.append(&result.stderr);
+        if self.retain_output {
+            self.stdout.append(&result.stdout);
+            self.stderr.append(&result.stderr);
+        }
         self.exit_code = result.exit_code;
         self.errexit_suppressed = result.errexit_suppressed;
 
@@ -440,7 +444,7 @@ mod tests {
 
     #[test]
     fn loop_acc_accumulate_none() {
-        let mut acc = LoopAccumulator::new();
+        let mut acc = LoopAccumulator::new(true);
         let r = ExecResult {
             stdout: "out".into(),
             stderr: "err".into(),
@@ -457,7 +461,7 @@ mod tests {
 
     #[test]
     fn loop_acc_accumulate_break_level_1() {
-        let mut acc = LoopAccumulator::new();
+        let mut acc = LoopAccumulator::new(true);
         let r = ExecResult {
             control_flow: ControlFlow::Break(1),
             ..Default::default()
@@ -467,7 +471,7 @@ mod tests {
 
     #[test]
     fn loop_acc_accumulate_break_level_3() {
-        let mut acc = LoopAccumulator::new();
+        let mut acc = LoopAccumulator::new(true);
         acc.stdout.push_str("prev ");
         let r = ExecResult {
             stdout: "body".into(),
@@ -485,7 +489,7 @@ mod tests {
 
     #[test]
     fn loop_acc_accumulate_continue_level_1() {
-        let mut acc = LoopAccumulator::new();
+        let mut acc = LoopAccumulator::new(true);
         let r = ExecResult {
             control_flow: ControlFlow::Continue(1),
             ..Default::default()
@@ -495,7 +499,7 @@ mod tests {
 
     #[test]
     fn loop_acc_accumulate_return() {
-        let mut acc = LoopAccumulator::new();
+        let mut acc = LoopAccumulator::new(true);
         let r = ExecResult {
             control_flow: ControlFlow::Return(42),
             ..Default::default()
@@ -511,7 +515,7 @@ mod tests {
 
     #[test]
     fn loop_acc_finish() {
-        let mut acc = LoopAccumulator::new();
+        let mut acc = LoopAccumulator::new(true);
         let r1 = ExecResult {
             stdout: "a".into(),
             exit_code: 1,

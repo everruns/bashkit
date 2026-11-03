@@ -12,11 +12,17 @@
 //! operand contributes its own quoted/unquoted parts. A lone expansion
 //! keeps the cheaper whole-string `ifs_split` path.
 //!
+//! Important decision: mixed glob words escape expansion output per part's
+//! quote flag; unquoted parts stay active patterns. The substitution byte
+//! charge uses the same decision before allocating the escaped output.
+//!
 //! Important decision: tilde expansion is decided per unquoted literal part
 //! at expansion time (`tilde_expand_word_literal`): a prefix that runs into
 //! another part (`~"x"`, `~$v`) is not a tilde prefix. Assignment values
 //! are pre-resolved by `tilde_assignment_value` (after `=` and each `:`);
 //! `${...}` operands use the `operand_tilde` flag, set per operator.
+//! Tilde directories are borrowed; expanded buffers reserve capacity before
+//! allocation and keep their leases through preprocessing and word consumption.
 
 use super::*;
 
@@ -290,8 +296,8 @@ impl Interpreter {
 
     /// How many bytes `append_expansion_for_word` will append for `value`,
     /// counted before anything is allocated so the budget is charged first.
-    fn expansion_appended_len(word: &Word, value: &str) -> usize {
-        if word.quoted && word.has_unquoted_glob {
+    fn expansion_appended_len(word: &Word, part_quoted: bool, value: &str) -> usize {
+        if word.has_unquoted_glob && part_quoted {
             value
                 .chars()
                 .map(|ch| ch.len_utf8() + usize::from(Self::needs_glob_escape(ch)))
@@ -301,11 +307,45 @@ impl Interpreter {
         }
     }
 
-    pub(super) fn append_expansion_for_word(result: &mut String, word: &Word, value: &str) {
-        if word.quoted && word.has_unquoted_glob {
-            result.push_str(&Self::quote_expansion_for_quoted_glob(value));
+    fn append_expansion_for_word(
+        result: &mut BudgetedString,
+        word: &Word,
+        part_quoted: bool,
+        value: &str,
+    ) -> Result<()> {
+        if word.has_unquoted_glob && part_quoted {
+            for ch in value.chars() {
+                if Self::needs_glob_escape(ch) {
+                    result.try_push('\\')?;
+                }
+                result.try_push(ch)?;
+            }
         } else {
-            result.push_str(value);
+            result.try_push_str(value)?;
+        }
+        Ok(())
+    }
+
+    /// Compound-array values remain live until subscript evaluation.
+    pub(super) async fn expand_array_word(&mut self, word: &Word) -> Result<BudgetedString> {
+        let expanded = Box::pin(self.expand_word_buffer(word, None, true)).await?;
+        if word.quoted && word.has_unquoted_glob {
+            let mut unescaped = BudgetedString::new(Some(&self.execution_budget))?;
+            let mut chars = expanded.chars().peekable();
+            while let Some(ch) = chars.next() {
+                if ch == '\\'
+                    && chars
+                        .peek()
+                        .is_some_and(|next| Self::needs_glob_escape(*next))
+                {
+                    unescaped.try_push(chars.next().unwrap_or(ch))?;
+                } else {
+                    unescaped.try_push(ch)?;
+                }
+            }
+            Ok(unescaped)
+        } else {
+            Ok(expanded)
         }
     }
 
@@ -329,20 +369,46 @@ impl Interpreter {
     pub(super) async fn expand_word_inner(
         &mut self,
         word: &Word,
-        mut prompts: Option<Vec<String>>,
+        prompts: Option<Vec<String>>,
     ) -> Result<String> {
+        // THREAT[TM-DOS-089]: pin the buffer future so the loop state machine
+        // lives on the heap, not in this frame. Every `$(...)` nesting level
+        // awaits through here; an inline child future grows per-level stack
+        // and aborts depth-32 under coverage instrumentation (cf. #1089).
+        Ok(Box::pin(self.expand_word_buffer(word, prompts, false))
+            .await?
+            .into_inner())
+    }
+
+    async fn expand_word_buffer(
+        &mut self,
+        word: &Word,
+        mut prompts: Option<Vec<String>>,
+        leased: bool,
+    ) -> Result<BudgetedString> {
         if prompts.is_none()
             && (Self::has_indirect_part(word) || Self::has_prompt_part(word))
             && let Some(expanded) = self.expand_word_special(word).await?
         {
-            return Ok(expanded);
+            return Ok(BudgetedString::try_from_string(
+                expanded,
+                leased.then_some(&self.execution_budget),
+            )?);
         }
-        let mut result = String::new();
-        // Keep command-substitution bytes charged until the complete word has
-        // been consumed; sibling substitutions otherwise evade live-byte caps.
+        let mut result = BudgetedString::new(leased.then_some(&self.execution_budget))?;
+        // Unleased words retain substitution charges until consumed. Leased
+        // words own their buffer charge, so temporary output charges end at copy.
         let mut substitution_leases = Vec::new();
 
+        // Check the metadata once: many unquoted expansions before a quoted
+        // suffix must not rescan the whole word for every output append.
+        let has_part_quotes = word.part_quoted.iter().any(|q| *q);
         for (idx, part) in word.parts.iter().enumerate() {
+            let part_quoted = if has_part_quotes {
+                word.part_quoted.get(idx).copied().unwrap_or(false)
+            } else {
+                word.quoted
+            };
             match part {
                 WordPart::BadSubstitution(text) => {
                     return Err(crate::error::Error::LineAbort(
@@ -360,24 +426,22 @@ impl Interpreter {
                         raw: None,
                     }
                     .to_string();
-                    result.push_str(&text);
+                    result.try_push_str(&text)?;
                 }
                 WordPart::Literal(s) => {
-                    // Tilde expansion (`~`, `~/x`, `x=~:~`); quoted literals
-                    // keep their tilde.
-                    match (!Self::part_is_quoted(word, idx) && s.contains('~'))
-                        .then(|| self.tilde_expand_word_literal(word, idx, s))
-                        .flatten()
-                    {
-                        Some(expanded) => result.push_str(&expanded),
-                        None => result.push_str(s),
-                    }
+                    self.append_literal_segment(
+                        &mut result,
+                        (word, idx, s),
+                        part_quoted,
+                        leased,
+                        &mut substitution_leases,
+                    )?;
                 }
                 WordPart::Variable(name) => {
                     if self.is_nounset() && !self.is_variable_set(name) {
                         self.nounset_error = Some(self.unbound_variable_diag(name));
                     }
-                    if name == "*" && word.quoted {
+                    if name == "*" && part_quoted {
                         let positional = self
                             .call_stack
                             .last()
@@ -391,13 +455,19 @@ impl Interpreter {
                                 .unwrap_or_default(),
                             None => " ".to_string(),
                         };
-                        Self::append_expansion_for_word(&mut result, word, &positional.join(&sep));
+                        Self::append_expansion_for_word(
+                            &mut result,
+                            word,
+                            part_quoted,
+                            &positional.join(&sep),
+                        )?;
                     } else {
                         Self::append_expansion_for_word(
                             &mut result,
                             word,
-                            &self.expand_variable(name),
-                        );
+                            part_quoted,
+                            &self.expand_variable_cow(name),
+                        )?;
                     }
                 }
                 WordPart::CommandSubstitution(commands) => {
@@ -410,9 +480,16 @@ impl Interpreter {
                     // THREAT[TM-DOS-089]: Delegate to Box::pin-ed helper to
                     // prevent stack growth proportional to nesting depth.
                     let trimmed = self.execute_cmd_subst(commands).await?;
-                    let appended_bytes = Self::expansion_appended_len(word, &trimmed);
-                    substitution_leases.push(self.execution_budget.lease_bytes(appended_bytes)?);
-                    Self::append_expansion_for_word(&mut result, word, &trimmed);
+                    let output_bytes = if leased {
+                        trimmed.capacity()
+                    } else {
+                        Self::expansion_appended_len(word, part_quoted, &trimmed)
+                    };
+                    let output_lease = self.execution_budget.lease_bytes(output_bytes)?;
+                    Self::append_expansion_for_word(&mut result, word, part_quoted, &trimmed)?;
+                    if !leased {
+                        substitution_leases.push(output_lease);
+                    }
                 }
                 WordPart::ArithmeticExpansion(expr) => {
                     let expanded_expr = if expr.contains("$(") || expr.contains('`') {
@@ -424,7 +501,12 @@ impl Interpreter {
                     let value = self
                         .try_evaluate_arithmetic_with_assign(&expanded_expr)
                         .map_err(|msg| crate::error::Error::LineAbort(self.arith_diag("", &msg)))?;
-                    Self::append_expansion_for_word(&mut result, word, &value.to_string());
+                    Self::append_expansion_for_word(
+                        &mut result,
+                        word,
+                        part_quoted,
+                        &value.to_string(),
+                    )?;
                 }
                 WordPart::Length(name) => {
                     let value = if let Some(bracket_pos) = name.find('[') {
@@ -440,13 +522,13 @@ impl Interpreter {
                         self.expand_array_access_part(arr_name, index_str)
                     } else if name == "@" || name == "*" {
                         // `${#@}` / `${#*}` count the positional parameters.
-                        result.push_str(&self.expand_variable("#"));
+                        result.try_push_str(&self.expand_variable("#"))?;
                         continue;
                     } else {
                         self.nounset_check_plain(name);
                         self.expand_variable(name)
                     };
-                    result.push_str(&self.shell_length(&value).to_string());
+                    result.try_push_str(&self.shell_length(&value).to_string())?;
                 }
                 WordPart::ParameterExpansion {
                     name,
@@ -508,7 +590,7 @@ impl Interpreter {
                     // Delegate to sync helper to avoid bloating the async state
                     // machine with Vec<String> locals (causes stack overflow at
                     // depth 32 in debug builds — see stack_overflow_regression_tests).
-                    self.operand_outer_unquoted = !Self::part_is_quoted(word, idx);
+                    self.operand_outer_unquoted = !part_quoted;
                     let colon_variant = self.star_colon_variant(
                         name,
                         &value,
@@ -524,7 +606,7 @@ impl Interpreter {
                         is_set,
                     );
                     self.operand_outer_unquoted = false;
-                    Self::append_expansion_for_word(&mut result, word, &expanded);
+                    Self::append_expansion_for_word(&mut result, word, part_quoted, &expanded)?;
                 }
                 WordPart::ArrayAccess { name, index } => {
                     // `${a[$(cmd)]}` in the source: the substitution runs
@@ -543,7 +625,7 @@ impl Interpreter {
                     } else {
                         self.expand_array_access_part(name, index)
                     };
-                    Self::append_expansion_for_word(&mut result, word, &value);
+                    Self::append_expansion_for_word(&mut result, word, part_quoted, &value)?;
                 }
                 WordPart::ArrayIndices { name, star } => {
                     let keys = self.array_keys(name);
@@ -552,7 +634,12 @@ impl Interpreter {
                     } else {
                         " ".to_string()
                     };
-                    Self::append_expansion_for_word(&mut result, word, &keys.join(&sep));
+                    Self::append_expansion_for_word(
+                        &mut result,
+                        word,
+                        part_quoted,
+                        &keys.join(&sep),
+                    )?;
                 }
                 WordPart::Substring {
                     name,
@@ -563,7 +650,7 @@ impl Interpreter {
                     let value = self
                         .substring_part(name, offset, length.as_deref())
                         .map_err(crate::error::Error::LineAbort)?;
-                    Self::append_expansion_for_word(&mut result, word, &value);
+                    Self::append_expansion_for_word(&mut result, word, part_quoted, &value)?;
                 }
                 WordPart::IndirectExpansion {
                     name,
@@ -578,7 +665,7 @@ impl Interpreter {
                         // Nameref without operator: ${!ref} is the name
                         // at the end of the nameref chain.
                         let target = self.resolve_nameref(name).to_string();
-                        Self::append_expansion_for_word(&mut result, word, &target);
+                        Self::append_expansion_for_word(&mut result, word, part_quoted, &target)?;
                     } else {
                         // Resolve the indirect target variable name
                         let resolved_name = if let Some(target) = nameref_target {
@@ -599,16 +686,31 @@ impl Interpreter {
                                 *colon_variant,
                                 is_set,
                             );
-                            Self::append_expansion_for_word(&mut result, word, &expanded);
+                            Self::append_expansion_for_word(
+                                &mut result,
+                                word,
+                                part_quoted,
+                                &expanded,
+                            )?;
                         } else {
                             // Plain indirect expansion (no operator)
                             if let Some(arr) = self.scoped.arrays.get(&resolved_name) {
                                 if let Some(first) = arr.get(&0) {
-                                    Self::append_expansion_for_word(&mut result, word, first);
+                                    Self::append_expansion_for_word(
+                                        &mut result,
+                                        word,
+                                        part_quoted,
+                                        first,
+                                    )?;
                                 }
                             } else {
                                 let value = self.expand_variable(&resolved_name);
-                                Self::append_expansion_for_word(&mut result, word, &value);
+                                Self::append_expansion_for_word(
+                                    &mut result,
+                                    word,
+                                    part_quoted,
+                                    &value,
+                                )?;
                             }
                         }
                     }
@@ -626,7 +728,12 @@ impl Interpreter {
                     } else {
                         " ".to_string()
                     };
-                    Self::append_expansion_for_word(&mut result, word, &names.join(&sep));
+                    Self::append_expansion_for_word(
+                        &mut result,
+                        word,
+                        part_quoted,
+                        &names.join(&sep),
+                    )?;
                 }
                 WordPart::ArrayLength(name) => {
                     let resolved = self.resolve_nameref(name);
@@ -637,24 +744,25 @@ impl Interpreter {
                     } else {
                         usize::from(self.scalar_value(resolved).is_some())
                     };
-                    result.push_str(&len.to_string());
+                    result.try_push_str(&len.to_string())?;
                 }
                 WordPart::ProcessSubstitution { commands, is_input } => {
                     let expanded = self
                         .expand_process_substitution(commands, *is_input)
                         .await?;
-                    Self::append_expansion_for_word(&mut result, word, &expanded);
+                    Self::append_expansion_for_word(&mut result, word, part_quoted, &expanded)?;
                 }
                 WordPart::Transformation { name, operator } => {
                     let value = match prompts.as_mut().and_then(Vec::pop) {
                         Some(decoded) if *operator == 'P' => decoded,
                         _ => self.transformation_part(name, *operator),
                     };
-                    Self::append_expansion_for_word(&mut result, word, &value);
+                    Self::append_expansion_for_word(&mut result, word, part_quoted, &value)?;
                 }
             }
         }
 
+        self.check_cancelled()?;
         Ok(result)
     }
 
@@ -794,26 +902,68 @@ impl Interpreter {
     /// Directory for the tilde prefix `~name`: `~` is `$HOME`, `~+` `$PWD`,
     /// `~-` `$OLDPWD`; `~root` and `~<sandbox user>` are the fixed homes.
     /// `None` keeps the text literal (unknown user, unset `OLDPWD`).
-    pub(super) fn tilde_dir(&self, prefix: &str) -> Option<String> {
+    /// Append one literal segment, tilde-expanding when unquoted and eligible.
+    /// Tilde expansion (`~`, `~/x`, `x=~:~`) runs during substitution: `~`
+    /// only expands at the start of the word or after `:`/`=` in an
+    /// assignment-like prefix. Quoted literals keep their tilde.
+    ///
+    /// Split out of `expand_word_buffer` so the per-level poll frame holds no
+    /// `BudgetedString` temporaries: every `$(...)` nesting level awaits
+    /// through that future, and heavy arm locals abort depth-32 under
+    /// coverage instrumentation (cf. #1089).
+    fn append_literal_segment(
+        &self,
+        result: &mut BudgetedString,
+        segment: (&Word, usize, &str),
+        part_quoted: bool,
+        leased: bool,
+        substitution_leases: &mut Vec<crate::limits::ExecutionBudgetLease>,
+    ) -> std::result::Result<(), crate::limits::LimitExceeded> {
+        // Small error type on purpose: every fallible op in here already
+        // reports LimitExceeded, and a lean Result keeps the caller's hot
+        // poll frame small. The caller converts to the shared Error once,
+        // outside this path (same Error::from(LimitExceeded) as `?` uses).
+        let (word, idx, s) = segment;
+        let expanded = if !part_quoted && s.contains('~') {
+            self.tilde_expand_word_literal(word, idx, s)?
+        } else {
+            None
+        };
+        if let Some(expanded) = expanded {
+            let tilde_lease = self.execution_budget.lease_bytes(expanded.len())?;
+            result.try_push_str(&expanded)?;
+            if !leased {
+                substitution_leases.push(tilde_lease);
+            }
+        } else {
+            result.try_push_str(s)?;
+        }
+        Ok(())
+    }
+
+    fn tilde_dir(&self, prefix: &str) -> Option<std::borrow::Cow<'_, str>> {
+        use std::borrow::Cow;
         let lookup = |name: &str| {
             self.scoped
                 .variables
                 .get(name)
                 .or_else(|| self.env.get(name))
-                .cloned()
+                .map(|value| Cow::Borrowed(value.as_str()))
         };
         match prefix {
             "" => Some(
                 self.env
                     .get("HOME")
                     .or_else(|| self.scoped.variables.get("HOME"))
-                    .cloned()
-                    .unwrap_or_else(|| format!("/home/{}", self.tilde_user)),
+                    .map(|value| Cow::Borrowed(value.as_str()))
+                    .unwrap_or_else(|| Cow::Owned(format!("/home/{}", self.tilde_user))),
             ),
-            "+" => Some(lookup("PWD").unwrap_or_else(|| self.cwd.display().to_string())),
+            "+" => {
+                Some(lookup("PWD").unwrap_or_else(|| Cow::Owned(self.cwd.display().to_string())))
+            }
             "-" => lookup("OLDPWD"),
-            "root" => Some("/root".to_string()),
-            user if user == &*self.tilde_user => Some(format!("/home/{user}")),
+            "root" => Some(Cow::Borrowed("/root")),
+            user if user == &*self.tilde_user => Some(Cow::Owned(format!("/home/{user}"))),
             _ => None,
         }
     }
@@ -830,13 +980,21 @@ impl Interpreter {
         starts: &[usize],
         after_colons: bool,
         word_continues: bool,
-    ) -> Option<String> {
-        let first = *starts.first()?;
-        let mut out = String::new();
+    ) -> std::result::Result<Option<BudgetedString>, crate::limits::LimitExceeded> {
+        let Some(&first) = starts.first() else {
+            return Ok(None);
+        };
+        // THREAT[TM-DOS-134]: directory length times prefix count is untrusted.
+        // Reserve before allocation; copying bytes also polls deadline/cancellation.
+        self.execution_budget.consume_work(s.len() as u64)?;
+        let mut out = BudgetedString::new(Some(&self.execution_budget))?;
         let mut copied = 0;
         let mut pos = first;
         let bytes = s.as_bytes();
         while pos < s.len() {
+            if pos.is_multiple_of(1_024) {
+                self.execution_budget.check()?;
+            }
             let eligible =
                 starts.contains(&pos) || (after_colons && pos > first && bytes[pos - 1] == b':');
             if eligible && bytes[pos] == b'~' {
@@ -847,8 +1005,10 @@ impl Interpreter {
                 if (end < s.len() || !word_continues)
                     && let Some(dir) = self.tilde_dir(&s[pos + 1..end])
                 {
-                    out.push_str(&s[copied..pos]);
-                    out.push_str(&dir);
+                    self.execution_budget.consume_work((pos - copied) as u64)?;
+                    self.execution_budget.consume_work(dir.len() as u64)?;
+                    out.try_push_str(&s[copied..pos])?;
+                    out.try_push_str(&dir)?;
                     copied = end;
                     pos = end;
                     continue;
@@ -857,16 +1017,23 @@ impl Interpreter {
             pos += 1;
         }
         if copied == 0 {
-            return None;
+            return Ok(None);
         }
-        out.push_str(&s[copied..]);
-        Some(out)
+        self.execution_budget
+            .consume_work((s.len() - copied) as u64)?;
+        out.try_push_str(&s[copied..])?;
+        Ok(Some(out))
     }
 
     /// Tilde expansion for literal part `idx` of `word`: a leading `~`, and
     /// in a word that looks like an assignment (`x=~:~`, as an argument to
     /// `echo` or `local`) the `~` after its `=` and after each `:`.
-    fn tilde_expand_word_literal(&self, word: &Word, idx: usize, s: &str) -> Option<String> {
+    fn tilde_expand_word_literal(
+        &self,
+        word: &Word,
+        idx: usize,
+        s: &str,
+    ) -> std::result::Result<Option<BudgetedString>, crate::limits::LimitExceeded> {
         let word_continues = idx + 1 < word.parts.len();
         let assign_eq = match word.parts.first() {
             Some(WordPart::Literal(first)) if Self::is_assignment_prefix(first) => first.find('='),
@@ -879,9 +1046,13 @@ impl Interpreter {
             }
             return self.tilde_expand_literal(s, &starts, assign_eq.is_some(), word_continues);
         }
-        assign_eq?;
+        if assign_eq.is_none() {
+            return Ok(None);
+        }
         // Only `:` inside this part can start a prefix here.
-        let colon = s.find(':')?;
+        let Some(colon) = s.find(':') else {
+            return Ok(None);
+        };
         self.tilde_expand_literal(s, &[colon + 1], true, word_continues)
     }
 
@@ -932,7 +1103,13 @@ impl Interpreter {
         })
     }
 
-    pub(super) fn tilde_assignment_value<'w>(&self, word: &'w Word) -> std::borrow::Cow<'w, Word> {
+    pub(super) fn tilde_assignment_value<'w>(
+        &self,
+        word: &'w Word,
+    ) -> Result<(
+        std::borrow::Cow<'w, Word>,
+        Vec<crate::limits::ExecutionBudgetLease>,
+    )> {
         use std::borrow::Cow;
         let quoted_at = |i: usize| Self::part_is_quoted(word, i);
         let has_tilde = word.parts.iter().enumerate().any(|(i, p)| match p {
@@ -941,8 +1118,9 @@ impl Interpreter {
             _ => false,
         });
         if !has_tilde {
-            return Cow::Borrowed(word);
+            return Ok((Cow::Borrowed(word), Vec::new()));
         }
+        let mut leases = Vec::new();
         let mut out = word.clone();
         out.part_quoted = (0..word.parts.len()).map(quoted_at).collect();
         let n = word.parts.len();
@@ -961,6 +1139,9 @@ impl Interpreter {
             {
                 // `x=${undef-~:~}`: the operand of an assignment value
                 // expands `~` after each `:` too.
+                // THREAT[TM-DOS-134]: budget the rebuilt operand the
+                // declaration retains across expansion.
+                leases.push(self.execution_budget.lease_bytes(expanded.len())?);
                 out.parts[i] = WordPart::ParameterExpansion {
                     name: name.clone(),
                     operator: op.clone(),
@@ -987,13 +1168,17 @@ impl Interpreter {
                 starts.push(c + 1);
             }
             starts.sort_unstable();
-            if let Some(expanded) = self.tilde_expand_literal(s, &starts, true, i + 1 < n) {
+            if let Some(expanded) = self.tilde_expand_literal(s, &starts, true, i + 1 < n)? {
+                // The preprocessed literal and expand_word's copy coexist.
+                leases.push(self.execution_budget.lease_bytes(expanded.len())?);
+                let (expanded, lease) = expanded.into_parts();
+                leases.extend(lease);
                 out.parts[i] = WordPart::Literal(expanded);
             }
             // Done with this part's tildes (`x=a=~` keeps its `~`).
             out.part_quoted[i] = true;
         }
-        Cow::Owned(out)
+        Ok((Cow::Owned(out), leases))
     }
 
     /// Expand a word to multiple fields (for array iteration and command args)
@@ -1279,6 +1464,7 @@ impl Interpreter {
         let ifs_null = matches!(self.scoped.variables.get("IFS"), Some(v) if v.is_empty());
         // A null IFS never splits, but unquoted `$@`/`$*` still yield one
         // field per parameter: each starts a new group of segments.
+        let mut tilde_leases = Vec::new();
         let mut groups: Vec<Vec<(String, bool, bool)>> = vec![Vec::new()];
         for (idx, part) in word.parts.iter().enumerate() {
             let quoted = word.part_quoted.get(idx).copied().unwrap_or(word.quoted);
@@ -1342,7 +1528,10 @@ impl Interpreter {
                     let segment = match p {
                         // Unquoted operand text is expansion output: it splits.
                         WordPart::Literal(s) if !q => (s.clone(), false, false),
-                        _ => self.mixed_word_segment(&inner, i, p, q).await?,
+                        _ => {
+                            self.mixed_word_segment(&inner, i, p, q, &mut tilde_leases)
+                                .await?
+                        }
                     };
                     if let Some(group) = groups.last_mut() {
                         group.push(segment);
@@ -1350,7 +1539,9 @@ impl Interpreter {
                 }
                 continue;
             }
-            let segment = self.mixed_word_segment(word, idx, part, quoted).await?;
+            let segment = self
+                .mixed_word_segment(word, idx, part, quoted, &mut tilde_leases)
+                .await?;
             if let Some(group) = groups.last_mut() {
                 group.push(segment);
             }
@@ -1378,14 +1569,23 @@ impl Interpreter {
         idx: usize,
         part: &WordPart,
         part_is_quoted: bool,
+        tilde_leases: &mut Vec<crate::limits::ExecutionBudgetLease>,
     ) -> Result<(String, bool, bool)> {
         let part_has_expansion = Self::is_field_split_expansion(part);
         let value = if let WordPart::Literal(s) = part {
             // A leading `~` sees the whole word (`~$v` stays literal).
-            (idx == 0 && !part_is_quoted && s.contains('~'))
-                .then(|| self.tilde_expand_word_literal(word, 0, s))
-                .flatten()
-                .unwrap_or_else(|| s.clone())
+            let expanded = if idx == 0 && !part_is_quoted && s.contains('~') {
+                self.tilde_expand_word_literal(word, 0, s)?
+            } else {
+                None
+            };
+            if let Some(expanded) = expanded {
+                let (value, lease) = expanded.into_parts();
+                tilde_leases.extend(lease);
+                value
+            } else {
+                s.clone()
+            }
         } else {
             let single = Word {
                 parts: vec![part.clone()],
@@ -1503,6 +1703,7 @@ impl Interpreter {
             return Ok(None);
         }
         // Each field under construction is a list of segments.
+        let mut tilde_leases = Vec::new();
         let mut fields: Vec<Vec<(String, bool, bool)>> = vec![Vec::new()];
         for (idx, part) in word.parts.iter().enumerate() {
             let q = part_quoted(idx);
@@ -1522,7 +1723,9 @@ impl Interpreter {
                 }
                 continue;
             }
-            let segment = self.mixed_word_segment(word, idx, part, q).await?;
+            let segment = self
+                .mixed_word_segment(word, idx, part, q, &mut tilde_leases)
+                .await?;
             if let Some(field) = fields.last_mut() {
                 field.push(segment);
             }
@@ -2064,19 +2267,35 @@ impl Interpreter {
             self.limits.max_parser_operations,
         );
         let mut result = String::new();
+        let mut operand_leases = Vec::new();
         let mut in_marked = false;
         for (idx, part) in word.parts.iter().enumerate() {
             match part {
                 WordPart::Literal(s) => {
                     // `${x:-~}`, `${x#~/}`: a leading unquoted `~`.
-                    let tilde_expanded = (tilde && idx == 0 && !force_quoted)
-                        .then(|| {
-                            let seg_end = quote_mark.and_then(|m| s.find(m)).unwrap_or(s.len());
-                            let continues = seg_end < s.len() || word.parts.len() > 1;
-                            self.tilde_expand_literal(&s[..seg_end], &[0], false, continues)
-                                .map(|e| format!("{e}{}", &s[seg_end..]))
-                        })
-                        .flatten();
+                    let tilde_expanded = if tilde && idx == 0 && !force_quoted {
+                        let seg_end = quote_mark.and_then(|m| s.find(m)).unwrap_or(s.len());
+                        let continues = seg_end < s.len() || word.parts.len() > 1;
+                        let expansion = (|| {
+                            let Some(mut expanded) =
+                                self.tilde_expand_literal(&s[..seg_end], &[0], false, continues)?
+                            else {
+                                return Ok(None);
+                            };
+                            expanded.try_push_str(&s[seg_end..])?;
+                            operand_leases.push(self.execution_budget.lease_bytes(expanded.len())?);
+                            Ok::<_, crate::limits::LimitExceeded>(Some(expanded))
+                        })();
+                        match expansion {
+                            Ok(expanded) => expanded,
+                            Err(error) => {
+                                self.memory_limit_error.get_or_insert(error);
+                                return String::new();
+                            }
+                        }
+                    } else {
+                        None
+                    };
                     let text = tilde_expanded.as_deref().unwrap_or(s);
                     if repl {
                         Self::push_replacement_literal(
@@ -2566,18 +2785,35 @@ impl Interpreter {
                 .is_some_and(|f| f.is_ascii_alphabetic() || f == '_')
                 && c.all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
         };
-        let valid = ident(&value)
-            || (!value.is_empty() && value.bytes().all(|b| b.is_ascii_digit()))
-            || matches!(value.as_str(), "@" | "*" | "#" | "?" | "$" | "!" | "-")
-            || value.find('[').is_some_and(|open| {
-                ident(&value[..open])
-                    && value.ends_with(']')
-                    && value.len() > open + 2
-                    && !value.contains("$(")
-                    && !value.contains('`')
-                    && !value.contains("<(")
-                    && !value.contains(">(")
-            });
+        // TM-RES-INDIRECT: a bracket indirect target is only valid when
+        // the first complete `[...]` reference consumes the entire value.
+        // Modern bash (5.x) rejects trailing operator/nesting text with
+        // `invalid variable name` (older 3.2 ignored it); rejection also
+        // keeps a nested `${!...}` from ever reaching the desugar re-parse
+        // below, which re-entered indirect expansion without bound
+        // (`r='a[0]:-${!r}]'` overflowed the stack). The boundary tracks
+        // nested brackets and quoted text, so valid nested subscripts
+        // (`a[b[0]]`) resolve whole, while `a[0]:-x]`, `a[0][1]`, and
+        // unbalanced shapes are refused. Plain names, `a[$i]`, and `a[@]`
+        // have no trailing text and pass through unchanged.
+        let valid_boundary = match value.find('[') {
+            Some(open) => crate::parser::parameter_subscript_end(&value, open)
+                .is_some_and(|end| end == value.len()),
+            None => true,
+        };
+        let valid = valid_boundary
+            && (ident(&value)
+                || (!value.is_empty() && value.bytes().all(|b| b.is_ascii_digit()))
+                || matches!(value.as_str(), "@" | "*" | "#" | "?" | "$" | "!" | "-")
+                || value.find('[').is_some_and(|open| {
+                    ident(&value[..open])
+                        && value.ends_with(']')
+                        && value.len() > open + 2
+                        && !value.contains("$(")
+                        && !value.contains('`')
+                        && !value.contains("<(")
+                        && !value.contains(">(")
+                }));
         if !valid {
             // THREAT[TM-DOS-130]: echo a bounded prefix of the bad target.
             let shown: String = value.chars().take(256).collect();
@@ -2643,11 +2879,13 @@ impl Interpreter {
                 suffix
             };
             let text = format!("${{{target}{suffix}}}");
-            let parsed = Parser::parse_word_string_with_limits(
+            let parsed = Parser::parse_indirect_word(
                 &text,
                 self.limits.max_ast_depth,
                 self.limits.max_parser_operations,
-            );
+                self.counters.subst_depth,
+                self.execution_budget.clone(),
+            )?;
             let [new_part] = <[WordPart; 1]>::try_from(parsed.parts).map_err(|_| {
                 crate::error::Error::LineAbort(self.diag(format!("{text}: bad substitution\n")))
             })?;
@@ -2725,9 +2963,13 @@ impl Interpreter {
             Some(expr) => {
                 let n = self.evaluate_arithmetic(expr);
                 if n < 0 {
-                    return Err(
-                        self.arith_diag("", &format!("{}: substring expression < 0", expr.trim()))
-                    );
+                    return Err(self.arith_diag(
+                        "",
+                        &format!(
+                            "{}: substring expression < 0",
+                            arithmetic::diag_echo(expr.trim())
+                        ),
+                    ));
                 }
                 usize::try_from(n).unwrap_or(usize::MAX)
             }
@@ -2780,9 +3022,13 @@ impl Interpreter {
                 (true, Some(s), Some(e)) if e >= s => return Ok((s, e)),
                 (true, None, _) => return Ok((0, 0)),
                 _ => {
-                    return Err(
-                        self.arith_diag("", &format!("{}: substring expression < 0", expr.trim()))
-                    );
+                    return Err(self.arith_diag(
+                        "",
+                        &format!(
+                            "{}: substring expression < 0",
+                            arithmetic::diag_echo(expr.trim())
+                        ),
+                    ));
                 }
             }
         }
@@ -3650,16 +3896,31 @@ mod expansion_charge_tests {
         ];
         for quoted in [false, true] {
             for has_unquoted_glob in [false, true] {
-                let w = word(quoted, has_unquoted_glob);
-                for value in values {
-                    let mut appended = String::new();
-                    Interpreter::append_expansion_for_word(&mut appended, &w, value);
-                    assert_eq!(
-                        Interpreter::expansion_appended_len(&w, value),
-                        appended.len(),
-                        "charge != appended for {value:?} \
+                for part_quoted in [Vec::new(), vec![true, false], vec![false, true]] {
+                    let mut w = word(quoted, has_unquoted_glob);
+                    w.part_quoted = part_quoted;
+                    for idx in 0..2 {
+                        for value in values {
+                            let mut appended = BudgetedString::new(None).unwrap();
+                            Interpreter::append_expansion_for_word(
+                                &mut appended,
+                                &w,
+                                Interpreter::part_is_quoted(&w, idx),
+                                value,
+                            )
+                            .unwrap();
+                            assert_eq!(
+                                Interpreter::expansion_appended_len(
+                                    &w,
+                                    Interpreter::part_is_quoted(&w, idx),
+                                    value
+                                ),
+                                appended.len(),
+                                "charge != appended for {value:?} \
                          (quoted={quoted}, has_unquoted_glob={has_unquoted_glob})"
-                    );
+                            );
+                        }
+                    }
                 }
             }
         }

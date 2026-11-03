@@ -1,0 +1,63 @@
+{
+  "eval": "bashkit_generate",
+  "sample": "gen_log_rotate",
+  "target": "openai/gpt-6.1-sol",
+  "input": [
+    "Write a bash script that rotates numbered log files.\n\nStarting files in /home/eval/logs (nothing else is in that directory):\n--- /home/eval/logs/app.log ---\nline c\n--- end ---\n--- /home/eval/logs/app.log.1 ---\nline b\n--- end ---\n--- /home/eval/logs/app.log.2 ---\nline a\n--- end ---\n--- /home/eval/logs/app.log.3 ---\nline 0\n--- end ---\n--- /home/eval/logs/app.log.old ---\nmanual backup\n--- end ---\n--- /home/eval/logs/worker.log ---\nw2\n--- end ---\n--- /home/eval/logs/worker.log.1 ---\nw1\n--- end ---\n\nDefine a shell function `rotate LOGFILE KEEP` implementing classic numbered rotation:\n- `LOGFILE.N` becomes `LOGFILE.N+1` for every existing N, highest first, so nothing is overwritten.\n- Afterwards no numbered file above KEEP may remain (delete any that would end up numbered higher than KEEP).\n- `LOGFILE` itself becomes `LOGFILE.1`, and a new empty `LOGFILE` is created.\n- Files that are not exactly `LOGFILE` or `LOGFILE.<number>` (for example `app.log.old`) must not be touched.\n\nThen call it twice: `rotate /home/eval/logs/app.log 3` and `rotate /home/eval/logs/worker.log 2`. Exit 0."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "9/9 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "```bash\n#!/bin/bash\nset -e\n\nrotate() {\n    local logfile=$1 keep=$2 file suffix n next\n    local -a numbers=()\n\n    [[ \"$keep\" =~ ^[0-9]+$ ]] || return 1\n    keep=$((10#$keep))\n\n    for file in \"$logfile\".*; do\n        [[ -e \"$file\" || -L \"$file\" ]] || continue\n        suffix=${file#\"$logfile\".}\n        [[ \"$suffix\" =~ ^[0-9]+$ ]] || continue\n        numbers+=(\"$suffix\")\n    done\n\n    if ((${#numbers[@]})); then\n        for suffix in $(printf '%s\\n' \"${numbers[@]}\" | sort -nr); do\n            n=$((10#$suffix))\n            if ((n >= keep)); then\n                rm -f -- \"$logfile.$suffix\"\n            else\n                next=$((n + 1))\n                mv -- \"$logfile.$suffix\" \"$logfile.$next\"\n            fi\n        done\n    fi\n\n    if ((keep > 0)); then\n        mv -- \"$logfile\" \"$logfile.1\"\n    else\n        rm -f -- \"$logfile\"\n    fi\n    : > \"$logfile\"\n}\n\nrotate /home/eval/logs/app.log 3\nrotate /home/eval/logs/worker.log 2\nexit 0\n```",
+    "iterations": 1,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "#!/bin/bash\nset -e\n\nrotate() {\n    local logfile=$1 keep=$2 file suffix n next\n    local -a numbers=()\n\n    [[ \"$keep\" =~ ^[0-9]+$ ]] || return 1\n    keep=$((10#$keep))\n\n    for file in \"$logfile\".*; do\n        [[ -e \"$file\" || -L \"$file\" ]] || continue\n        suffix=${file#\"$logfile\".}\n        [[ \"$suffix\" =~ ^[0-9]+$ ]] || continue\n        numbers+=(\"$suffix\")\n    done\n\n    if ((${#numbers[@]})); then\n        for suffix in $(printf '%s\\n' \"${numbers[@]}\" | sort -nr); do\n            n=$((10#$suffix))\n            if ((n >= keep)); then\n                rm -f -- \"$logfile.$suffix\"\n            else\n                next=$((n + 1))\n                mv -- \"$logfile.$suffix\" \"$logfile.$next\"\n            fi\n        done\n    fi\n\n    if ((keep > 0)); then\n        mv -- \"$logfile\" \"$logfile.1\"\n    else\n        rm -f -- \"$logfile\"\n    fi\n    : > \"$logfile\"\n}\n\nrotate /home/eval/logs/app.log 3\nrotate /home/eval/logs/worker.log 2\nexit 0\n"
+    ],
+    "usage": {
+      "input_tokens": 599,
+      "output_tokens": 569,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 15231
+    },
+    "metrics": {
+      "exec_ms": 15.0,
+      "exit_code": 0.0,
+      "extracted": 1.0,
+      "generate_ms": 15216.0,
+      "script_bytes": 936.0,
+      "script_found": 1.0,
+      "timed_out": 0.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "#!/bin/bash\nset -e\n\nrotate() {\n    local logfile=$1 keep=$2 file suffix n next\n    local -a numbers=()\n\n    [[ \"$keep\" =~ ^[0-9]+$ ]] || return 1\n    keep=$((10#$keep))\n\n    for file in \"$logfile\".*; do\n        [[ -e \"$file\" || -L \"$file\" ]] || continue\n        suffix=${file#\"$logfile\".}\n        [[ \"$suffix\" =~ ^[0-9]+$ ]] || continue\n        numbers+=(\"$suffix\")\n    done\n\n    if ((${#numbers[@]})); then\n        for suffix in $(printf '%s\\n' \"${numbers[@]}\" | sort -nr); do\n            n=$((10#$suffix))\n            if ((n >= keep)); then\n                rm -f -- \"$logfile.$suffix\"\n            else\n                next=$((n + 1))\n                mv -- \"$logfile.$suffix\" \"$logfile.$next\"\n            fi\n        done\n    fi\n\n    if ((keep > 0)); then\n        mv -- \"$logfile\" \"$logfile.1\"\n    else\n        rm -f -- \"$logfile\"\n    fi\n    : > \"$logfile\"\n}\n\nrotate /home/eval/logs/app.log 3\nrotate /home/eval/logs/worker.log 2\nexit 0\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          }
+        ]
+      },
+      "generate": {
+        "extraction": "fenced",
+        "timed_out": false
+      }
+    }
+  },
+  "skipped": false
+}

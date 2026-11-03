@@ -8,6 +8,90 @@ fn bytes(value: &[u8]) -> BashkitBytes {
     }
 }
 
+struct LiveOutput {
+    bash: *mut Bashkit,
+    bytes: Vec<u8>,
+    reject: bool,
+    reentry: Option<BashkitStatus>,
+}
+
+unsafe extern "C" fn live_output(
+    context: *mut std::ffi::c_void,
+    stream: u32,
+    chunk: BashkitBytes,
+) -> u32 {
+    let state = unsafe { &mut *(context as *mut LiveOutput) };
+    assert!(stream == 1 || stream == 2);
+    state.bytes.extend(unsafe { borrowed(chunk) });
+    let mut result = ptr::null_mut();
+    let mut error = ptr::null_mut();
+    state.reentry =
+        Some(unsafe { bashkit_execute(state.bash, bytes(b":"), &mut result, &mut error) });
+    unsafe { bashkit_error_free(error) };
+    u32::from(state.reject)
+}
+
+#[test]
+fn streaming_bytes_capture_and_reentry_contract() {
+    unsafe {
+        let mut bash = ptr::null_mut();
+        let mut error = ptr::null_mut();
+        assert_eq!(
+            bashkit_create_default(&mut bash, &mut error),
+            BashkitStatus::Ok
+        );
+        let mut output = LiveOutput {
+            bash,
+            bytes: Vec::new(),
+            reject: false,
+            reentry: None,
+        };
+        let mut result = ptr::null_mut();
+        assert_eq!(
+            bashkit_execute_streaming(
+                bash,
+                bytes(b"printf '\\0\\377hello'"),
+                3,
+                Some(live_output),
+                (&mut output as *mut LiveOutput).cast(),
+                &mut result,
+                &mut error
+            ),
+            BashkitStatus::Ok
+        );
+        assert_eq!(output.bytes, b"\0\xffhello");
+        assert_eq!(output.reentry, Some(BashkitStatus::InvalidArgument));
+        assert_eq!(borrowed(bashkit_result_stdout(result)), b"\0\xffh");
+        assert_ne!(
+            bashkit_result_flags(result) & BASHKIT_RESULT_STDOUT_TRUNCATED,
+            0
+        );
+        bashkit_result_free(result);
+        output.reject = true;
+        assert_ne!(
+            bashkit_execute_streaming(
+                bash,
+                bytes(b"echo hello"),
+                0,
+                Some(live_output),
+                (&mut output as *mut LiveOutput).cast(),
+                &mut result,
+                &mut error
+            ),
+            BashkitStatus::Ok
+        );
+        bashkit_error_free(error);
+        assert!(result.is_null());
+        assert_eq!(
+            bashkit_execute(bash, bytes(b"echo recovered"), &mut result, &mut error),
+            BashkitStatus::Ok
+        );
+        assert_eq!(borrowed(bashkit_result_stdout(result)), b"recovered\n");
+        bashkit_result_free(result);
+        bashkit_free(bash);
+    }
+}
+
 unsafe fn borrowed(value: BashkitBytes) -> Vec<u8> {
     if value.len == 0 {
         Vec::new()

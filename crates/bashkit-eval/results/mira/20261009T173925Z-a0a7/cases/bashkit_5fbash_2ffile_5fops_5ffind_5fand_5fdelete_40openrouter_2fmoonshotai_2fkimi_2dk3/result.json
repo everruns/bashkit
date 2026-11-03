@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "file_ops_find_and_delete",
+  "target": "openrouter/moonshotai/kimi-k3",
+  "input": [
+    "Find all .tmp files under /workspace and delete them. Print the number of .tmp files deleted."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "4/4 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Done. **3 `.tmp` files were deleted:**\n\n- `/workspace/a.tmp`\n- `/workspace/sub/c.tmp`\n- `/workspace/sub/deep/d.tmp`\n\nA follow-up scan confirms no `.tmp` files remain under `/workspace`. Other files (e.g., `b.txt`) were left untouched.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "ls -la /workspace 2>&1 | head -20; echo \"---\"; find /workspace -type f -name \"*.tmp\" 2>&1",
+      "count=$(find /workspace -type f -name \"*.tmp\" | wc -l)\nfind /workspace -type f -name \"*.tmp\" -delete\necho \"Deleted .tmp files: $count\"\necho \"Remaining .tmp files: $(find /workspace -type f -name '*.tmp' | wc -l)\""
+    ],
+    "usage": {
+      "input_tokens": 2119,
+      "output_tokens": 325,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 6440
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /workspace 2>&1 | head -20; echo \"---\"; find /workspace -type f -name \"*.tmp\" 2>&1",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--        5 2026-10-09 17:39 a.tmp\n-rw-r--r--        7 2026-10-09 17:39 b.txt\ndrwxr-xr-x        0 2026-10-09 17:39 sub\n---\n/workspace/a.tmp\n/workspace/sub/c.tmp\n/workspace/sub/deep/d.tmp\n"
+          },
+          {
+            "commands": "count=$(find /workspace -type f -name \"*.tmp\" | wc -l)\nfind /workspace -type f -name \"*.tmp\" -delete\necho \"Deleted .tmp files: $count\"\necho \"Remaining .tmp files: $(find /workspace -type f -name '*.tmp' | wc -l)\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Deleted .tmp files: 3\nRemaining .tmp files: 0\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "rt_py_jsonl_flatten",
+  "target": "openai/gpt-6.1-sol",
+  "input": [
+    "Convert /data/events.jsonl (one JSON value per line) to /out/events.csv.\n- One CSV row per line that is a JSON object, in input order. Blank or whitespace-only lines are skipped silently.\n- Nested objects are flattened with '.' ({\"a\":{\"b\":1}} gives column a.b); an empty nested object adds no column. Arrays are not flattened.\n- Columns: the union of flattened keys over all rows, sorted by plain string comparison, as the header row.\n- Cells: strings verbatim; booleans true/false; null or missing key -> empty; numbers as Python's json.dumps prints the parsed value (2.50 -> 2.5, 1e3 -> 1000.0); arrays as compact JSON with no spaces and non-ASCII characters kept literally.\n- CSV uses ',' and '\\n' line endings and quotes a field only when it contains a comma, double quote or newline (embedded quotes doubled).\nWrite /out/errors.txt with one line `line N` (1-based line number) for every non-blank line that is not valid JSON or not a JSON object."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Created:\n- `/out/events.csv`\n- `/out/errors.txt`",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "mkdir -p /out\ncat > /out/convert_events.py <<'PY'\nimport json\n\nrows = []\ncolumns = set()\nerrors = []\n\ndef flatten(obj, prefix='', result=None):\n    if result is None:\n        result = {}\n    for key, value in obj.items():\n        name = prefix + '.' + key if prefix else key\n        if isinstance(value, dict):\n            flatten(value, name, result)\n        else:\n            result[name] = value\n    return result\n\ndef reject_constant(value):\n    raise ValueError('Invalid JSON constant: ' + value)\n\nwith open('/data/events.jsonl', encoding='utf-8') as source:\n    for number, line in enumerate(source, 1):\n        if not line.strip():\n            continue\n        try:\n            obj = json.loads(line, parse_constant=reject_constant)\n        except (ValueError, RecursionError):\n            errors.append(f'line {number}\\n')\n            continue\n        if not isinstance(obj, dict):\n            errors.append(f'line {number}\\n')\n            continue\n        row = flatten(obj)\n        rows.append(row)\n        columns.update(row)\n\ndef cell(value):\n    if value is None:\n        return ''\n    if isinstance(value, str):\n        return value\n    if isinstance(value, bool):\n        return 'true' if value else 'false'\n    if isinstance(value, list):\n        return json.dumps(value, ensure_ascii=False, separators=(',', ':'))\n    return json.dumps(value)\n\ndef quote(value):\n    if any(c in value for c in ',\"\\n'):\n        return '\"' + value.replace('\"', '\"\"') + '\"'\n    return value\n\nheader = sorted(columns)\nwith open('/out/events.csv', 'w', encoding='utf-8', newline='') as target:\n    target.write(','.join(quote(key) for key in header) + '\\n')\n    for row in rows:\n        target.write(','.join(quote(cell(row.get(key))) for key in header) + '\\n')\nwith open('/out/errors.txt', 'w', encoding='utf-8', newline='') as target:\n    target.writelines(errors)\nPY\npython /out/convert_events.py\nls -l /out/events.csv /out/errors.txt",
+      "python - <<'PY'\np = '/out/convert_events.py'\ns = open(p).read().replace(\"def flatten(obj, prefix='', result=None):\", \"def flatten(obj, prefix=None, result=None):\").replace(\"name = prefix + '.' + key if prefix else key\", \"name = prefix + '.' + key if prefix is not None else key\")\nopen(p, 'w').write(s)\nPY\npython /out/convert_events.py\nrm /out/convert_events.py"
+    ],
+    "usage": {
+      "input_tokens": 3200,
+      "output_tokens": 739,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 15013
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "mkdir -p /out\ncat > /out/convert_events.py <<'PY'\nimport json\n\nrows = []\ncolumns = set()\nerrors = []\n\ndef flatten(obj, prefix='', result=None):\n    if result is None:\n        result = {}\n    for key, value in obj.items():\n        name = prefix + '.' + key if prefix else key\n        if isinstance(value, dict):\n            flatten(value, name, result)\n        else:\n            result[name] = value\n    return result\n\ndef reject_constant(value):\n    raise ValueError('Invalid JSON constant: ' + value)\n\nwith open('/data/events.jsonl', encoding='utf-8') as source:\n    for number, line in enumerate(source, 1):\n        if not line.strip():\n            continue\n        try:\n            obj = json.loads(line, parse_constant=reject_constant)\n        except (ValueError, RecursionError):\n            errors.append(f'line {number}\\n')\n            continue\n        if not isinstance(obj, dict):\n            errors.append(f'line {number}\\n')\n            continue\n        row = flatten(obj)\n        rows.append(row)\n        columns.update(row)\n\ndef cell(value):\n    if value is None:\n        return ''\n    if isinstance(value, str):\n        return value\n    if isinstance(value, bool):\n        return 'true' if value else 'false'\n    if isinstance(value, list):\n        return json.dumps(value, ensure_ascii=False, separators=(',', ':'))\n    return json.dumps(value)\n\ndef quote(value):\n    if any(c in value for c in ',\"\\n'):\n        return '\"' + value.replace('\"', '\"\"') + '\"'\n    return value\n\nheader = sorted(columns)\nwith open('/out/events.csv', 'w', encoding='utf-8', newline='') as target:\n    target.write(','.join(quote(key) for key in header) + '\\n')\n    for row in rows:\n        target.write(','.join(quote(cell(row.get(key))) for key in header) + '\\n')\nwith open('/out/errors.txt', 'w', encoding='utf-8', newline='') as target:\n    target.writelines(errors)\nPY\npython /out/convert_events.py\nls -l /out/events.csv /out/errors.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--      284 2026-10-12 18:58 /out/events.csv\n-rw-r--r--       22 2026-10-12 18:58 /out/errors.txt\n"
+          },
+          {
+            "commands": "python - <<'PY'\np = '/out/convert_events.py'\ns = open(p).read().replace(\"def flatten(obj, prefix='', result=None):\", \"def flatten(obj, prefix=None, result=None):\").replace(\"name = prefix + '.' + key if prefix else key\", \"name = prefix + '.' + key if prefix is not None else key\")\nopen(p, 'w').write(s)\nPY\npython /out/convert_events.py\nrm /out/convert_events.py",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

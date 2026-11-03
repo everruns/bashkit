@@ -1,0 +1,85 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "hard_trap_publish",
+  "target": "anthropic/claude-opus-5-5",
+  "input": [
+    "In the git repository /home/eval/publisher, bin/publish violates the contract in its header comment (wrong exit codes, leftover temporary files, sloppy validation). Fix bin/publish so `make test` passes; do not edit tests/. Then use it to publish /home/eval/publisher/etc/prod.conf to /home/eval/publisher/site/config.txt (run `bash bin/publish etc/prod.conf site/config.txt` from /home/eval/publisher), and commit your fix with a message starting with `fix:`."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I fixed `bin/publish` so it follows its header comment, and `make test` now passes. I then published `etc/prod.conf` to `site/config.txt` (exit code 0, nothing printed) and committed the fix as `fix: make bin/publish honor its exit-code, validation and temp-file contract`. That commit contains only `bin/publish`.\n\n**What was wrong and what changed:**\n- **Exit codes:** A wrong number of arguments now exits with 2 instead of 1. If the folder `DEST` goes in doesn't exist, it now exits with 4 before doing anything, instead of failing with some other error.\n- **Validation:** Before, any line that merely started with a lowercase letter or underscore was accepted, so `max conns=5` got through. Now the key must match `^[a-z_]+=`, and a bad line prints `publish: bad line N` and exits with 3.\n- **Last line without a newline:** It used to be silently dropped. It's now read; `feature_flags=a=1,b=0` in `prod.conf` is exactly that case.\n- **Temporary files:** One temp folder was never deleted, and the cleanup step was replaced by a later one. Now one cleanup step removes everything on every exit, including errors and interrupts.\n- **Output on success:** The stray `publish: done` is gone, so a successful run prints nothing.\n- **Leaving `DEST` untouched on failure:** The output is written to a temporary file in the same folder as `DEST` and then renamed into place in one step. A failed run never touches `DEST`, and the published file gets normal permissions.\n- **Sorting:** Lines are sorted by key in byte order (`LC_ALL=C`), so `a` comes before `a_b`.\n\n**The published file, `site/config.txt`:**\n```\ndb_url: postgres://db/shop?sslmode=require\nfeature_flags: a=1,b=0\nname: shop\nregion: eu-west\ntimeout_s: 30\n```\n\n`site/config.txt` and the test outputs under `build/` aren't committed and still show as untracked. Tell me if you want any of them committed or added to `.gitignore`.",
+    "iterations": 6,
+    "tool_calls_count": 5,
+    "tool_calls": [
+      "cd /home/eval/publisher; git status; git log --oneline|head; ls -R | head -50; cat bin/publish; cat Makefile; ls tests",
+      "cd /home/eval/publisher; cat tests/test_publish.sh; for f in tests/fixtures/*; do echo \"== $f\"; cat -A $f; done; cat -A etc/prod.conf; cat site/README",
+      "cd /home/eval/publisher; cat > /tmp/new_body <<'EOF'\nset -eu\nexport LC_ALL=C\n\n[ $# -eq 2 ] || { echo \"usage: publish SRC DEST\" >&2; exit 2; }\nsrc=$1 dest=$2\n\ndestdir=$(dirname -- \"$dest\")\n[ -d \"$destdir\" ] || { echo \"publish: directory does not exist: $destdir\" >&2; exit 4; }\n\nwork=$(mktemp -d \"${TMPDIR:-/tmp}/publish.XXXXXX\")\nstage=\ncleanup() {\n  rm -rf -- \"$work\"\n  if [ -n \"$stage\" ]; then rm -f -- \"$stage\"; fi\n}\ntrap cleanup EXIT\ntrap 'exit 1' HUP INT TERM\n\n: > \"$work/pairs\"\nn=0\nwhile IFS= read -r line || [ -n \"$line\" ]; do\n  n=$((n + 1))\n  if [[ -z $line || $line == '#'* ]]; then\n    continue\n  elif [[ $line =~ ^[a-z_]+= ]]; then\n    printf '%s\\n' \"$line\" >> \"$work/pairs\"\n  else\n    echo \"publish: bad line $n\" >&2\n    exit 3\n  fi\ndone < \"$src\"\n\nsort -s -t= -k1,1 \"$work/pairs\" | sed 's/=/: /' > \"$work/out\"\n\n# Stage next to DEST so the final rename is atomic.\nstage=$(mktemp \"$destdir/.publish.XXXXXX\")\ncat \"$work/out\" > \"$stage\"\nmv -f -- \"$stage\" \"$dest\"\nstage=\nEOF\nhead -16 bin/publish > /tmp/hdr; head -c -0 /tmp/hdr | tail -1; sed -i '$d' /tmp/hdr; cat /tmp/hdr /tmp/new_body > bin/publish; cat bin/publish | head -20; make test",
+      "cd /home/eval/publisher; sed -i 's|^cat \"\\$work/out\" > \"\\$stage\"$|cat \"$work/out\" > \"$stage\"\\nchmod \"$(printf %o $((0666 \\& ~$(umask))))\" \"$stage\"|' bin/publish; tail -5 bin/publish; make test && bash bin/publish etc/prod.conf site/config.txt; echo rc=$?; cat -A site/config.txt; ls -la site; git status --short",
+      "cd /home/eval/publisher; git add bin/publish && git commit -qm \"fix: make bin/publish honor its exit-code, validation and temp-file contract\" && git log --oneline | head -2; git status --short"
+    ],
+    "usage": {
+      "input_tokens": 21201,
+      "output_tokens": 3012,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 33152
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 5.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 5.0,
+      "turns": 6.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cd /home/eval/publisher; git status; git log --oneline|head; ls -R | head -50; cat bin/publish; cat Makefile; ls tests",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "On branch master\n\nnothing to commit, working tree clean\ncommit b464d978\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 22:15:51 2026 +0000\n\n    initial import\n\n.:\nMakefile\nbin\netc\nsite\ntests\n\n./bin:\npublish\n\n./etc:\nprod.conf\n\n./site:\nREADME\n\n./tests:\nfixtures\ntest_publish.sh\n\n./tests/fixtures:\nbad.conf\nempty.conf\ngood.conf\ngood.expected\n#!/bin/bash\n# publish SRC DEST: render the key=value file SRC into DEST as \"key: value\"\n# lines sorted by key (LC_ALL=C byte order). Blank lines and lines starting\n# with # are ignored. Every line of SRC counts, even a last line without a\n# trailing newline. Values may contain \"=\".\n#\n# Contract (tests/test_publish.sh checks all of it):\n#   exit 0  success: DEST replaced, nothing printed on stdout\n#   exit 2  usage error (not exactly two arguments)\n#   exit 3  SRC has a line that is not blank, not a comment and not\n#           key=value with key matching [a-z_]+ ; prints\n#           \"publish: bad line N\" (N = 1-based line number) on stderr\n#   exit 4  the directory DEST would be written to does not exist\n#   On every non-zero exit DEST is left untouched, and on every exit no\n#   temporary file or directory remains in ${TMPDIR:-/tmp}.\nset -eu\n\n[ $# -eq 2 ] || { echo \"usage: publish SRC DEST\" >&2; exit 1; }\nsrc=$1 dest=$2\n\nrender() {\n  local tmp=$(mktemp)\n  local work=$(mktemp -d)\n  trap 'rm -f \"$tmp\"' EXIT\n  n=0\n  while IFS= read -r line; do\n    n=$((n + 1))\n    case $line in\n      ''|'#'*) continue ;;\n      [a-z_]*=*) echo \"$line\" >> \"$work/pairs\" ;;\n      *) echo \"publish: bad line $n\" >&2; exit 3 ;;\n    esac\n  done < \"$src\"\n  sort \"$work/pairs\" | sed 's/=/: /' > \"$tmp\"\n  cp \"$tmp\" \"$dest\"\n}\n\nrender\ntrap 'echo \"publish: done\"; exit 0' EXIT\ntest:\n\t@bash tests/test_publish.sh\n\n.PHONY: test\nfixtures\ntest_publish.sh\n"
+          },
+          {
+            "commands": "cd /home/eval/publisher; cat tests/test_publish.sh; for f in tests/fixtures/*; do echo \"== $f\"; cat -A $f; done; cat -A etc/prod.conf; cat site/README",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "#!/bin/bash\ncd \"$(dirname \"$0\")/..\" || exit 2\nexport LC_ALL=C\nexport TMPDIR=\"$PWD/build/tmp\"\nrm -rf build/tmp build/pub; mkdir -p build/tmp build/pub\nfail=0\ncheck() { # NAME WANT GOT\n  if [ \"$2\" != \"$3\" ]; then echo \"FAIL $1: exit $3, want $2\"; fail=1; fi\n  if [ -n \"$(ls -A \"$TMPDIR\")\" ]; then\n    echo \"FAIL $1: left in TMPDIR: $(ls -A \"$TMPDIR\" | tr '\\n' ' ')\"; fail=1\n    rm -rf \"$TMPDIR\"; mkdir -p \"$TMPDIR\"\n  fi\n}\nprintf 'OLD\\n' > build/pub/out.txt\nbash bin/publish tests/fixtures/good.conf > build/pub/usage.out 2>&1; check usage 2 $?\nbash bin/publish tests/fixtures/bad.conf build/pub/out.txt 2> build/pub/stderr; check bad 3 $?\n[ \"$(cat build/pub/stderr)\" = \"publish: bad line 4\" ] || { echo \"FAIL bad: stderr was: $(cat build/pub/stderr)\"; fail=1; }\n[ \"$(cat build/pub/out.txt)\" = OLD ] || { echo \"FAIL bad: DEST was modified\"; fail=1; }\nbash bin/publish tests/fixtures/good.conf build/nope/out.txt 2>/dev/null; check nodir 4 $?\nbash bin/publish tests/fixtures/empty.conf build/pub/empty.txt; check empty 0 $?\n[ -f build/pub/empty.txt ] && [ ! -s build/pub/empty.txt ] || { echo \"FAIL empty: want an empty DEST\"; fail=1; }\nout=$(bash bin/publish tests/fixtures/good.conf build/pub/out.txt); check good 0 $?\n[ -z \"$out\" ] || { echo \"FAIL good: unexpected stdout: $out\"; fail=1; }\ncmp -s tests/fixtures/good.expected build/pub/out.txt || { echo \"FAIL good: DEST differs from tests/fixtures/good.expected\"; fail=1; }\nif [ \"$fail\" -eq 0 ]; then echo PASS | tee build/test-report.txt; else echo FAIL > build/test-report.txt; exit 1; fi\n== tests/fixtures/bad.conf\n# bad$\nname=ok$\n$\nmax conns=5$\nport=1$\n== tests/fixtures/empty.conf\n# nothing here$\n$\n== tests/fixtures/good.conf\n# service config$\nname=api$\nmax_conns=5$\n$\nurl=http://x/?a=b$\na_b=1$\na=2$\n== tests/fixtures/good.expected\na: 2$\na_b: 1$\nmax_conns: 5$\nname: api$\nurl: http://x/?a=b$\n# production$\nname=shop$\nregion=eu-west$\n$\ntimeout_s=30$\ndb_url=postgres://db/shop?sslmode=require$\nfeature_flags=a=1,b=0Published config lands here.\n"
+          },
+          {
+            "commands": "cd /home/eval/publisher; cat > /tmp/new_body <<'EOF'\nset -eu\nexport LC_ALL=C\n\n[ $# -eq 2 ] || { echo \"usage: publish SRC DEST\" >&2; exit 2; }\nsrc=$1 dest=$2\n\ndestdir=$(dirname -- \"$dest\")\n[ -d \"$destdir\" ] || { echo \"publish: directory does not exist: $destdir\" >&2; exit 4; }\n\nwork=$(mktemp -d \"${TMPDIR:-/tmp}/publish.XXXXXX\")\nstage=\ncleanup() {\n  rm -rf -- \"$work\"\n  if [ -n \"$stage\" ]; then rm -f -- \"$stage\"; fi\n}\ntrap cleanup EXIT\ntrap 'exit 1' HUP INT TERM\n\n: > \"$work/pairs\"\nn=0\nwhile IFS= read -r line || [ -n \"$line\" ]; do\n  n=$((n + 1))\n  if [[ -z $line || $line == '#'* ]]; then\n    continue\n  elif [[ $line =~ ^[a-z_]+= ]]; then\n    printf '%s\\n' \"$line\" >> \"$work/pairs\"\n  else\n    echo \"publish: bad line $n\" >&2\n    exit 3\n  fi\ndone < \"$src\"\n\nsort -s -t= -k1,1 \"$work/pairs\" | sed 's/=/: /' > \"$work/out\"\n\n# Stage next to DEST so the final rename is atomic.\nstage=$(mktemp \"$destdir/.publish.XXXXXX\")\ncat \"$work/out\" > \"$stage\"\nmv -f -- \"$stage\" \"$dest\"\nstage=\nEOF\nhead -16 bin/publish > /tmp/hdr; head -c -0 /tmp/hdr | tail -1; sed -i '$d' /tmp/hdr; cat /tmp/hdr /tmp/new_body > bin/publish; cat bin/publish | head -20; make test",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "set -eu\n#!/bin/bash\n# publish SRC DEST: render the key=value file SRC into DEST as \"key: value\"\n# lines sorted by key (LC_ALL=C byte order). Blank lines and lines starting\n# with # are ignored. Every line of SRC counts, even a last line without a\n# trailing newline. Values may contain \"=\".\n#\n# Contract (tests/test_publish.sh checks all of it):\n#   exit 0  success: DEST replaced, nothing printed on stdout\n#   exit 2  usage error (not exactly two arguments)\n#   exit 3  SRC has a line that is not blank, not a comment and not\n#           key=value with key matching [a-z_]+ ; prints\n#           \"publish: bad line N\" (N = 1-based line number) on stderr\n#   exit 4  the directory DEST would be written to does not exist\n#   On every non-zero exit DEST is left untouched, and on every exit no\n#   temporary file or directory remains in ${TMPDIR:-/tmp}.\nset -eu\nexport LC_ALL=C\n\n[ $# -eq 2 ] || { echo \"usage: publish SRC DEST\" >&2; exit 2; }\nsrc=$1 dest=$2\nPASS\n"
+          },
+          {
+            "commands": "cd /home/eval/publisher; sed -i 's|^cat \"\\$work/out\" > \"\\$stage\"$|cat \"$work/out\" > \"$stage\"\\nchmod \"$(printf %o $((0666 \\& ~$(umask))))\" \"$stage\"|' bin/publish; tail -5 bin/publish; make test && bash bin/publish etc/prod.conf site/config.txt; echo rc=$?; cat -A site/config.txt; ls -la site; git status --short",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "stage=$(mktemp \"$destdir/.publish.XXXXXX\")\ncat \"$work/out\" > \"$stage\"\nchmod \"$(printf %o $((0666 & ~$(umask))))\" \"$stage\"\nmv -f -- \"$stage\" \"$dest\"\nstage=\nPASS\nrc=0\ndb_url: postgres://db/shop?sslmode=require$\nfeature_flags: a=1,b=0$\nname: shop$\nregion: eu-west$\ntimeout_s: 30$\n-rw-r--r--       29 2026-10-09 22:15 README\n-rw-r--r--      107 2026-10-09 22:16 config.txt\nOn branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/pub/empty.txt\n\tbuild/pub/out.txt\n\tbuild/pub/stderr\n\tbuild/pub/usage.out\n\tbuild/test-report.txt\n\tsite/config.txt\n"
+          },
+          {
+            "commands": "cd /home/eval/publisher; git add bin/publish && git commit -qm \"fix: make bin/publish honor its exit-code, validation and temp-file contract\" && git log --oneline | head -2; git status --short",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "[master b464d95] fix: make bin/publish honor its exit-code, validation and temp-file contract\ncommit b464d95e\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nOn branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/pub/empty.txt\n\tbuild/pub/out.txt\n\tbuild/pub/stderr\n\tbuild/pub/usage.out\n\tbuild/test-report.txt\n\tsite/config.txt\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

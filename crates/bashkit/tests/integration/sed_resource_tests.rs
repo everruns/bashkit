@@ -100,3 +100,114 @@ async fn output_over_stdout_cap_still_writes_a_file() {
     assert_eq!(result.exit_code, 0, "stderr: {}", result.stderr);
     assert_eq!(result.stdout.trim(), "70893");
 }
+
+/// TM-DOS-018 follow-up: `N` preserves pattern space while resetting the
+/// per-cycle step budget, so `:a;N;100~100{h;G};ba` doubles pattern+hold
+/// every 100 lines without tripping the step limit. Growth model: 1500
+/// x-lines (~3 KB input) reach ~13 MB of pattern against a 1 MB budget.
+/// The budgeted pattern/hold growth must refuse this with a bounded
+/// diagnostic and a nonzero status, never OOM the host.
+///
+/// The refusal can surface either as sed's own `sed: <error>` result or as a
+/// top-level resource-limit error. Which layer trips first is an
+/// implementation detail; what this pins is that the amplification is always
+/// refused, with a bounded diagnostic and a nonzero status.
+#[tokio::test]
+async fn pattern_hold_doubling_stops_at_live_intermediate_budget() {
+    let limits = ExecutionLimits::new().max_live_intermediate_bytes(1 << 20);
+    let mut bash = Bash::builder().limits(limits).build();
+
+    // 1500 lines x 2 B = ~3 KB of input; h;G every 100 lines doubles the
+    // pattern, so it would need ~13 MB against a 1 MB budget.
+    // No trailing pipe: the asserted status is sed's own, not wc's.
+    let script = "for i in $(seq 1 1500); do printf 'x\\n'; \
+                  done > /in.txt; sed -n ':a;N;100~100{h;G};ba' /in.txt";
+
+    match bash.exec(script).await {
+        Ok(result) => {
+            assert_ne!(result.exit_code, 0, "stdout: {}", result.stdout);
+            assert!(
+                result.stdout.is_empty(),
+                "refused run must print nothing, got {} bytes",
+                result.stdout.len()
+            );
+            assert!(result.stderr.contains("sed:"), "stderr: {}", result.stderr);
+            assert!(result.stderr.len() < 1024, "diagnostic must stay bounded");
+        }
+        Err(error) => {
+            let rendered = error.to_string();
+            assert!(
+                rendered.contains("live intermediate bytes"),
+                "unexpected error: {rendered}"
+            );
+        }
+    }
+}
+
+/// Same PoC shape under the default budget is finite GNU behavior, not a
+/// hang: it terminates with exit 0 and (under `-n`) empty output. This
+/// control proves the refusal above comes from the budget, not from
+/// breaking the script.
+#[tokio::test]
+async fn pattern_hold_doubling_succeeds_at_default_budget() {
+    let mut bash = Bash::builder().build();
+    let script = "for i in $(seq 1 1500); do printf 'x\\n'; \
+                  done > /in.txt; sed -n ':a;N;100~100{h;G};ba' /in.txt";
+    let result = bash.exec(script).await.expect("sed runs");
+    assert_eq!(
+        result.exit_code, 0,
+        "default budget must run the PoC to completion; stderr: {}",
+        result.stderr
+    );
+    assert!(
+        result.stdout.is_empty(),
+        "nothing printed under -n, got {} bytes",
+        result.stdout.len()
+    );
+}
+
+#[tokio::test]
+async fn sed_commands_stop_at_work_budget() {
+    let limits = ExecutionLimits::new().max_work_units(100);
+    let mut bash = Bash::builder().limits(limits).build();
+    // 200 print commands on a single input line: trivial setup, and the
+    // command charges alone must exceed the cap.
+    let mut script = String::from("printf 'a\\n' > /in.txt; sed -n '");
+    for _ in 0..200 {
+        script.push_str("p;");
+    }
+    script.push_str("' /in.txt");
+    match bash.exec(&script).await {
+        Ok(result) => {
+            assert_ne!(result.exit_code, 0, "stdout: {}", result.stdout);
+            assert!(result.stderr.contains("sed:"), "stderr: {}", result.stderr);
+            assert!(result.stderr.len() < 1024, "diagnostic must stay bounded");
+        }
+        Err(error) => {
+            let rendered = error.to_string();
+            assert!(rendered.contains("work"), "unexpected error: {rendered}");
+        }
+    }
+}
+
+/// TM-DOS-018 follow-up: lines read into pattern space charge aggregate
+/// input. Whatever layer trips first (sed's own metering or the pipe/file
+/// accounting underneath), a 600 B input against a 100 B cap is always
+/// refused with a bounded diagnostic and a nonzero status, never silently
+/// processed.
+#[tokio::test]
+async fn sed_lines_stop_at_input_budget() {
+    let limits = ExecutionLimits::new().max_aggregate_input_bytes(100);
+    let mut bash = Bash::builder().limits(limits).build();
+    let script = "printf '%.0shello\\n' {1..100} > /in.txt; sed -n 'p' /in.txt";
+    match bash.exec(script).await {
+        Ok(result) => {
+            assert_ne!(result.exit_code, 0, "stdout: {}", result.stdout);
+            assert!(result.stderr.len() < 1024, "diagnostic must stay bounded");
+        }
+        Err(error) => {
+            let rendered = error.to_string();
+            assert!(rendered.contains("input"), "unexpected error: {rendered}");
+        }
+    }
+}

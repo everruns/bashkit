@@ -1,0 +1,92 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "archive_create_extract",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "Create a tar.gz archive of the /project directory and save it as /tmp/project.tar.gz. Then create /backup directory and extract the archive there. Verify the files exist in /backup."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "The tasks have been completed:\n\n1. **Created Archive:** Archived `/project` to `/tmp/project.tar.gz`:\n   ```bash\n   tar -czf /tmp/project.tar.gz -C / project\n   ```\n\n2. **Extracted Archive:** Created directory `/backup` and extracted `/tmp/project.tar.gz` into it:\n   ```bash\n   mkdir -p /backup && tar -xzf /tmp/project.tar.gz -C /backup\n   ```\n\n3. **Verification:** Verified the extracted contents in `/backup`:\n   ```\n   /backup/project\n   /backup/project/README.md\n   /backup/project/src\n   /backup/project/src/main.sh\n   ```",
+    "iterations": 7,
+    "tool_calls_count": 6,
+    "tool_calls": [
+      "ls -la /project",
+      "tar -czf /tmp/project.tar.gz -C / project",
+      "mkdir -p /backup && tar -xzf /tmp/project.tar.gz -C /backup",
+      "ls -la /backup\nls -la /backup/project",
+      "tar -tf /tmp/project.tar.gz",
+      "ls -la /backup\nfind /backup"
+    ],
+    "usage": {
+      "input_tokens": 2541,
+      "output_tokens": 730,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 17203
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 6.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 6.0,
+      "turns": 7.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /project",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       37 2026-10-09 04:57 README.md\ndrwxr-xr-x        0 2026-10-09 04:57 src\n"
+          },
+          {
+            "commands": "tar -czf /tmp/project.tar.gz -C / project",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "mkdir -p /backup && tar -xzf /tmp/project.tar.gz -C /backup",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "ls -la /backup\nls -la /backup/project",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "drwxr-xr-x        0 2026-10-09 04:57 project\n-rw-r--r--       37 2026-10-09 04:57 README.md\ndrwxr-xr-x        0 2026-10-09 04:57 src\n"
+          },
+          {
+            "commands": "tar -tf /tmp/project.tar.gz",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "project/\nproject/src/\nproject/src/main.sh\nproject/README.md\n"
+          },
+          {
+            "commands": "ls -la /backup\nfind /backup",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "drwxr-xr-x        0 2026-10-09 04:57 project\n/backup\n/backup/project\n/backup/project/README.md\n/backup/project/src\n/backup/project/src/main.sh\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

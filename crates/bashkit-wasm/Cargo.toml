@@ -8,8 +8,9 @@
 # app, including embedded/iframe contexts. See knowledge/runtimes/browser-package.md.
 #
 # Feature surface mirrors the `wasm` CI job (jq). http_client,
-# ssh, sqlite, python, realfs, and interop are intentionally excluded: they need
+# ssh, sqlite, realfs, and interop are intentionally excluded: they need
 # sockets, threads, or a host filesystem that the browser sandbox lacks.
+# Python/TypeScript are optional features, published through the /runtimes import.
 #
 # JS callbacks (js_sys::Function / JsFuture) are `!Send`, but bashkit's `Builtin`
 # trait is `Send + Sync` (async_trait). wasm32 is single-threaded, so we bridge
@@ -32,6 +33,8 @@ publish = false
 # `bashkit/terminal`; `scripts/build.sh` turns it on for the npm package because
 # it costs ~60 KB gzipped and stays inert until a page constructs `Terminal`.
 terminal = ["bashkit/terminal"]
+python = ["bashkit/python", "dep:getrandom03"]
+typescript = ["bashkit/typescript"]
 
 [lib]
 crate-type = ["cdylib", "rlib"]
@@ -67,3 +70,10 @@ getrandom = { workspace = true, features = ["wasm_js"] }
 [package.metadata.wasm-pack.profile.release]
 # Keep the shipped .wasm small; the interpreter is large.
 wasm-opt = ["-Oz"]
+
+# Monty also uses getrandom 0.3; select its browser backend explicitly.
+[dependencies.getrandom03]
+package = "getrandom"
+version = "0.3"
+features = ["wasm_js"]
+optional = true

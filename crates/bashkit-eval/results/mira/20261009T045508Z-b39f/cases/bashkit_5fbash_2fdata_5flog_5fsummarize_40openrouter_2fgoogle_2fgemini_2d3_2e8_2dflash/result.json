@@ -1,0 +1,71 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "data_log_summarize",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "Analyze /var/log/app.log and produce a count per log level (INFO, WARN, ERROR). Print each as 'LEVEL: N' on its own line."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "INFO: 5\nWARN: 2\nERROR: 3",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "ls -la /var/log/app.log\nhead -n 20 /var/log/app.log",
+      "cat /var/log/app.log",
+      "for level in INFO WARN ERROR; do\n    count=$(grep -c \"^$level\" /var/log/app.log)\n    echo \"$level: $count\"\ndone"
+    ],
+    "usage": {
+      "input_tokens": 1305,
+      "output_tokens": 417,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 7492
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 3.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /var/log/app.log\nhead -n 20 /var/log/app.log",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--      228 2026-10-09 04:56 /var/log/app.log\nINFO: app started\nINFO: connected to db\nWARN: slow query detected\nERROR: connection timeout\nINFO: retry succeeded\nWARN: high memory usage\nERROR: write failed\nINFO: request completed\nERROR: connection timeout\nINFO: shutting down\n"
+          },
+          {
+            "commands": "cat /var/log/app.log",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "INFO: app started\nINFO: connected to db\nWARN: slow query detected\nERROR: connection timeout\nINFO: retry succeeded\nWARN: high memory usage\nERROR: write failed\nINFO: request completed\nERROR: connection timeout\nINFO: shutting down\n"
+          },
+          {
+            "commands": "for level in INFO WARN ERROR; do\n    count=$(grep -c \"^$level\" /var/log/app.log)\n    echo \"$level: $count\"\ndone",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "INFO: 5\nWARN: 2\nERROR: 3\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "complex_release_notes",
+  "target": "openrouter/meta/muse-spark-1.3-contributor",
+  "input": [
+    "Read /data/commits.log containing conventional commit messages (one per line, format: 'type(scope): message'). Parse each line, group by type, and generate /release/CHANGELOG.md with sections: '## Features' for 'feat' commits, '## Bug Fixes' for 'fix' commits, and '## Other' for all remaining types. Under each section list items as '- scope: message'. Print the generated changelog."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "8/8 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Generated `/release/CHANGELOG.md`:\n\n```\n## Features\n- auth: add OAuth2 support\n- ui: dark mode toggle\n- api: add pagination support\n- db: add connection pooling\n\n## Bug Fixes\n- api: handle null response body\n- auth: token refresh race condition\n- ui: button alignment on mobile\n- api: correct status code for 404\n\n## Other\n- deps: update lodash to 4.17.21\n- readme: update install instructions\n```\n",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cat /data/commits.log; echo \"---\"; ls -R /data 2>&1; ls -R /release 2>&1 || echo \"no release\"",
+      "mkdir -p /release\npython3 - << 'PY'\nimport re\nfrom pathlib import Path\nfrom collections import defaultdict\n\nlog_path = Path(\"/data/commits.log\")\nout_path = Path(\"/release/CHANGELOG.md\")\n\npattern = re.compile(r'^(\\w+)\\(([^)]+)\\):\\s*(.+)$')\n\nfeatures = []\nfixes = []\nother = []\n\nwith open(log_path) as f:\n    for raw in f:\n        line = raw.strip()\n        if not line:\n            continue\n        m = pattern.match(line)\n        if not m:\n            # fallback: put whole line in Other\n            other.append(line)\n            continue\n        typ, scope, msg = m.group(1), m.group(2), m.group(3)\n        item = f\"- {scope}: {msg}\"\n        if typ == \"feat\":\n            features.append(item)\n        elif typ == \"fix\":\n            fixes.append(item)\n        else:\n            other.append(item)\n\n# Build markdown with sections in order Features, Bug Fixes, Other\n# Only include non-empty sections (all three are non-empty here)\nsections = []\nif features:\n    sections.append(\"## Features\\n\" + \"\\n\".join(features))\nif fixes:\n    sections.append(\"## Bug Fixes\\n\" + \"\\n\".join(fixes))\nif other:\n    sections.append(\"## Other\\n\" + \"\\n\".join(other))\n\ncontent = \"\\n\\n\".join(sections) + \"\\n\"\nout_path.write_text(content)\nprint(content, end=\"\")\nPY\necho \"---FILE WRITTEN---\"\ncat /release/CHANGELOG.md"
+    ],
+    "usage": {
+      "input_tokens": 3985,
+      "output_tokens": 1528,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 11977
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat /data/commits.log; echo \"---\"; ls -R /data 2>&1; ls -R /release 2>&1 || echo \"no release\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "feat(auth): add OAuth2 support\nfix(api): handle null response body\nfeat(ui): dark mode toggle\nchore(deps): update lodash to 4.17.21\nfix(auth): token refresh race condition\nfeat(api): add pagination support\nfix(ui): button alignment on mobile\ndocs(readme): update install instructions\nfeat(db): add connection pooling\nfix(api): correct status code for 404\n---\n/data:\ncommits.log\nls: cannot access '/release': No such file or directory\nno release\n"
+          },
+          {
+            "commands": "mkdir -p /release\npython3 - << 'PY'\nimport re\nfrom pathlib import Path\nfrom collections import defaultdict\n\nlog_path = Path(\"/data/commits.log\")\nout_path = Path(\"/release/CHANGELOG.md\")\n\npattern = re.compile(r'^(\\w+)\\(([^)]+)\\):\\s*(.+)$')\n\nfeatures = []\nfixes = []\nother = []\n\nwith open(log_path) as f:\n    for raw in f:\n        line = raw.strip()\n        if not line:\n            continue\n        m = pattern.match(line)\n        if not m:\n            # fallback: put whole line in Other\n            other.append(line)\n            continue\n        typ, scope, msg = m.group(1), m.group(2), m.group(3)\n        item = f\"- {scope}: {msg}\"\n        if typ == \"feat\":\n            features.append(item)\n        elif typ == \"fix\":\n            fixes.append(item)\n        else:\n            other.append(item)\n\n# Build markdown with sections in order Features, Bug Fixes, Other\n# Only include non-empty sections (all three are non-empty here)\nsections = []\nif features:\n    sections.append(\"## Features\\n\" + \"\\n\".join(features))\nif fixes:\n    sections.append(\"## Bug Fixes\\n\" + \"\\n\".join(fixes))\nif other:\n    sections.append(\"## Other\\n\" + \"\\n\".join(other))\n\ncontent = \"\\n\\n\".join(sections) + \"\\n\"\nout_path.write_text(content)\nprint(content, end=\"\")\nPY\necho \"---FILE WRITTEN---\"\ncat /release/CHANGELOG.md",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "## Features\n- auth: add OAuth2 support\n- ui: dark mode toggle\n- api: add pagination support\n- db: add connection pooling\n\n## Bug Fixes\n- api: handle null response body\n- auth: token refresh race condition\n- ui: button alignment on mobile\n- api: correct status code for 404\n\n## Other\n- deps: update lodash to 4.17.21\n- readme: update install instructions\n---FILE WRITTEN---\n## Features\n- auth: add OAuth2 support\n- ui: dark mode toggle\n- api: add pagination support\n- db: add connection pooling\n\n## Bug Fixes\n- api: handle null response body\n- auth: token refresh race condition\n- ui: button alignment on mobile\n- api: correct status code for 404\n\n## Other\n- deps: update lodash to 4.17.21\n- readme: update install instructions\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

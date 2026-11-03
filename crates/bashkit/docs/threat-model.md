@@ -32,6 +32,8 @@ through configurable limits.
 | Large input (TM-DOS-001) | 1GB script | `max_input_bytes` limit (10MB) | MITIGATED |
 | Output flooding (TM-DOS-002) | `yes \| head -n 1000000000` | Command limit stops loop | MITIGATED |
 | Width-derived allocation (TM-DOS-103) | `printf x \| od -w1152921504606846976` | Reject widths above 65,536 bytes; stack-pad one numeric field; budget output capacity before fallible growth | MITIGATED |
+| Pagination amplification (TM-DOS-137) | Long `pr -h` headers repeated on many short pages | Check the 16 MiB cap before every append; lease input, rows and output capacity before growth; borrow cells/page slices and retain date timestamps; charge input/work and poll cancellation/deadlines, including skipped pages | MITIGATED |
+| Embedded CLI limit escalation (TM-DOS-139) | `markkit extract x --max-input-size 99999999999` | `markkit` limits can only be lowered below their defaults; `fetchkit` bodies capped by HTTP limits; `--ocr` refused | MITIGATED |
 | Variable explosion (TM-DOS-003) | `x=$(cat /dev/urandom)` | /dev/urandom returns bounded 8KB | MITIGATED |
 | Array growth (TM-DOS-004) | `arr+=(element)` in loop | Command limit | MITIGATED |
 
@@ -81,20 +83,29 @@ through configurable limits.
 | Array and arithmetic reports (TM-DOS-130) | `$((` nested in arithmetic, many `${a[-9]}` reads, huge `${!r}` target | 32 nesting levels; warnings capped at 64 KiB per command; indirect target echoed truncated to 256 chars | MITIGATED |
 | History files (TM-DOS-131) | `history -a` loops, huge `$HISTSIZE`, giant `$HISTFILE` | History list bounded by `max_history_entries`/`max_history_bytes`; `$HISTFILE` reads refused past `max_input_bytes`; VFS only | MITIGATED |
 | Completion specs and bindings (TM-DOS-132) | `complete`/`bind` in a loop | 1024 specs (64 KiB each) and 1024 binding changes (4 KiB each) per interpreter; never shared between instances | MITIGATED |
+| Prompt recursion (TM-DOS-133) | `x='${x@P}'; echo "${x@P}"`, mutual cycles or substitution-mediated cycles | Cumulative prompt depth capped at `min(max_ast_depth, 8)`; shared work, aggregate input, cancellation and deadline checks on each prompt; descendant shells inherit depth | MITIGATED |
+| Indirect operand recursion (TM-DOS-135) | Indirect target text reinterpreted as an operator/default operand | Admission and parameter parsing share an exact-reference scanner for nested brackets, braces, quotes, and escapes; indirect reparses inherit request work/cancellation and enclosing substitution depth | MITIGATED |
 
 **Stack Overflow / Recursion:**
 
 | Threat | Attack Example | Mitigation | Status |
 |--------|---------------|------------|--------|
-| Function recursion (TM-DOS-020) | `f() { f; }; f` | Depth limit of 16, including a hard ceiling when callers request more, protects 2 MiB host stacks | MITIGATED |
+| Function and signal-trap recursion (TM-DOS-020) | `f() { f; }; f` or `trap 'kill -USR1 $$' USR1; kill -USR1 $$` | Functions, source, child shells and trap handlers share a hard depth ceiling of 16, plus a dedicated trap-nesting cap of 3 that trips first on small stacks; nested exhaustion is skipped with a diagnostic and the first trip fails the exec as a resource-limit error, while handler logic failures never disturb the interrupted command (TM-DOS-030). Subprocess tests cover direct, mutual and mixed recursion on 2 MiB stacks | MITIGATED |
 | Command sub depth (TM-DOS-021) | `$($($($())))` nesting | Inherited depth/fuel from parent | MITIGATED |
 | Parser depth (TM-DOS-022) | `(((((...))))))` nesting | `max_ast_depth` + hard cap (100) | MITIGATED |
 | Arithmetic depth (TM-DOS-026) | `$(((((...))))))` | `MAX_ARITHMETIC_DEPTH` (50) | MITIGATED |
-| Builtin parser depth (TM-DOS-027) | Deeply nested awk/jq | `MAX_AWK_PARSER_DEPTH` (100) + `MAX_JQ_JSON_DEPTH` (100) | MITIGATED |
+| Builtin parser depth (TM-DOS-027) | Deeply nested awk/jq, including awk field-operand unary chains | Shared `MAX_AWK_PARSER_DEPTH` (100) across every recursive awk expression path + `MAX_JQ_JSON_DEPTH` (100) | MITIGATED |
 | Collect dirs recursion (TM-DOS-049) | Deep VFS tree | Mitigated by `max_path_depth` | MITIGATED |
 | Python read-only self-mount recursion (TM-DOS-118) | `bash.mount("/", bash.fs(), read_only=True)` hides the live filesystem identity behind a wrapper | Python validates the resolved filesystem identity before wrapping it | MITIGATED |
 | find traversal amplification (TM-DOS-121) | `find -L` over a symlink cycle, unbounded `-exec ... {} +` batches, or `*`-heavy `-name` patterns | Canonical-path loop detection with a 40-hop symlink cap, budget-charged directory listings, capped output, batches flushed every 4096 paths, linear-time glob matching | MITIGATED |
 | Background job flooding (TM-DOS-122) | `while :; do sleep 99 & done` holds unbounded concurrent interpreters | `max_background_jobs` (64 default, 16 hardened) caps live jobs; extra `&` fails like bash's fork EAGAIN; jobs share the session budget, timeout and cancellation; every job is reaped when `exec()` returns | MITIGATED |
+
+`join` matching-row products (TM-DOS-138) use shared-budget storage for
+input decoding, parsed rows/fields/keys and generated output. Output growth and
+its byte-stream copy are admitted before allocation. Parsing, key grouping and
+each emitted field charge work and poll cancellation/deadlines, including
+suppressed groups. Budget failures propagate as resource-limit errors. The
+stdout capture limit remains downstream of pipelines and redirects.
 
 **Parser and Arithmetic:**
 
@@ -109,7 +120,7 @@ through configurable limits.
 | Brace range OOM (TM-DOS-041) | `{1..999999999}` | Cap range size | **MITIGATED** |
 | Brace combinatorial (TM-DOS-042) | `{1..100}{1..100}{1..100}` | Cap total expansion | **MITIGATED** |
 | Compound assign overflow (TM-DOS-043) | `((x+=1))` with x=i64::MAX | `wrapping_*` ops | **MITIGATED** |
-| Lexer stack overflow (TM-DOS-044) | ~50 nested `$()` in quotes | Depth tracking | **MITIGATED** |
+| Lexer stack overflow (TM-DOS-044) | ~50 nested `$()` in quotes | Shared AST depth, heap-owned child parsers, outlined nonrecursive parser frames | **MITIGATED** |
 | parse_word_string limits (TM-DOS-050) | Parameter expansion ignores limits | Propagate limits | **MITIGATED** |
 | Removed YAML helper parser (TM-DOS-051) | Former custom parser recursed over indentation | Parser deleted; yq uses TM-DOS-101 controls | **REMOVED** |
 | Template engine recursion (TM-DOS-052) | Nested `{{#if}}`/`{{#each}}` overflow | Add depth limit | **MITIGATED** |
@@ -120,18 +131,20 @@ through configurable limits.
 | sleep bypasses timeout (TM-DOS-057) | `sleep N` ignores `ExecutionLimits::timeout` | Host-backed timeout; non-JS wasm blocking sleep is clamped to the execution deadline | **MITIGATED** |
 | Interactive terminal flooding (TM-DOS-119) | Unbounded type-ahead, undrained output, or a `vi` buffer grown by pastes | Caps on unread input (1 MiB), retained output (4 MiB), scrollback (1000 rows), transcript (1 MiB), line length, `vi` buffer (8 MiB) and undo history; `:w` goes through VFS limits | MITIGATED |
 | Input wait vs. timeout (TM-DOS-120) | Abusing the keyboard-wait exclusion to run work past the deadline | Only time blocked reading the terminal is excluded; CPU work and `sleep` still count | MITIGATED |
-| Concurrent pipeline amplification (TM-DOS-124) | An endless loop piped into `head`, a producer whose reader quit, or recursive pipelines `f() { f \| f; }` | 4 KiB pipes with backpressure; a writer whose reader is gone ends with 141 (SIGPIPE); streaming nesting counts toward `max_subshell_depth` and falls back to sequential stages past 4 levels; stages share the session budget, timeout and cancellation | MITIGATED |
-| make amplification (TM-DOS-126) | Exponential recursive variables, self-including makefiles, deep `$(MAKE)` recursion, huge graphs | Expansion depth 200 and 4 MiB per expansion; include depth 16; target, query and glob caps per run; `$(MAKE)` stops at level 4; recipes run under the session budget and timeout | MITIGATED |
+| Concurrent pipeline amplification (TM-DOS-124) | An endless loop piped into `head`, a producer whose reader quit, or recursive pipelines `f() { f \| f; }` | 4 KiB pipes with backpressure; a writer whose reader is gone ends with 141 (SIGPIPE); streaming nesting counts toward `max_subshell_depth` and falls back to sequential stages past 4 levels; stages share the session budget, timeout and cancellation; producers atomically claim the shared job cap before construction, borrow the AST and lease owned fork storage/future layouts before allocation | MITIGATED |
+| make amplification (TM-DOS-126) | Exponential recursive variables, self-including makefiles, deep `$(MAKE)` recursion, huge graphs | Expansion depth 200 and 4 MiB per expansion; substitution checks its exact size before construction, with shared capacity leases retained by expanded values and work/deadline checkpoints while matching and copying; include depth 16; target, query and glob caps per run; `$(MAKE)` stops at level 4; recipes run under the session budget and timeout | MITIGATED |
 | Random generator amplification (TM-DOS-123) | `openssl rand` asked for gigabytes | Requests capped at 1 MiB; fixed-size `uuidgen`/`$SRANDOM` | MITIGATED |
 | Child-shell recursion (TM-DOS-125) | Script that re-runs itself via `sh` | Child shells count against function depth, max 8 nested | MITIGATED |
 | Pattern substitution (TM-DOS-127) | `${x//*a*/b}` over a long value | Globs run as a size-capped linear-time regex; extglob search capped at 10,000 attempts | MITIGATED |
 | Unbounded builtin output (TM-DOS-058) | `seq 1 1000000` produces 1M lines | Add `max_stdout_bytes` limit | **MITIGATED** |
 | Silent truncation at builtin caps (TM-DOS-109) | `seq 200000`, an awk loop past its cap, or an oversized `sprintf` expression returns incomplete output with exit 0 | Caps report `<cmd>: <what> limit (<N>) exceeded` on stderr and exit non-zero; awk caps and formatting errors are fatal | **MITIGATED** |
+| Syntax diagnostic amplification (TM-DOS-136) | A multiline unexpected token and long `bash -c` ARG0 multiply diagnostic storage before stderr capture | Unexpected-token messages and complete syntax reports are capped at 1 KiB during construction; overflow stops formatting and appends `[diagnostic truncated]`. Short reports retain Bash text and syntax-error exit status | **MITIGATED** |
 | In-builtin memory growth (TM-DOS-110) | `awk 'BEGIN { s = "x"; while (1) s = s s }'` or `jq -n '"x" \| until(false; . + .)'` allocates until the host aborts | awk checks each string against a 16 MiB cap before allocating it, caps `$N` field indexes, and caps total variable memory at `max_live_intermediate_bytes` (fatal, exit 2). jq meters every live string, array and object against the same limit and fails before growing (exit 5); non-emitting jq loops and pure recursion stop at the timeout; non-tail recursion hits a live-context ceiling (64) before host stack exhaustion | **MITIGATED** |
-| Arrays bypass the retained-memory budget (TM-DOS-114) | Ten array slots each holding a 4 MiB string retain ~40 MB past the 10 MB variable-byte budget | Array keys and values charge `max_total_variable_bytes` alongside scalars, are released on unset/replacement/scope pop, and an over-budget write fails execution | **MITIGATED** |
+| Arrays bypass the retained-memory budget (TM-DOS-114) | Ten array slots each holding a 4 MiB string retain ~40 MB past the 10 MB variable-byte budget | Array keys and values charge `max_total_variable_bytes` alongside scalars, are released on unset/replacement/scope pop, and an over-budget write fails execution. Pending indexed compound-assignment keys, values, fields and containers also hold shared intermediate-memory leases, including repeated subscripts | **MITIGATED** |
 | `$(<file)` resource-accounting bypass (TM-DOS-115) | Repeated file-read substitutions skip command limits and accumulate file contents during argument expansion | Optimized reads charge command, session-command, and work budgets; file and accumulated substitution bytes hold live-intermediate leases | **MITIGATED** |
 | Silent scalar assignment rejection (TM-DOS-111) | A variable write over the byte or count limit is dropped while the script exits 0 | The first rejected write fails execution with a memory-limit error; a later exec can reuse the session | **MITIGATED** |
 | AWK `close()` recycles getline read quotas (TM-DOS-116) | `getline x < file; close(file)` in a loop reloads the same large VFS file while retained-cache accounting returns to zero | Every cache miss charges the shared aggregate-input and work budgets before decoding the file; `close()` still releases retained cache bytes but cannot refund either charge | **MITIGATED** |
+| Diagnostic prefix amplification (TM-DOS-103) | A long child-shell `$0` repeated across builtin error lines multiplies stderr before capture limits apply | Diagnostic names show at most 1,024 UTF-8 bytes without changing `$0`; rewritten bytes and cached text acquire shared memory leases before fallible growth, retain them through routing, and check work, cancellation and deadlines. Exhaustion aborts the request, including redirected or streamed diagnostics | **MITIGATED** |
 | `sed r` output amplification (TM-DOS-112) | `sed 'r FILE' FILE` re-emits the whole file after every input line, growing output quadratically inside the engine | Every sed sink leases from `max_live_intermediate_bytes` before growing; a refused lease is `sed: <error>` with exit 1. The stdout *capture* cap is deliberately not a sink limit, since sed output is often piped onward or redirected to a file | **MITIGATED** |
 | Newline-dense head/tail input (TM-DOS-117) | A small line selection over a newline-dense file builds an offset for every line | Line selection scans from the nearest end and stores no per-line offset collection | **MITIGATED** |
 | Param expansion bomb (TM-DOS-059) | `${x//a/bigstring}` multiplicative amplification | `max_total_variable_bytes` + `max_stdout_bytes` | MITIGATED |
@@ -166,6 +179,12 @@ let bash = Bash::builder()
 # }
 ```
 
+`dd conv=sync` uses checked padding arithmetic and rejects padded lengths above
+its 64 MiB copy cap before allocation. Copied payload capacity is reserved through
+`BudgetedBytes` against the shared live-memory budget and retained through output
+handling, including discarded output. Stdout cached text shares that budget
+(TM-DOS-003, TM-DOS-103).
+
 **Additional DoS hardening:**
 
 | Threat | Attack Example | Mitigation | Status |
@@ -181,13 +200,14 @@ let bash = Bash::builder()
 | Persistent history memory DoS (TM-DOS-094) | Unbounded command history in long-lived instances | `ExecutionLimits` caps history entries/bytes/output | FIXED |
 | Multi-component glob amplification (TM-DOS-095) | `/*/*/*/*` multiplies the candidate set at each component | Reject patterns deeper than `max_path_depth`; cap live candidates at `max_file_count` | FIXED |
 | Aggregate budget refresh (TM-DOS-096) | Nest/mix parsers, pipelines, traversal, runtimes, archives, and callbacks to restart local ceilings | One poisoned request-scoped `ExecutionBudget` meters aggregate work/input/live bytes without replacing subsystem caps | MITIGATED |
+| Tilde expansion amplification (TM-DOS-134) | Large `HOME`/`PWD`/`OLDPWD` repeated after assignment colons | Borrowed directories, checked pre-allocation live-byte reservations, byte-proportional work/deadline checks, and leases retained through assignment/field consumption; failures abort expansion | MITIGATED |
 | Contradictory execution-profile limits (TM-DOS-097) | Host config silently requests ineffective or impossible limits | Validate profile cross-field invariants before `BashBuilder` accepts it | MITIGATED |
 | Suspended host-call retention (TM-DOS-098) | Script repeats event-backed calls or host never resumes one | Capacity-one channel; an independently driven execution future keeps the deadline armed while parked and drops the timed-out session without another host poll; handle drop aborts the driver | MITIGATED |
 | `time` report amplification (TM-DOS-099) | Attacker-controlled `-f` format expands repeatedly or targets the VFS with `-o` | Incremental rendering is capped by the stderr limit before emission or file replacement | MITIGATED |
 | jq control normalization amplification (TM-DOS-100) | Literal controls expand sixfold as `\u00XX` | Charge single-pass work and lease live bytes before allocation growth | MITIGATED |
 | yq structured-data amplification (TM-DOS-101) | Deep/multi-document YAML or JSON, runaway filters, expanded output | Parser depth and 4096-document caps, aggregate budgets, shared jaq work/deadline/output limits, final render cap | MITIGATED |
 | Archive decoder pre-allocation (TM-DOS-102) | Compressed output grows before memory checks | Validate and charge each decoder chunk before reserve/copy | MITIGATED |
-| Post-allocation charging (TM-DOS-103) | Archive/compression buffers grow before their live-byte check | Owning budget-aware string/vector/byte builders charge before reserve, roll back errors, and release on drop | MITIGATED |
+| Post-allocation charging (TM-DOS-103) | Archive/compression buffers, tar file-list names, or standard-stream operands grow before their live-byte check | Owning budget-aware string/vector/byte builders charge before reserve, roll back errors, and release on drop; tar file lists also lease raw reads and charge per-line work. Standard-stream captures enforce stdout/stderr ceilings before write/append and combined collection, retain byte/text leases through redirects/hooks, and check work/cancellation/deadlines on every write. Wrapper-owned stdin/copy storage is also admitted | MITIGATED |
 | Pipeline stderr aggregation (TM-DOS-104) | Many stderr-producing pipeline stages accumulate past the output cap | Stop appending at `max_stderr_bytes` and propagate the truncation flag to the result | MITIGATED |
 | Zip creation pre-allocation (TM-DOS-106) | Recursive inputs and encoded output allocate before live-memory checks | Collect paths only, lease file sizes before VFS reads, and encode through a budget-aware byte buffer | MITIGATED |
 | Analysis command-name validation (TM-DOS-107) | A huge comment before thousands of commands makes validation rescan the source per command | Index source character positions once, then binary-search each name | MITIGATED |
@@ -308,11 +328,12 @@ Scripts may attempt to leak sensitive information.
 
 | Threat | Attack Example | Mitigation | Status |
 |--------|---------------|------------|--------|
-| Library Debug shapes leak via stderr (TM-INF-022) | `{:?}` dumps internal struct shapes into agent-visible stderr | Static scan forbids Debug formatting in builtins, plus per-tool leak tests and fuzz invariants | MITIGATED |
+| Library Debug shapes leak via stderr (TM-INF-022) | `{:?}` dumps internal struct shapes into agent-visible stderr; separately, a diagnostic that quotes the script back can run past the 1 KB stderr budget — an arithmetic error named both the whole expression and the whole unparsed rest, echoing one input back twice over | Static scan forbids Debug formatting in builtins, plus per-tool leak tests and fuzz invariants. Each run of script text echoed into an arithmetic diagnostic is capped (`MAX_ARITHMETIC_DIAG_ECHO`), so the text that says what went wrong always survives (L-ARITH-002) | MITIGATED |
 | jq `halt`/`halt_error` exits the host process (TM-INF-023) | Filter calls `halt(N)` → `std::process::exit` | Upstream `halt` native stripped; safe replacement returns a jq error | MITIGATED |
 | Host env side-channel via clap `Arg::env` (TM-INF-024) | `ls` resolved `TABSIZE`/`TIME_STYLE` from host env | Codegen strips `.env(...)`; builtins read `ctx.env` only | MITIGATED |
 | Untrusted generated Rust in drift CI (TM-INF-025) | Malicious upstream `uu_app()` runs with a write token | Generator validates the emitted shape; drift workflow splits read/write privilege | FIXED |
 | Checkout token readable by untrusted CI code (TM-INF-034) | `actions/checkout` leaves `GITHUB_TOKEN` in `.git/config`, where a dependency build script or test in the same job can read it | `persist-credentials: false` on every checkout that does not back an authenticated `git`/`gh` call, and on every job of a pull-request-triggered workflow; every workflow declares a read-only default `permissions` block | FIXED |
+| Windows signing authority (TM-INF-035) | Compiler dependencies or native imports gain production code-signing access, or unsigned build outputs reach PyPI | A separate source-validated OIDC job signs native files without compiling or importing them; deployment requires a release-tag-restricted environment and profile-scoped signer role. Embedded signatures and timestamps are verified after RECORD repair; unsigned artifact names never match the publisher's glob. External profile/environment provisioning must complete before enabling the release gate | MITIGATED |
 | Publish from unverified release refs (TM-INF-027) | Dispatch publish from a branch or unprotected tag | Dispatch requires `refs/heads/main`; publish gated on real `vX.Y.Z` tags | FIXED |
 | JS `onOutput` errors expose host stack traces (TM-INF-028) | Callback throws, leaking `error.stack` | Propagate `error.message` only; strip absolute/`file://` paths | FIXED |
 | Raw callback errors leak host internals (TM-INF-030) | Tool callback throws API keys/connection strings/stack traces | `sanitize_errors` defaults on for `ScriptedTool`/`ToolImpl`/`ToolRegistry` across shell/Python/TypeScript | MITIGATED |
@@ -391,6 +412,7 @@ Network access is disabled by default. When enabled, strict controls apply.
 | HTTP-transport SSRF via fail-open precheck (TM-NET-023) | Malformed/no-host URL or rebind window bypasses the IP filter | Precheck fails closed on bad URLs; transports receive pinned addresses + `is_private_ip` | MITIGATED |
 | Repeated curl data bypasses body cap (TM-NET-028) | Many data/file parts plus encoding expansion exceed 10 MB in aggregate | Checked aggregate appends; file metadata checked against remaining capacity before reads | MITIGATED |
 | Private IP behind NAT64/6to4 or reserved range (TM-NET-029) | AAAA `64:ff9b::a9fe:a9fe` / `2002:7f00:1::`, or A in `0.0.0.0/8`, `198.18.0.0/15`, multicast | `is_private_ip` checks the embedded IPv4 of NAT64/6to4 and blocks all non-global special-purpose ranges | MITIGATED |
+| Embedded CLI egress bypass (TM-NET-030) | `fetchkit fetch`/`markkit extract URL` follow a redirect off the allowlist or read host proxy env | Both builtins send every hop through the sandbox HTTP client (allowlist re-checked per hop); no own TLS stack; `--allow-env-proxy` refused | MITIGATED |
 
 **Credential Injection (TM-NET-024–027):**
 
@@ -548,6 +570,7 @@ echo $user_input
 | `$?` leaks into VFS subprocess (TM-ISO-024) | Parent `last_exit_code` visible in child, causing false `set -e` failures | Child resets `last_exit_code`, `nounset_error`, and traps | **MITIGATED** |
 | Wrapper rebuild drops constructor capabilities (TM-ISO-025) | A binding reset loses limits, policy files, callbacks, or network policy | Canonical capability matrix with executable evidence; rebuilds retain constructor config | **MITIGATED** |
 | Shared ToolRegistry request context (TM-ISO-026) | Concurrent shell/Python/TypeScript calls leak tenant identity or traces | Per-request `ExecutionExtensions`, task-local runtime routing, and callback-owned context | **MITIGATED** |
+| Browser WASM caller context (TM-ISO-029) | Shared wasm-bindgen wakeups deliver a host call in another request's async context | A per-execution promise mailbox launches callbacks in the original caller context; revocable capabilities and AbortSignal end dispatch on cancellation/completion | **MITIGATED** |
 | Stale request authority and retained host-extension handles (TM-ISO-027) | A late runtime/transport/callback result crosses completion, or a builtin/tool keeps VFS or request context past completion/cancellation | Shared request budget plus one revocable capability lease, cancellation-aware awaits, deterministic late-use failure, RAII closure/release, and explicit `insert_trusted` escape hatch | **MITIGATED** |
 | Process substitution shared through the VFS (TM-ISO-028) | Tenants on one filesystem read or clobber each other's `<(cmd)` data at `/dev/fd/63` | `/dev/fd/N` (N >= 3) resolves in each interpreter's own fd namespace; nothing reaches the shared filesystem | **MITIGATED** |
 
@@ -590,6 +613,7 @@ All unexpected errors are caught and converted to safe, human-readable messages.
 | Binary output bypasses resource limits (TM-INT-009) | Invalid UTF-8 exceeds configured caps when counted as text | Byte-native accumulation and callbacks truncate by exact byte length | **MITIGATED** |
 | Invalid UTF-8 line input panics (TM-INT-010) | `read`/`select` apply a lossy-text newline offset to raw pipeline bytes | Line consumers find and split newlines in the authoritative byte buffer | **MITIGATED** |
 | Command resolver panic (TM-INT-011) | Unresolved command name triggers a panic in embedder resolver code | `catch_unwind` wrapper and sanitized shell error | **MITIGATED** |
+| C runtime callback lifetime (TM-INT-012) | A delayed reply targets a later request, or callback reentry blocks a locked handle | Owned calls, copied bounded JSON and one-shot revocable execution leases reject stale replies; callback-enabled handles return BUSY for concurrent blocking access. Hosts must preserve code/user-data lifetime and free calls without racing use | **MITIGATED** |
 
 **Panic Recovery:**
 
@@ -651,15 +675,18 @@ The parser includes multiple layers of depth protection to prevent stack overflo
 attacks:
 
 1. **Configurable depth limit** (`max_ast_depth`, default 100): Controls maximum nesting
-   of compound commands (if/for/while/case/subshell).
+   of compound commands (if/for/while/case/subshell) and substitutions.
 
 2. **Hard cap** (`HARD_MAX_AST_DEPTH = 100`): Even if the caller configures a higher
    `max_ast_depth`, the parser clamps it to 100. This prevents misconfiguration from
    causing stack overflow.
 
 3. **Child parser inheritance** (TM-DOS-021): When parsing `$(...)` or `<(...)`,
-   the child parser inherits the *remaining* depth budget and fuel from the parent.
-   This prevents attackers from bypassing depth limits through nested substitutions.
+   each substitution consumes one level of the enclosing AST depth. Command
+   substitution child parsers inherit the same ceiling, remaining fuel, execution
+   budget, and timeout origin, and stay heap-owned while parsing. Nonrecursive
+   parameter parsing and AST assembly run outside recursive frames, keeping the
+   unchanged hard ceiling safe on default 2 MiB Rust test-thread stacks.
 
 4. **Arithmetic depth limit** (TM-DOS-026): The arithmetic evaluator (`$((expr))`)
    has its own depth limit (`MAX_ARITHMETIC_DEPTH = 50`) to prevent stack overflow

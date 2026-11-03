@@ -270,12 +270,45 @@ async fn indent_4_uses_4_spaces() {
 }
 
 #[tokio::test]
-async fn indent_0_renders_compact() {
-    // Real jq: --indent 0 is equivalent to -c.
+async fn indent_0_renders_newlines_without_indent() {
+    // jq >= 1.8: --indent 0 keeps the newlines and drops the spaces. Only -c
+    // is compact.
     let result = run_jq_with_args(&["--indent", "0", "."], r#"{"a":1}"#)
         .await
         .unwrap();
-    assert_eq!(result.trim(), r#"{"a":1}"#);
+    assert_eq!(result, "{\n\"a\": 1\n}\n");
+}
+
+#[tokio::test]
+async fn output_shape_flags_are_last_wins() {
+    // -c, --tab and --indent N set the same thing, so the last one wins.
+    let cases: [(&[&str], &str); 6] = [
+        (&["-c", "--indent", "0", "."], "{\n\"a\": [\n1,\n2\n]\n}\n"),
+        (&["--indent", "0", "-c", "."], "{\"a\":[1,2]}\n"),
+        (
+            &["-c", "--indent", "4", "."],
+            "{\n    \"a\": [\n        1,\n        2\n    ]\n}\n",
+        ),
+        (&["--indent", "4", "-c", "."], "{\"a\":[1,2]}\n"),
+        (&["--tab", "-c", "."], "{\"a\":[1,2]}\n"),
+        (
+            &["-c", "--tab", "."],
+            "{\n\t\"a\": [\n\t\t1,\n\t\t2\n\t]\n}\n",
+        ),
+    ];
+    for (args, expected) in cases {
+        let result = run_jq_with_args(args, r#"{"a":[1,2]}"#).await.unwrap();
+        assert_eq!(result, expected, "args: jq {}", args.join(" "));
+    }
+}
+
+#[tokio::test]
+async fn later_indent_overrides_tab() {
+    // --tab used to stick regardless of a later --indent N.
+    let result = run_jq_with_args(&["--tab", "--indent", "4", "."], r#"{"a":1}"#)
+        .await
+        .unwrap();
+    assert_eq!(result, "{\n    \"a\": 1\n}\n");
 }
 
 #[tokio::test]
@@ -1512,11 +1545,48 @@ mod differential {
     use super::*;
 
     fn real_jq_available() -> bool {
-        std::process::Command::new("jq")
+        real_jq_version().is_some()
+    }
+
+    /// `(major, minor)` of the host `jq`, or `None` when there is no usable
+    /// one. `jq --version` prints `jq-1.8.1`, older builds `jq-1.7`.
+    fn real_jq_version() -> Option<(u32, u32)> {
+        let out = std::process::Command::new("jq")
             .arg("--version")
             .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
+            .ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        let text = String::from_utf8_lossy(&out.stdout);
+        let version = text.trim().strip_prefix("jq-")?;
+        let mut parts = version.split('.');
+        let major = parts.next()?.parse().ok()?;
+        // `jq-1.7` has no minor component; treat the missing one as 0.
+        let minor = parts.next().unwrap_or("0").parse().unwrap_or(0);
+        Some((major, minor))
+    }
+
+    /// Like [`assert_matches`], for a case whose expected output only holds
+    /// from a given jq upwards. An older host oracle skips just that case
+    /// rather than reddening the suite, the same bargain
+    /// `minimum_bash_major` strikes for the competitor corpus.
+    ///
+    /// The one case that needs it today is `--indent 0`: jq 1.7 and earlier
+    /// let it imply `-c`, jq 1.8 emits newlines without indentation
+    /// (jqlang/jq#3232). CI pins the oracle (`scripts/install-jq-ci.sh`), so
+    /// this only ever skips on a developer machine with an older jq.
+    async fn assert_matches_from_jq(min: (u32, u32), args: &[&str], input: &str) {
+        match real_jq_version() {
+            Some(found) if found >= min => assert_matches(args, input).await,
+            Some((major, minor)) => eprintln!(
+                "host jq {major}.{minor} predates {}.{}; skipping `jq {}`",
+                min.0,
+                min.1,
+                args.join(" ")
+            ),
+            None => eprintln!("real jq not present; skipping differential test"),
+        }
     }
 
     fn run_real_jq(args: &[&str], input: &str) -> Option<(String, i32)> {
@@ -1640,7 +1710,39 @@ mod differential {
 
     #[tokio::test]
     async fn diff_indent_0() {
-        assert_matches(&["--indent", "0", "."], r#"{"a":1}"#).await;
+        assert_matches_from_jq((1, 8), &["--indent", "0", "."], r#"{"a":1}"#).await;
+    }
+
+    #[tokio::test]
+    async fn diff_indent_0_nested() {
+        assert_matches_from_jq(
+            (1, 8),
+            &["--indent", "0", "."],
+            r#"{"a":[1,2],"b":{"c":3}}"#,
+        )
+        .await;
+    }
+
+    /// `-c`, `--tab` and `--indent N` all set the same thing, so the last one
+    /// on the command line wins. Each pair below disagrees with its reverse.
+    /// jq has behaved this way since at least 1.7; only what `--indent 0`
+    /// itself means changed in 1.8, which is why one case is gated.
+    #[tokio::test]
+    async fn diff_output_shape_flags_are_last_wins() {
+        let input = r#"{"a":[1,2]}"#;
+        for args in [
+            ["-c", "--indent", "4", "."].as_slice(),
+            ["--indent", "4", "-c", "."].as_slice(),
+            ["--indent", "0", "-c", "."].as_slice(),
+            ["-c", "--tab", "."].as_slice(),
+            ["--tab", "-c", "."].as_slice(),
+            ["--tab", "--indent", "4", "."].as_slice(),
+            ["--indent", "4", "--tab", "."].as_slice(),
+            ["--indent", "0", "--indent", "4", "."].as_slice(),
+        ] {
+            assert_matches(args, input).await;
+        }
+        assert_matches_from_jq((1, 8), &["-c", "--indent", "0", "."], input).await;
     }
 
     #[tokio::test]
@@ -1832,6 +1934,35 @@ async fn null_input_leaves_stream_to_input_and_inputs() {
     );
 }
 
+/// jq 1.7: with `-n`, stdin is only parsed when `input`/`inputs` reach it,
+/// so invalid JSON on stdin is ignored by a filter that never reads it.
+#[tokio::test]
+async fn null_input_ignores_unread_invalid_stdin() {
+    let result = run_jq_result_with_args(&["-n", "1"], "not json")
+        .await
+        .unwrap();
+    assert_eq!(result.stdout, "1\n");
+    assert_eq!(result.stderr, "");
+    assert_eq!(result.exit_code, 0);
+
+    // Values before the bad text are still readable.
+    let result = run_jq_result_with_args(&["-n", "input"], "1 x")
+        .await
+        .unwrap();
+    assert_eq!(result.stdout, "1\n");
+    assert_eq!(result.stderr, "");
+    assert_eq!(result.exit_code, 0);
+}
+
+#[tokio::test]
+async fn null_input_reports_invalid_stdin_once_reached() {
+    let result = run_jq_result_with_args(&["-nc", "[inputs]"], "1 x")
+        .await
+        .unwrap();
+    assert!(result.stderr.starts_with("jq: "), "{}", result.stderr);
+    assert_eq!(result.exit_code, 5);
+}
+
 #[tokio::test]
 async fn slurp_of_empty_input_is_empty_array() {
     assert_eq!(run_jq_with_args(&["-s", "."], "").await.unwrap(), "[]\n");
@@ -2011,6 +2142,23 @@ async fn math_errors_use_jq_wording() {
             "\"number (5) and number (0) cannot be divided (remainder) because the divisor is zero\"]\n"
         )
     );
+}
+
+#[tokio::test]
+async fn math_error_on_huge_operands_stays_bounded() {
+    let out = run_jq_with_args(&["-c", "try ([range(0;200000)] + 1) catch ."], "null")
+        .await
+        .unwrap();
+    assert!(
+        out.len() < 1024,
+        "math error on huge operand leaked {} bytes",
+        out.len()
+    );
+    assert!(out.contains("..."), "huge operand preview should truncate");
+    // Fresh-context follow-up (each helper builds a new shell); true
+    // same-session recovery is covered by `shell_recovers_after_huge_operand_math_error`.
+    let recovered = run_jq_with_args(&["-c", "1 + 2"], "null").await.unwrap();
+    assert_eq!(recovered, "3\n");
 }
 
 #[tokio::test]
@@ -2357,5 +2505,33 @@ async fn decoding_builtins_follow_jq() {
          \"string (\\\"Y\\\") trailing base64 byte found\"\n\
          \"date \\\"x\\\" does not match format \\\"%Y\\\"\"\n\
          \"date \\\"2026-01-15\\\" does not match format \\\"%Y-%m-%dT%H:%M:%SZ\\\"\"\n1768478400\n"
+    );
+}
+
+/// A filter whose trailing comment is not followed by a newline, which had
+/// no coverage: every other comment case here is followed by more filter.
+///
+/// jaq-core 3.1.2 fixes a lexer panic on exactly this shape (the comment
+/// scanner replaced the remaining input with a `""` literal, breaking the
+/// invariant that the replacement is a suffix of the previous input). That
+/// panic does not reproduce through this builtin on 3.1.1 -- checked across
+/// these inputs plus a dozen malformed ones, all of which returned the same
+/// output on both versions -- so this pins the shape rather than guarding a
+/// regression: the prepended compat prefix and the `loc`/`altpat` rewrites
+/// put the filter at the end of the lexer input, where the fix applies.
+#[tokio::test]
+async fn filter_ending_in_a_comment_is_accepted() {
+    assert_eq!(run_jq(".a # trailing", r#"{"a":1}"#).await.unwrap(), "1\n");
+    // The comment is the whole filter, and the input ends mid-comment.
+    assert_eq!(run_jq(". # c", r#"1"#).await.unwrap(), "1\n");
+    // A comment ending in a carriage return, and one ending in a backslash
+    // (the odd-backslash line-continuation branch the fix touches).
+    assert_eq!(
+        run_jq(".a # trailing\r", r#"{"a":1}"#).await.unwrap(),
+        "1\n"
+    );
+    assert_eq!(
+        run_jq(".a # trailing\\", r#"{"a":1}"#).await.unwrap(),
+        "1\n"
     );
 }

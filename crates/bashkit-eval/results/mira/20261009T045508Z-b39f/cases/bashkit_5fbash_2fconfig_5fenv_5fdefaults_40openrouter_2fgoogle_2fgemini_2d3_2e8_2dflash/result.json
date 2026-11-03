@@ -1,0 +1,99 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "config_env_defaults",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "Write /scripts/start.sh that configures a service. It should read these environment variables and fall back to defaults when they're not set: DB_HOST (default 'localhost'), DB_PORT (default '5432'), DB_NAME (default 'myapp'), LOG_LEVEL (default 'info'). Print the resolved config as 'key=value' lines. If DB_HOST is explicitly set, also print 'custom_db=true'. Run the script twice: first with no env vars set (to test defaults), then with DB_HOST=db.prod.internal to test the override."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "`/scripts/start.sh` has been created with support for default fallbacks and custom DB host detection:\n\n- **Defaults**: `DB_HOST=localhost`, `DB_PORT=5432`, `DB_NAME=myapp`, `LOG_LEVEL=info`.\n- **Conditionals**: Emits `custom_db=true` when `DB_HOST` is explicitly set.\n\n### Test Execution\n\n1. **Without environment variables (defaults):**\n```bash\n/scripts/start.sh\n```\nOutput:\n```text\nDB_HOST=localhost\nDB_PORT=5432\nDB_NAME=myapp\nLOG_LEVEL=info\n```\n\n2. **With `DB_HOST=db.prod.internal` override:**\n```bash\nDB_HOST=db.prod.internal /scripts/start.sh\n```\nOutput:\n```text\nDB_HOST=db.prod.internal\nDB_PORT=5432\nDB_NAME=myapp\nLOG_LEVEL=info\ncustom_db=true\n```",
+    "iterations": 8,
+    "tool_calls_count": 7,
+    "tool_calls": [
+      "ls -la /\nls -la /scripts 2>/dev/null || true",
+      "find / -maxdepth 3 -not -path '*/.*' -not -path '/proc*' -not -path '/sys*' -not -path '/dev*' 2>/dev/null",
+      "mkdir -p /scripts",
+      "cat << 'EOF' > /scripts/start.sh\n#!/usr/bin/env bash\nset -e\n\ncustom_db=false\nif [ -n \"${DB_HOST+x}\" ]; then\n    custom_db=true\nfi\n\nRESOLVED_DB_HOST=\"${DB_HOST:-localhost}\"\nRESOLVED_DB_PORT=\"${DB_PORT:-5432}\"\nRESOLVED_DB_NAME=\"${DB_NAME:-myapp}\"\nRESOLVED_LOG_LEVEL=\"${LOG_LEVEL:-info}\"\n\necho \"DB_HOST=$RESOLVED_DB_HOST\"\necho \"DB_PORT=$RESOLVED_DB_PORT\"\necho \"DB_NAME=$RESOLVED_DB_NAME\"\necho \"LOG_LEVEL=$RESOLVED_LOG_LEVEL\"\n\nif [ \"$custom_db\" = true ]; then\n    echo \"custom_db=true\"\nfi\nEOF\n\nchmod +x /scripts/start.sh",
+      "echo \"=== Test 1: No env vars ===\"\nenv -i /scripts/start.sh\n\necho \"=== Test 2: DB_HOST set ===\"\nenv -i DB_HOST=db.prod.internal /scripts/start.sh",
+      "unset DB_HOST DB_PORT DB_NAME LOG_LEVEL\n/scripts/start.sh\nDB_HOST=db.prod.internal /scripts/start.sh",
+      "ls -la /scripts/start.sh"
+    ],
+    "usage": {
+      "input_tokens": 19666,
+      "output_tokens": 1931,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 24468
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 7.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 7.0,
+      "turns": 8.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /\nls -la /scripts 2>/dev/null || true",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "drwxr-xr-x        0 2026-10-09 04:55 bin\ndrwxr-xr-x        0 2026-10-09 05:00 dev\ndrwxr-xr-x        0 2026-10-09 04:55 etc\ndrwxr-xr-x        0 2026-10-09 05:00 home\ndrwxr-xr-x        0 2026-10-09 04:55 proc\ndrwxr-xr-x        0 2026-10-09 04:55 root\ndrwxrwxrwx        0 2026-10-09 05:00 tmp\ndrwxr-xr-x        0 2026-10-09 04:55 usr\n"
+          },
+          {
+            "commands": "find / -maxdepth 3 -not -path '*/.*' -not -path '/proc*' -not -path '/sys*' -not -path '/dev*' 2>/dev/null",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/\n/bin\n/bin/:\n/bin/[\n/bin/arch\n/bin/assert\n/bin/awk\n/bin/b2sum\n/bin/base32\n/bin/base64\n/bin/basename\n/bin/basenc\n/bin/bash\n/bin/bc\n/bin/bind\n/bin/bunzip2\n/bin/busybox\n/bin/bzcat\n/bin/bzip2\n/bin/cat\n/bin/chgrp\n/bin/chmod\n/bin/chown\n/bin/cksum\n/bin/clear\n/bin/cmp\n/bin/column\n/bin/comm\n/bin/complete\n/bin/compopt\n/bin/cp\n/bin/csv\n/bin/curl\n/bin/cut\n/bin/date\n/bin/dd\n/bin/df\n/bin/diff\n/bin/dirname\n/bin/dotenv\n/bin/du\n/bin/echo\n/bin/egrep\n/bin/env\n/bin/envsubst\n/bin/expand\n/bin/expr\n/bin/factor\n/bin/false\n/bin/fgrep\n/bin/file\n/bin/find\n/bin/flock\n/bin/fmt\n/bin/fold\n/bin/free\n/bin/gawk\n/bin/getconf\n/bin/git\n/bin/glob\n/bin/grep\n/bin/groups\n/bin/gunzip\n/bin/gzip\n/bin/head\n/bin/hexdump\n/bin/hostid\n/bin/hostname\n/bin/http\n/bin/iconv\n/bin/id\n/bin/install\n/bin/join\n/bin/jq\n/bin/json\n/bin/kill\n/bin/less\n/bin/link\n/bin/ln\n/bin/locale\n/bin/log\n/bin/logname\n/bin/ls\n/bin/make\n/bin/man\n/bin/mawk\n/bin/md5sum\n/bin/mkdir\n/bin/mkfifo\n/bin/mktemp\n/bin/more\n/bin/mv\n/bin/nano\n/bin/nawk\n/bin/nice\n/bin/nl\n/bin/nohup\n/bin/nproc\n/bin/numfmt\n/bin/od\n/bin/openssl\n/bin/parallel\n/bin/paste\n/bin/patch\n/bin/pgrep\n/bin/pkill\n/bin/pr\n/bin/printenv\n/bin/printf\n/bin/ps\n/bin/pwd\n/bin/read\n/bin/readlink\n/bin/realpath\n/bin/retry\n/bin/rev\n/bin/rg\n/bin/rm\n/bin/rmdir\n/bin/sed\n/bin/semver\n/bin/seq\n/bin/sh\n/bin/sha1sum\n/bin/sha224sum\n/bin/sha256sum\n/bin/sha384sum\n/bin/sha512sum\n/bin/shasum\n/bin/shuf\n/bin/sleep\n/bin/sort\n/bin/split\n/bin/stat\n/bin/strings\n/bin/sudo\n/bin/sum\n/bin/sync\n/bin/tac\n/bin/tail\n/bin/tar\n/bin/tee\n/bin/template\n/bin/test\n/bin/timeout\n/bin/tomlq\n/bin/touch\n/bin/tr\n/bin/tree\n/bin/true\n/bin/truncate\n/bin/tsort\n/bin/tty\n/bin/uname\n/bin/unexpand\n/bin/uniq\n/bin/unlink\n/bin/unzip\n/bin/uptime\n/bin/users\n/bin/uuidgen\n/bin/verify\n/bin/vi\n/bin/watch\n/bin/wc\n/bin/wget\n/bin/which\n/bin/who\n/bin/whoami\n/bin/xargs\n/bin/xxd\n/bin/yes\n/bin/yq\n/bin/zip\n/etc\n/etc/group\n/etc/hostname\n/etc/hosts\n/etc/os-release\n/etc/passwd\n/etc/shells\n/etc/ssl\n/etc/ssl/certs\n/etc/timezone\n/home\n/home/eval\n/home/user\n/root\n/tmp\n/usr\n/usr/bin\n/usr/bin/:\n/usr/bin/[\n/usr/bin/arch\n/usr/bin/assert\n/usr/bin/awk\n/usr/bin/b2sum\n/usr/bin/base32\n/usr/bin/base64\n/usr/bin/basename\n/usr/bin/basenc\n/usr/bin/bash\n/usr/bin/bc\n/usr/bin/bind\n/usr/bin/bunzip2\n/usr/bin/busybox\n/usr/bin/bzcat\n/usr/bin/bzip2\n/usr/bin/cat\n/usr/bin/chgrp\n/usr/bin/chmod\n/usr/bin/chown\n/usr/bin/cksum\n/usr/bin/clear\n/usr/bin/cmp\n/usr/bin/column\n/usr/bin/comm\n/usr/bin/complete\n/usr/bin/compopt\n/usr/bin/cp\n/usr/bin/csv\n/usr/bin/curl\n/usr/bin/cut\n/usr/bin/date\n/usr/bin/dd\n/usr/bin/df\n/usr/bin/diff\n/usr/bin/dirname\n/usr/bin/dotenv\n/usr/bin/du\n/usr/bin/echo\n/usr/bin/egrep\n/usr/bin/env\n/usr/bin/envsubst\n/usr/bin/expand\n/usr/bin/expr\n/usr/bin/factor\n/usr/bin/false\n/usr/bin/fgrep\n/usr/bin/file\n/usr/bin/find\n/usr/bin/flock\n/usr/bin/fmt\n/usr/bin/fold\n/usr/bin/free\n/usr/bin/gawk\n/usr/bin/getconf\n/usr/bin/git\n/usr/bin/glob\n/usr/bin/grep\n/usr/bin/groups\n/usr/bin/gunzip\n/usr/bin/gzip\n/usr/bin/head\n/usr/bin/hexdump\n/usr/bin/hostid\n/usr/bin/hostname\n/usr/bin/http\n/usr/bin/iconv\n/usr/bin/id\n/usr/bin/install\n/usr/bin/join\n/usr/bin/jq\n/usr/bin/json\n/usr/bin/kill\n/usr/bin/less\n/usr/bin/link\n/usr/bin/ln\n/usr/bin/locale\n/usr/bin/log\n/usr/bin/logname\n/usr/bin/ls\n/usr/bin/make\n/usr/bin/man\n/usr/bin/mawk\n/usr/bin/md5sum\n/usr/bin/mkdir\n/usr/bin/mkfifo\n/usr/bin/mktemp\n/usr/bin/more\n/usr/bin/mv\n/usr/bin/nano\n/usr/bin/nawk\n/usr/bin/nice\n/usr/bin/nl\n/usr/bin/nohup\n/usr/bin/nproc\n/usr/bin/numfmt\n/usr/bin/od\n/usr/bin/openssl\n/usr/bin/parallel\n/usr/bin/paste\n/usr/bin/patch\n/usr/bin/pgrep\n/usr/bin/pkill\n/usr/bin/pr\n/usr/bin/printenv\n/usr/bin/printf\n/usr/bin/ps\n/usr/bin/pwd\n/usr/bin/read\n/usr/bin/readlink\n/usr/bin/realpath\n/usr/bin/retry\n/usr/bin/rev\n/usr/bin/rg\n/usr/bin/rm\n/usr/bin/rmdir\n/usr/bin/sed\n/usr/bin/semver\n/usr/bin/seq\n/usr/bin/sh\n/usr/bin/sha1sum\n/usr/bin/sha224sum\n/usr/bin/sha256sum\n/usr/bin/sha384sum\n/usr/bin/sha512sum\n/usr/bin/shasum\n/usr/bin/shuf\n/usr/bin/sleep\n/usr/bin/sort\n/usr/bin/split\n/usr/bin/stat\n/usr/bin/strings\n/usr/bin/sudo\n/usr/bin/sum\n/usr/bin/sync\n/usr/bin/tac\n/usr/bin/tail\n/usr/bin/tar\n/usr/bin/tee\n/usr/bin/template\n/usr/bin/test\n/usr/bin/timeout\n/usr/bin/tomlq\n/usr/bin/touch\n/usr/bin/tr\n/usr/bin/tree\n/usr/bin/true\n/usr/bin/truncate\n/usr/bin/tsort\n/usr/bin/tty\n/usr/bin/uname\n/usr/bin/unexpand\n/usr/bin/uniq\n/usr/bin/unlink\n/usr/bin/unzip\n/usr/bin/uptime\n/usr/bin/users\n/usr/bin/uuidgen\n/usr/bin/verify\n/usr/bin/vi\n/usr/bin/watch\n/usr/bin/wc\n/usr/bin/wget\n/usr/bin/which\n/usr/bin/who\n/usr/bin/whoami\n/usr/bin/xargs\n/usr/bin/xxd\n/usr/bin/yes\n/usr/bin/yq\n/usr/bin/zip\n"
+          },
+          {
+            "commands": "mkdir -p /scripts",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "cat << 'EOF' > /scripts/start.sh\n#!/usr/bin/env bash\nset -e\n\ncustom_db=false\nif [ -n \"${DB_HOST+x}\" ]; then\n    custom_db=true\nfi\n\nRESOLVED_DB_HOST=\"${DB_HOST:-localhost}\"\nRESOLVED_DB_PORT=\"${DB_PORT:-5432}\"\nRESOLVED_DB_NAME=\"${DB_NAME:-myapp}\"\nRESOLVED_LOG_LEVEL=\"${LOG_LEVEL:-info}\"\n\necho \"DB_HOST=$RESOLVED_DB_HOST\"\necho \"DB_PORT=$RESOLVED_DB_PORT\"\necho \"DB_NAME=$RESOLVED_DB_NAME\"\necho \"LOG_LEVEL=$RESOLVED_LOG_LEVEL\"\n\nif [ \"$custom_db\" = true ]; then\n    echo \"custom_db=true\"\nfi\nEOF\n\nchmod +x /scripts/start.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "echo \"=== Test 1: No env vars ===\"\nenv -i /scripts/start.sh\n\necho \"=== Test 2: DB_HOST set ===\"\nenv -i DB_HOST=db.prod.internal /scripts/start.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "=== Test 1: No env vars ===\nDB_HOST=localhost\nDB_PORT=5432\nDB_NAME=myapp\nLOG_LEVEL=info\n=== Test 2: DB_HOST set ===\nDB_HOST=db.prod.internal\nDB_PORT=5432\nDB_NAME=myapp\nLOG_LEVEL=info\ncustom_db=true\n"
+          },
+          {
+            "commands": "unset DB_HOST DB_PORT DB_NAME LOG_LEVEL\n/scripts/start.sh\nDB_HOST=db.prod.internal /scripts/start.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "DB_HOST=localhost\nDB_PORT=5432\nDB_NAME=myapp\nLOG_LEVEL=info\nDB_HOST=db.prod.internal\nDB_PORT=5432\nDB_NAME=myapp\nLOG_LEVEL=info\ncustom_db=true\n"
+          },
+          {
+            "commands": "ls -la /scripts/start.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rwxr-xr-x      452 2026-10-09 05:00 /scripts/start.sh\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "error_missing_file",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "Read the file /data/input.txt. If it does not exist, create the directory /data if needed, then create the file with the content 'default data', and finally read and print the file contents."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "4/4 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "The file `/data/input.txt` did not exist initially. The directory `/data` and file `/data/input.txt` have been created with the content `'default data'`.\n\nContents of `/data/input.txt`:\n```\ndefault data\n```",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "if [ ! -f /data/input.txt ]; then\n    mkdir -p /data\n    echo -n 'default data' > /data/input.txt\nfi\ncat /data/input.txt\n",
+      "ls -la /data/input.txt\ncat /data/input.txt\necho\n"
+    ],
+    "usage": {
+      "input_tokens": 745,
+      "output_tokens": 461,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 8519
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "if [ ! -f /data/input.txt ]; then\n    mkdir -p /data\n    echo -n 'default data' > /data/input.txt\nfi\ncat /data/input.txt\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "default data"
+          },
+          {
+            "commands": "ls -la /data/input.txt\ncat /data/input.txt\necho\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       12 2026-10-09 04:56 /data/input.txt\ndefault data\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

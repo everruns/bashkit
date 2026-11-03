@@ -381,7 +381,7 @@ impl SqliteEngine {
                 if size == 0 {
                     return Some(Vec::new());
                 }
-                Some(read_all(&file, size))
+                Some(rollback_journal_header(read_all(&file, size)))
             }
             Backend::Vfs(io) => io.file_bytes(path),
         }
@@ -408,6 +408,24 @@ impl Drop for SqliteEngine {
         // about checkpoints to keep the on-disk image consistent.
         self.close();
     }
+}
+
+/// Mark a fully checkpointed image as a rollback-journal database.
+///
+/// Decision: Turso always writes WAL mode (header bytes 18/19 = 2). The Memory
+/// backend persists only the main file, after a TRUNCATE checkpoint, so the
+/// image has no WAL to replay and is a valid legacy-mode database. Builds of
+/// SQLite without WAL (CPython's `sqlite3` in the WASI guest is one) reject a
+/// WAL-mode header with "file is not a database", so `python3` could not open
+/// a db written by the `sqlite` builtin. Turso reads either mode. The same
+/// bytes serve the cache-invalidation compare, so a reopen is not forced.
+pub(super) fn rollback_journal_header(mut bytes: Vec<u8>) -> Vec<u8> {
+    const MAGIC: &[u8; 16] = b"SQLite format 3\0";
+    if bytes.len() >= 20 && bytes[..16] == MAGIC[..] && bytes[18] == 2 && bytes[19] == 2 {
+        bytes[18] = 1;
+        bytes[19] = 1;
+    }
+    bytes
 }
 
 fn read_all(file: &Arc<dyn turso_core::File>, size: usize) -> Vec<u8> {

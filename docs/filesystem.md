@@ -10,6 +10,21 @@ default; you grant access deliberately, never by accident.
 This is the foundation of the [security model](security.md): there is no real
 filesystem to escape to unless you mount one.
 
+## Copying directory contents
+
+Use `cp -r source/. destination` to merge a directory's contents into an existing
+destination, including hidden files and nested directories. The destination does
+not gain an extra `source` directory. A plain `cp -r source/ destination` keeps
+that directory name instead. No-clobber (`-n`), symlink preservation and filesystem
+limits still apply.
+
+```bash
+mkdir -p package/nested workspace
+echo content > package/nested/file.txt
+cp -r package/. workspace
+cat workspace/nested/file.txt
+```
+
 ## The layering stack
 
 A `Bash` instance composes its filesystem from layers. Each layer wraps the one

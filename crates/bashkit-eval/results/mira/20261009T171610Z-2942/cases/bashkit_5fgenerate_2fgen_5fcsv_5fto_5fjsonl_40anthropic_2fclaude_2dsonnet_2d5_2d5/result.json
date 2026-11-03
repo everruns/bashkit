@@ -1,0 +1,63 @@
+{
+  "eval": "bashkit_generate",
+  "sample": "gen_csv_to_jsonl",
+  "target": "anthropic/claude-sonnet-5-5",
+  "input": [
+    "Write a bash script that converts a CSV file to JSON Lines.\n\nStarting files:\n--- /home/eval/data/users.csv (no trailing newline on the last line) ---\nid,name,email,active\n1,Alice Smith,alice@example.com,yes\n2,Bob Jones,bob@example.com,no\n3,Carol White,carol@example.com,yes\n--- end ---\n\nFields never contain commas or quotes.\n\nWrite /home/eval/data/users.jsonl with one compact JSON object per data row (no spaces), in input order, keys in this order: `id` (JSON number), `name` (string), `email` (string), `active` (JSON boolean: `yes` -> true, anything else -> false). Example line: `{\"id\":1,\"name\":\"Alice Smith\",\"email\":\"alice@example.com\",\"active\":true}`. Every row must be converted, including the last one.\n\nThen print `active=<number of active users>` to stdout and exit 0."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "3/3 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I'll use a `while read` loop that also handles the last line, which has no trailing newline (`|| [[ -n $id ]]`). Because fields never contain commas or quotes, the JSON can be built with `printf` directly. I strip any trailing CR for safety, and `id` is emitted as a number.\n\n```bash\n#!/bin/bash\nin=/home/eval/data/users.csv\nout=/home/eval/data/users.jsonl\n: > \"$out\"\ncount=0\nfirst=1\nwhile IFS=, read -r id name email active || [[ -n \"$id$name$email$active\" ]]; do\n  active=${active%$'\\r'}\n  if (( first )); then first=0; continue; fi\n  [[ -z \"$id$name$email$active\" ]] && continue\n  if [[ \"$active\" == \"yes\" ]]; then\n    b=true\n    count=$((count+1))\n  else\n    b=false\n  fi\n  printf '{\"id\":%s,\"name\":\"%s\",\"email\":\"%s\",\"active\":%s}\\n' \"$id\" \"$name\" \"$email\" \"$b\" >> \"$out\"\ndone < \"$in\"\necho \"active=$count\"\nexit 0\n```",
+    "iterations": 1,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "#!/bin/bash\nin=/home/eval/data/users.csv\nout=/home/eval/data/users.jsonl\n: > \"$out\"\ncount=0\nfirst=1\nwhile IFS=, read -r id name email active || [[ -n \"$id$name$email$active\" ]]; do\n  active=${active%$'\\r'}\n  if (( first )); then first=0; continue; fi\n  [[ -z \"$id$name$email$active\" ]] && continue\n  if [[ \"$active\" == \"yes\" ]]; then\n    b=true\n    count=$((count+1))\n  else\n    b=false\n  fi\n  printf '{\"id\":%s,\"name\":\"%s\",\"email\":\"%s\",\"active\":%s}\\n' \"$id\" \"$name\" \"$email\" \"$b\" >> \"$out\"\ndone < \"$in\"\necho \"active=$count\"\nexit 0\n"
+    ],
+    "usage": {
+      "input_tokens": 750,
+      "output_tokens": 373,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 3219
+    },
+    "metrics": {
+      "exec_ms": 5.0,
+      "exit_code": 0.0,
+      "extracted": 1.0,
+      "generate_ms": 3214.0,
+      "script_bytes": 531.0,
+      "script_found": 1.0,
+      "timed_out": 0.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "#!/bin/bash\nin=/home/eval/data/users.csv\nout=/home/eval/data/users.jsonl\n: > \"$out\"\ncount=0\nfirst=1\nwhile IFS=, read -r id name email active || [[ -n \"$id$name$email$active\" ]]; do\n  active=${active%$'\\r'}\n  if (( first )); then first=0; continue; fi\n  [[ -z \"$id$name$email$active\" ]] && continue\n  if [[ \"$active\" == \"yes\" ]]; then\n    b=true\n    count=$((count+1))\n  else\n    b=false\n  fi\n  printf '{\"id\":%s,\"name\":\"%s\",\"email\":\"%s\",\"active\":%s}\\n' \"$id\" \"$name\" \"$email\" \"$b\" >> \"$out\"\ndone < \"$in\"\necho \"active=$count\"\nexit 0\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "active=2\n"
+          }
+        ]
+      },
+      "generate": {
+        "extraction": "fenced",
+        "timed_out": false
+      }
+    }
+  },
+  "skipped": false
+}

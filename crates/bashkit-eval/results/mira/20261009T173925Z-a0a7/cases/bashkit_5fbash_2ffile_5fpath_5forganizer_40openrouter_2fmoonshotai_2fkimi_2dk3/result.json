@@ -1,0 +1,78 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "file_path_organizer",
+  "target": "openrouter/moonshotai/kimi-k3",
+  "input": [
+    "Under /uploads there are files with various extensions. Write a script that: 1) For each file, determines its extension and moves it into a subdirectory named after that extension (e.g., .txt files go to /uploads/txt/, .csv files go to /uploads/csv/). Create the subdirectories as needed. 2) Print each move as 'moved: FILENAME -> EXTENSION_DIR/'. 3) After all moves, print a summary of how many files per extension as 'EXT: N files'. Handle the case where a file has no extension by putting it in /uploads/other/."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "8/8 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "The script works correctly. Here's the final script saved at `/home/eval/organize_uploads.sh`:\n\n```bash\n#!/usr/bin/env bash\n# Organize files in /uploads into subdirectories named after their extension.\n#   .txt -> /uploads/txt/, .csv -> /uploads/csv/, no extension -> /uploads/other/\n\nset -u\nUPLOADS_DIR=\"/uploads\"\n\ndeclare -A counts\n\n# Iterate over regular files directly inside /uploads (skip subdirectories).\n# Process substitution keeps the loop in the current shell so `counts` persists.\nwhile IFS= read -r filepath; do\n    filename=\"${filepath##*/}\"\n\n    # Determine extension:\n    #  - no dot in name, or a pure dotfile like \".gitignore\"  => no extension\n    if [[ \"$filename\" != *.* || ( \"$filename\" == .* && \"${filename:1}\" != *.* ) ]]; then\n        ext_dir=\"other\"\n    else\n        ext_dir=\"${filename##*.}\"   # text after the last dot\n    fi\n\n    target_dir=\"$UPLOADS_DIR/$ext_dir\"\n    mkdir -p \"$target_dir\"\n\n    if mv -- \"$filepath\" \"$target_dir/\"; then\n        echo \"moved: $filename -> $ext_dir/\"\n        counts[\"$ext_dir\"]=$(( ${counts[\"$ext_dir\"]:-0} + 1 ))\n    fi\ndone < <(find \"$UPLOADS_DIR\" -mindepth 1 -maxdepth 1 -type f)\n\n# Summary\nif (( ${#counts[@]} == 0 )); then\n    echo \"no files moved\"\nelse\n    for ext in $(printf '%s\\n' \"${!counts[@]}\" | sort); do\n        echo \"$ext: ${counts[$ext]} files\"\n    done\nfi\n```\n\n## How it works\n\n1. **File enumeration** — `find ... -mindepth 1 -maxdepth 1 -type f` lists only regular files directly in `/uploads`, so already-created subdirectories are never re-processed (making the script safe to re-run).\n2. **Extension detection** — `${filename##*.}` extracts text after the last dot. Files with no dot (like `README`) or pure dotfiles (like `.gitignore`) are treated as having no extension and routed to `other/`.\n3. **Move & log** — `mkdir -p` creates the extension directory as needed, `mv` moves the file, and each move is printed as `moved: FILENAME -> EXTENSION_DIR/`.\n4. **Summary** — an associative array counts moves per extension; results are sorted and printed as `EXT: N files`.\n\n## Verified results\n\n```\nmoved: README -> other/\nmoved: config.json -> json/\nmoved: data.csv -> csv/\nmoved: image.png -> png/\nmoved: notes.txt -> txt/\nmoved: report.txt -> txt/\nmoved: results.csv -> csv/\ncsv: 2 files\njson: 1 files\nother: 1 files\npng: 1 files\ntxt: 2 files\n```\n\nThe directory structure was verified (all files in their correct `txt/`, `csv/`, `json/`, `png/`, `other/` subdirectories), and a second run confirms idempotency — it prints `no files moved` instead of erroring.",
+    "iterations": 5,
+    "tool_calls_count": 4,
+    "tool_calls": [
+      "ls -la /uploads/ 2>/dev/null || echo \"Directory /uploads does not exist\"",
+      "cat > /home/eval/organize_uploads.sh << 'EOF'\n#!/usr/bin/env bash\n# Organize files in /uploads into subdirectories named after their extension.\n\nset -u\nUPLOADS_DIR=\"/uploads\"\n\ndeclare -A counts\n\n# Iterate over regular files only (skip subdirectories)\nfind \"$UPLOADS_DIR\" -mindepth 1 -maxdepth 1 -type f | while read -r filepath; do\n    filename=\"${filepath##*/}\"\n\n    # Determine extension:\n    # - No dot at all, or a dotfile like \".gitignore\" (leading dot only) => no extension\n    if [[ \"$filename\" != *.* || ( \"$filename\" == .* && \"${filename:1}\" != *.* ) ]]; then\n        ext_dir=\"other\"\n    else\n        ext=\"${filename##*.}\"\n        ext_dir=\"$ext\"\n    fi\n\n    target_dir=\"$UPLOADS_DIR/$ext_dir\"\n    mkdir -p \"$target_dir\"\n\n    if mv -- \"$filepath\" \"$target_dir/\"; then\n        echo \"moved: $filename -> $ext_dir/\"\n        # Count per extension directory (stored in a temp file since while-loop\n        # runs in a subshell when piped)\n        echo \"$ext_dir\" >> /tmp/.ext_counts.$$\n    fi\ndone\n\n# Summary\necho \"---\"\nif [[ -f /tmp/.ext_counts.$$ ]]; then\n    sort /tmp/.ext_counts.$$ | uniq -c | while read -r n ext; do\n        echo \"$ext: $n files\"\n    done\n    rm -f /tmp/.ext_counts.$$\nelse\n    echo \"no files moved\"\nfi\nEOF\nchmod +x /home/eval/organize_uploads.sh\necho \"Script created.\"",
+      "cat > /home/eval/organize_uploads.sh << 'EOF'\n#!/usr/bin/env bash\n# Organize files in /uploads into subdirectories named after their extension.\n#   .txt -> /uploads/txt/, .csv -> /uploads/csv/, no extension -> /uploads/other/\n\nset -u\nUPLOADS_DIR=\"/uploads\"\n\ndeclare -A counts\n\n# Iterate over regular files directly inside /uploads (skip subdirectories).\n# Process substitution keeps the loop in the current shell so `counts` persists.\nwhile IFS= read -r filepath; do\n    filename=\"${filepath##*/}\"\n\n    # Determine extension:\n    #  - no dot in name, or a pure dotfile like \".gitignore\"  => no extension\n    if [[ \"$filename\" != *.* || ( \"$filename\" == .* && \"${filename:1}\" != *.* ) ]]; then\n        ext_dir=\"other\"\n    else\n        ext_dir=\"${filename##*.}\"   # text after the last dot\n    fi\n\n    target_dir=\"$UPLOADS_DIR/$ext_dir\"\n    mkdir -p \"$target_dir\"\n\n    if mv -- \"$filepath\" \"$target_dir/\"; then\n        echo \"moved: $filename -> $ext_dir/\"\n        counts[\"$ext_dir\"]=$(( ${counts[\"$ext_dir\"]:-0} + 1 ))\n    fi\ndone < <(find \"$UPLOADS_DIR\" -mindepth 1 -maxdepth 1 -type f)\n\n# Summary\nif (( ${#counts[@]} == 0 )); then\n    echo \"no files moved\"\nelse\n    for ext in $(printf '%s\\n' \"${!counts[@]}\" | sort); do\n        echo \"$ext: ${counts[$ext]} files\"\n    done\nfi\nEOF\nchmod +x /home/eval/organize_uploads.sh\n/home/eval/organize_uploads.sh",
+      "echo \"=== Directory structure ===\"\nfind /uploads -mindepth 1 | sort\necho\necho \"=== Re-run (idempotency test) ===\"\n/home/eval/organize_uploads.sh"
+    ],
+    "usage": {
+      "input_tokens": 7022,
+      "output_tokens": 2274,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 19465
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 4.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 4.0,
+      "turns": 5.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /uploads/ 2>/dev/null || echo \"Directory /uploads does not exist\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       17 2026-10-09 17:44 README\n-rw-r--r--       13 2026-10-09 17:44 config.json\n-rw-r--r--        5 2026-10-09 17:44 data.csv\n-rw-r--r--        8 2026-10-09 17:44 image.png\n-rw-r--r--       13 2026-10-09 17:44 notes.txt\n-rw-r--r--       14 2026-10-09 17:44 report.txt\n-rw-r--r--        5 2026-10-09 17:44 results.csv\n"
+          },
+          {
+            "commands": "cat > /home/eval/organize_uploads.sh << 'EOF'\n#!/usr/bin/env bash\n# Organize files in /uploads into subdirectories named after their extension.\n\nset -u\nUPLOADS_DIR=\"/uploads\"\n\ndeclare -A counts\n\n# Iterate over regular files only (skip subdirectories)\nfind \"$UPLOADS_DIR\" -mindepth 1 -maxdepth 1 -type f | while read -r filepath; do\n    filename=\"${filepath##*/}\"\n\n    # Determine extension:\n    # - No dot at all, or a dotfile like \".gitignore\" (leading dot only) => no extension\n    if [[ \"$filename\" != *.* || ( \"$filename\" == .* && \"${filename:1}\" != *.* ) ]]; then\n        ext_dir=\"other\"\n    else\n        ext=\"${filename##*.}\"\n        ext_dir=\"$ext\"\n    fi\n\n    target_dir=\"$UPLOADS_DIR/$ext_dir\"\n    mkdir -p \"$target_dir\"\n\n    if mv -- \"$filepath\" \"$target_dir/\"; then\n        echo \"moved: $filename -> $ext_dir/\"\n        # Count per extension directory (stored in a temp file since while-loop\n        # runs in a subshell when piped)\n        echo \"$ext_dir\" >> /tmp/.ext_counts.$$\n    fi\ndone\n\n# Summary\necho \"---\"\nif [[ -f /tmp/.ext_counts.$$ ]]; then\n    sort /tmp/.ext_counts.$$ | uniq -c | while read -r n ext; do\n        echo \"$ext: $n files\"\n    done\n    rm -f /tmp/.ext_counts.$$\nelse\n    echo \"no files moved\"\nfi\nEOF\nchmod +x /home/eval/organize_uploads.sh\necho \"Script created.\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Script created.\n"
+          },
+          {
+            "commands": "cat > /home/eval/organize_uploads.sh << 'EOF'\n#!/usr/bin/env bash\n# Organize files in /uploads into subdirectories named after their extension.\n#   .txt -> /uploads/txt/, .csv -> /uploads/csv/, no extension -> /uploads/other/\n\nset -u\nUPLOADS_DIR=\"/uploads\"\n\ndeclare -A counts\n\n# Iterate over regular files directly inside /uploads (skip subdirectories).\n# Process substitution keeps the loop in the current shell so `counts` persists.\nwhile IFS= read -r filepath; do\n    filename=\"${filepath##*/}\"\n\n    # Determine extension:\n    #  - no dot in name, or a pure dotfile like \".gitignore\"  => no extension\n    if [[ \"$filename\" != *.* || ( \"$filename\" == .* && \"${filename:1}\" != *.* ) ]]; then\n        ext_dir=\"other\"\n    else\n        ext_dir=\"${filename##*.}\"   # text after the last dot\n    fi\n\n    target_dir=\"$UPLOADS_DIR/$ext_dir\"\n    mkdir -p \"$target_dir\"\n\n    if mv -- \"$filepath\" \"$target_dir/\"; then\n        echo \"moved: $filename -> $ext_dir/\"\n        counts[\"$ext_dir\"]=$(( ${counts[\"$ext_dir\"]:-0} + 1 ))\n    fi\ndone < <(find \"$UPLOADS_DIR\" -mindepth 1 -maxdepth 1 -type f)\n\n# Summary\nif (( ${#counts[@]} == 0 )); then\n    echo \"no files moved\"\nelse\n    for ext in $(printf '%s\\n' \"${!counts[@]}\" | sort); do\n        echo \"$ext: ${counts[$ext]} files\"\n    done\nfi\nEOF\nchmod +x /home/eval/organize_uploads.sh\n/home/eval/organize_uploads.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "moved: README -> other/\nmoved: config.json -> json/\nmoved: data.csv -> csv/\nmoved: image.png -> png/\nmoved: notes.txt -> txt/\nmoved: report.txt -> txt/\nmoved: results.csv -> csv/\ncsv: 2 files\njson: 1 files\nother: 1 files\npng: 1 files\ntxt: 2 files\n"
+          },
+          {
+            "commands": "echo \"=== Directory structure ===\"\nfind /uploads -mindepth 1 | sort\necho\necho \"=== Re-run (idempotency test) ===\"\n/home/eval/organize_uploads.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "=== Directory structure ===\n/uploads/csv\n/uploads/csv/data.csv\n/uploads/csv/results.csv\n/uploads/json\n/uploads/json/config.json\n/uploads/other\n/uploads/other/README\n/uploads/png\n/uploads/png/image.png\n/uploads/txt\n/uploads/txt/notes.txt\n/uploads/txt/report.txt\n\n=== Re-run (idempotency test) ===\nno files moved\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

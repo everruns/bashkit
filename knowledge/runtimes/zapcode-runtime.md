@@ -164,3 +164,23 @@ a hint to `help()` and `system_prompt()`:
 > ts/node/deno/bun: Embedded TypeScript (ZapCode). Supports ES2024 subset.
 > File I/O via readFile()/writeFile() async functions. No npm/import/require.
 > No HTTP/network. No eval().
+
+### Browser platform clocks
+
+Only wasm32-unknown-unknown uses the source copy in
+`crates/bashkit/src/zapcode_browser`. ZapCode 1.5.1 uses std Instant in its resource
+tracker and Instant/SystemTime in tracing, which panic on this target. The copy
+replaces those reads with Bashkit's clock shim; time limits remain enabled.
+Native and WASI builds retain the registry crate and its public value types.
+
+Upstream is MIT, with its license retained. `upstream-sha256.json` records every
+original source file. The only mechanical namespace change is `crate::` to
+`crate::zapcode_browser::`, plus lib.rs to mod.rs. `scripts/check_zapcode_browser.py`
+reverses those changes and the two clock substitutions, then checks hashes and
+the complete file inventory and alignment with the native Cargo.lock version. Rustfmt and Clippy skip this upstream source like
+the jaq-json vendor. To update, copy a reviewed crate release, regenerate hashes,
+apply those changes, retain the license and rerun the real browser runtime suite.
+Keep parser/postcard/indexmap dependency versions aligned with upstream. Remove
+the copy once upstream provides browser-safe clocks; never disable deadlines.
+
+See [Browser Package](browser-package.md) for bundle and callback session rules.

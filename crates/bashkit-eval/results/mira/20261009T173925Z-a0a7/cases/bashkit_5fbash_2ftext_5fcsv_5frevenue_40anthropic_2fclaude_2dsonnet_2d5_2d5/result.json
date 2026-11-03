@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "text_csv_revenue",
+  "target": "anthropic/claude-sonnet-5-5",
+  "input": [
+    "Read /data/sales.csv (columns: product,price,quantity). Compute total revenue (sum of price*quantity for each row, skip the header). Print only the final total number."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "329",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "head -5 /data/sales.csv; wc -l /data/sales.csv",
+      "python3 -c \"\nimport csv\nfrom decimal import Decimal\nprint(sum(Decimal(r['price'])*Decimal(r['quantity']) for r in csv.DictReader(open('/data/sales.csv'))))\""
+    ],
+    "usage": {
+      "input_tokens": 3422,
+      "output_tokens": 194,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 3778
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "head -5 /data/sales.csv; wc -l /data/sales.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "product,price,quantity\nwidget,10,5\ngadget,25,3\ndoohickey,7,12\nsprocket,15,8\n5 /data/sales.csv\n"
+          },
+          {
+            "commands": "python3 -c \"\nimport csv\nfrom decimal import Decimal\nprint(sum(Decimal(r['price'])*Decimal(r['quantity']) for r in csv.DictReader(open('/data/sales.csv'))))\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "329\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

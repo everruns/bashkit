@@ -1,0 +1,225 @@
+{
+  "eval": "bashkit_hard",
+  "sample": "hard_jq_rollup",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "/home/eval/shop/data/orders.json is an array of shop orders. Build per-customer rollups with jq.\n\nRules:\n- Customer key: .customer.id. Orders whose customer is null or missing belong to the key \"guest\".\n- Only orders with status \"paid\" count towards paid_orders, revenue_cents, by_month and top_skus (refunded and pending orders are ignored there), but every customer key that appears in any order gets a file.\n- Line revenue in cents = floor(qty * unit_cents * (100 - discount_pct) / 100), where a null or missing discount_pct means 0.\n- name = .customer.name on that customer's most recent order of any status (by .placed); null for \"guest\".\n\nWrite one file per customer key, /home/eval/shop/out/customers/<key>.json, containing one object with exactly these keys in this order:\n  customer (the key), name, paid_orders (number of paid orders), revenue_cents (integer sum of line revenue over paid orders), by_month (object mapping \"YYYY-MM\" of .placed to that month's revenue, keys ascending, only months with paid orders), top_skus (array of up to 3 skus with the highest revenue over paid orders, ties broken by sku ascending)\nAlso write /home/eval/shop/out/summary.json: an array of {\"customer\": <key>, \"revenue_cents\": <int>} for every customer key, sorted by revenue_cents descending then customer ascending.\n\nFormat every file exactly as `jq .` pretty-prints it (2-space indent, one trailing newline). Numbers must be integers (no 12.0)."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "",
+    "iterations": 25,
+    "tool_calls_count": 25,
+    "tool_calls": [
+      "ls -la /home/eval/shop\nls -la /home/eval/shop/data\nhead -n 50 /home/eval/shop/data/orders.json",
+      "which jq\njq --version",
+      "wc -l /home/eval/shop/data/orders.json\njq 'length' /home/eval/shop/data/orders.json",
+      "cat /home/eval/shop/data/orders.json",
+      "ls -la /home/eval/shop/out",
+      "jq -r '.[].placed' /home/eval/shop/data/orders.json",
+      "jq '[.[] | (.customer.id // \"guest\")] | unique' /home/eval/shop/data/orders.json",
+      "cat << 'EOF' > /tmp/test.jq\n# Helper to get customer key\ndef cust_key: .customer.id // \"guest\";\n\n# Helper to compute line revenue\ndef item_rev:\n  ((.qty * .unit_cents * (100 - (.discount_pct // 0))) / 100) | floor;\n\n.\nEOF\njq -f /tmp/test.jq /home/eval/shop/data/orders.json > /dev/null\necho \"syntax ok\"",
+      "cat << 'EOF' > /tmp/test2.jq\ndef item_rev:\n  ((.qty * .unit_cents * (100 - (.discount_pct // 0))) / 100) | floor;\n\ndef cust_key:\n  .customer.id // \"guest\";\n\ngroup_by(cust_key)[] |\n{\n  key: (.[0] | cust_key),\n  orders: .,\n  name: (\n    if (.[0] | cust_key) == \"guest\" then null\n    else\n      (sort_by(.placed) | last | .customer.name)\n    end\n  ),\n  paid: [.[] | select(.status == \"paid\")]\n} |\n{\n  customer: .key,\n  name: .name,\n  paid_orders: (.paid | length),\n  revenue_cents: ([.paid[].items[] | item_rev] | add // 0),\n  by_month: (\n    [.paid[] | {month: .placed[0:7], rev: ([.items[] | item_rev] | add // 0)}]\n    | group_by(.month)\n    | sort_by(.[0].month)\n    | map({key: .[0].month, value: ([.[].rev] | add)})\n    | from_entries\n  ),\n  top_skus: (\n    [.paid[].items[] | {sku: .sku, rev: item_rev}]\n    | group_by(.sku)\n    | map({sku: .[0].sku, rev: ([.[].rev] | add)})\n    | sort_by([(-.rev), .sku])\n    | .[0:3]\n    | map(.sku)\n  )\n}\nEOF\njq -f /tmp/test2.jq /home/eval/shop/data/orders.json",
+      "jq -r '.paid_orders | type' <<<'{\"paid_orders\": 0}'\njq -c '.' <<<'{\"customer\": \"c-ann\", \"name\": \"Ann Lee\", \"paid_orders\": 2, \"revenue_cents\": 5037, \"by_month\": {}, \"top_skus\": []}'",
+      "python3 -c \"print(1)\" 2>/dev/null || echo \"no python3\"\npython -c \"print(1)\" 2>/dev/null || echo \"no python\"\nnode -v 2>/dev/null || echo \"no node\"\nawk --version",
+      "jq 'to_entries | map(.key)' <<<'{\"customer\": 1, \"name\": 2, \"paid_orders\": 3, \"revenue_cents\": 4, \"by_month\": 5, \"top_skus\": 6}'",
+      "jq -S 'to_entries | map(.key)' <<<'{\"customer\": 1, \"name\": 2, \"paid_orders\": 3, \"revenue_cents\": 4, \"by_month\": 5, \"top_skus\": 6}'",
+      "jq -n '{\n  customer: \"c-ann\",\n  name: \"Ann Lee\",\n  paid_orders: 2,\n  revenue_cents: 5037,\n  by_month: { \"2026-07\": 3637, \"2026-08\": 1400 },\n  top_skus: [\"sku-cheese\", \"sku-bread\", \"sku-eggs\"]\n}'",
+      "jq -f /tmp/test2.jq /home/eval/shop/data/orders.json | jq '[.[] | {customer: .customer, revenue_cents: .revenue_cents}] | sort_by([(-.revenue_cents), .customer])'",
+      "jq -s '.' <(jq -f /tmp/test2.jq /home/eval/shop/data/orders.json) | jq 'map({customer, revenue_cents}) | sort_by([(-.revenue_cents), .customer])'",
+      "jq '[.[] | select((.customer.id // \"guest\") == \"c-ann\")]' /home/eval/shop/data/orders.json",
+      "jq -n '\n4 * 899 * 67 / 100 | floor\n'\njq -n '\n2 * 350 * 90 / 100 | floor\n'\njq -n '\n2 * 299\n'",
+      "jq -n '2409 + 630 + 598'",
+      "mkdir -p /home/eval/shop/out/customers",
+      "cat << 'EOF' > /tmp/generate.jq\ndef item_rev:\n  ((.qty * .unit_cents * (100 - (.discount_pct // 0))) / 100) | floor;\n\ndef cust_key:\n  .customer.id // \"guest\";\n\ngroup_by(cust_key)\n| map(\n    {\n      key: (.[0] | cust_key),\n      orders: .,\n      name: (\n        if (.[0] | cust_key) == \"guest\" then null\n        else\n          (sort_by(.placed) | last | .customer.name)\n        end\n      ),\n      paid: [.[] | select(.status == \"paid\")]\n    }\n    | {\n      customer: .key,\n      name: .name,\n      paid_orders: (.paid | length),\n      revenue_cents: ([.paid[].items[] | item_rev] | add // 0),\n      by_month: (\n        [.paid[] | {month: .placed[0:7], rev: ([.items[] | item_rev] | add // 0)}]\n        | group_by(.month)\n        | sort_by(.[0].month)\n        | map({key: .[0].month, value: ([.[].rev] | add)})\n        | from_entries\n      ),\n      top_skus: (\n        [.paid[].items[] | {sku: .sku, rev: item_rev}]\n        | group_by(.sku)\n        | map({sku: .[0].sku, rev: ([.[].rev] | add)})\n        | sort_by([(-.rev), .sku])\n        | .[0:3]\n        | map(.sku)\n      )\n    }\n  )\nEOF",
+      "jq -f /tmp/generate.jq /home/eval/shop/data/orders.json > /tmp/all_customers.json\njq 'length' /tmp/all_customers.json",
+      "jq -c '.[] | .customer' /tmp/all_customers.json",
+      "jq -c '.[]' /tmp/all_customers.json | while read -r line; do\n  cust=$(echo \"$line\" | jq -r '.customer')\n  echo \"$line\" | jq . > \"/home/eval/shop/out/customers/${cust}.json\"\ndone",
+      "jq '[.[] | {customer: .customer, revenue_cents: .revenue_cents}] | sort_by([(-.revenue_cents), .customer])' /tmp/all_customers.json > /home/eval/shop/out/summary.json"
+    ],
+    "usage": {
+      "input_tokens": 100080,
+      "output_tokens": 2694,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 61744
+    },
+    "metrics": {
+      "natural_stop": 0.0,
+      "tool_calls": 25.0,
+      "tool_calls_err": 2.0,
+      "tool_calls_ok": 23.0,
+      "turns": 25.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /home/eval/shop\nls -la /home/eval/shop/data\nhead -n 50 /home/eval/shop/data/orders.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "drwxr-xr-x        0 2026-10-09 05:32 data\n-rw-r--r--    10397 2026-10-09 05:32 orders.json\n[\n  {\n    \"id\": \"o-1000\",\n    \"placed\": \"2026-07-01T08:00:00Z\",\n    \"status\": \"paid\",\n    \"items\": [\n      {\n        \"sku\": \"sku-cheese\",\n        \"qty\": 2,\n        \"unit_cents\": 899\n      }\n    ],\n    \"customer\": null\n  },\n  {\n    \"id\": \"o-1001\",\n    \"placed\": \"2026-07-04T09:07:00Z\",\n    \"status\": \"paid\",\n    \"items\": [\n      {\n        \"sku\": \"sku-eggs\",\n        \"qty\": 4,\n        \"unit_cents\": 299\n      },\n      {\n        \"sku\": \"sku-apple\",\n        \"qty\": 1,\n        \"unit_cents\": 120\n      },\n      {\n        \"sku\": \"sku-cheese\",\n        \"qty\": 2,\n        \"unit_cents\": 899\n      }\n    ],\n    \"customer\": {\n      \"id\": \"c-bob\",\n      \"name\": \"Bob Stone\"\n    }\n  },\n  {\n    \"id\": \"o-1002\",\n    \"placed\": \"2026-07-07T10:14:00Z\",\n    \"status\": \"pending\",\n    \"items\": [\n      {\n        \"sku\": \"sku-apple\",\n        \"qty\": 4,\n        \"unit_cents\": 120\n      },\n"
+          },
+          {
+            "commands": "which jq\njq --version",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/usr/bin/jq\njq-1.8\n"
+          },
+          {
+            "commands": "wc -l /home/eval/shop/data/orders.json\njq 'length' /home/eval/shop/data/orders.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "586 /home/eval/shop/data/orders.json\n26\n"
+          },
+          {
+            "commands": "cat /home/eval/shop/data/orders.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "[\n  {\n    \"id\": \"o-1000\",\n    \"placed\": \"2026-07-01T08:00:00Z\",\n    \"status\": \"paid\",\n    \"items\": [\n      {\n        \"sku\": \"sku-cheese\",\n        \"qty\": 2,\n        \"unit_cents\": 899\n      }\n    ],\n    \"customer\": null\n  },\n  {\n    \"id\": \"o-1001\",\n    \"placed\": \"2026-07-04T09:07:00Z\",\n    \"status\": \"paid\",\n    \"items\": [\n      {\n        \"sku\": \"sku-eggs\",\n        \"qty\": 4,\n        \"unit_cents\": 299\n      },\n      {\n        \"sku\": \"sku-apple\",\n        \"qty\": 1,\n        \"unit_cents\": 120\n      },\n      {\n        \"sku\": \"sku-cheese\",\n        \"qty\": 2,\n        \"unit_cents\": 899\n      }\n    ],\n    \"customer\": {\n      \"id\": \"c-bob\",\n      \"name\": \"Bob Stone\"\n    }\n  },\n  {\n    \"id\": \"o-1002\",\n    \"placed\": \"2026-07-07T10:14:00Z\",\n    \"status\": \"pending\",\n    \"items\": [\n      {\n        \"sku\": \"sku-apple\",\n        \"qty\": 4,\n        \"unit_cents\": 120\n      },\n      {\n        \"sku\": \"sku-bread\",\n        \"qty\": 4,\n        \"unit_cents\": 350,\n        \"discount_pct\": null\n      },\n      {\n        \"sku\": \"sku-cheese\",\n        \"qty\": 3,\n        \"unit_cents\": 899\n      }\n    ],\n    \"customer\": {\n      \"id\": \"c-eve\",\n      \"name\": \"Eve Adams\"\n    }\n  },\n  {\n    \"id\": \"o-1003\",\n    \"placed\": \"2026-07-10T11:21:00Z\",\n    \"status\": \"refunded\",\n    \"items\": [\n      {\n        \"sku\": \"sku-cheese\",\n        \"qty\": 2,\n        \"unit_cents\": 899,\n        \"discount_pct\": 5\n      },\n      {\n        \"sku\": \"sku-bread\",\n        \"qty\": 1,\n        \"unit_cents\": 350,\n        \"discount_pct\": 5\n      }\n    ],\n    \"customer\": {\n      \"id\": \"c-bob\",\n      \"name\": \"Bob Stone\"\n    }\n  },\n  {\n    \"id\": \"o-1004\",\n    \"placed\": \"2026-07-13T12:28:00Z\",\n    \"status\": \"paid\",\n    \"items\": [\n      {\n        \"sku\": \"sku-cheese\",\n        \"qty\": 4,\n        \"unit_cents\": 899,\n        \"discount_pct\": null\n      },\n      {\n        \"sku\": \"sku-apple\",\n        \"qty\": 1,\n        \"unit_cents\": 120,\n        \"discount_pct\": 5\n      },\n      {\n        \"sku\": \"sku-eggs\",\n        \"qty\": 3,\n        \"unit_cents\": 299,\n        \"discount_pct\": null\n      }\n    ],\n    \"customer\": {\n      \"id\": \"c-cy\",\n      \"name\": \"Cy Park\"\n    }\n  },\n  {\n    \"id\": \"o-1005\",\n    \"placed\": \"2026-07-16T13:35:00Z\",\n    \"status\": \"pending\",\n    \"items\": [\n      {\n        \"sku\": \"sku-eggs\",\n        \"qty\": 1,\n        \"unit_cents\": 299\n      },\n      {\n        \"sku\": \"sku-bread\",\n        \"qty\": 2,\n        \"unit_cents\": 350,\n        \"discount_pct\": 5\n      }\n    ],\n    \"customer\": {\n      \"id\": \"c-eve\",\n      \"name\": \"Eve Adams\"\n    }\n  },\n  {\n    \"id\": \"o-1006\",\n    \"placed\": \"2026-07-19T14:42:00Z\",\n    \"status\": \"paid\",\n    \"items\": [\n      {\n        \"sku\": \"sku-cheese\",\n        \"qty\": 3,\n        \"unit_cents\": 899\n      },\n      {\n        \"sku\": \"sku-dates\",\n        \"qty\": 3,\n        \"unit_cents\": 450,\n        \"discount_pct\": 10\n      }\n    ],\n    \"customer\": {\n      \"id\": \"c-bob\",\n      \"name\": \"Bob Stone\"\n    }\n  },\n  {\n    \"id\": \"o-1007\",\n    \"placed\": \"2026-07-22T15:49:00Z\",\n    \"status\": \"paid\",\n    \"items\": [\n      {\n        \"sku\": \"sku-apple\",\n        \"qty\": 2,\n        \"unit_cents\": 120\n      },\n      {\n        \"sku\": \"sku-bread\",\n        \"qty\": 4,\n        \"unit_cents\": 350,\n        \"discount_pct\": 15\n      },\n      {\n        \"sku\": \"sku-cheese\",\n        \"qty\": 2,\n        \"unit_cents\": 899,\n        \"discount_pct\": null\n      }\n    ]\n  },\n  {\n    \"id\": \"o-1008\",\n    \"placed\": \"2026-07-25T16:56:00Z\",\n    \"status\": \"paid\",\n    \"items\": [\n      {\n        \"sku\": \"sku-apple\",\n        \"qty\": 3,\n        \"unit_cents\": 120,\n        \"discount_pct\": 15\n      }\n    ],\n    \"customer\": {\n      \"id\": \"c-cy\",\n      \"name\": \"Cy Park\"\n    }\n  },\n  {\n    \"id\": \"o-1009\",\n    \"placed\": \"2026-07-28T17:03:00Z\",\n    \"status\": \"paid\",\n    \"items\": [\n      {\n        \"sku\": \"sku-cheese\",\n        \"qty\": 4,\n        \"unit_cents\": 899,\n        \"discount_pct\": 33\n      },\n      {\n        \"sku\": \"sku-bread\",\n        \"qty\": 2,\n        \"unit_cents\": 350,\n        \"discount_pct\": 10\n      },\n      {\n        \"sku\": \"sku-eggs\",\n        \"qty\": 2,\n        \"unit_cents\": 299,\n        \"discount_pct\": null\n      }\n    ],\n    \"customer\": {\n      \"id\": \"c-ann\",\n      \"name\": \"Ann Lee\"\n    }\n  },\n  {\n    \"id\": \"o-1010\",\n    \"placed\": \"2026-08-01T08:10:00Z\",\n    \"status\": \"pending\",\n    \"items\": [\n      {\n        \"sku\": \"sku-cheese\",\n        \"qty\": 4,\n        \"unit_cents\": 899,\n        \"discount_pct\": 10\n      },\n      {\n        \"sku\": \"sku-dates\",\n        \"qty\": 2,\n        \"unit_cents\": 450,\n        \"discount_pct\": null\n      },\n      {\n        \"sku\": \"sku-eggs\",\n        \"qty\": 4,\n        \"unit_cents\": 299\n      }\n    ],\n    \"customer\": {\n      \"id\": \"c-eve\",\n      \"name\": \"Eve Adams\"\n    }\n  },\n  {\n    \"id\": \"o-1011\",\n    \"placed\": \"2026-08-04T09:17:00Z\",\n    \"status\": \"paid\",\n    \"items\": [\n      {\n        \"sku\": \"sku-bread\",\n        \"qty\": 4,\n        \"unit_cents\": 350,\n        \"discount_pct\": null\n      }\n    ],\n    \"customer\": {\n      \"id\": \"c-ann\",\n      \"name\": \"Ann Lee\"\n    }\n  },\n  {\n    \"id\": \"o-1012\",\n    \"placed\": \"2026-08-07T10:24:00Z\",\n    \"status\": \"refunded\",\n    \"items\": [\n      {\n        \"sku\": \"sku-eggs\",\n        \"qty\": 3,\n        \"unit_cents\": 299,\n        \"discount_pct\": null\n      },\n      {\n        \"sku\": \"sku-dates\",\n        \"qty\": 1,\n        \"unit_cents\": 450,\n        \"discount_pct\": null\n      }\n    ],\n    \"customer\": {\n      \"id\": \"c-ann\",\n      \"name\": \"Ann Lee\"\n    }\n  },\n  {\n    \"id\": \"o-1013\",\n    \"placed\": \"2026-08-10T11:31:00Z\",\n    \"status\": \"paid\",\n    \"items\": [\n      {\n        \"sku\": \"sku-eggs\",\n        \"qty\": 3,\n        \"unit_cents\": 299\n      },\n      {\n        \"sku\": \"sku-cheese\",\n        \"qty\": 3,\n        \"unit_cents\": 899,\n        \"discount_pct\": 10\n      },\n      {\n        \"sku\": \"sku-dates\",\n        \"qty\": 4,\n        \"unit_cents\": 450\n      }\n    ]\n  },\n  {\n    \"id\": \"o-1014\",\n    \"placed\": \"2026-08-13T12:38:00Z\",\n    \"status\": \"paid\",\n    \"items\": [\n      {\n        \"sku\": \"sku-bread\",\n        \"qty\": 3,\n        \"unit_cents\": 350,\n        \"discount_pct\": null\n      },\n      {\n        \"sku\": \"sku-apple\",\n        \"qty\": 2,\n        \"unit_cents\": 120\n      },\n      {\n        \"sku\": \"sku-cheese\",\n        \"qty\": 3,\n        \"unit_cents\": 899\n      }\n    ],\n    \"customer\": null\n  },\n  {\n    \"id\": \"o-1015\",\n    \"placed\": \"2026-08-16T13:45:00Z\",\n    \"status\": \"pending\",\n    \"items\": [\n      {\n        \"sku\": \"sku-apple\",\n        \"qty\": 1,\n        \"unit_cents\": 120\n      },\n      {\n        \"sku\": \"sku-cheese\",\n        \"qty\": 3,\n        \"unit_cents\": 899,\n        \"discount_pct\": 10\n      },\n      {\n        \"sku\": \"sku-bread\",\n        \"qty\": 1,\n        \"unit_cents\": 350\n      }\n    ],\n    \"customer\": {\n      \"id\": \"c-eve\",\n      \"name\": \"Eve Adams\"\n    }\n  },\n  {\n    \"id\": \"o-1016\",\n    \"placed\": \"2026-08-19T14:52:00Z\",\n    \"status\": \"pending\",\n    \"items\": [\n      {\n        \"sku\": \"sku-apple\",\n        \"qty\": 4,\n        \"unit_cents\": 120\n      }\n    ],\n    \"customer\": {\n      \"id\": \"c-eve\",\n      \"name\": \"Eve Adams\"\n    }\n  },\n  {\n    \"id\": \"o-1017\",\n    \"placed\": \"2026-08-22T15:59:00Z\",\n    \"status\": \"pending\",\n    \"items\": [\n      {\n        \"sku\": \"sku-bread\",\n        \"qty\": 4,\n        \"unit_cents\": 350,\n        \"discount_pct\": null\n      }\n    ],\n    \"customer\": {\n      \"id\": \"c-eve\",\n      \"name\": \"Eve Adams\"\n    }\n  },\n  {\n    \"id\": \"o-1018\",\n    \"placed\": \"2026-08-25T16:06:00Z\",\n    \"status\": \"paid\",\n    \"items\": [\n      {\n        \"sku\": \"sku-eggs\",\n        \"qty\": 2,\n        \"unit_cents\": 299,\n        \"discount_pct\": null\n      },\n      {\n        \"sku\": \"sku-dates\",\n        \"qty\": 3,\n        \"unit_cents\": 450,\n        \"discount_pct\": 15\n      },\n      {\n        \"sku\": \"sku-apple\",\n        \"qty\": 4,\n        \"unit_cents\": 120,\n        \"discount_pct\": null\n      }\n    ],\n    \"customer\": {\n      \"id\": \"c-bob\",\n      \"name\": \"Robert Stone\"\n    }\n  },\n  {\n    \"id\": \"o-1019\",\n    \"placed\": \"2026-08-28T17:13:00Z\",\n    \"status\": \"paid\",\n    \"items\": [\n      {\n        \"sku\": \"sku-bread\",\n        \"qty\": 1,\n        \"unit_cents\": 350,\n        \"discount_pct\": 5\n      }\n    ],\n    \"customer\": {\n      \"id\": \"c-dee\",\n      \"name\": \"Dee Ford\"\n    }\n  },\n  {\n    \"id\": \"o-1020\",\n    \"placed\": \"2026-09-01T08:20:00Z\",\n    \"status\": \"pending\",\n    \"items\": [\n      {\n        \"sku\": \"sku-bread\",\n        \"qty\": 1,\n        \"unit_cents\": 350,\n        \"discount_pct\": null\n      },\n      {\n        \"sku\": \"sku-eggs\",\n        \"qty\": 1,\n        \"unit_cents\": 299\n      },\n      {\n        \"sku\": \"sku-apple\",\n        \"qty\": 1,\n        \"unit_cents\": 120\n      }\n    ],\n    \"customer\": {\n      \"id\": \"c-eve\",\n      \"name\": \"Eve Adams\"\n    }\n  },\n  {\n    \"id\": \"o-1021\",\n    \"placed\": \"2026-09-04T09:27:00Z\",\n    \"status\": \"paid\",\n    \"items\": [\n      {\n        \"sku\": \"sku-bread\",\n        \"qty\": 4,\n        \"unit_cents\": 350\n      },\n      {\n        \"sku\": \"sku-cheese\",\n        \"qty\": 2,\n        \"unit_cents\": 899,\n        \"discount_pct\": null\n      },\n      {\n        \"sku\": \"sku-dates\",\n        \"qty\": 4,\n        \"unit_cents\": 450\n      }\n    ],\n    \"customer\": {\n      \"id\": \"c-cy\",\n      \"name\": \"Cy Park\"\n    }\n  },\n  {\n    \"id\": \"o-1022\",\n    \"placed\": \"2026-09-07T10:34:00Z\",\n    \"status\": \"refunded\",\n    \"items\": [\n      {\n        \"sku\": \"sku-apple\",\n        \"qty\": 1,\n        \"unit_cents\": 120,\n        \"discount_pct\": null\n      }\n    ],\n    \"customer\": {\n      \"id\": \"c-dee\",\n      \"name\": \"Dee Ford\"\n    }\n  },\n  {\n    \"id\": \"o-1023\",\n    \"placed\": \"2026-09-10T11:41:00Z\",\n    \"status\": \"paid\",\n    \"items\": [\n      {\n        \"sku\": \"sku-dates\",\n        \"qty\": 1,\n        \"unit_cents\": 450,\n        \"discount_pct\": null\n      },\n      {\n        \"sku\": \"sku-eggs\",\n        \"qty\": 1,\n        \"unit_cents\": 299\n      }\n    ],\n    \"customer\": {\n      \"id\": \"c-dee\",\n      \"name\": \"Dee Ford\"\n    }\n  },\n  {\n    \"id\": \"o-1024\",\n    \"placed\": \"2026-09-13T12:48:00Z\",\n    \"status\": \"paid\",\n    \"items\": [\n      {\n        \"sku\": \"sku-bread\",\n        \"qty\": 2,\n        \"unit_cents\": 350\n      }\n    ],\n    \"customer\": {\n      \"id\": \"c-dee\",\n      \"name\": \"Dee Ford\"\n    }\n  },\n  {\n    \"id\": \"o-1025\",\n    \"placed\": \"2026-09-16T13:55:00Z\",\n    \"status\": \"pending\",\n    \"items\": [\n      {\n        \"sku\": \"sku-bread\",\n        \"qty\": 2,\n        \"unit_cents\": 350,\n        \"discount_pct\": 33\n      },\n      {\n        \"sku\": \"sku-dates\",\n        \"qty\": 2,\n        \"unit_cents\": 450\n      }\n    ],\n    \"customer\": {\n      \"id\": \"c-eve\",\n      \"name\": \"Eve Adams\"\n    }\n  }\n]\n"
+          },
+          {
+            "commands": "ls -la /home/eval/shop/out",
+            "exit_code": 2,
+            "stderr": "ls: cannot access '/home/eval/shop/out': No such file or directory\n",
+            "stdout": ""
+          },
+          {
+            "commands": "jq -r '.[].placed' /home/eval/shop/data/orders.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "2026-07-01T08:00:00Z\n2026-07-04T09:07:00Z\n2026-07-07T10:14:00Z\n2026-07-10T11:21:00Z\n2026-07-13T12:28:00Z\n2026-07-16T13:35:00Z\n2026-07-19T14:42:00Z\n2026-07-22T15:49:00Z\n2026-07-25T16:56:00Z\n2026-07-28T17:03:00Z\n2026-08-01T08:10:00Z\n2026-08-04T09:17:00Z\n2026-08-07T10:24:00Z\n2026-08-10T11:31:00Z\n2026-08-13T12:38:00Z\n2026-08-16T13:45:00Z\n2026-08-19T14:52:00Z\n2026-08-22T15:59:00Z\n2026-08-25T16:06:00Z\n2026-08-28T17:13:00Z\n2026-09-01T08:20:00Z\n2026-09-04T09:27:00Z\n2026-09-07T10:34:00Z\n2026-09-10T11:41:00Z\n2026-09-13T12:48:00Z\n2026-09-16T13:55:00Z\n"
+          },
+          {
+            "commands": "jq '[.[] | (.customer.id // \"guest\")] | unique' /home/eval/shop/data/orders.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "[\n  \"c-ann\",\n  \"c-bob\",\n  \"c-cy\",\n  \"c-dee\",\n  \"c-eve\",\n  \"guest\"\n]\n"
+          },
+          {
+            "commands": "cat << 'EOF' > /tmp/test.jq\n# Helper to get customer key\ndef cust_key: .customer.id // \"guest\";\n\n# Helper to compute line revenue\ndef item_rev:\n  ((.qty * .unit_cents * (100 - (.discount_pct // 0))) / 100) | floor;\n\n.\nEOF\njq -f /tmp/test.jq /home/eval/shop/data/orders.json > /dev/null\necho \"syntax ok\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "syntax ok\n"
+          },
+          {
+            "commands": "cat << 'EOF' > /tmp/test2.jq\ndef item_rev:\n  ((.qty * .unit_cents * (100 - (.discount_pct // 0))) / 100) | floor;\n\ndef cust_key:\n  .customer.id // \"guest\";\n\ngroup_by(cust_key)[] |\n{\n  key: (.[0] | cust_key),\n  orders: .,\n  name: (\n    if (.[0] | cust_key) == \"guest\" then null\n    else\n      (sort_by(.placed) | last | .customer.name)\n    end\n  ),\n  paid: [.[] | select(.status == \"paid\")]\n} |\n{\n  customer: .key,\n  name: .name,\n  paid_orders: (.paid | length),\n  revenue_cents: ([.paid[].items[] | item_rev] | add // 0),\n  by_month: (\n    [.paid[] | {month: .placed[0:7], rev: ([.items[] | item_rev] | add // 0)}]\n    | group_by(.month)\n    | sort_by(.[0].month)\n    | map({key: .[0].month, value: ([.[].rev] | add)})\n    | from_entries\n  ),\n  top_skus: (\n    [.paid[].items[] | {sku: .sku, rev: item_rev}]\n    | group_by(.sku)\n    | map({sku: .[0].sku, rev: ([.[].rev] | add)})\n    | sort_by([(-.rev), .sku])\n    | .[0:3]\n    | map(.sku)\n  )\n}\nEOF\njq -f /tmp/test2.jq /home/eval/shop/data/orders.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "{\n  \"customer\": \"c-ann\",\n  \"name\": \"Ann Lee\",\n  \"paid_orders\": 2,\n  \"revenue_cents\": 5037,\n  \"by_month\": {\n    \"2026-07\": 3637,\n    \"2026-08\": 1400\n  },\n  \"top_skus\": [\n    \"sku-cheese\",\n    \"sku-bread\",\n    \"sku-eggs\"\n  ]\n}\n{\n  \"customer\": \"c-bob\",\n  \"name\": \"Robert Stone\",\n  \"paid_orders\": 3,\n  \"revenue_cents\": 9251,\n  \"by_month\": {\n    \"2026-07\": 7026,\n    \"2026-08\": 2225\n  },\n  \"top_skus\": [\n    \"sku-cheese\",\n    \"sku-dates\",\n    \"sku-eggs\"\n  ]\n}\n{\n  \"customer\": \"c-cy\",\n  \"name\": \"Cy Park\",\n  \"paid_orders\": 3,\n  \"revenue_cents\": 9911,\n  \"by_month\": {\n    \"2026-07\": 4913,\n    \"2026-09\": 4998\n  },\n  \"top_skus\": [\n    \"sku-cheese\",\n    \"sku-dates\",\n    \"sku-bread\"\n  ]\n}\n{\n  \"customer\": \"c-dee\",\n  \"name\": \"Dee Ford\",\n  \"paid_orders\": 3,\n  \"revenue_cents\": 1781,\n  \"by_month\": {\n    \"2026-08\": 332,\n    \"2026-09\": 1449\n  },\n  \"top_skus\": [\n    \"sku-bread\",\n    \"sku-dates\",\n    \"sku-eggs\"\n  ]\n}\n{\n  \"customer\": \"c-eve\",\n  \"name\": \"Eve Adams\",\n  \"paid_orders\": 0,\n  \"revenue_cents\": 0,\n  \"by_month\": {},\n  \"top_skus\": []\n}\n{\n  \"customer\": \"guest\",\n  \"name\": null,\n  \"paid_orders\": 4,\n  \"revenue_cents\": 14137,\n  \"by_month\": {\n    \"2026-07\": 5026,\n    \"2026-08\": 9111\n  },\n  \"top_skus\": [\n    \"sku-cheese\",\n    \"sku-bread\",\n    \"sku-dates\"\n  ]\n}\n"
+          },
+          {
+            "commands": "jq -r '.paid_orders | type' <<<'{\"paid_orders\": 0}'\njq -c '.' <<<'{\"customer\": \"c-ann\", \"name\": \"Ann Lee\", \"paid_orders\": 2, \"revenue_cents\": 5037, \"by_month\": {}, \"top_skus\": []}'",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "number\n{\"customer\":\"c-ann\",\"name\":\"Ann Lee\",\"paid_orders\":2,\"revenue_cents\":5037,\"by_month\":{},\"top_skus\":[]}\n"
+          },
+          {
+            "commands": "python3 -c \"print(1)\" 2>/dev/null || echo \"no python3\"\npython -c \"print(1)\" 2>/dev/null || echo \"no python\"\nnode -v 2>/dev/null || echo \"no node\"\nawk --version",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "no python3\nno python\nno node\nGNU Awk 5.2.1 (bashkit)\n"
+          },
+          {
+            "commands": "jq 'to_entries | map(.key)' <<<'{\"customer\": 1, \"name\": 2, \"paid_orders\": 3, \"revenue_cents\": 4, \"by_month\": 5, \"top_skus\": 6}'",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "[\n  \"customer\",\n  \"name\",\n  \"paid_orders\",\n  \"revenue_cents\",\n  \"by_month\",\n  \"top_skus\"\n]\n"
+          },
+          {
+            "commands": "jq -S 'to_entries | map(.key)' <<<'{\"customer\": 1, \"name\": 2, \"paid_orders\": 3, \"revenue_cents\": 4, \"by_month\": 5, \"top_skus\": 6}'",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "[\n  \"customer\",\n  \"name\",\n  \"paid_orders\",\n  \"revenue_cents\",\n  \"by_month\",\n  \"top_skus\"\n]\n"
+          },
+          {
+            "commands": "jq -n '{\n  customer: \"c-ann\",\n  name: \"Ann Lee\",\n  paid_orders: 2,\n  revenue_cents: 5037,\n  by_month: { \"2026-07\": 3637, \"2026-08\": 1400 },\n  top_skus: [\"sku-cheese\", \"sku-bread\", \"sku-eggs\"]\n}'",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "{\n  \"customer\": \"c-ann\",\n  \"name\": \"Ann Lee\",\n  \"paid_orders\": 2,\n  \"revenue_cents\": 5037,\n  \"by_month\": {\n    \"2026-07\": 3637,\n    \"2026-08\": 1400\n  },\n  \"top_skus\": [\n    \"sku-cheese\",\n    \"sku-bread\",\n    \"sku-eggs\"\n  ]\n}\n"
+          },
+          {
+            "commands": "jq -f /tmp/test2.jq /home/eval/shop/data/orders.json | jq '[.[] | {customer: .customer, revenue_cents: .revenue_cents}] | sort_by([(-.revenue_cents), .customer])'",
+            "exit_code": 5,
+            "stderr": "jq: error (at <stdin>:15): Cannot index string with string \"customer\"\njq: error (at <stdin>:30): Cannot index string with string \"customer\"\njq: error (at <stdin>:45): Cannot index string with string \"customer\"\njq: error (at <stdin>:60): Cannot index string with string \"customer\"\njq: error (at <stdin>:68): Cannot index string with string \"customer\"\njq: error (at <stdin>:83): Cannot index string with string \"customer\"\n",
+            "stdout": ""
+          },
+          {
+            "commands": "jq -s '.' <(jq -f /tmp/test2.jq /home/eval/shop/data/orders.json) | jq 'map({customer, revenue_cents}) | sort_by([(-.revenue_cents), .customer])'",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "[\n  {\n    \"customer\": \"guest\",\n    \"revenue_cents\": 14137\n  },\n  {\n    \"customer\": \"c-cy\",\n    \"revenue_cents\": 9911\n  },\n  {\n    \"customer\": \"c-bob\",\n    \"revenue_cents\": 9251\n  },\n  {\n    \"customer\": \"c-ann\",\n    \"revenue_cents\": 5037\n  },\n  {\n    \"customer\": \"c-dee\",\n    \"revenue_cents\": 1781\n  },\n  {\n    \"customer\": \"c-eve\",\n    \"revenue_cents\": 0\n  }\n]\n"
+          },
+          {
+            "commands": "jq '[.[] | select((.customer.id // \"guest\") == \"c-ann\")]' /home/eval/shop/data/orders.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "[\n  {\n    \"id\": \"o-1009\",\n    \"placed\": \"2026-07-28T17:03:00Z\",\n    \"status\": \"paid\",\n    \"items\": [\n      {\n        \"sku\": \"sku-cheese\",\n        \"qty\": 4,\n        \"unit_cents\": 899,\n        \"discount_pct\": 33\n      },\n      {\n        \"sku\": \"sku-bread\",\n        \"qty\": 2,\n        \"unit_cents\": 350,\n        \"discount_pct\": 10\n      },\n      {\n        \"sku\": \"sku-eggs\",\n        \"qty\": 2,\n        \"unit_cents\": 299,\n        \"discount_pct\": null\n      }\n    ],\n    \"customer\": {\n      \"id\": \"c-ann\",\n      \"name\": \"Ann Lee\"\n    }\n  },\n  {\n    \"id\": \"o-1011\",\n    \"placed\": \"2026-08-04T09:17:00Z\",\n    \"status\": \"paid\",\n    \"items\": [\n      {\n        \"sku\": \"sku-bread\",\n        \"qty\": 4,\n        \"unit_cents\": 350,\n        \"discount_pct\": null\n      }\n    ],\n    \"customer\": {\n      \"id\": \"c-ann\",\n      \"name\": \"Ann Lee\"\n    }\n  },\n  {\n    \"id\": \"o-1012\",\n    \"placed\": \"2026-08-07T10:24:00Z\",\n    \"status\": \"refunded\",\n    \"items\": [\n      {\n        \"sku\": \"sku-eggs\",\n        \"qty\": 3,\n        \"unit_cents\": 299,\n        \"discount_pct\": null\n      },\n      {\n        \"sku\": \"sku-dates\",\n        \"qty\": 1,\n        \"unit_cents\": 450,\n        \"discount_pct\": null\n      }\n    ],\n    \"customer\": {\n      \"id\": \"c-ann\",\n      \"name\": \"Ann Lee\"\n    }\n  }\n]\n"
+          },
+          {
+            "commands": "jq -n '\n4 * 899 * 67 / 100 | floor\n'\njq -n '\n2 * 350 * 90 / 100 | floor\n'\njq -n '\n2 * 299\n'",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "2409\n630\n598\n"
+          },
+          {
+            "commands": "jq -n '2409 + 630 + 598'",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "3637\n"
+          },
+          {
+            "commands": "mkdir -p /home/eval/shop/out/customers",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "cat << 'EOF' > /tmp/generate.jq\ndef item_rev:\n  ((.qty * .unit_cents * (100 - (.discount_pct // 0))) / 100) | floor;\n\ndef cust_key:\n  .customer.id // \"guest\";\n\ngroup_by(cust_key)\n| map(\n    {\n      key: (.[0] | cust_key),\n      orders: .,\n      name: (\n        if (.[0] | cust_key) == \"guest\" then null\n        else\n          (sort_by(.placed) | last | .customer.name)\n        end\n      ),\n      paid: [.[] | select(.status == \"paid\")]\n    }\n    | {\n      customer: .key,\n      name: .name,\n      paid_orders: (.paid | length),\n      revenue_cents: ([.paid[].items[] | item_rev] | add // 0),\n      by_month: (\n        [.paid[] | {month: .placed[0:7], rev: ([.items[] | item_rev] | add // 0)}]\n        | group_by(.month)\n        | sort_by(.[0].month)\n        | map({key: .[0].month, value: ([.[].rev] | add)})\n        | from_entries\n      ),\n      top_skus: (\n        [.paid[].items[] | {sku: .sku, rev: item_rev}]\n        | group_by(.sku)\n        | map({sku: .[0].sku, rev: ([.[].rev] | add)})\n        | sort_by([(-.rev), .sku])\n        | .[0:3]\n        | map(.sku)\n      )\n    }\n  )\nEOF",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "jq -f /tmp/generate.jq /home/eval/shop/data/orders.json > /tmp/all_customers.json\njq 'length' /tmp/all_customers.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "6\n"
+          },
+          {
+            "commands": "jq -c '.[] | .customer' /tmp/all_customers.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "\"c-ann\"\n\"c-bob\"\n\"c-cy\"\n\"c-dee\"\n\"c-eve\"\n\"guest\"\n"
+          },
+          {
+            "commands": "jq -c '.[]' /tmp/all_customers.json | while read -r line; do\n  cust=$(echo \"$line\" | jq -r '.customer')\n  echo \"$line\" | jq . > \"/home/eval/shop/out/customers/${cust}.json\"\ndone",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "jq '[.[] | {customer: .customer, revenue_cents: .revenue_cents}] | sort_by([(-.revenue_cents), .customer])' /tmp/all_customers.json > /home/eval/shop/out/summary.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

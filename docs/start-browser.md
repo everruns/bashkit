@@ -31,6 +31,44 @@ const result = bash.executeSync('echo "Hello, browser!" | tr a-z A-Z');
 console.log(result.stdout); // HELLO, BROWSER!
 ```
 
+## Python and TypeScript host functions
+
+Use the optional runtime bundle when scripts need embedded Python or TypeScript:
+
+```js
+import { initBashkit, Bash } from "@everruns/bashkit-wasm/runtimes";
+await initBashkit();
+const bash = new Bash({
+  python: true,
+  externalFunctions: ["lookup"],
+  externalHandler: async (_name, args, kwargs, { signal }) => {
+    const response = await fetch(`/api/items/${encodeURIComponent(String(args[0]))}`, { signal });
+    return response.json();
+  },
+  typescript: true,
+  typescriptExternalFunctions: ["double"],
+  typescriptExternalHandler: (_name, args) => Number(args[0]) * 2,
+});
+await bash.execute(`python -c 'print(lookup(21))'`);
+console.log((await bash.execute(`ts -c 'await double(21)'`)).stdout); // 42
+```
+
+The default import keeps the slim binary. Both bundles use one event loop and
+work in module workers without SharedArrayBuffer or COOP/COEP. Runtimes remain
+disabled until enabled in constructor options.
+
+Handlers accept the same JSON subset and signatures as the
+[native JS SDK](start-node.md#python-and-typescript-host-functions). Use async
+`execute` for host calls. Its signal aborts on timeout, cancellation or completion;
+pass it to host I/O. An optional `execute(commands, { signal, onOutput })` controls
+cancellation and streaming. Cancellation is sticky until `clearCancel()`.
+One execution may run per instance; concurrent or recursive execution rejects
+with a busy error. Reset preserves handlers; persisted state contains no host code.
+Terminal supports pure runtimes but rejects runtime callback names; use Bash for
+host functions. Host code owns service authorization and I/O limits.
+
+Runtime host callbacks also work with live commands and the `stdout`/`stderr` byte sinks, explicit `capture` limits, and `AbortSignal` options described in [Streaming I/O](streaming.md). Text `onOutput` observers remain a separate execution mode; use byte sinks when combining output delivery with live execution options.
+
 ## Try it live
 
 This is the exact package above, running in your browser, no server, nothing

@@ -1,0 +1,120 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "complex_todo_app",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "Build a command-line TODO app. Create /app/todo.sh that supports these subcommands: 'add <task>' appends a task to /app/tasks.txt, 'list' prints all tasks with line numbers, 'done <number>' removes that line from the file. Then demonstrate: add 'Buy groceries', add 'Write tests', add 'Deploy app', list all tasks, mark task 1 as done, list again to show remaining tasks."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "",
+    "iterations": 10,
+    "tool_calls_count": 10,
+    "tool_calls": [
+      "ls -la /app 2>/dev/null || mkdir -p /app",
+      "find / -maxdepth 3 -name \"*todo*\" 2>/dev/null",
+      "ls -la /",
+      "cat << 'EOF' > /app/todo.sh\n#!/bin/bash\n\nTASKS_FILE=\"/app/tasks.txt\"\n\ntouch \"$TASKS_FILE\"\n\nsubcommand=\"$1\"\nshift || true\n\ncase \"$subcommand\" in\n    add)\n        task=\"$*\"\n        if [ -n \"$task\" ]; then\n            echo \"$task\" >> \"$TASKS_FILE\"\n        fi\n        ;;\n    list)\n        if [ -s \"$TASKS_FILE\" ]; then\n            nl -ba -w1 -s'. ' \"$TASKS_FILE\" 2>/dev/null || awk '{print NR \". \" $0}' \"$TASKS_FILE\"\n        fi\n        ;;\n    done)\n        num=\"$1\"\n        if [ -n \"$num\" ]; then\n            sed -i \"${num}d\" \"$TASKS_FILE\"\n        fi\n        ;;\n    *)\n        echo \"Usage: $0 {add <task>|list|done <number>}\" >&2\n        exit 1\n        ;;\nesac\nEOF\nchmod +x /app/todo.sh",
+      "which nl sed awk",
+      "echo \"test\" > /tmp/test.txt\nnl -ba -w1 -s'. ' /tmp/test.txt\nawk '{print NR \". \" $0}' /tmp/test.txt\nsed -i \"1d\" /tmp/test.txt\ncat /tmp/test.txt",
+      "cat << 'EOF' > /app/todo.sh\n#!/bin/bash\n\nTASKS_FILE=\"/app/tasks.txt\"\n\ntouch \"$TASKS_FILE\"\n\nsubcommand=\"$1\"\nshift || true\n\ncase \"$subcommand\" in\n    add)\n        task=\"$*\"\n        if [ -n \"$task\" ]; then\n            echo \"$task\" >> \"$TASKS_FILE\"\n        fi\n        ;;\n    list)\n        if [ -s \"$TASKS_FILE\" ]; then\n            awk '{print NR \". \" $0}' \"$TASKS_FILE\"\n        fi\n        ;;\n    done)\n        num=\"$1\"\n        if [ -n \"$num\" ]; then\n            sed -i \"${num}d\" \"$TASKS_FILE\"\n        fi\n        ;;\n    *)\n        echo \"Usage: $0 {add <task>|list|done <number>}\" >&2\n        exit 1\n        ;;\nesac\nEOF\nchmod +x /app/todo.sh",
+      "/bin/nl -ba /dev/null 2>&1\necho \"foo\" | /bin/nl -ba -w1 -s'. '\necho \"foo\" | awk '{print NR \". \" $0}'",
+      "rm -f /app/tasks.txt\n/app/todo.sh add \"Buy groceries\"\n/app/todo.sh add \"Write tests\"\n/app/todo.sh add \"Deploy app\"\n/app/todo.sh list\n/app/todo.sh done 1\n/app/todo.sh list",
+      "cat /app/tasks.txt\ncat /app/todo.sh"
+    ],
+    "usage": {
+      "input_tokens": 10016,
+      "output_tokens": 2024,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 39494
+    },
+    "metrics": {
+      "natural_stop": 0.0,
+      "tool_calls": 10.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 10.0,
+      "turns": 10.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /app 2>/dev/null || mkdir -p /app",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "find / -maxdepth 3 -name \"*todo*\" 2>/dev/null",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "ls -la /",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "drwxr-xr-x        0 2026-10-09 17:41 app\ndrwxr-xr-x        0 2026-10-09 17:39 bin\ndrwxr-xr-x        0 2026-10-09 17:41 dev\ndrwxr-xr-x        0 2026-10-09 17:39 etc\ndrwxr-xr-x        0 2026-10-09 17:41 home\ndrwxr-xr-x        0 2026-10-09 17:39 proc\ndrwxr-xr-x        0 2026-10-09 17:39 root\ndrwxrwxrwx        0 2026-10-09 17:41 tmp\ndrwxr-xr-x        0 2026-10-09 17:39 usr\n"
+          },
+          {
+            "commands": "cat << 'EOF' > /app/todo.sh\n#!/bin/bash\n\nTASKS_FILE=\"/app/tasks.txt\"\n\ntouch \"$TASKS_FILE\"\n\nsubcommand=\"$1\"\nshift || true\n\ncase \"$subcommand\" in\n    add)\n        task=\"$*\"\n        if [ -n \"$task\" ]; then\n            echo \"$task\" >> \"$TASKS_FILE\"\n        fi\n        ;;\n    list)\n        if [ -s \"$TASKS_FILE\" ]; then\n            nl -ba -w1 -s'. ' \"$TASKS_FILE\" 2>/dev/null || awk '{print NR \". \" $0}' \"$TASKS_FILE\"\n        fi\n        ;;\n    done)\n        num=\"$1\"\n        if [ -n \"$num\" ]; then\n            sed -i \"${num}d\" \"$TASKS_FILE\"\n        fi\n        ;;\n    *)\n        echo \"Usage: $0 {add <task>|list|done <number>}\" >&2\n        exit 1\n        ;;\nesac\nEOF\nchmod +x /app/todo.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "which nl sed awk",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/usr/bin/nl\n/usr/bin/sed\n/usr/bin/awk\n"
+          },
+          {
+            "commands": "echo \"test\" > /tmp/test.txt\nnl -ba -w1 -s'. ' /tmp/test.txt\nawk '{print NR \". \" $0}' /tmp/test.txt\nsed -i \"1d\" /tmp/test.txt\ncat /tmp/test.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "1. test\n1. test\n"
+          },
+          {
+            "commands": "cat << 'EOF' > /app/todo.sh\n#!/bin/bash\n\nTASKS_FILE=\"/app/tasks.txt\"\n\ntouch \"$TASKS_FILE\"\n\nsubcommand=\"$1\"\nshift || true\n\ncase \"$subcommand\" in\n    add)\n        task=\"$*\"\n        if [ -n \"$task\" ]; then\n            echo \"$task\" >> \"$TASKS_FILE\"\n        fi\n        ;;\n    list)\n        if [ -s \"$TASKS_FILE\" ]; then\n            awk '{print NR \". \" $0}' \"$TASKS_FILE\"\n        fi\n        ;;\n    done)\n        num=\"$1\"\n        if [ -n \"$num\" ]; then\n            sed -i \"${num}d\" \"$TASKS_FILE\"\n        fi\n        ;;\n    *)\n        echo \"Usage: $0 {add <task>|list|done <number>}\" >&2\n        exit 1\n        ;;\nesac\nEOF\nchmod +x /app/todo.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "/bin/nl -ba /dev/null 2>&1\necho \"foo\" | /bin/nl -ba -w1 -s'. '\necho \"foo\" | awk '{print NR \". \" $0}'",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "1. foo\n1. foo\n"
+          },
+          {
+            "commands": "rm -f /app/tasks.txt\n/app/todo.sh add \"Buy groceries\"\n/app/todo.sh add \"Write tests\"\n/app/todo.sh add \"Deploy app\"\n/app/todo.sh list\n/app/todo.sh done 1\n/app/todo.sh list",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "1. Buy groceries\n2. Write tests\n3. Deploy app\n1. Write tests\n2. Deploy app\n"
+          },
+          {
+            "commands": "cat /app/tasks.txt\ncat /app/todo.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Write tests\nDeploy app\n#!/bin/bash\n\nTASKS_FILE=\"/app/tasks.txt\"\n\ntouch \"$TASKS_FILE\"\n\nsubcommand=\"$1\"\nshift || true\n\ncase \"$subcommand\" in\n    add)\n        task=\"$*\"\n        if [ -n \"$task\" ]; then\n            echo \"$task\" >> \"$TASKS_FILE\"\n        fi\n        ;;\n    list)\n        if [ -s \"$TASKS_FILE\" ]; then\n            awk '{print NR \". \" $0}' \"$TASKS_FILE\"\n        fi\n        ;;\n    done)\n        num=\"$1\"\n        if [ -n \"$num\" ]; then\n            sed -i \"${num}d\" \"$TASKS_FILE\"\n        fi\n        ;;\n    *)\n        echo \"Usage: $0 {add <task>|list|done <number>}\" >&2\n        exit 1\n        ;;\nesac\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

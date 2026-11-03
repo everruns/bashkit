@@ -84,6 +84,21 @@ and failed with `feature-banned` after it, while the workspace still passed.
 Cargo-deny's [feature restrictions](https://embarkstudios.github.io/cargo-deny/checks/bans/cfg.html#the-features-field-optional)
 enforce this audit boundary in CI.
 
+A workspace crate that is published to crates.io needs the same `policy.*`
+entry from the other direction: `audit-as-crates-io = false`. cargo-vet calls a
+member first-party by provenance -- it was not fetched from crates.io -- so once
+the same name and version is also published, the two descriptions collide and
+`cargo vet` refuses to run until an entry says which to believe. The gap is
+quiet where it matters: CI runs `cargo vet --locked`, which never reaches that
+check, so the Audit job stays green while the command is broken for every
+developer and for refreshing `supply-chain/imports.lock` -- the non-locked run
+is the only way to record publisher facts, which `[[trusted.*]]` crates such as
+`tokio` need on every bump. `bashkit-scripted-tool` went public in 0.20.0 with
+no entry and nothing failed until #2792 needed that refresh.
+`scripts/tests/test_ci_supply_chain.py` derives the published set from the
+`release-check` recipe and fails when one of those crates has no entry; a new
+published crate must be added in both places.
+
 `get-size2` is constrained to `=0.10.1` as a Python-only direct dependency,
 so downstream resolution is protected even without this workspace's lockfile.
 Both 0.10.2 and 0.10.3 implement `GetSize` for `compact_str` 0.10, whereas
@@ -92,6 +107,33 @@ The extra edge enables no runtime or feature by itself and adds no crate to
 the existing Python graph. Remove it when Monty's AST upgrades its string
 type. The Python binding's `num-bigint` dependency must still match Monty's
 0.4 line.
+
+## JavaScript test-tool audit boundary
+
+The native JavaScript package constrains AVA's transitive file-tracing tools to
+patched `glob` and `minimatch` versions. The upstream `@vercel/nft` constraint
+still selects vulnerable glob 13, so the package's pnpm overrides carry the
+security floor until upstream catches up. These dependencies belong to test
+instrumentation, not the published runtime. Keep the normal release cooldown
+and audit gate; never suppress the cancellation-bypass or pattern-amplification
+advisories. See [package overrides](../../crates/bashkit-js/package.json).
+
+## YAML maintenance boundary
+
+The `jq` feature's `yq` builtin uses `serde_norway` and
+`unsafe-libyaml-norway`, replacing `serde_yaml_ng` and the archived
+`unsafe-libyaml` (RUSTSEC-2024-0449). This changes maintenance ownership rather
+than the YAML contract: Serde values, multi-document iteration and YAML
+serialization remain, as does the parser's recursion ceiling of 128.
+Bashkit still rejects alias tokens before deserialization, limits conversion
+depth to 100, and shares the jq evaluator's existing limits (TM-DOS-101).
+
+The initial fork review compared the published `unsafe-libyaml` 0.2.11 library
+with `unsafe-libyaml-norway` 0.2.15: implementation files are identical; the
+library delta adds one lint allowance, while test executables also rename
+imports and simplify one loop. Dependency vet exemptions retain the prior
+criteria at exact replacement versions; no audit advisory was suppressed.
+Future version bumps still require source and contract review.
 
 ## Feature-unification edges
 
@@ -115,6 +157,31 @@ intrinsic from the graph entirely. The edge adds no crate to the tree and enable
 no runtime surface by itself.
 
 Remove it when `branches` compiles on nightly without `std`.
+
+## oxc is held at 0.117.x by the vendored ZapCode parser
+
+`bashkit` declares five oxc crates (`oxc_parser`, `oxc_ast`, `oxc_allocator`,
+`oxc_span`, `oxc_syntax`) for the `wasm32-unknown-unknown` TypeScript path,
+where `zapcode_browser/parser` walks the oxc AST directly rather than going
+through the published `zapcode-core`. The versions are chosen to match what
+upstream ZapCode vendors, so the two sides of the same parser pipeline agree.
+
+`zapcode-core` 1.5.1 requires `oxc ^0.117`, so it does not move when bashkit's
+declaration does. #2758 bumped the declaration to 0.154.0 and Cargo resolved a
+**second** copy of all 13 oxc crates — `oxc_parser`, `oxc_ast` and the rest
+each appearing at both 0.117.0 and 0.154.0 — putting the vendored parser and
+`zapcode-core` 37 minor versions apart. Two further costs came with it: oxc
+0.154 requires rustc 1.97.0 against the 1.95.0 in `rust-toolchain.toml` (the
+`WASM web package` job failed at resolution, the same shape as the wasmtime
+49.x failure in #2708), and it added 19 unvetted crates, including
+`compact_str` 0.10, `phf` 0.14 and `oxc_index` 5.0.
+
+`oxc_*` is therefore in dependabot's `ignore` list outright, not by
+update-type: every release past 0.117.x splits the graph the same way, so there
+is no version to bump to. Lifting it waits on a `zapcode-core` release built
+against a newer oxc, and then means bumping the pinned toolchain and porting
+the vendored parser in one deliberate change — not inside an aggregated
+`chore(deps)` PR.
 
 ## Measure size and audit surface separately
 

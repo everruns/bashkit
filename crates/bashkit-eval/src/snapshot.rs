@@ -89,7 +89,7 @@ impl SnapshotTargets {
                 "dir_exists" => {
                     targets.dirs.insert(check_value.to_string());
                 }
-                "file_contains" | "file_not_contains" | "file_line_regex" => {
+                "file_contains" | "file_not_contains" | "file_line_regex" | "file_equals" => {
                     if let Some((path, _)) = check_value.split_once(':') {
                         targets.files.insert(path.to_string());
                     }

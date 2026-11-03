@@ -1,0 +1,113 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "script_health_check",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "Write /scripts/healthcheck.sh that checks three conditions: 1) /app/config.json exists and contains valid JSON, 2) /var/log directory exists, 3) /app/data directory contains at least 2 files. For each check print 'PASS: <description>' or 'FAIL: <description>'. Exit 0 if all checks pass, exit 1 if any fail. Then run the script."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "4/4 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "`/scripts/healthcheck.sh` has been created and verified.\n\n### Script Implementation\nThe script performs the three required checks:\n1. Validates that `/app/config.json` exists and parses cleanly via `jq empty`.\n2. Checks that `/var/log` exists as a directory (`[ -d /var/log ]`).\n3. Verifies `/app/data` exists and counts regular files using `find /app/data -maxdepth 1 -type f | wc -l` to ensure at least 2 files exist.\n\nEach check outputs `PASS: <description>` or `FAIL: <description>`. The script tracks status across all checks and exits `0` if all pass or `1` if any fail.\n\n### Execution Output\n```\nPASS: /app/config.json exists and contains valid JSON\nPASS: /var/log directory exists\nPASS: /app/data directory contains at least 2 files\n```\nExit status: `0`.",
+    "iterations": 10,
+    "tool_calls_count": 9,
+    "tool_calls": [
+      "ls -la /\nwhich jq\nwhich python3\nwhich node\n",
+      "ls -la /app\nls -la /var/log\nls -la /scripts\n",
+      "cat /app/config.json\nls -la /app/data\nls -ld /var/log\n",
+      "ls -la /app/data\nls -ld /var/log\n",
+      "mkdir -p /scripts",
+      "cat << 'EOF' > /scripts/healthcheck.sh\n#!/bin/bash\n\nall_passed=true\n\n# Check 1: /app/config.json exists and contains valid JSON\ndesc1=\"/app/config.json exists and contains valid JSON\"\nif [ -f /app/config.json ] && jq empty /app/config.json 2>/dev/null; then\n    echo \"PASS: $desc1\"\nelse\n    echo \"FAIL: $desc1\"\n    all_passed=false\nfi\n\n# Check 2: /var/log directory exists\ndesc2=\"/var/log directory exists\"\nif [ -d /var/log ]; then\n    echo \"PASS: $desc2\"\nelse\n    echo \"FAIL: $desc2\"\n    all_passed=false\nfi\n\n# Check 3: /app/data directory contains at least 2 files\ndesc3=\"/app/data directory contains at least 2 files\"\nif [ -d /app/data ]; then\n    file_count=$(find /app/data -maxdepth 1 -type f | wc -l)\n    if [ \"$file_count\" -ge 2 ]; then\n        echo \"PASS: $desc3\"\n    else\n        echo \"FAIL: $desc3\"\n        all_passed=false\n    fi\nelse\n    echo \"FAIL: $desc3\"\n    all_passed=false\nfi\n\nif [ \"$all_passed\" = true ]; then\n    exit 0\nelse\n    exit 1\nfi\nEOF\n\nchmod +x /scripts/healthcheck.sh",
+      "/scripts/healthcheck.sh\necho \"Exit code: $?\"",
+      "cat /scripts/healthcheck.sh",
+      "/scripts/healthcheck.sh"
+    ],
+    "usage": {
+      "input_tokens": 9939,
+      "output_tokens": 934,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 18749
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 9.0,
+      "tool_calls_err": 2.0,
+      "tool_calls_ok": 7.0,
+      "turns": 10.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /\nwhich jq\nwhich python3\nwhich node\n",
+            "exit_code": 1,
+            "stderr": "",
+            "stdout": "drwxr-xr-x        0 2026-10-09 04:59 app\ndrwxr-xr-x        0 2026-10-09 04:55 bin\ndrwxr-xr-x        0 2026-10-09 04:59 dev\ndrwxr-xr-x        0 2026-10-09 04:55 etc\ndrwxr-xr-x        0 2026-10-09 04:59 home\ndrwxr-xr-x        0 2026-10-09 04:55 proc\ndrwxr-xr-x        0 2026-10-09 04:55 root\ndrwxrwxrwx        0 2026-10-09 04:59 tmp\ndrwxr-xr-x        0 2026-10-09 04:55 usr\ndrwxr-xr-x        0 2026-10-09 04:59 var\n/usr/bin/jq\n"
+          },
+          {
+            "commands": "ls -la /app\nls -la /var/log\nls -la /scripts\n",
+            "exit_code": 2,
+            "stderr": "ls: cannot access '/scripts': No such file or directory\n",
+            "stdout": "-rw-r--r--       32 2026-10-09 04:59 config.json\ndrwxr-xr-x        0 2026-10-09 04:59 data\n-rw-r--r--        0 2026-10-09 04:59 .keep\n"
+          },
+          {
+            "commands": "cat /app/config.json\nls -la /app/data\nls -ld /var/log\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "{\"version\":\"1.0\",\"enabled\":true}-rw-r--r--        5 2026-10-09 04:59 file1.txt\n-rw-r--r--        5 2026-10-09 04:59 file2.txt\n-rw-r--r--        5 2026-10-09 04:59 file3.txt\ndrwxr-xr-x        0 2026-10-09 04:59 /var/log\n"
+          },
+          {
+            "commands": "ls -la /app/data\nls -ld /var/log\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--        5 2026-10-09 04:59 file1.txt\n-rw-r--r--        5 2026-10-09 04:59 file2.txt\n-rw-r--r--        5 2026-10-09 04:59 file3.txt\ndrwxr-xr-x        0 2026-10-09 04:59 /var/log\n"
+          },
+          {
+            "commands": "mkdir -p /scripts",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "cat << 'EOF' > /scripts/healthcheck.sh\n#!/bin/bash\n\nall_passed=true\n\n# Check 1: /app/config.json exists and contains valid JSON\ndesc1=\"/app/config.json exists and contains valid JSON\"\nif [ -f /app/config.json ] && jq empty /app/config.json 2>/dev/null; then\n    echo \"PASS: $desc1\"\nelse\n    echo \"FAIL: $desc1\"\n    all_passed=false\nfi\n\n# Check 2: /var/log directory exists\ndesc2=\"/var/log directory exists\"\nif [ -d /var/log ]; then\n    echo \"PASS: $desc2\"\nelse\n    echo \"FAIL: $desc2\"\n    all_passed=false\nfi\n\n# Check 3: /app/data directory contains at least 2 files\ndesc3=\"/app/data directory contains at least 2 files\"\nif [ -d /app/data ]; then\n    file_count=$(find /app/data -maxdepth 1 -type f | wc -l)\n    if [ \"$file_count\" -ge 2 ]; then\n        echo \"PASS: $desc3\"\n    else\n        echo \"FAIL: $desc3\"\n        all_passed=false\n    fi\nelse\n    echo \"FAIL: $desc3\"\n    all_passed=false\nfi\n\nif [ \"$all_passed\" = true ]; then\n    exit 0\nelse\n    exit 1\nfi\nEOF\n\nchmod +x /scripts/healthcheck.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "/scripts/healthcheck.sh\necho \"Exit code: $?\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "PASS: /app/config.json exists and contains valid JSON\nPASS: /var/log directory exists\nPASS: /app/data directory contains at least 2 files\nExit code: 0\n"
+          },
+          {
+            "commands": "cat /scripts/healthcheck.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "#!/bin/bash\n\nall_passed=true\n\n# Check 1: /app/config.json exists and contains valid JSON\ndesc1=\"/app/config.json exists and contains valid JSON\"\nif [ -f /app/config.json ] && jq empty /app/config.json 2>/dev/null; then\n    echo \"PASS: $desc1\"\nelse\n    echo \"FAIL: $desc1\"\n    all_passed=false\nfi\n\n# Check 2: /var/log directory exists\ndesc2=\"/var/log directory exists\"\nif [ -d /var/log ]; then\n    echo \"PASS: $desc2\"\nelse\n    echo \"FAIL: $desc2\"\n    all_passed=false\nfi\n\n# Check 3: /app/data directory contains at least 2 files\ndesc3=\"/app/data directory contains at least 2 files\"\nif [ -d /app/data ]; then\n    file_count=$(find /app/data -maxdepth 1 -type f | wc -l)\n    if [ \"$file_count\" -ge 2 ]; then\n        echo \"PASS: $desc3\"\n    else\n        echo \"FAIL: $desc3\"\n        all_passed=false\n    fi\nelse\n    echo \"FAIL: $desc3\"\n    all_passed=false\nfi\n\nif [ \"$all_passed\" = true ]; then\n    exit 0\nelse\n    exit 1\nfi\n"
+          },
+          {
+            "commands": "/scripts/healthcheck.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "PASS: /app/config.json exists and contains valid JSON\nPASS: /var/log directory exists\nPASS: /app/data directory contains at least 2 files\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

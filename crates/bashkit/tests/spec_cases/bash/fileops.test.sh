@@ -329,3 +329,25 @@ a
 a
 b
 ### end
+
+### ls_almost_all
+# -A shows dotfiles but never . or ..
+mkdir -p /tmp/lsA && cd /tmp/lsA
+touch .hid vis
+ls -A
+ls -A | wc -l
+### expect
+.hid
+vis
+2
+### end
+
+### stat_format_mtime_epoch
+# %Y is the modification time in seconds since the epoch
+cd /tmp && touch -d @1000000000 mt-old && touch -d @1041379200 mt-new
+stat -c '%n %Y' mt-old
+[ "$(stat -c %Y mt-old)" -lt "$(stat -c %Y mt-new)" ] && echo older
+### expect
+mt-old 1000000000
+older
+### end

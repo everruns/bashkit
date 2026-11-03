@@ -15,6 +15,8 @@ tags:
 
 Experiment, proven end-to-end under wasmtime. See `examples/hyperlight/`.
 Not published as a package; no micro-VM boot test yet (needs KVM/WHP hardware).
+The end-to-end smoke builds both standalone guest and host with `--locked`, so
+their audited dependency graphs cannot silently change during verification.
 
 ## Abstract
 

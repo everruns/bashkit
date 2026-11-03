@@ -53,7 +53,7 @@ assert_eq!(r.stdout, "2\n1K\n3M\n");
   `BashBuilder::wasm_coreutils_replace_native(limits)`.
 
 The module loads on first use (one-time engine and module setup). Call
-`bashkit::WasmCoreutil::warm_up()` at process start to move that cost out of
+`bashkit::warm_up()` (or `bashkit::WasmCoreutil::warm_up()`) at process start to move that cost out of
 the first request.
 
 ## Limits

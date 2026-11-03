@@ -25,6 +25,12 @@ bun add @everruns/bashkit       # Bun
 deno add npm:@everruns/bashkit  # Deno
 ```
 
+Use a patched, supported Node.js release. The October 2026 security minimums
+are **22.23.4**, **24.22.1**, and **26.12.1** in their respective release lines;
+keep taking subsequent upstream security updates. The package's `engines >=18`
+is an ABI compatibility floor, not security support for EOL Node 18/20. The
+Node 20 CI lane checks legacy compatibility only. Bashkit does not bundle Node.
+
 ## Quick Start
 
 ### Sync Execution
@@ -630,9 +636,16 @@ import {
 - `files?: Record<string, string | (() => string) | (() => Promise<string>)>`
 - `mounts?: Array<{ path: string; root: string; writable?: boolean }>`
 - `python?: boolean`
-- `externalFunctions?: string[]`
+- `externalFunctions?: string[]`, Python host function names
+- `externalHandler?: ExternalHandler`, sync/async Python dispatcher `(name, args, kwargs, { signal })`
+- `typescript?: boolean`, opt into embedded TypeScript (`ts`/`node`/`deno`/`bun`)
+- `typescriptExternalFunctions?: string[]`
+- `typescriptExternalHandler?: TypeScriptExternalHandler`, dispatcher `(name, args, { signal })`
+
 - `customBuiltins?: Record<string, (ctx: BuiltinContext) => string | Promise<string>>`, JS callbacks registered as bash builtins (see [Custom Builtins](#custom-builtins))
 - `network?: NetworkOptions`, outbound HTTP configuration (see [Network](#network))
+
+Host calls require asynchronous `execute()`. See the [host function guide](../../docs/start-node.md#python-and-typescript-host-functions) for JSON values, caller context, cancellation and reentry rules.
 
 ### ScriptAnalysis
 

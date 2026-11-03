@@ -163,6 +163,27 @@ fn unquote(s: &str) -> String {
 }
 
 impl Bindings {
+    pub(super) fn fork_storage(
+        &self,
+        storage: &mut super::pipeline_admission::ForkStorage<'_>,
+    ) -> Result<()> {
+        storage.slice::<Binding>(self.changes.len())?;
+        for binding in &self.changes {
+            storage.add(binding.seq.len())?;
+            if let Some(Target::Function(text) | Target::Macro(text) | Target::Command(text)) =
+                &binding.target
+            {
+                storage.add(text.len())?;
+            }
+        }
+        storage.slice::<(String, String)>(self.variables.len())?;
+        for (name, value) in &self.variables {
+            storage.add(name.len())?;
+            storage.add(value.len())?;
+        }
+        Ok(())
+    }
+
     /// Every live binding of `keymap`: defaults minus unbound keys, plus
     /// changes (a later change of the same keys wins).
     fn effective(&self, keymap: &str) -> Vec<(Vec<u8>, String, Target)> {

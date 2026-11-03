@@ -197,7 +197,43 @@ assert t.execute_sync("slow").exit_code == 1
 """
 
 
-@pytest.mark.parametrize("script", [_EXIT_SCRIPT_CLEAN, _EXIT_SCRIPT_ABANDONED], ids=["clean", "abandoned"])
+_EXIT_SCRIPT_ABANDONED_SLOW_CANCEL = """
+import asyncio
+import threading
+import time
+
+from bashkit.scripted import ScriptedTool
+
+cancelling = threading.Event()
+
+async def slow(params, stdin=None):
+    try:
+        await asyncio.sleep(30)
+    finally:
+        # Hold the private-loop worker inside the cancelled callback past
+        # interpreter exit. The timeout already abandoned the blocking-pool
+        # thread that dispatched this callback, and a blocking task cannot be
+        # cancelled, so that thread is still parked in its result receive when
+        # the exit hook runs: it only wakes when the hook joins this worker,
+        # and must then re-attach from inside the hook. Unenrolled, that
+        # re-attach raced Py_FinalizeEx and aborted the process on CPython
+        # < 3.13 (SIGABRT, "FATAL: exception not rethrown").
+        cancelling.set()
+        time.sleep(0.3)
+    return "late\\n"
+
+t = ScriptedTool("api", timeout_seconds=0.05)
+t.add_tool("slow", "Slow", callback=slow)
+assert t.execute_sync("slow").exit_code == 1
+assert cancelling.wait(2), "callback never cancelled"
+"""
+
+
+@pytest.mark.parametrize(
+    "script",
+    [_EXIT_SCRIPT_CLEAN, _EXIT_SCRIPT_ABANDONED, _EXIT_SCRIPT_ABANDONED_SLOW_CANCEL],
+    ids=["clean", "abandoned", "abandoned-slow-cancel"],
+)
 def test_interpreter_exit_does_not_crash(script):
     """Module-level tools torn down at Py_Finalize must not abort (SIGABRT)."""
     # Replicate this (parent) interpreter's exact import surface in the child.
@@ -217,3 +253,95 @@ def test_interpreter_exit_does_not_crash(script):
             timeout=60,
         )
         assert proc.returncode == 0, proc.stderr.decode()
+
+
+@pytest.mark.parametrize("kind", ["Bash", "BashTool", "ScriptedTool"])
+def test_exit_waits_for_native_result_delivery_to_return(kind):
+    # Publishing a result wakes Python before call_soon_threadsafe() returns
+    # on the native worker. Force that window open: atexit must drain the
+    # delivery's Python references before CPython destroys its thread state.
+    script = """
+import atexit
+import asyncio
+import os
+import sys
+import threading
+import time
+
+returned = threading.Event()
+def check_delivery_finished():
+    if not returned.is_set():
+        os._exit(5)
+atexit.register(check_delivery_finished)
+
+from bashkit import Bash, BashTool
+from bashkit.scripted import ScriptedTool
+
+class SlowDeliveryLoop(asyncio.SelectorEventLoop):
+    def call_soon_threadsafe(self, callback, *args, context=None):
+        native = threading.current_thread() is not threading.main_thread()
+        if native:
+            returned.clear()
+        handle = super().call_soon_threadsafe(callback, *args, context=context)
+        if native:
+            time.sleep(0.2)
+            returned.set()
+        return handle
+
+loop = SlowDeliveryLoop()
+asyncio.set_event_loop(loop)
+tool = {"Bash": Bash, "BashTool": BashTool, "ScriptedTool": lambda: ScriptedTool("api")}[sys.argv[1]]()
+async def run():
+    assert (await tool.execute("echo ok")).stdout == "ok\\n"
+loop.run_until_complete(run())
+loop.close()
+"""
+    preamble = "import sys; sys.path[:0] = %r\n" % [p for p in sys.path if p]
+    proc = subprocess.run([sys.executable, "-c", preamble + script, kind], capture_output=True, timeout=10)
+    assert proc.returncode == 0, proc.stderr.decode()
+
+
+@pytest.mark.parametrize("kind", ["builtin", "python", "typescript"])
+def test_exit_drains_private_callback_cancellation(kind):
+    script = """
+import atexit
+import asyncio
+import os
+import sys
+import threading
+import time
+
+cancelling, finished = threading.Event(), threading.Event()
+def check_callback_finished():
+    if not finished.is_set():
+        os._exit(5)
+atexit.register(check_callback_finished)
+
+from bashkit import BashTool
+async def slow(*args):
+    try:
+        await asyncio.sleep(30)
+    finally:
+        cancelling.set()
+        time.sleep(0.2)
+        finished.set()
+
+kind = sys.argv[1]
+if kind == "builtin":
+    options = dict(custom_builtins={"slow": slow})
+    command = "slow"
+elif kind == "python":
+    options = dict(python=True, env={"BASHKIT_ALLOW_INPROCESS_PYTHON": "1"},
+                   external_functions=["slow"], external_handler=slow)
+    command = "python -c 'slow()'"
+else:
+    options = dict(typescript=True, typescript_external_functions=["slow"],
+                   typescript_external_handler=slow)
+    command = "ts -c 'await slow()'"
+tool = BashTool(timeout_seconds=0.1, **options)
+assert tool.execute_sync(command).exit_code != 0
+assert cancelling.wait(2)
+"""
+    preamble = "import sys; sys.path[:0] = %r\n" % [p for p in sys.path if p]
+    proc = subprocess.run([sys.executable, "-c", preamble + script, kind], capture_output=True, timeout=10)
+    assert proc.returncode == 0, proc.stderr.decode()

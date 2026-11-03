@@ -1,0 +1,57 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "search_find_replace",
+  "target": "anthropic/claude-sonnet-5-5",
+  "input": [
+    "Search all .js files under /src for the string 'console.log'. Replace every occurrence with 'logger.info' in-place. Print each modified filename and how many replacements were made per file. At the end, print 'Files modified: N' with the total count of files changed."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "6/6 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I replaced every `console.log` with `logger.info` in the `.js` files under `/src`. I didn't re-scan afterwards to confirm none remain.\n\n- `/src/app.js`: 1 replacement\n- `/src/index.js`: 2 replacements\n- `/src/middleware.js`: 2 replacements\n\nFiles modified: 3\n\nThe replacement was a plain text match, so it would also have changed `console.log` inside comments or strings. It doesn't add a `logger` import or definition to any file, so each of these files needs `logger` in scope before it will run.",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "cd /src 2>/dev/null || { echo \"no /src\"; exit 1; }\npython3 - <<'EOF'\nimport os\nn=0\nfor r,d,fs in os.walk('/src'):\n    for f in fs:\n        if f.endswith('.js'):\n            p=os.path.join(r,f)\n            try:\n                s=open(p,encoding='utf-8',newline='').read()\n            except Exception as e:\n                print(\"skip\",p,e); continue\n            c=s.count('console.log')\n            if c:\n                open(p,'w',encoding='utf-8',newline='').write(s.replace('console.log','logger.info'))\n                print(f\"{p}: {c} replacements\"); n+=1\nprint(f\"Files modified: {n}\")\nEOF"
+    ],
+    "usage": {
+      "input_tokens": 2424,
+      "output_tokens": 474,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 4649
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cd /src 2>/dev/null || { echo \"no /src\"; exit 1; }\npython3 - <<'EOF'\nimport os\nn=0\nfor r,d,fs in os.walk('/src'):\n    for f in fs:\n        if f.endswith('.js'):\n            p=os.path.join(r,f)\n            try:\n                s=open(p,encoding='utf-8',newline='').read()\n            except Exception as e:\n                print(\"skip\",p,e); continue\n            c=s.count('console.log')\n            if c:\n                open(p,'w',encoding='utf-8',newline='').write(s.replace('console.log','logger.info'))\n                print(f\"{p}: {c} replacements\"); n+=1\nprint(f\"Files modified: {n}\")\nEOF",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/src/app.js: 1 replacements\n/src/index.js: 2 replacements\n/src/middleware.js: 2 replacements\nFiles modified: 3\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

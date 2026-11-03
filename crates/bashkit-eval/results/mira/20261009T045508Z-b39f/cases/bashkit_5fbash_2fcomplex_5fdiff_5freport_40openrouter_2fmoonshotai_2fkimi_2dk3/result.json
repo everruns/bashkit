@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "complex_diff_report",
+  "target": "openrouter/moonshotai/kimi-k3",
+  "input": [
+    "Compare /data/v1.conf and /data/v2.conf. Produce a human-readable summary showing: which keys were added, which were removed, and which had their values changed. Print the summary to stdout."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "6/6 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "The comparison is complete. Here's the summary of differences between the two config files:\n\n**Added keys (1):**\n- `timeout = 30` — present only in v2.conf\n\n**Removed keys (1):**\n- `max_connections = 100` — present only in v1.conf\n\n**Changed keys (3):**\n- `host`: `localhost` → `0.0.0.0`\n- `log_level`: `info` → `debug`\n- `port`: `8080` → `9090`\n\nThe `workers` key (`4`) remained unchanged, so it was correctly excluded from the report.\n\nThe script I used (saved at `/tmp/cmpconf.sh`) parses each file as `key=value` pairs into bash associative arrays—skipping blank lines, `#` comments, and trimming whitespace—then compares key sets and values, printing sorted, human-readable output. It's reusable for any pair of files by changing the `f1`/`f2` variables at the top.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "echo \"=== v1.conf ===\"; cat /data/v1.conf; echo; echo \"=== v2.conf ===\"; cat /data/v2.conf",
+      "cat > /tmp/cmpconf.sh <<'EOF'\n#!/usr/bin/env bash\n# Compare two key=value config files and print a human-readable diff summary.\nset -euo pipefail\n\nf1=/data/v1.conf\nf2=/data/v2.conf\n\ndeclare -A c1 c2\n\n# Parse a config file into an associative array: key -> value\n# Skips blank lines and comments, trims surrounding whitespace.\nparse() {\n  local file=$1 arrname=$2\n  local -n out=$arrname\n  local line key val\n  while IFS= read -r line || [[ -n $line ]]; do\n    # trim leading/trailing whitespace\n    line=\"${line#\"${line%%[![:space:]]*}\"}\"\n    line=\"${line%\"${line##*[![:space:]]}\"}\"\n    [[ -z $line || $line == \\#* ]] && continue\n    key=${line%%=*}\n    val=${line#*=}\n    key=\"${key%\"${key##*[![:space:]]}\"}\"          # rtrim key\n    val=\"${val#\"${val%%[![:space:]]*}\"}\"          # ltrim value\n    out[$key]=$val\n  done < \"$file\"\n}\n\nparse \"$f1\" c1\nparse \"$f2\" c2\n\nadded=(); removed=(); changed=()\n\nfor k in \"${!c2[@]}\"; do\n  if [[ ! -v \"c1[$k]\" ]]; then\n    added+=(\"$k\")\n  elif [[ ${c1[$k]} != \"${c2[$k]}\" ]]; then\n    changed+=(\"$k\")\n  fi\ndone\nfor k in \"${!c1[@]}\"; do\n  [[ ! -v \"c2[$k]\" ]] && removed+=(\"$k\")\ndone\n\n# Sort for stable, readable output\nmapfile -t added   < <(printf '%s\\n' \"${added[@]:-}\"   | sort -u | sed '/^$/d')\nmapfile -t removed < <(printf '%s\\n' \"${removed[@]:-}\" | sort -u | sed '/^$/d')\nmapfile -t changed < <(printf '%s\\n' \"${changed[@]:-}\" | sort -u | sed '/^$/d')\n\necho \"Config comparison: $f1 -> $f2\"\necho \"================================================\"\n\necho\necho \"ADDED keys (${#added[@]}):\"\nif ((${#added[@]})); then\n  for k in \"${added[@]}\"; do printf '  + %s = %s\\n' \"$k\" \"${c2[$k]}\"; done\nelse\n  echo \"  (none)\"\nfi\n\necho\necho \"REMOVED keys (${#removed[@]}):\"\nif ((${#removed[@]})); then\n  for k in \"${removed[@]}\"; do printf '  - %s = %s\\n' \"$k\" \"${c1[$k]}\"; done\nelse\n  echo \"  (none)\"\nfi\n\necho\necho \"CHANGED keys (${#changed[@]}):\"\nif ((${#changed[@]})); then\n  for k in \"${changed[@]}\"; do printf '  ~ %s: %s -> %s\\n' \"$k\" \"${c1[$k]}\" \"${c2[$k]}\"; done\nelse\n  echo \"  (none)\"\nfi\nEOF\nbash /tmp/cmpconf.sh"
+    ],
+    "usage": {
+      "input_tokens": 2272,
+      "output_tokens": 1470,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 8696
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "echo \"=== v1.conf ===\"; cat /data/v1.conf; echo; echo \"=== v2.conf ===\"; cat /data/v2.conf",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "=== v1.conf ===\nport=8080\nhost=localhost\nlog_level=info\nworkers=4\nmax_connections=100\n\n=== v2.conf ===\nport=9090\nhost=0.0.0.0\nlog_level=debug\nworkers=4\ntimeout=30\n"
+          },
+          {
+            "commands": "cat > /tmp/cmpconf.sh <<'EOF'\n#!/usr/bin/env bash\n# Compare two key=value config files and print a human-readable diff summary.\nset -euo pipefail\n\nf1=/data/v1.conf\nf2=/data/v2.conf\n\ndeclare -A c1 c2\n\n# Parse a config file into an associative array: key -> value\n# Skips blank lines and comments, trims surrounding whitespace.\nparse() {\n  local file=$1 arrname=$2\n  local -n out=$arrname\n  local line key val\n  while IFS= read -r line || [[ -n $line ]]; do\n    # trim leading/trailing whitespace\n    line=\"${line#\"${line%%[![:space:]]*}\"}\"\n    line=\"${line%\"${line##*[![:space:]]}\"}\"\n    [[ -z $line || $line == \\#* ]] && continue\n    key=${line%%=*}\n    val=${line#*=}\n    key=\"${key%\"${key##*[![:space:]]}\"}\"          # rtrim key\n    val=\"${val#\"${val%%[![:space:]]*}\"}\"          # ltrim value\n    out[$key]=$val\n  done < \"$file\"\n}\n\nparse \"$f1\" c1\nparse \"$f2\" c2\n\nadded=(); removed=(); changed=()\n\nfor k in \"${!c2[@]}\"; do\n  if [[ ! -v \"c1[$k]\" ]]; then\n    added+=(\"$k\")\n  elif [[ ${c1[$k]} != \"${c2[$k]}\" ]]; then\n    changed+=(\"$k\")\n  fi\ndone\nfor k in \"${!c1[@]}\"; do\n  [[ ! -v \"c2[$k]\" ]] && removed+=(\"$k\")\ndone\n\n# Sort for stable, readable output\nmapfile -t added   < <(printf '%s\\n' \"${added[@]:-}\"   | sort -u | sed '/^$/d')\nmapfile -t removed < <(printf '%s\\n' \"${removed[@]:-}\" | sort -u | sed '/^$/d')\nmapfile -t changed < <(printf '%s\\n' \"${changed[@]:-}\" | sort -u | sed '/^$/d')\n\necho \"Config comparison: $f1 -> $f2\"\necho \"================================================\"\n\necho\necho \"ADDED keys (${#added[@]}):\"\nif ((${#added[@]})); then\n  for k in \"${added[@]}\"; do printf '  + %s = %s\\n' \"$k\" \"${c2[$k]}\"; done\nelse\n  echo \"  (none)\"\nfi\n\necho\necho \"REMOVED keys (${#removed[@]}):\"\nif ((${#removed[@]})); then\n  for k in \"${removed[@]}\"; do printf '  - %s = %s\\n' \"$k\" \"${c1[$k]}\"; done\nelse\n  echo \"  (none)\"\nfi\n\necho\necho \"CHANGED keys (${#changed[@]}):\"\nif ((${#changed[@]})); then\n  for k in \"${changed[@]}\"; do printf '  ~ %s: %s -> %s\\n' \"$k\" \"${c1[$k]}\" \"${c2[$k]}\"; done\nelse\n  echo \"  (none)\"\nfi\nEOF\nbash /tmp/cmpconf.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Config comparison: /data/v1.conf -> /data/v2.conf\n================================================\n\nADDED keys (1):\n  + timeout = 30\n\nREMOVED keys (1):\n  - max_connections = 100\n\nCHANGED keys (3):\n  ~ host: localhost -> 0.0.0.0\n  ~ log_level: info -> debug\n  ~ port: 8080 -> 9090\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

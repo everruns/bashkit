@@ -1,0 +1,71 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "build_multi_stage",
+  "target": "anthropic/claude-sonnet-5-5",
+  "input": [
+    "Simulate a build pipeline: 1) Check that /src/main.c and /src/utils.c exist, 2) 'Compile' each .c file by copying it to /build/ with a .o extension and prepending '// compiled', 3) 'Link' by concatenating all .o files into /build/program with a '// linked' header, 4) 'Package' by creating a tar.gz of /build/ at /dist/release.tar.gz. Print status for each stage. If any stage fails, stop and report the error."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "6/6 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "All four stages passed.\n\n| Stage | Result |\n|---|---|\n| 1. Check | `/src/main.c` and `/src/utils.c` both exist. |\n| 2. Compile | Created `/build/main.o` and `/build/utils.o`, each starting with `// compiled`. |\n| 3. Link | Created `/build/program`, which starts with `// linked` followed by both `.o` files. |\n| 4. Package | Created `/dist/release.tar.gz`, which contains `build/`, `build/program`, `build/main.o` and `build/utils.o`. |\n\nThe script stops and reports the stage name if any step fails, but no step failed.",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "ls -la /src /build /dist 2>&1",
+      "ls -la /src 2>&1; ls -ld /dist 2>&1",
+      "set -e\nfail(){ echo \"FAILED at stage: $1 - $2\"; exit 1; }\n\necho \"== Stage 1: Check sources ==\"\nfor f in /src/main.c /src/utils.c; do [ -f \"$f\" ] || fail \"check\" \"$f missing\"; done\necho \"OK: sources found\"\n\necho \"== Stage 2: Compile ==\"\nmkdir -p /build || fail compile \"mkdir\"\nfor f in /src/*.c; do\n  o=/build/$(basename \"${f%.c}\").o\n  { echo \"// compiled\"; cat \"$f\"; } > \"$o\" || fail compile \"$f\"\n  echo \"compiled $f -> $o\"\ndone\n\necho \"== Stage 3: Link ==\"\n{ echo \"// linked\"; cat /build/*.o; } > /build/program || fail link \"concat\"\necho \"linked -> /build/program\"\n\necho \"== Stage 4: Package ==\"\nmkdir -p /dist || fail package \"mkdir\"\ntar -czf /dist/release.tar.gz -C / build || fail package \"tar\"\necho \"packaged -> /dist/release.tar.gz\"\ntar -tzf /dist/release.tar.gz\necho; echo \"--- /build/program ---\"; cat /build/program"
+    ],
+    "usage": {
+      "input_tokens": 5756,
+      "output_tokens": 823,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 8638
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 2.0,
+      "tool_calls_ok": 1.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /src /build /dist 2>&1",
+            "exit_code": 2,
+            "stderr": "",
+            "stdout": "ls: cannot access '/build': No such file or directory\n"
+          },
+          {
+            "commands": "ls -la /src 2>&1; ls -ld /dist 2>&1",
+            "exit_code": 2,
+            "stderr": "",
+            "stdout": "-rw-r--r--       32 2026-10-09 17:45 main.c\n-rw-r--r--       27 2026-10-09 17:45 utils.c\nls: cannot access '/dist': No such file or directory\n"
+          },
+          {
+            "commands": "set -e\nfail(){ echo \"FAILED at stage: $1 - $2\"; exit 1; }\n\necho \"== Stage 1: Check sources ==\"\nfor f in /src/main.c /src/utils.c; do [ -f \"$f\" ] || fail \"check\" \"$f missing\"; done\necho \"OK: sources found\"\n\necho \"== Stage 2: Compile ==\"\nmkdir -p /build || fail compile \"mkdir\"\nfor f in /src/*.c; do\n  o=/build/$(basename \"${f%.c}\").o\n  { echo \"// compiled\"; cat \"$f\"; } > \"$o\" || fail compile \"$f\"\n  echo \"compiled $f -> $o\"\ndone\n\necho \"== Stage 3: Link ==\"\n{ echo \"// linked\"; cat /build/*.o; } > /build/program || fail link \"concat\"\necho \"linked -> /build/program\"\n\necho \"== Stage 4: Package ==\"\nmkdir -p /dist || fail package \"mkdir\"\ntar -czf /dist/release.tar.gz -C / build || fail package \"tar\"\necho \"packaged -> /dist/release.tar.gz\"\ntar -tzf /dist/release.tar.gz\necho; echo \"--- /build/program ---\"; cat /build/program",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "== Stage 1: Check sources ==\nOK: sources found\n== Stage 2: Compile ==\ncompiled /src/main.c -> /build/main.o\ncompiled /src/utils.c -> /build/utils.o\n== Stage 3: Link ==\nlinked -> /build/program\n== Stage 4: Package ==\npackaged -> /dist/release.tar.gz\nbuild/\nbuild/program\nbuild/main.o\nbuild/utils.o\n\n--- /build/program ---\n// linked\n// compiled\nint main() { return helper(); }\n// compiled\nint helper() { return 0; }\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "json_ndjson_error_aggregate",
+  "target": "anthropic/claude-opus-5-5",
+  "input": [
+    "Read /var/log/services.jsonl which contains newline-delimited JSON log entries. Each line is a JSON object with fields: timestamp, service, level, message. Count how many ERROR-level entries each service has. Print results as 'service: count' lines, sorted by count descending."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "ERROR entries per service, highest count first:\n\n```\nauth: 3\npayments: 2\napi: 1\n```\n\nThe file has 10 log entries, and all of them were valid JSON. 6 are ERROR level and the other 4 are INFO. I counted them with a short Python script and checked the totals by reading the whole file.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "head -5 /var/log/services.jsonl; wc -l /var/log/services.jsonl",
+      "python3 -c '\nimport json,collections\nc=collections.Counter()\nbad=0\nfor l in open(\"/var/log/services.jsonl\"):\n    l=l.strip()\n    if not l: continue\n    try: e=json.loads(l)\n    except Exception: bad+=1; continue\n    if str(e.get(\"level\",\"\")).upper()==\"ERROR\": c[e.get(\"service\")]+=1\nfor s,n in sorted(c.items(),key=lambda x:(-x[1],x[0])): print(f\"{s}: {n}\")\nif bad: print(\"malformed lines:\",bad)\n'; cat /var/log/services.jsonl"
+    ],
+    "usage": {
+      "input_tokens": 4530,
+      "output_tokens": 430,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 5125
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "head -5 /var/log/services.jsonl; wc -l /var/log/services.jsonl",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "{\"timestamp\":\"2024-01-01T10:00:00Z\",\"service\":\"auth\",\"level\":\"ERROR\",\"message\":\"token expired\"}\n{\"timestamp\":\"2024-01-01T10:00:01Z\",\"service\":\"api\",\"level\":\"INFO\",\"message\":\"request received\"}\n{\"timestamp\":\"2024-01-01T10:00:02Z\",\"service\":\"auth\",\"level\":\"ERROR\",\"message\":\"invalid credentials\"}\n{\"timestamp\":\"2024-01-01T10:00:03Z\",\"service\":\"payments\",\"level\":\"ERROR\",\"message\":\"gateway timeout\"}\n{\"timestamp\":\"2024-01-01T10:00:04Z\",\"service\":\"auth\",\"level\":\"INFO\",\"message\":\"login success\"}\n9 /var/log/services.jsonl\n"
+          },
+          {
+            "commands": "python3 -c '\nimport json,collections\nc=collections.Counter()\nbad=0\nfor l in open(\"/var/log/services.jsonl\"):\n    l=l.strip()\n    if not l: continue\n    try: e=json.loads(l)\n    except Exception: bad+=1; continue\n    if str(e.get(\"level\",\"\")).upper()==\"ERROR\": c[e.get(\"service\")]+=1\nfor s,n in sorted(c.items(),key=lambda x:(-x[1],x[0])): print(f\"{s}: {n}\")\nif bad: print(\"malformed lines:\",bad)\n'; cat /var/log/services.jsonl",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "auth: 3\npayments: 2\napi: 1\n{\"timestamp\":\"2024-01-01T10:00:00Z\",\"service\":\"auth\",\"level\":\"ERROR\",\"message\":\"token expired\"}\n{\"timestamp\":\"2024-01-01T10:00:01Z\",\"service\":\"api\",\"level\":\"INFO\",\"message\":\"request received\"}\n{\"timestamp\":\"2024-01-01T10:00:02Z\",\"service\":\"auth\",\"level\":\"ERROR\",\"message\":\"invalid credentials\"}\n{\"timestamp\":\"2024-01-01T10:00:03Z\",\"service\":\"payments\",\"level\":\"ERROR\",\"message\":\"gateway timeout\"}\n{\"timestamp\":\"2024-01-01T10:00:04Z\",\"service\":\"auth\",\"level\":\"INFO\",\"message\":\"login success\"}\n{\"timestamp\":\"2024-01-01T10:00:05Z\",\"service\":\"api\",\"level\":\"ERROR\",\"message\":\"rate limited\"}\n{\"timestamp\":\"2024-01-01T10:00:06Z\",\"service\":\"auth\",\"level\":\"ERROR\",\"message\":\"token expired\"}\n{\"timestamp\":\"2024-01-01T10:00:07Z\",\"service\":\"payments\",\"level\":\"ERROR\",\"message\":\"invalid card\"}\n{\"timestamp\":\"2024-01-01T10:00:08Z\",\"service\":\"api\",\"level\":\"INFO\",\"message\":\"health check ok\"}\n{\"timestamp\":\"2024-01-01T10:00:09Z\",\"service\":\"payments\",\"level\":\"INFO\",\"message\":\"payment processed\"}"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "config_env_template",
+  "target": "anthropic/claude-opus-5-5",
+  "input": [
+    "Read /config/template.env which has lines like 'KEY=${VALUE:-default}'. For each line, check if the key exists in /config/overrides.txt (format: KEY=value). If it does, use the override value; otherwise use the default from the template. Write the final KEY=value pairs to /app/.env and print the result."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I wrote the final values to `/app/.env`. Here's what it contains:\n\n```\nDB_HOST=db.prod.internal\nDB_PORT=5432\nDB_NAME=myapp\nREDIS_URL=redis://localhost:6379\nLOG_LEVEL=warn\n```\n\n- **Overridden:** `DB_HOST` and `LOG_LEVEL` use the values from `/config/overrides.txt`.\n- **Defaults kept:** `DB_PORT`, `DB_NAME` and `REDIS_URL` aren't in the overrides file, so they use the default after `:-` in each `${VAR:-default}` line of the template.\n\nValues containing extra colons or `=` signs, like the Redis URL, came through intact. The script skipped blank lines and `#` comments in both files, though neither file had any.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cat -A /config/template.env; echo ---; cat -A /config/overrides.txt",
+      "mkdir -p /app\ndeclare -A ov\nwhile IFS= read -r line || [[ -n $line ]]; do\n  [[ -z $line || $line == \\#* || $line != *=* ]] && continue\n  ov[\"${line%%=*}\"]=\"${line#*=}\"\ndone < /config/overrides.txt\n: > /app/.env\nwhile IFS= read -r line || [[ -n $line ]]; do\n  [[ -z $line || $line == \\#* || $line != *=* ]] && continue\n  key=\"${line%%=*}\"; rhs=\"${line#*=}\"\n  if [[ $rhs =~ ^\\$\\{[A-Za-z_][A-Za-z0-9_]*:-(.*)\\}$ ]]; then def=\"${BASH_REMATCH[1]}\"; else def=\"$rhs\"; fi\n  if [[ -v ov[$key] ]]; then val=\"${ov[$key]}\"; else val=\"$def\"; fi\n  printf '%s=%s\\n' \"$key\" \"$val\" >> /app/.env\ndone < /config/template.env\ncat /app/.env"
+    ],
+    "usage": {
+      "input_tokens": 3047,
+      "output_tokens": 772,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 8787
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat -A /config/template.env; echo ---; cat -A /config/overrides.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "DB_HOST=${DB_HOST:-localhost}$\nDB_PORT=${DB_PORT:-5432}$\nDB_NAME=${DB_NAME:-myapp}$\nREDIS_URL=${REDIS_URL:-redis://localhost:6379}$\nLOG_LEVEL=${LOG_LEVEL:-info}$\n---\nDB_HOST=db.prod.internal$\nLOG_LEVEL=warn$\n"
+          },
+          {
+            "commands": "mkdir -p /app\ndeclare -A ov\nwhile IFS= read -r line || [[ -n $line ]]; do\n  [[ -z $line || $line == \\#* || $line != *=* ]] && continue\n  ov[\"${line%%=*}\"]=\"${line#*=}\"\ndone < /config/overrides.txt\n: > /app/.env\nwhile IFS= read -r line || [[ -n $line ]]; do\n  [[ -z $line || $line == \\#* || $line != *=* ]] && continue\n  key=\"${line%%=*}\"; rhs=\"${line#*=}\"\n  if [[ $rhs =~ ^\\$\\{[A-Za-z_][A-Za-z0-9_]*:-(.*)\\}$ ]]; then def=\"${BASH_REMATCH[1]}\"; else def=\"$rhs\"; fi\n  if [[ -v ov[$key] ]]; then val=\"${ov[$key]}\"; else val=\"$def\"; fi\n  printf '%s=%s\\n' \"$key\" \"$val\" >> /app/.env\ndone < /config/template.env\ncat /app/.env",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "DB_HOST=db.prod.internal\nDB_PORT=5432\nDB_NAME=myapp\nREDIS_URL=redis://localhost:6379\nLOG_LEVEL=warn\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

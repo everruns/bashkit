@@ -1,0 +1,71 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "hard_toposort",
+  "target": "openai/gpt-6.1-sol",
+  "input": [
+    "In /home/eval/pkgs there are dependency lists deps.txt, deps-big.txt and deps-cycle.txt. Each non-comment line has the form `package: dep1 dep2 ...` (deps are separated by spaces or tabs; there may be extra whitespace around names and the colon). `#` starts a comment that runs to the end of the line, blank lines are ignored, a package may appear on several lines (its deps accumulate), and a name that only ever appears as a dependency is still a package.\n\nWrite an executable script /home/eval/pkgs/bin/order (bash; awk/sort/etc. are fine, no python) that takes one such file and prints a build order, one package per line, where every package comes after all of its dependencies. The order must be deterministic: repeatedly emit the smallest package (byte order) whose dependencies have all been emitted. If some packages can never be emitted because of a cycle, print the order for the ones that can, then print `cycle: ` followed by all remaining packages sorted (byte order) and separated by single spaces to stderr, and exit 1; otherwise exit 0.\n\nThen from /home/eval/pkgs run it on each file and save: stdout of deps.txt to build/order.txt, stdout of deps-big.txt to build/big-order.txt, stdout of deps-cycle.txt to build/cycle-order.txt, its stderr to build/cycle.txt and its exit status (just the number) to build/cycle.rc."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "6/6 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Created executable `/home/eval/pkgs/bin/order` and saved all requested outputs under `/home/eval/pkgs/build/`:\n\n- `order.txt`\n- `big-order.txt`\n- `cycle-order.txt`\n- `cycle.txt`\n- `cycle.rc`\n\nBoth non-cycle files exit successfully. The cycle run emits `e` and `f`, reports `cycle: a b c d g` to stderr, and records exit status `1`.",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "ls -la /home/eval/pkgs; command -v awk; command -v sort; command -v bash; head -30 /home/eval/pkgs/deps.txt; wc -l /home/eval/pkgs/deps*.txt; ls -la /home/eval/pkgs/bin /home/eval/pkgs/build",
+      "mkdir -p /home/eval/pkgs/bin /home/eval/pkgs/build\ncat > /home/eval/pkgs/bin/order <<'EOF'\n#!/usr/bin/bash\n# Sort the vertices once, then always choose the first ready vertex.\nset -o pipefail\nexport LC_ALL=C\nif [[ $# -ne 1 ]]; then\n    printf 'usage: %s dependency-file\\n' \"$0\" >&2\n    exit 2\nfi\nawk '\nfunction trim(s) {\n    sub(/^[ \\t\\r\\n]+/, \"\", s)\n    sub(/[ \\t\\r\\n]+$/, \"\", s)\n    return s\n}\n{\n    sub(/#.*/, \"\")\n    line = trim($0)\n    if (line == \"\") next\n    colon = index(line, \":\")\n    package = trim(substr(line, 1, colon - 1))\n    print \"V\\t\" package\n    rest = trim(substr(line, colon + 1))\n    if (rest == \"\") next\n    count = split(rest, deps, /[ \\t]+/)\n    for (i = 1; i <= count; i++) {\n        print \"V\\t\" deps[i]\n        print \"E\\t\" deps[i] \"\\t\" package\n    }\n}\n' < \"$1\" | sort -u | awk -F '\\t' '\n$1 == \"E\" {\n    edge[$2 SUBSEP $3] = 1\n    needed[$3]++\n}\n$1 == \"V\" { names[++n] = $2 }\nEND {\n    for (step = 1; step <= n; step++) {\n        chosen = 0\n        for (i = 1; i <= n; i++) {\n            if (!done[names[i]] && needed[names[i]] == 0) {\n                chosen = i\n                break\n            }\n        }\n        if (!chosen) {\n            message = \"cycle: \"\n            separator = \"\"\n            for (i = 1; i <= n; i++) {\n                if (!done[names[i]]) {\n                    message = message separator names[i]\n                    separator = \" \"\n                }\n            }\n            print message > \"/dev/stderr\"\n            exit 1\n        }\n        package = names[chosen]\n        print package\n        done[package] = 1\n        for (i = 1; i <= n; i++) {\n            if ((package SUBSEP names[i]) in edge) needed[names[i]]--\n        }\n    }\n}\n'\nEOF\nchmod +x /home/eval/pkgs/bin/order\ncd /home/eval/pkgs\nbin/order deps.txt > build/order.txt\nbin/order deps-big.txt > build/big-order.txt\nbin/order deps-cycle.txt > build/cycle-order.txt 2> build/cycle.txt\nrc=$?\nprintf '%s\\n' \"$rc\" > build/cycle.rc\ncat build/order.txt\ncat build/cycle-order.txt\ncat build/cycle.txt\ncat build/cycle.rc",
+      "cd /home/eval/pkgs\ncat build/big-order.txt\nls -l bin/order build/order.txt build/big-order.txt build/cycle-order.txt build/cycle.txt build/cycle.rc\nbin/order deps.txt >/dev/null; printf 'deps.txt exit: %s\\n' \"$?\"\nbin/order deps-big.txt >/dev/null; printf 'deps-big.txt exit: %s\\n' \"$?\""
+    ],
+    "usage": {
+      "input_tokens": 5567,
+      "output_tokens": 1424,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 31868
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 2.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /home/eval/pkgs; command -v awk; command -v sort; command -v bash; head -30 /home/eval/pkgs/deps.txt; wc -l /home/eval/pkgs/deps*.txt; ls -la /home/eval/pkgs/bin /home/eval/pkgs/build",
+            "exit_code": 2,
+            "stderr": "ls: cannot access '/home/eval/pkgs/bin': No such file or directory\n",
+            "stdout": "-rw-r--r--      551 2026-10-12 18:57 deps-big.txt\n-rw-r--r--       41 2026-10-12 18:57 deps-cycle.txt\n-rw-r--r--      217 2026-10-12 18:57 deps.txt\n/usr/bin/awk\n/usr/bin/sort\n/usr/bin/bash\n# package: dependencies (each must be built before the package)\napp: web  db   log\nweb: http log\nhttp: net\ndb: net log\nlog:\ncli: app\nnet:\ndocs:\n\n# repeated entries are allowed; deps accumulate\nweb: log\ntest: app mock\n 37 /home/eval/pkgs/deps-big.txt\n  7 /home/eval/pkgs/deps-cycle.txt\n 13 /home/eval/pkgs/deps.txt\n 57 total\n"
+          },
+          {
+            "commands": "mkdir -p /home/eval/pkgs/bin /home/eval/pkgs/build\ncat > /home/eval/pkgs/bin/order <<'EOF'\n#!/usr/bin/bash\n# Sort the vertices once, then always choose the first ready vertex.\nset -o pipefail\nexport LC_ALL=C\nif [[ $# -ne 1 ]]; then\n    printf 'usage: %s dependency-file\\n' \"$0\" >&2\n    exit 2\nfi\nawk '\nfunction trim(s) {\n    sub(/^[ \\t\\r\\n]+/, \"\", s)\n    sub(/[ \\t\\r\\n]+$/, \"\", s)\n    return s\n}\n{\n    sub(/#.*/, \"\")\n    line = trim($0)\n    if (line == \"\") next\n    colon = index(line, \":\")\n    package = trim(substr(line, 1, colon - 1))\n    print \"V\\t\" package\n    rest = trim(substr(line, colon + 1))\n    if (rest == \"\") next\n    count = split(rest, deps, /[ \\t]+/)\n    for (i = 1; i <= count; i++) {\n        print \"V\\t\" deps[i]\n        print \"E\\t\" deps[i] \"\\t\" package\n    }\n}\n' < \"$1\" | sort -u | awk -F '\\t' '\n$1 == \"E\" {\n    edge[$2 SUBSEP $3] = 1\n    needed[$3]++\n}\n$1 == \"V\" { names[++n] = $2 }\nEND {\n    for (step = 1; step <= n; step++) {\n        chosen = 0\n        for (i = 1; i <= n; i++) {\n            if (!done[names[i]] && needed[names[i]] == 0) {\n                chosen = i\n                break\n            }\n        }\n        if (!chosen) {\n            message = \"cycle: \"\n            separator = \"\"\n            for (i = 1; i <= n; i++) {\n                if (!done[names[i]]) {\n                    message = message separator names[i]\n                    separator = \" \"\n                }\n            }\n            print message > \"/dev/stderr\"\n            exit 1\n        }\n        package = names[chosen]\n        print package\n        done[package] = 1\n        for (i = 1; i <= n; i++) {\n            if ((package SUBSEP names[i]) in edge) needed[names[i]]--\n        }\n    }\n}\n'\nEOF\nchmod +x /home/eval/pkgs/bin/order\ncd /home/eval/pkgs\nbin/order deps.txt > build/order.txt\nbin/order deps-big.txt > build/big-order.txt\nbin/order deps-cycle.txt > build/cycle-order.txt 2> build/cycle.txt\nrc=$?\nprintf '%s\\n' \"$rc\" > build/cycle.rc\ncat build/order.txt\ncat build/cycle-order.txt\ncat build/cycle.txt\ncat build/cycle.rc",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "docs\nlog\nmock\nnet\ndb\nhttp\nweb\napp\ncli\ntest\ne\nf\ncycle: a b c d g\n1\n"
+          },
+          {
+            "commands": "cd /home/eval/pkgs\ncat build/big-order.txt\nls -l bin/order build/order.txt build/big-order.txt build/cycle-order.txt build/cycle.txt build/cycle.rc\nbin/order deps.txt >/dev/null; printf 'deps.txt exit: %s\\n' \"$?\"\nbin/order deps-big.txt >/dev/null; printf 'deps-big.txt exit: %s\\n' \"$?\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "cli-1\nmath\nregex\ntime-2\nzlib-9\njson-8\nlog\nauth\ncore\ncache-3\ncsv\ncolor\nfs\nnet-9\nbench\nfmt\nmock\nsig-9\ntest-0\ntls\nutil-0\ndocs\nproc\nterm\ndb-9\nuuid-2\nio-8\nhttp\nxml\nyaml-1\n-rwxr-xr-x     1606 2026-10-12 18:57 bin/order\n-rw-r--r--       43 2026-10-12 18:57 build/order.txt\n-rw-r--r--      166 2026-10-12 18:57 build/big-order.txt\n-rw-r--r--        4 2026-10-12 18:57 build/cycle-order.txt\n-rw-r--r--       17 2026-10-12 18:57 build/cycle.txt\n-rw-r--r--        2 2026-10-12 18:57 build/cycle.rc\ndeps.txt exit: 0\ndeps-big.txt exit: 0\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

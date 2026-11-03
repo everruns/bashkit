@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "rt_py_sessionize",
+  "target": "anthropic/claude-sonnet-5-5",
+  "input": [
+    "/data/access.log has lines `<timestamp> user=<name> path=<path> status=<3 digits>` in no particular order. A valid timestamp is ISO 8601 `YYYY-MM-DDTHH:MM:SS` followed by `Z` or a `+HH:MM`/`-HH:MM` offset; a line with any other timestamp (no offset, a space instead of T, an impossible time) or not matching the format exactly is skipped. Duplicate lines are separate events.\n\nSplit each user's events, ordered by instant, into sessions: a new session starts when the gap to the previous event is more than 30 minutes (a gap of exactly 30:00 stays in the same session).\n\nWrite /out/sessions.tsv (tab-separated) with header user, session, start, end, events, seconds: one row per session, sorted by user then start; session numbers start at 1 per user; start/end are UTC as YYYY-MM-DDTHH:MM:SSZ; seconds = end minus start.\nWrite /out/summary.txt with the single line `users=U sessions=S events=E skipped=K`."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I wrote `/out/sessions.tsv` and `/out/summary.txt`. The summary line reads `users=4 sessions=5 events=14 skipped=6`.\n\nThe sessions file has these rows:\n\n| user | session | start | end | events | seconds |\n|---|---|---|---|---|---|\n| alice | 1 | 2026-05-04T08:00:00Z | 2026-05-04T08:45:00Z | 6 | 2700 |\n| bob | 1 | 2026-05-04T07:59:59Z | 2026-05-04T08:59:59Z | 3 | 3600 |\n| bob | 2 | 2026-05-04T09:30:00Z | 2026-05-04T09:30:00Z | 1 | 0 |\n| carol | 1 | 2026-05-05T00:30:00Z | 2026-05-05T01:05:00Z | 3 | 2100 |\n| erin | 1 | 2026-05-04T08:30:00Z | 2026-05-04T08:30:00Z | 1 | 0 |\n\nI skipped 6 lines:\n- bob's line with a space instead of `T` in the timestamp\n- carol's line with no offset\n- dave's line, which has no `path=` field\n- the line with no `user=` field\n- the `garbage line`\n- erin's line with the impossible hour `25:00:00`\n\nBob's second session starts because the gap from 08:59:59Z to 09:30:00Z is 30:01, one second over the limit. Alice's duplicate 08:00Z line counts as a separate event, which is why she has 6.\n\nI only spot-checked the output against the sample lines, not every line of the log.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "head -n 15 /data/access.log; wc -l /data/access.log; ls /out",
+      "tail -n 5 /data/access.log | cat -A | head; mkdir -p /out\ncat > /tmp/s.py <<'E'\nimport re,datetime as D\nfrom collections import defaultdict\npat=re.compile(r'(\\d{4})-(\\d\\d)-(\\d\\d)T(\\d\\d):(\\d\\d):(\\d\\d)(Z|[+-]\\d\\d:\\d\\d) user=(\\S+) path=(\\S+) status=(\\d{3})')\nev=defaultdict(list);sk=0;n=0\nfor l in open('/data/access.log',encoding='utf-8').read().split('\\n'):\n    if l.endswith('\\r'): l=l[:-1]\n    if l=='' : continue\n    m=pat.fullmatch(l)\n    if not m: sk+=1;continue\n    try:\n        tz=m[7]\n        if tz!='Z':\n            if int(tz[1:3])>23 or int(tz[4:])>59: raise ValueError\n        d=D.datetime.fromisoformat(l.split(' ')[0])\n        if d.tzinfo is None: raise ValueError\n    except ValueError: sk+=1;continue\n    ev[m[8]].append(d.astimezone(D.timezone.utc));n+=1\nf=lambda d:d.strftime('%Y-%m-%dT%H:%M:%SZ')\nrows=[];S=0\nfor u in sorted(ev):\n    t=sorted(ev[u]);ss=[[t[0],t[0],1]]\n    for x in t[1:]:\n        if (x-ss[-1][1]).total_seconds()>1800: ss.append([x,x,1])\n        else: ss[-1][1]=x;ss[-1][2]+=1\n    for i,s in enumerate(ss,1):\n        rows.append(f\"{u}\\t{i}\\t{f(s[0])}\\t{f(s[1])}\\t{s[2]}\\t{int((s[1]-s[0]).total_seconds())}\")\nopen('/out/sessions.tsv','w').write(\"user\\tsession\\tstart\\tend\\tevents\\tseconds\\n\"+\"\\n\".join(rows)+\"\\n\")\nopen('/out/summary.txt','w').write(f\"users={len(ev)} sessions={len(rows)} events={n} skipped={sk}\\n\")\nE\npython3 /tmp/s.py; cat /out/*"
+    ],
+    "usage": {
+      "input_tokens": 6186,
+      "output_tokens": 1638,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 12587
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 1.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "head -n 15 /data/access.log; wc -l /data/access.log; ls /out",
+            "exit_code": 2,
+            "stderr": "ls: cannot access '/out': No such file or directory\n",
+            "stdout": "2026-05-04T10:00:00+02:00 user=alice path=/home status=200\n2026-05-04T08:10:00Z user=alice path=/cart status=200\n2026-05-04T03:40:00-05:00 user=alice path=/pay status=500\n2026-05-04T07:59:59Z user=bob path=/ status=200\n2026-05-04T08:29:59Z user=bob path=/a status=200\n2026-05-04T08:59:59Z user=bob path=/b status=200\n2026-05-04T09:30:00Z user=bob path=/c status=404\n2026-05-04 10:00:00 user=bob path=/bad status=200\n2026-05-04T12:00:00 user=carol path=/naive status=200\n2026-05-04T23:50:00-01:00 user=carol path=/late status=200\n2026-05-05T00:30:00Z user=carol path=/next status=200\n2026-05-05T01:05:00+00:00 user=carol path=/again status=200\n2026-05-04T09:00:00+01:00 user=alice path=/home status=200\n2026-05-04T11:15:00+03:00 user=dave status=200\n2026-05-04T08:00:00Z path=/x status=200\n20 /data/access.log\n"
+          },
+          {
+            "commands": "tail -n 5 /data/access.log | cat -A | head; mkdir -p /out\ncat > /tmp/s.py <<'E'\nimport re,datetime as D\nfrom collections import defaultdict\npat=re.compile(r'(\\d{4})-(\\d\\d)-(\\d\\d)T(\\d\\d):(\\d\\d):(\\d\\d)(Z|[+-]\\d\\d:\\d\\d) user=(\\S+) path=(\\S+) status=(\\d{3})')\nev=defaultdict(list);sk=0;n=0\nfor l in open('/data/access.log',encoding='utf-8').read().split('\\n'):\n    if l.endswith('\\r'): l=l[:-1]\n    if l=='' : continue\n    m=pat.fullmatch(l)\n    if not m: sk+=1;continue\n    try:\n        tz=m[7]\n        if tz!='Z':\n            if int(tz[1:3])>23 or int(tz[4:])>59: raise ValueError\n        d=D.datetime.fromisoformat(l.split(' ')[0])\n        if d.tzinfo is None: raise ValueError\n    except ValueError: sk+=1;continue\n    ev[m[8]].append(d.astimezone(D.timezone.utc));n+=1\nf=lambda d:d.strftime('%Y-%m-%dT%H:%M:%SZ')\nrows=[];S=0\nfor u in sorted(ev):\n    t=sorted(ev[u]);ss=[[t[0],t[0],1]]\n    for x in t[1:]:\n        if (x-ss[-1][1]).total_seconds()>1800: ss.append([x,x,1])\n        else: ss[-1][1]=x;ss[-1][2]+=1\n    for i,s in enumerate(ss,1):\n        rows.append(f\"{u}\\t{i}\\t{f(s[0])}\\t{f(s[1])}\\t{s[2]}\\t{int((s[1]-s[0]).total_seconds())}\")\nopen('/out/sessions.tsv','w').write(\"user\\tsession\\tstart\\tend\\tevents\\tseconds\\n\"+\"\\n\".join(rows)+\"\\n\")\nopen('/out/summary.txt','w').write(f\"users={len(ev)} sessions={len(rows)} events={n} skipped={sk}\\n\")\nE\npython3 /tmp/s.py; cat /out/*",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "garbage line$\n2026-05-04T14:00:00+05:30 user=erin path=/solo status=200$\n2026-05-04T10:00:00+02:00 user=alice path=/home status=200$\n2026-05-04T08:45:00Z user=alice path=/home status=304$\n2026-05-04T25:00:00Z user=erin path=/bad status=200$\nuser\tsession\tstart\tend\tevents\tseconds\nalice\t1\t2026-05-04T08:00:00Z\t2026-05-04T08:45:00Z\t6\t2700\nbob\t1\t2026-05-04T07:59:59Z\t2026-05-04T08:59:59Z\t3\t3600\nbob\t2\t2026-05-04T09:30:00Z\t2026-05-04T09:30:00Z\t1\t0\ncarol\t1\t2026-05-05T00:30:00Z\t2026-05-05T01:05:00Z\t3\t2100\nerin\t1\t2026-05-04T08:30:00Z\t2026-05-04T08:30:00Z\t1\t0\nusers=4 sessions=5 events=14 skipped=6\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

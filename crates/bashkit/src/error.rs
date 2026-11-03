@@ -5,6 +5,12 @@
 //! - No leakage of sensitive information (paths, memory addresses, secrets)
 //! - Clear categorization for programmatic handling
 
+// Decision: syntax diagnostics have a fixed 1 KiB construction cap, independent
+// of stderr capture. Untrusted token lines and shell names can otherwise multiply
+// allocations before an execution budget or asynchronous timeout can intervene.
+
+use std::fmt::{self, Write};
+
 use crate::limits::LimitExceeded;
 use thiserror::Error;
 
@@ -141,7 +147,8 @@ impl Error {
     /// bash's report of this syntax error in `source`, as read by `who`
     /// (`bash: -c`, a script path): `who: line N: message`, followed by the
     /// offending source line for a `near unexpected token` error. `None` for
-    /// errors other than [`Error::Parse`].
+    /// errors other than [`Error::Parse`]. Reports are limited to 1 KiB,
+    /// including `[diagnostic truncated]` when the complete report cannot fit.
     ///
     /// ```
     /// let err = bashkit::parser::Parser::new("if then fi").parse().unwrap_err();
@@ -288,34 +295,132 @@ pub(crate) fn syntax_report(
     line: usize,
     shift: usize,
 ) -> String {
-    let message = if message.starts_with("syntax error") || message.starts_with("unexpected EOF") {
-        message.to_string()
+    // THREAT[TM-DOS-136]: stop before growth, including temporary formatting.
+    // The shell name (`-c` ARG0) is attacker-controlled and stamped on every
+    // report line: truncate it first so a long ARG0 cannot evict the
+    // structural payload (`syntax error ...`, token excerpt, marker) out of
+    // the byte budget. Short names print verbatim.
+    let shell: std::borrow::Cow<'_, str> = if who.chars().count() > MAX_SHELL_NAME_CHARS {
+        let head_len = MAX_SHELL_NAME_CHARS - SHELL_NAME_TAIL_CHARS;
+        let mut head_end = head_len;
+        while !who.is_char_boundary(head_end) {
+            head_end -= 1;
+        }
+        let mut tail_start = who.len();
+        for _ in 0..SHELL_NAME_TAIL_CHARS {
+            if tail_start == 0 {
+                break;
+            }
+            tail_start -= 1;
+            while !who.is_char_boundary(tail_start) {
+                tail_start -= 1;
+            }
+        }
+        std::borrow::Cow::Owned(format!("{}...{}", &who[..head_end], &who[tail_start..]))
     } else {
-        format!("syntax error: {message}")
+        std::borrow::Cow::Borrowed(who)
     };
-    if line == 0 {
-        return format!("{who}: {message}\n");
-    }
-    let at = line + shift;
-    let mut lines = message.lines();
-    let first = lines.next().unwrap_or_default();
-    let mut out = format!("{who}: line {at}: {first}\n");
-    if first.contains("near unexpected token")
-        && let Some(text) = source.lines().nth(line - 1)
-    {
-        out.push_str(&format!("{who}: line {at}: `{text}'\n"));
-    }
-    for more in lines {
-        let further = more.strip_prefix("line ").and_then(|rest| {
-            let (n, text) = rest.split_once(": ")?;
-            Some((n.parse::<usize>().ok()? + shift, text))
-        });
-        match further {
-            Some((n, text)) => out.push_str(&format!("{who}: line {n}: {text}\n")),
-            None => out.push_str(&format!("{who}: line {at}: {more}\n")),
+    let who = shell.as_ref();
+    let mut out = Diagnostic::new();
+    let _ = (|| -> fmt::Result {
+        let prefix = if message.starts_with("syntax error") || message.starts_with("unexpected EOF")
+        {
+            ""
+        } else {
+            "syntax error: "
+        };
+        if line == 0 {
+            return writeln!(out, "{who}: {prefix}{message}");
+        }
+        let at = line.saturating_add(shift);
+        let mut lines = message.lines();
+        let first = lines.next().unwrap_or_default();
+        writeln!(out, "{who}: line {at}: {prefix}{first}")?;
+        if first.contains("near unexpected token")
+            && let Some(text) = source.lines().nth(line - 1)
+        {
+            writeln!(out, "{who}: line {at}: `{text}'")?;
+        }
+        for more in lines {
+            let further = more.strip_prefix("line ").and_then(|rest| {
+                let (n, text) = rest.split_once(": ")?;
+                Some((n.parse::<usize>().ok()?.saturating_add(shift), text))
+            });
+            match further {
+                Some((n, text)) => writeln!(out, "{who}: line {n}: {text}")?,
+                None => writeln!(out, "{who}: line {at}: {more}")?,
+            }
+        }
+        Ok(())
+    })();
+    out.finish()
+}
+
+const MAX_DIAGNOSTIC_BYTES: usize = 1024;
+/// Display width for the shell name (`-c` ARG0) inside one diagnostic.
+/// Short names print verbatim; longer ones are cut here so a long ARG0
+/// cannot evict the structural payload out of the byte budget. The cut keeps
+/// the head and the tail: the tail carries attribution suffixes such as
+/// `: eval` (bash prints `<script>: eval: line N ...`). The width sits well
+/// above realistic script paths (the oracle pins those byte-exact) while the
+/// 1 KiB total stays the enforced bound.
+const MAX_SHELL_NAME_CHARS: usize = 256;
+/// Tail kept by the shell-name cut, so attribution suffixes survive.
+const SHELL_NAME_TAIL_CHARS: usize = 16;
+const DIAGNOSTIC_TRUNCATED: &str = "[diagnostic truncated]\n";
+
+/// Fixed-capacity writer: formatting cannot allocate the full untrusted text.
+struct Diagnostic {
+    text: String,
+    truncated: bool,
+}
+
+impl Diagnostic {
+    fn new() -> Self {
+        Self {
+            text: String::with_capacity(MAX_DIAGNOSTIC_BYTES),
+            truncated: false,
         }
     }
-    out
+
+    fn finish(mut self) -> String {
+        if self.truncated {
+            let mut end = self
+                .text
+                .len()
+                .min(MAX_DIAGNOSTIC_BYTES - DIAGNOSTIC_TRUNCATED.len());
+            while !self.text.is_char_boundary(end) {
+                end -= 1;
+            }
+            self.text.truncate(end);
+            self.text.push_str(DIAGNOSTIC_TRUNCATED);
+        }
+        self.text
+    }
+}
+
+impl Write for Diagnostic {
+    fn write_str(&mut self, text: &str) -> fmt::Result {
+        let remaining = MAX_DIAGNOSTIC_BYTES - self.text.len();
+        if text.len() > remaining {
+            let mut end = remaining;
+            while !text.is_char_boundary(end) {
+                end -= 1;
+            }
+            self.text.push_str(&text[..end]);
+            self.truncated = true;
+            return Err(fmt::Error);
+        }
+        self.text.push_str(text);
+        Ok(())
+    }
+}
+
+/// Bound parser token diagnostics at their creation, before report formatting.
+pub(crate) fn bounded_diagnostic(args: fmt::Arguments<'_>) -> String {
+    let mut out = Diagnostic::new();
+    let _ = out.write_fmt(args);
+    out.finish()
 }
 
 #[cfg(test)]
@@ -357,6 +462,96 @@ mod tests {
     fn io_error_reason_passes_through_non_io_variants() {
         let err = Error::Execution("boom".into());
         assert_eq!(io_error_reason(&err), "execution error: boom");
+    }
+
+    #[test]
+    fn syntax_report_bounds_multiline_token_and_shell_name() {
+        let source = format!("for x \"{}\"", "a\n".repeat(16));
+        let error = crate::parser::Parser::new(&source).parse().unwrap_err();
+        let report = error.syntax_report(&"x".repeat(256), &source).unwrap();
+        assert!(report.len() <= 1024, "report was {} bytes", report.len());
+        assert!(report.ends_with("[diagnostic truncated]\n"));
+    }
+
+    #[test]
+    fn syntax_report_bounds_each_untrusted_component() {
+        for (who, source, message, line) in [
+            ("bash".to_owned(), String::new(), "界".repeat(2048), 0),
+            (
+                "bash".into(),
+                "界".repeat(2048),
+                "syntax error near unexpected token `x'".into(),
+                1,
+            ),
+            (
+                "bash".into(),
+                String::new(),
+                format!("syntax error\n{}", "line 1: bad\n".repeat(2048)),
+                1,
+            ),
+        ] {
+            let report = syntax_report(&who, &source, &message, line, 0);
+            assert!(report.len() <= MAX_DIAGNOSTIC_BYTES);
+            assert_eq!(report.capacity(), MAX_DIAGNOSTIC_BYTES);
+            assert!(report.ends_with(DIAGNOSTIC_TRUNCATED));
+        }
+    }
+
+    #[test]
+    fn syntax_report_long_shell_name_keeps_payload() {
+        // A long `-c` ARG0 is truncated first: the structural payload must
+        // survive inside the byte budget, with the marker only if the rest
+        // still overflows.
+        let report = syntax_report(&"B".repeat(8192), "", "syntax error", 1, 1);
+        assert!(report.len() <= MAX_DIAGNOSTIC_BYTES);
+        assert!(report.contains("syntax error"));
+        assert!(report.contains("..."));
+        let short = syntax_report("CASE", "", "syntax error", 1, 1);
+        assert!(short.contains("CASE"), "short names print verbatim");
+        let layered = syntax_report(
+            &format!("{}: eval", "S".repeat(256)),
+            "",
+            "syntax error",
+            1,
+            1,
+        );
+        assert!(
+            layered.contains(": eval"),
+            "attribution suffix survives the shell-name cut"
+        );
+        assert!(layered.len() <= MAX_DIAGNOSTIC_BYTES);
+    }
+
+    #[test]
+    fn syntax_report_preserves_line_numbers_and_exact_boundary() {
+        assert_eq!(
+            syntax_report("bash", "", "unexpected EOF\nline 7: unmatched quote", 2, 3),
+            "bash: line 5: unexpected EOF\nbash: line 10: unmatched quote\n"
+        );
+        let message = format!("syntax error: {}", "x".repeat(1003));
+        let report = syntax_report("bash", "", &message, 0, 0);
+        assert_eq!(report.len(), MAX_DIAGNOSTIC_BYTES);
+        assert!(!report.contains(DIAGNOSTIC_TRUNCATED));
+        assert_eq!(
+            syntax_report("bash", "", "bad input", 0, 0),
+            "bash: syntax error: bad input\n"
+        );
+        assert!(
+            syntax_report("bash", "", "syntax error\nline 1: extra", 1, usize::MAX)
+                .contains(&usize::MAX.to_string())
+        );
+    }
+
+    #[test]
+    fn parser_bounds_unexpected_token_before_copying() {
+        let source = format!("for x \"{}\"", "é\n".repeat(2048));
+        let Error::Parse { message, .. } = crate::parser::Parser::new(&source).parse().unwrap_err()
+        else {
+            panic!("expected parse error")
+        };
+        assert!(message.len() <= MAX_DIAGNOSTIC_BYTES);
+        assert_eq!(message.capacity(), MAX_DIAGNOSTIC_BYTES);
+        assert!(message.ends_with(DIAGNOSTIC_TRUNCATED));
     }
 
     use super::*;

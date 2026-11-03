@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "complex_diff_report",
+  "target": "anthropic/claude-sonnet-5-5",
+  "input": [
+    "Compare /data/v1.conf and /data/v2.conf. Produce a human-readable summary showing: which keys were added, which were removed, and which had their values changed. Print the summary to stdout."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "6/6 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Summary of changes from `/data/v1.conf` to `/data/v2.conf`:\n\n**Added**\n- `timeout = 30`\n\n**Removed**\n- `max_connections` (was `100`)\n\n**Changed**\n- `host`: `localhost` → `0.0.0.0`\n- `log_level`: `info` → `debug`\n- `port`: `8080` → `9090`\n\n`workers` is the only key that stayed the same (`4`).",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cd /data; ls -la; echo ---; cat v1.conf; echo ---; cat v2.conf",
+      "cd /data; declare -A a b\nwhile IFS='=' read -r k v; do [[ -z $k || $k == \\#* ]] && continue; a[$k]=$v; done < v1.conf\nwhile IFS='=' read -r k v; do [[ -z $k || $k == \\#* ]] && continue; b[$k]=$v; done < v2.conf\necho \"Added:\"; for k in \"${!b[@]}\"; do [[ -v a[$k] ]] || echo \"  $k = ${b[$k]}\"; done | sort\necho \"Removed:\"; for k in \"${!a[@]}\"; do [[ -v b[$k] ]] || echo \"  $k (was ${a[$k]})\"; done | sort\necho \"Changed:\"; for k in \"${!a[@]}\"; do [[ -v b[$k] && ${a[$k]} != \"${b[$k]}\" ]] && echo \"  $k: ${a[$k]} -> ${b[$k]}\"; done | sort"
+    ],
+    "usage": {
+      "input_tokens": 2854,
+      "output_tokens": 592,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 5331
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cd /data; ls -la; echo ---; cat v1.conf; echo ---; cat v2.conf",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       70 2026-10-09 04:58 v1.conf\n-rw-r--r--       60 2026-10-09 04:58 v2.conf\n---\nport=8080\nhost=localhost\nlog_level=info\nworkers=4\nmax_connections=100\n---\nport=9090\nhost=0.0.0.0\nlog_level=debug\nworkers=4\ntimeout=30\n"
+          },
+          {
+            "commands": "cd /data; declare -A a b\nwhile IFS='=' read -r k v; do [[ -z $k || $k == \\#* ]] && continue; a[$k]=$v; done < v1.conf\nwhile IFS='=' read -r k v; do [[ -z $k || $k == \\#* ]] && continue; b[$k]=$v; done < v2.conf\necho \"Added:\"; for k in \"${!b[@]}\"; do [[ -v a[$k] ]] || echo \"  $k = ${b[$k]}\"; done | sort\necho \"Removed:\"; for k in \"${!a[@]}\"; do [[ -v b[$k] ]] || echo \"  $k (was ${a[$k]})\"; done | sort\necho \"Changed:\"; for k in \"${!a[@]}\"; do [[ -v b[$k] && ${a[$k]} != \"${b[$k]}\" ]] && echo \"  $k: ${a[$k]} -> ${b[$k]}\"; done | sort",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Added:\n  timeout = 30\nRemoved:\n  max_connections (was 100)\nChanged:\n  host: localhost -> 0.0.0.0\n  log_level: info -> debug\n  port: 8080 -> 9090\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

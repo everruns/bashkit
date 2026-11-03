@@ -1,0 +1,57 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "complex_diff_report",
+  "target": "openai/gpt-6-luna",
+  "input": [
+    "Compare /data/v1.conf and /data/v2.conf. Produce a human-readable summary showing: which keys were added, which were removed, and which had their values changed. Print the summary to stdout."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "6/6 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Added:\n- `timeout=30`\n\nRemoved:\n- `max_connections=100`\n\nChanged:\n- `port`: `8080` → `9090`\n- `host`: `localhost` → `0.0.0.0`\n- `log_level`: `info` → `debug`",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "cat /data/v1.conf; printf '\\n--- v2 ---\\n'; cat /data/v2.conf; printf '\\n--- filenames ---\\n'; ls -l /data/v1.conf /data/v2.conf"
+    ],
+    "usage": {
+      "input_tokens": 604,
+      "output_tokens": 167,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 3112
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat /data/v1.conf; printf '\\n--- v2 ---\\n'; cat /data/v2.conf; printf '\\n--- filenames ---\\n'; ls -l /data/v1.conf /data/v2.conf",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "port=8080\nhost=localhost\nlog_level=info\nworkers=4\nmax_connections=100\n\n--- v2 ---\nport=9090\nhost=0.0.0.0\nlog_level=debug\nworkers=4\ntimeout=30\n\n--- filenames ---\n-rw-r--r--       70 2026-10-09 04:58 /data/v1.conf\n-rw-r--r--       60 2026-10-09 04:58 /data/v2.conf\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

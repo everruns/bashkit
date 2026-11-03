@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "data_csv_join",
+  "target": "anthropic/claude-opus-5-5",
+  "input": [
+    "Join /data/employees.csv and /data/departments.csv on the department_id field. Produce /data/report.csv with columns: name, department_name, salary. Include a header row. Print the result."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I joined the two files on `department_id` and saved the result as `/data/report.csv`:\n\n```\nname,department_name,salary\nAlice,Engineering,120000\nBob,Marketing,95000\nCarol,Engineering,115000\nDave,Sales,88000\nEve,Marketing,92000\n```\n\nEvery employee's `department_id` matched a department, so all 5 employees are in the report, in their original order. If an ID had no match, that employee would still appear but with an empty department name.\n\nI used a short `awk` script that splits on commas. That works for this data, but it would break if any field contained a quoted comma.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cd /data; ls; head -n 50 employees.csv departments.csv; wc -l employees.csv departments.csv",
+      "cd /data; awk -F, 'NR==FNR{if(FNR>1)d[$1]=$2;next} FNR==1{print \"name,department_name,salary\";next} {sub(/\\r$/,\"\");print $1\",\"(($2 in d)?d[$2]:\"\")\",\"$3}' departments.csv employees.csv > report.csv; cat report.csv"
+    ],
+    "usage": {
+      "input_tokens": 2690,
+      "output_tokens": 462,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 5034
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cd /data; ls; head -n 50 employees.csv departments.csv; wc -l employees.csv departments.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "departments.csv\nemployees.csv\n==> employees.csv <==\nname,department_id,salary\nAlice,1,120000\nBob,2,95000\nCarol,1,115000\nDave,3,88000\nEve,2,92000\n\n==> departments.csv <==\ndepartment_id,department_name\n1,Engineering\n2,Marketing\n3,Sales\n  6 employees.csv\n  4 departments.csv\n 10 total\n"
+          },
+          {
+            "commands": "cd /data; awk -F, 'NR==FNR{if(FNR>1)d[$1]=$2;next} FNR==1{print \"name,department_name,salary\";next} {sub(/\\r$/,\"\");print $1\",\"(($2 in d)?d[$2]:\"\")\",\"$3}' departments.csv employees.csv > report.csv; cat report.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "name,department_name,salary\nAlice,Engineering,120000\nBob,Marketing,95000\nCarol,Engineering,115000\nDave,Sales,88000\nEve,Marketing,92000\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

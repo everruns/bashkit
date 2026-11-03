@@ -1,0 +1,71 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "complex_test_output",
+  "target": "openrouter/moonshotai/kimi-k3",
+  "input": [
+    "Read /data/test-results.txt which contains test output in a standard format. Parse it to: 1) Count total tests, passed, and failed. 2) Extract the names of all failing tests. 3) Generate a summary report at /reports/test-summary.md with a header '# Test Summary', a line 'Total: N | Passed: N | Failed: N', and a '## Failures' section listing each failed test. Print the summary."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "10/10 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Done. Here's the summary:\n\n**Test results parsed:**\n- **Total:** 12 tests\n- **Passed:** 9\n- **Failed:** 3\n\n**Failing tests:**\n1. `test_login_expired_token`\n2. `test_signup_duplicate_email`\n3. `test_session_timeout`\n\nThe report was written to `/reports/test-summary.md` with the following content:\n\n```markdown\n# Test Summary\n\nTotal: 12 | Passed: 9 | Failed: 3\n\n## Failures\n- test_login_expired_token\n- test_signup_duplicate_email\n- test_session_timeout\n```",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "cat /data/test-results.txt",
+      "mkdir -p /reports && python3 - <<'EOF'\ntotal = passed = failed = 0\nfailures = []\n\nwith open('/data/test-results.txt') as f:\n    for line in f:\n        line = line.strip()\n        if not line:\n            continue\n        status, _, name = line.partition(' ')\n        total += 1\n        if status == 'PASS':\n            passed += 1\n        elif status == 'FAIL':\n            failed += 1\n            failures.append(name)\n\nreport = ['# Test Summary', '', f'Total: {total} | Passed: {passed} | Failed: {failed}', '', '## Failures']\nreport += [f'- {t}' for t in failures] if failures else ['(none)']\ntext = '\\n'.join(report) + '\\n'\n\nwith open('/reports/test-summary.md', 'w') as f:\n    f.write(text)\n\nprint(text)\nEOF",
+      "cat /reports/test-summary.md"
+    ],
+    "usage": {
+      "input_tokens": 3591,
+      "output_tokens": 523,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 5018
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 3.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat /data/test-results.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "PASS test_login_valid\nPASS test_login_invalid_password\nFAIL test_login_expired_token\nPASS test_signup_new_user\nFAIL test_signup_duplicate_email\nPASS test_logout\nPASS test_password_reset\nFAIL test_session_timeout\nPASS test_profile_update\nPASS test_profile_delete\nPASS test_api_rate_limit\nPASS test_api_auth_header\n"
+          },
+          {
+            "commands": "mkdir -p /reports && python3 - <<'EOF'\ntotal = passed = failed = 0\nfailures = []\n\nwith open('/data/test-results.txt') as f:\n    for line in f:\n        line = line.strip()\n        if not line:\n            continue\n        status, _, name = line.partition(' ')\n        total += 1\n        if status == 'PASS':\n            passed += 1\n        elif status == 'FAIL':\n            failed += 1\n            failures.append(name)\n\nreport = ['# Test Summary', '', f'Total: {total} | Passed: {passed} | Failed: {failed}', '', '## Failures']\nreport += [f'- {t}' for t in failures] if failures else ['(none)']\ntext = '\\n'.join(report) + '\\n'\n\nwith open('/reports/test-summary.md', 'w') as f:\n    f.write(text)\n\nprint(text)\nEOF",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# Test Summary\n\nTotal: 12 | Passed: 9 | Failed: 3\n\n## Failures\n- test_login_expired_token\n- test_signup_duplicate_email\n- test_session_timeout\n\n"
+          },
+          {
+            "commands": "cat /reports/test-summary.md",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# Test Summary\n\nTotal: 12 | Passed: 9 | Failed: 3\n\n## Failures\n- test_login_expired_token\n- test_signup_duplicate_email\n- test_session_timeout\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

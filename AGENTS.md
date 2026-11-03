@@ -45,6 +45,7 @@ Fix root cause. Unsure: read more code; if stuck, ask w/ short options. Unrecogn
 | operations/eval | LLM eval study on the mira framework, dataset format, scoring |
 | operations/oils-spec | Upstream Oils spec suite pass rate vs real bash (`just oils-spec`) |
 | operations/maintenance | Pre-release maintenance requirements |
+| runtimes/node-package | Native JavaScript package, runtime callbacks, caller context and worker-thread safety |
 | runtimes/python-package | Python package, PyPI wheels, platform matrix |
 | integrations/scripted-tool-orchestration | Compose ToolDef+callback pairs into OrchestratorTool via bash scripts |
 | integrations/ssh-support | Sandboxed SSH/SCP/SFTP operations |
@@ -52,6 +53,7 @@ Fix root cause. Unsure: read more code; if stuck, ask w/ short options. Unrecogn
 | security/request-signing | Transparent Ed25519 request signing (bot-auth) per RFC 9421 |
 | integrations/interactive-shell | Interactive REPL mode with rustyline line editing |
 | integrations/in-process-terminal | In-memory PTY-like `Terminal` (feature `terminal`), screen text, `vi` builtin |
+| runtimes/markkit-fetchkit-builtins | `markkit`/`fetchkit` builtins: same CLI via upstream `run(args, host)`, VFS + allowlist |
 | runtimes/sqlite-builtin | Embedded SQLite via Turso (MemoryIO + VfsIO backends, dot-commands) |
 | runtimes/coreutils-args-port | Codegen port of uutils clap definitions + uucore modules |
 | security/credential-injection | Per-host HTTP credential injection without exposing secrets |
@@ -198,6 +200,15 @@ Do not mix criterion `.md` files into `crates/bashkit-bench/results/`.
 - `ruff check crates/bashkit-python` and `ruff format --check crates/bashkit-python`
 - Tests: `pytest crates/bashkit-python/tests/ -v` (requires `maturin develop` first)
 - CI: `.github/workflows/python.yml` (lint, test on 3.9/3.12/3.13, build wheel)
+
+Windows wheel signing checks: `.github/workflows/windows-signing.yml` runs
+`python -m unittest discover -s scripts/tests -p test_windows_signing.py -v`
+with pinned wheel tooling on Windows. Packaging tests also run on other hosts;
+WinVerifyTrust tests require Windows. Production signing prerequisites and the
+unsigned/signed artifact boundary live in `knowledge/runtimes/python-package.md`.
+The manual `windows-signing-smoke.yml` workflow tests the actual Azure signer
+through the same reusable job as publication, from a main-reachable test tag,
+and emits a validation wheel without publishing. See the release knowledge.
 
 ### Pre-PR Checklist
 

@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "complex_debug_script",
+  "target": "openai/gpt-6.1-sol",
+  "input": [
+    "The script /scripts/broken.sh has bugs. Run it first to see the errors. Then examine the script, identify the bugs, fix them, and run the fixed version. The script should compute the factorial of 5 and print 'factorial(5) = 120'. The script should exit 0. Write the fixed version back to /scripts/broken.sh."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "3/3 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Ran the original script and found an unterminated command substitution on line 13: `result=$(factorial 5` was missing its closing `)`.\n\nFixed `/scripts/broken.sh` and ran it again. Output:\n\n```text\nfactorial(5) = 120\n```\n\nExit status: `0`.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "bash /scripts/broken.sh; result=$?; printf 'exit status: %s\\n' \"$result\"; printf '\\n--- script ---\\n'; cat /scripts/broken.sh",
+      "sed -i 's/^result=$(factorial 5$/result=$(factorial 5)/' /scripts/broken.sh\nbash /scripts/broken.sh\nstatus=$?\nprintf 'exit status: %s\\n' \"$status\""
+    ],
+    "usage": {
+      "input_tokens": 1192,
+      "output_tokens": 206,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 11137
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "bash /scripts/broken.sh; result=$?; printf 'exit status: %s\\n' \"$result\"; printf '\\n--- script ---\\n'; cat /scripts/broken.sh",
+            "exit_code": 0,
+            "stderr": "/scripts/broken.sh: line 13: syntax error: unterminated command substitution\n",
+            "stdout": "exit status: 2\n\n--- script ---\n#!/bin/bash\n\nfactorial() {\n  local n=$1\n  if [ $n -le 1 ]; then\n    echo 1\n  else\n    local sub=$(factorial $((n-1)))\n    echo $((n * sub))\n  fi\n}\n\nresult=$(factorial 5\necho \"factorial(5) = $result\"\nexit 0\n"
+          },
+          {
+            "commands": "sed -i 's/^result=$(factorial 5$/result=$(factorial 5)/' /scripts/broken.sh\nbash /scripts/broken.sh\nstatus=$?\nprintf 'exit status: %s\\n' \"$status\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "factorial(5) = 120\nexit status: 0\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

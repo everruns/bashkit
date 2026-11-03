@@ -1,0 +1,113 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "pipe_process_sub",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "Use process substitution to compare two sorted lists without creating temporary files. /data/installed.txt contains currently installed packages. /data/required.txt contains required packages. Use diff with process substitution (diff <(sort file1) <(sort file2)) to find: 1) packages in installed but not required (to remove), 2) packages in required but not installed (to install). Print 'To install:' followed by missing packages, and 'To remove:' followed by extra packages."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "To compare the package lists and determine which packages to install and remove using process substitution with `diff`:\n\n```bash\necho \"To install:\"\ndiff <(sort /data/installed.txt) <(sort /data/required.txt) | grep '^> ' | sed 's/^> //'\n\necho \"To remove:\"\ndiff <(sort /data/installed.txt) <(sort /data/required.txt) | grep '^< ' | sed 's/^< //'\n```\n\n### Output:\n```\nTo install:\nnodejs\nredis\nTo remove:\nnginx\nvim\n```",
+    "iterations": 10,
+    "tool_calls_count": 9,
+    "tool_calls": [
+      "ls -la /data\nhead -n 20 /data/installed.txt /data/required.txt",
+      "ls -la /home/eval",
+      "diff <(sort /data/installed.txt) <(sort /data/required.txt) || true",
+      "diff --version",
+      "diff --help || true",
+      "diff -u <(sort /data/installed.txt) <(sort /data/required.txt) || true",
+      "echo \"To install:\"\ndiff -u <(sort /data/installed.txt) <(sort /data/required.txt) | grep '^+[^+]' | sed 's/^+//'\necho \"To remove:\"\ndiff -u <(sort /data/installed.txt) <(sort /data/required.txt) | grep '^-[^-]' | sed 's/^-//'",
+      "# Check default diff output parsing with grep/sed\necho \"To install:\"\ndiff <(sort /data/installed.txt) <(sort /data/required.txt) | grep '^> ' | sed 's/^> //'\necho \"To remove:\"\ndiff <(sort /data/installed.txt) <(sort /data/required.txt) | grep '^< ' | sed 's/^< //'",
+      "# Test comm vs diff\ncomm -23 <(sort /data/installed.txt) <(sort /data/required.txt)\ncomm -13 <(sort /data/installed.txt) <(sort /data/required.txt)"
+    ],
+    "usage": {
+      "input_tokens": 8114,
+      "output_tokens": 1508,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 47250
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 9.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 9.0,
+      "turns": 10.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /data\nhead -n 20 /data/installed.txt /data/required.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       32 2026-10-09 17:45 installed.txt\n-rw-r--r--       35 2026-10-09 17:45 required.txt\n==> /data/installed.txt <==\ncurl\ngit\nnginx\nvim\nwget\npython3\n\n==> /data/required.txt <==\ncurl\ngit\nnodejs\npython3\nwget\nredis\n"
+          },
+          {
+            "commands": "ls -la /home/eval",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "diff <(sort /data/installed.txt) <(sort /data/required.txt) || true",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "3c3\n< nginx\n---\n> nodejs\n5c5\n< vim\n---\n> redis\n"
+          },
+          {
+            "commands": "diff --version",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "diff (bashkit) 0.1\n"
+          },
+          {
+            "commands": "diff --help || true",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Usage: diff [OPTION]... FILE1 FILE2\nCompare files line by line.\n\n  -u\t\toutput in unified format\n  -q, --brief\treport only when files differ\n  --help\t\tdisplay this help and exit\n  --version\toutput version information and exit\n"
+          },
+          {
+            "commands": "diff -u <(sort /data/installed.txt) <(sort /data/required.txt) || true",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "--- /dev/fd/63\n+++ /dev/fd/62\n@@ -1,6 +1,6 @@\n curl\n git\n-nginx\n+nodejs\n python3\n-vim\n+redis\n wget\n"
+          },
+          {
+            "commands": "echo \"To install:\"\ndiff -u <(sort /data/installed.txt) <(sort /data/required.txt) | grep '^+[^+]' | sed 's/^+//'\necho \"To remove:\"\ndiff -u <(sort /data/installed.txt) <(sort /data/required.txt) | grep '^-[^-]' | sed 's/^-//'",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "To install:\nnodejs\nredis\nTo remove:\nnginx\nvim\n"
+          },
+          {
+            "commands": "# Check default diff output parsing with grep/sed\necho \"To install:\"\ndiff <(sort /data/installed.txt) <(sort /data/required.txt) | grep '^> ' | sed 's/^> //'\necho \"To remove:\"\ndiff <(sort /data/installed.txt) <(sort /data/required.txt) | grep '^< ' | sed 's/^< //'",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "To install:\nnodejs\nredis\nTo remove:\nnginx\nvim\n"
+          },
+          {
+            "commands": "# Test comm vs diff\ncomm -23 <(sort /data/installed.txt) <(sort /data/required.txt)\ncomm -13 <(sort /data/installed.txt) <(sort /data/required.txt)",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "nginx\nvim\nnodejs\nredis\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

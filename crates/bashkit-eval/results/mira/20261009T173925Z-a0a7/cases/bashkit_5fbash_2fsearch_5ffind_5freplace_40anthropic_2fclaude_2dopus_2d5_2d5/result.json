@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "search_find_replace",
+  "target": "anthropic/claude-opus-5-5",
+  "input": [
+    "Search all .js files under /src for the string 'console.log'. Replace every occurrence with 'logger.info' in-place. Print each modified filename and how many replacements were made per file. At the end, print 'Files modified: N' with the total count of files changed."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "6/6 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I replaced every `console.log` with `logger.info` in the `.js` files under `/src`, editing the files in place.\n\n```\n/src/app.js: 1 replacement(s)\n/src/index.js: 2 replacement(s)\n/src/middleware.js: 2 replacement(s)\nFiles modified: 3\n```\n\n`/src/utils.js` had no occurrences, so it wasn't changed. A search afterwards found no `console.log` left and showed all 5 `logger.info` lines where they should be.\n\nThe change only renames the calls. If any of these files doesn't already define or import `logger`, those lines will fail when they run until you add it.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "find /src -name '*.js' -type f 2>/dev/null | head -100; echo; grep -rc 'console.log' /src --include='*.js' 2>/dev/null",
+      "python3 - <<'EOF'\nimport os\nn=0\nfor root,_,files in os.walk('/src'):\n    for f in sorted(files):\n        if not f.endswith('.js'): continue\n        p=os.path.join(root,f)\n        s=open(p).read()\n        c=s.count('console.log')\n        if c:\n            open(p,'w').write(s.replace('console.log','logger.info'))\n            print(f\"{p}: {c} replacement(s)\")\n            n+=1\nprint(f\"Files modified: {n}\")\nEOF\necho ---; grep -rn 'console.log\\|logger.info' /src"
+    ],
+    "usage": {
+      "input_tokens": 3893,
+      "output_tokens": 583,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 8425
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "find /src -name '*.js' -type f 2>/dev/null | head -100; echo; grep -rc 'console.log' /src --include='*.js' 2>/dev/null",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/src/app.js\n/src/index.js\n/src/middleware.js\n/src/utils.js\n\n/src/app.js:1\n/src/index.js:2\n/src/middleware.js:2\n/src/utils.js:0\n"
+          },
+          {
+            "commands": "python3 - <<'EOF'\nimport os\nn=0\nfor root,_,files in os.walk('/src'):\n    for f in sorted(files):\n        if not f.endswith('.js'): continue\n        p=os.path.join(root,f)\n        s=open(p).read()\n        c=s.count('console.log')\n        if c:\n            open(p,'w').write(s.replace('console.log','logger.info'))\n            print(f\"{p}: {c} replacement(s)\")\n            n+=1\nprint(f\"Files modified: {n}\")\nEOF\necho ---; grep -rn 'console.log\\|logger.info' /src",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/src/app.js: 1 replacement(s)\n/src/index.js: 2 replacement(s)\n/src/middleware.js: 2 replacement(s)\nFiles modified: 3\n---\n/src/app.js:5:  logger.info('Request received');\n/src/index.js:2:logger.info('Server starting');\n/src/index.js:4:logger.info('Listening on port 3000');\n/src/middleware.js:2:  logger.info('Auth check');\n/src/middleware.js:6:    logger.info('Auth failed');\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

@@ -1,0 +1,78 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "hard_toposort",
+  "target": "anthropic/claude-sonnet-5-5",
+  "input": [
+    "In /home/eval/pkgs there are dependency lists deps.txt, deps-big.txt and deps-cycle.txt. Each non-comment line has the form `package: dep1 dep2 ...` (deps are separated by spaces or tabs; there may be extra whitespace around names and the colon). `#` starts a comment that runs to the end of the line, blank lines are ignored, a package may appear on several lines (its deps accumulate), and a name that only ever appears as a dependency is still a package.\n\nWrite an executable script /home/eval/pkgs/bin/order (bash; awk/sort/etc. are fine, no python) that takes one such file and prints a build order, one package per line, where every package comes after all of its dependencies. The order must be deterministic: repeatedly emit the smallest package (byte order) whose dependencies have all been emitted. If some packages can never be emitted because of a cycle, print the order for the ones that can, then print `cycle: ` followed by all remaining packages sorted (byte order) and separated by single spaces to stderr, and exit 1; otherwise exit 0.\n\nThen from /home/eval/pkgs run it on each file and save: stdout of deps.txt to build/order.txt, stdout of deps-big.txt to build/big-order.txt, stdout of deps-cycle.txt to build/cycle-order.txt, its stderr to build/cycle.txt and its exit status (just the number) to build/cycle.rc."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "6/6 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I wrote `/home/eval/pkgs/bin/order` and ran it on all three files from `/home/eval/pkgs`. The outputs are saved in `build/`.\n\n- **`deps.txt` and `deps-big.txt`:** I checked the big order and found no package listed before one of its dependencies. I didn't run that check on the other two files.\n- **`deps-cycle.txt`:** `cycle-order.txt` holds `e` and `f`. `cycle.txt` holds `cycle: a b c d g`, and `cycle.rc` holds `1`.\n\nThe saved files are `order.txt`, `big-order.txt`, `cycle-order.txt`, `cycle.txt` and `cycle.rc`.\n\nI did not test other edge cases, such as a package with no colon on its line.",
+    "iterations": 5,
+    "tool_calls_count": 4,
+    "tool_calls": [
+      "cd /home/eval/pkgs; ls -la . bin build 2>&1; head -20 deps.txt; wc -l deps*.txt; cat -A deps-cycle.txt | head -30",
+      "cd /home/eval/pkgs; mkdir -p bin build; cat > bin/order <<'EOF'\n#!/bin/bash\nexport LC_ALL=C\nf=${1:?usage: order file}\nawk '\n{\n  sub(/#.*/, \"\"); gsub(/\\r/, \"\")\n  i = index($0, \":\"); if (i == 0) next\n  p = substr($0, 1, i-1); r = substr($0, i+1)\n  gsub(/[ \\t]+/, \"\", p)\n  if (p == \"\") next\n  pk[p] = 1\n  n = split(r, a, /[ \\t:]+/)\n  for (k = 1; k <= n; k++) {\n    d = a[k]; if (d == \"\") continue\n    pk[d] = 1\n    if (!((p SUBSEP d) in seen)) {\n      seen[p SUBSEP d] = 1\n      cnt[p]++\n      nd[d]++; dl[d, nd[d]] = p\n    }\n  }\n}\nEND {\n  for (x in pk) { total++; if (!(x in cnt)) ready[x] = 1 }\n  out = 0\n  while (1) {\n    m = \"\"; have = 0\n    for (x in ready) if (!have || x < m) { m = x; have = 1 }\n    if (!have) break\n    delete ready[m]; print m; done[m] = 1; out++\n    for (k = 1; k <= nd[m]; k++) { q = dl[m, k]; if (--cnt[q] == 0) ready[q] = 1 }\n  }\n  if (out < total) {\n    s = \"\"; c = 0\n    for (x in pk) if (!(x in done)) rem[++c] = x\n    # insertion-free sort via sort command\n    cmd = \"LC_ALL=C sort\"\n    for (k = 1; k <= c; k++) print rem[k] | cmd\n    close(cmd)\n    exit 1\n  }\n}' \"$f\" > >(cat) 2>/dev/null\nEOF\necho",
+      "cd /home/eval/pkgs; python3 - <<'EOF' 2>/dev/null || true\nEOF\ncat > bin/order <<'EOF'\n#!/bin/bash\nexport LC_ALL=C\nf=${1:?usage: order file}\nawk '\n{\n  sub(/#.*/, \"\"); gsub(/\\r/, \"\")\n  i = index($0, \":\"); if (i == 0) next\n  p = substr($0, 1, i-1); r = substr($0, i+1)\n  gsub(/[ \\t]+/, \"\", p)\n  if (p == \"\") next\n  pk[p] = 1\n  n = split(r, a, /[ \\t:]+/)\n  for (k = 1; k <= n; k++) {\n    d = a[k]; if (d == \"\") continue\n    pk[d] = 1\n    if (!((p SUBSEP d) in seen)) {\n      seen[p SUBSEP d] = 1\n      cnt[p]++\n      nd[d]++; dl[d, nd[d]] = p\n    }\n  }\n}\nEND {\n  for (x in pk) { total++; if (!(x in cnt)) ready[x] = 1 }\n  out = 0\n  while (1) {\n    m = \"\"; have = 0\n    for (x in ready) if (!have || x < m) { m = x; have = 1 }\n    if (!have) break\n    delete ready[m]; print m; done[m] = 1; out++\n    for (k = 1; k <= nd[m]; k++) { q = dl[m, k]; if (--cnt[q] == 0) ready[q] = 1 }\n  }\n  if (out < total) {\n    fflush()\n    cmd = \"LC_ALL=C sort | paste -sd\\\" \\\" - | sed \\\"s/^/cycle: /\\\" >&2\"\n    for (x in pk) if (!(x in done)) print x | cmd\n    close(cmd)\n    exit 1\n  }\n}' \"$f\"\nEOF\nchmod +x bin/order\nbin/order deps.txt > build/order.txt; bin/order deps-big.txt > build/big-order.txt\nbin/order deps-cycle.txt > build/cycle-order.txt 2> build/cycle.txt; echo $? > build/cycle.rc\ncat build/order.txt | tr '\\n' ' '; echo; cat build/big-order.txt | tr '\\n' ' '; echo; cat build/cycle-order.txt build/cycle.txt build/cycle.rc; cat deps-big.txt | head -40",
+      "cd /home/eval/pkgs; sed 's/#.*//' deps-big.txt | awk -F: 'NF>1{n=split($2,a,/[ \\t]+/);for(i=1;i<=n;i++)if(a[i]!=\"\")print a[i],$1}' | gsub 2>/dev/null; sed 's/#.*//' deps-big.txt | awk 'NR==FNR{pos[$1]=FNR;next} {i=index($0,\":\");if(!i)next;p=substr($0,1,i-1);gsub(/[ \\t]/,\"\",p);n=split(substr($0,i+1),a,/[ \\t]+/);for(k=1;k<=n;k++)if(a[k]!=\"\"&&pos[a[k]]>pos[p])print \"BAD\",p,a[k]}' build/big-order.txt -; echo checked"
+    ],
+    "usage": {
+      "input_tokens": 13430,
+      "output_tokens": 2881,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 22326
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 4.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 4.0,
+      "turns": 5.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cd /home/eval/pkgs; ls -la . bin build 2>&1; head -20 deps.txt; wc -l deps*.txt; cat -A deps-cycle.txt | head -30",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "ls: cannot access 'bin': No such file or directory\n# package: dependencies (each must be built before the package)\napp: web  db   log\nweb: http log\nhttp: net\ndb: net log\nlog:\ncli: app\nnet:\ndocs:\n\n# repeated entries are allowed; deps accumulate\nweb: log\ntest: app mock\n 37 deps-big.txt\n  7 deps-cycle.txt\n 13 deps.txt\n 57 total\na: b$\nb: c$\nc: a$\nd: a$\ne:$\nf: e$\n  g :  f   d$\n"
+          },
+          {
+            "commands": "cd /home/eval/pkgs; mkdir -p bin build; cat > bin/order <<'EOF'\n#!/bin/bash\nexport LC_ALL=C\nf=${1:?usage: order file}\nawk '\n{\n  sub(/#.*/, \"\"); gsub(/\\r/, \"\")\n  i = index($0, \":\"); if (i == 0) next\n  p = substr($0, 1, i-1); r = substr($0, i+1)\n  gsub(/[ \\t]+/, \"\", p)\n  if (p == \"\") next\n  pk[p] = 1\n  n = split(r, a, /[ \\t:]+/)\n  for (k = 1; k <= n; k++) {\n    d = a[k]; if (d == \"\") continue\n    pk[d] = 1\n    if (!((p SUBSEP d) in seen)) {\n      seen[p SUBSEP d] = 1\n      cnt[p]++\n      nd[d]++; dl[d, nd[d]] = p\n    }\n  }\n}\nEND {\n  for (x in pk) { total++; if (!(x in cnt)) ready[x] = 1 }\n  out = 0\n  while (1) {\n    m = \"\"; have = 0\n    for (x in ready) if (!have || x < m) { m = x; have = 1 }\n    if (!have) break\n    delete ready[m]; print m; done[m] = 1; out++\n    for (k = 1; k <= nd[m]; k++) { q = dl[m, k]; if (--cnt[q] == 0) ready[q] = 1 }\n  }\n  if (out < total) {\n    s = \"\"; c = 0\n    for (x in pk) if (!(x in done)) rem[++c] = x\n    # insertion-free sort via sort command\n    cmd = \"LC_ALL=C sort\"\n    for (k = 1; k <= c; k++) print rem[k] | cmd\n    close(cmd)\n    exit 1\n  }\n}' \"$f\" > >(cat) 2>/dev/null\nEOF\necho",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "\n"
+          },
+          {
+            "commands": "cd /home/eval/pkgs; python3 - <<'EOF' 2>/dev/null || true\nEOF\ncat > bin/order <<'EOF'\n#!/bin/bash\nexport LC_ALL=C\nf=${1:?usage: order file}\nawk '\n{\n  sub(/#.*/, \"\"); gsub(/\\r/, \"\")\n  i = index($0, \":\"); if (i == 0) next\n  p = substr($0, 1, i-1); r = substr($0, i+1)\n  gsub(/[ \\t]+/, \"\", p)\n  if (p == \"\") next\n  pk[p] = 1\n  n = split(r, a, /[ \\t:]+/)\n  for (k = 1; k <= n; k++) {\n    d = a[k]; if (d == \"\") continue\n    pk[d] = 1\n    if (!((p SUBSEP d) in seen)) {\n      seen[p SUBSEP d] = 1\n      cnt[p]++\n      nd[d]++; dl[d, nd[d]] = p\n    }\n  }\n}\nEND {\n  for (x in pk) { total++; if (!(x in cnt)) ready[x] = 1 }\n  out = 0\n  while (1) {\n    m = \"\"; have = 0\n    for (x in ready) if (!have || x < m) { m = x; have = 1 }\n    if (!have) break\n    delete ready[m]; print m; done[m] = 1; out++\n    for (k = 1; k <= nd[m]; k++) { q = dl[m, k]; if (--cnt[q] == 0) ready[q] = 1 }\n  }\n  if (out < total) {\n    fflush()\n    cmd = \"LC_ALL=C sort | paste -sd\\\" \\\" - | sed \\\"s/^/cycle: /\\\" >&2\"\n    for (x in pk) if (!(x in done)) print x | cmd\n    close(cmd)\n    exit 1\n  }\n}' \"$f\"\nEOF\nchmod +x bin/order\nbin/order deps.txt > build/order.txt; bin/order deps-big.txt > build/big-order.txt\nbin/order deps-cycle.txt > build/cycle-order.txt 2> build/cycle.txt; echo $? > build/cycle.rc\ncat build/order.txt | tr '\\n' ' '; echo; cat build/big-order.txt | tr '\\n' ' '; echo; cat build/cycle-order.txt build/cycle.txt build/cycle.rc; cat deps-big.txt | head -40",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "docs log mock net db http web app cli test \ncli-1 math regex time-2 zlib-9 json-8 log auth core cache-3 csv color fs net-9 bench fmt mock sig-9 test-0 tls util-0 docs proc term db-9 uuid-2 io-8 http xml yaml-1 \ne\nf\ncycle: a b c d g\n1\nlog:\tzlib-9\nutil-0:  tls  net-9  math\nyaml-1: tls term\nsig-9: csv\nnet-9: log\ncore:  zlib-9  log\n\nsig-9:\tcsv\tnet-9\ncli-1:\nfmt: json-8\nmock:\tbench\nbench: net-9\ncsv:  log\ncolor:\tcsv\nfmt: json-8 bench zlib-9\nproc:  docs  json-8  util-0\ncache-3: core auth\n# --\ntest-0: csv math\nfs:  zlib-9  core\nuuid-2: core\nzlib-9:\nauth:  zlib-9  log  math\ntime-2:  math\njson-8:  zlib-9\nregex:\ndocs:\tcore\tutil-0\ntls:\tcore\tmath\tlog\nhttp: io-8\nxml:\tfmt\tmock\nio-8: csv\nio-8: csv test-0 uuid-2\nnet-9:  log  zlib-9\nmath:\nterm: docs\ndb-9:\tauth\tterm\n# generated dependency list\n"
+          },
+          {
+            "commands": "cd /home/eval/pkgs; sed 's/#.*//' deps-big.txt | awk -F: 'NF>1{n=split($2,a,/[ \\t]+/);for(i=1;i<=n;i++)if(a[i]!=\"\")print a[i],$1}' | gsub 2>/dev/null; sed 's/#.*//' deps-big.txt | awk 'NR==FNR{pos[$1]=FNR;next} {i=index($0,\":\");if(!i)next;p=substr($0,1,i-1);gsub(/[ \\t]/,\"\",p);n=split(substr($0,i+1),a,/[ \\t]+/);for(k=1;k<=n;k++)if(a[k]!=\"\"&&pos[a[k]]>pos[p])print \"BAD\",p,a[k]}' build/big-order.txt -; echo checked",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "checked\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

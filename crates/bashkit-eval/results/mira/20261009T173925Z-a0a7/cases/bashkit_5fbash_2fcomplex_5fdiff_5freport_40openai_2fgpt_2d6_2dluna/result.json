@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "complex_diff_report",
+  "target": "openai/gpt-6-luna",
+  "input": [
+    "Compare /data/v1.conf and /data/v2.conf. Produce a human-readable summary showing: which keys were added, which were removed, and which had their values changed. Print the summary to stdout."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "6/6 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Configuration comparison (`v1.conf` → `v2.conf`)\n\n- **Added:** `timeout = 30`\n- **Removed:** `max_connections = 100`\n- **Changed values:**\n  - `host`: `localhost` → `0.0.0.0`\n  - `log_level`: `info` → `debug`\n  - `port`: `8080` → `9090`",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "python3 - <<'PY'\nfrom pathlib import Path\nfor f in ['/data/v1.conf','/data/v2.conf']:\n    p=Path(f)\n    print(f, p.exists())\n    if p.exists(): print(p.read_text())\nPY",
+      "python3 - <<'PY'\nold = {'port': '8080', 'host': 'localhost', 'log_level': 'info', 'workers': '4', 'max_connections': '100'}\nnew = {'port': '9090', 'host': '0.0.0.0', 'log_level': 'debug', 'workers': '4', 'timeout': '30'}\nprint('Configuration comparison (v1.conf → v2.conf)')\nprint('Added keys:')\nfor key in sorted(new.keys() - old.keys()):\n    print(f'  {key} = {new[key]}')\nprint('Removed keys:')\nfor key in sorted(old.keys() - new.keys()):\n    print(f'  {key} = {old[key]}')\nprint('Changed values:')\nfor key in sorted(old.keys() & new.keys()):\n    if old[key] != new[key]:\n        print(f'  {key}: {old[key]} → {new[key]}')\nPY"
+    ],
+    "usage": {
+      "input_tokens": 1881,
+      "output_tokens": 481,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 12976
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "python3 - <<'PY'\nfrom pathlib import Path\nfor f in ['/data/v1.conf','/data/v2.conf']:\n    p=Path(f)\n    print(f, p.exists())\n    if p.exists(): print(p.read_text())\nPY",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/data/v1.conf True\nport=8080\nhost=localhost\nlog_level=info\nworkers=4\nmax_connections=100\n\n/data/v2.conf True\nport=9090\nhost=0.0.0.0\nlog_level=debug\nworkers=4\ntimeout=30\n\n"
+          },
+          {
+            "commands": "python3 - <<'PY'\nold = {'port': '8080', 'host': 'localhost', 'log_level': 'info', 'workers': '4', 'max_connections': '100'}\nnew = {'port': '9090', 'host': '0.0.0.0', 'log_level': 'debug', 'workers': '4', 'timeout': '30'}\nprint('Configuration comparison (v1.conf → v2.conf)')\nprint('Added keys:')\nfor key in sorted(new.keys() - old.keys()):\n    print(f'  {key} = {new[key]}')\nprint('Removed keys:')\nfor key in sorted(old.keys() - new.keys()):\n    print(f'  {key} = {old[key]}')\nprint('Changed values:')\nfor key in sorted(old.keys() & new.keys()):\n    if old[key] != new[key]:\n        print(f'  {key}: {old[key]} → {new[key]}')\nPY",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Configuration comparison (v1.conf → v2.conf)\nAdded keys:\n  timeout = 30\nRemoved keys:\n  max_connections = 100\nChanged values:\n  host: localhost → 0.0.0.0\n  log_level: info → debug\n  port: 8080 → 9090\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

@@ -1,0 +1,155 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "hard_toposort",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "In /home/eval/pkgs there are dependency lists deps.txt, deps-big.txt and deps-cycle.txt. Each non-comment line has the form `package: dep1 dep2 ...` (deps are separated by spaces or tabs; there may be extra whitespace around names and the colon). `#` starts a comment that runs to the end of the line, blank lines are ignored, a package may appear on several lines (its deps accumulate), and a name that only ever appears as a dependency is still a package.\n\nWrite an executable script /home/eval/pkgs/bin/order (bash; awk/sort/etc. are fine, no python) that takes one such file and prints a build order, one package per line, where every package comes after all of its dependencies. The order must be deterministic: repeatedly emit the smallest package (byte order) whose dependencies have all been emitted. If some packages can never be emitted because of a cycle, print the order for the ones that can, then print `cycle: ` followed by all remaining packages sorted (byte order) and separated by single spaces to stderr, and exit 1; otherwise exit 0.\n\nThen from /home/eval/pkgs run it on each file and save: stdout of deps.txt to build/order.txt, stdout of deps-big.txt to build/big-order.txt, stdout of deps-cycle.txt to build/cycle-order.txt, its stderr to build/cycle.txt and its exit status (just the number) to build/cycle.rc."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "6/6 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "An executable bash script has been created at `/home/eval/pkgs/bin/order` to compute deterministic topological build orders (using `LC_ALL=C` and AWK).\n\nThe script handles:\n- Stripping comments starting with `#` and ignoring blank lines.\n- Parsing `package: dep1 dep2 ...` entries, including extra whitespace around package names and delimiters.\n- Accumulating dependencies across multiple package declarations.\n- Treating tokens that only appear as dependencies as packages.\n- Deterministically emitting the smallest package in byte order whose dependencies have all been satisfied (Kahn's algorithm).\n- Emitting resolved packages and logging unresolvable packages formatted as `cycle: <pkgs>` to stderr with exit status 1 upon encountering dependency cycles.\n\nThe script was executed against the dependency files from `/home/eval/pkgs`, producing the requested outputs:\n- `build/order.txt` from `deps.txt`\n- `build/big-order.txt` from `deps-big.txt`\n- `build/cycle-order.txt`, `build/cycle.txt`, and `build/cycle.rc` from `deps-cycle.txt`",
+    "iterations": 16,
+    "tool_calls_count": 15,
+    "tool_calls": [
+      "ls -la /home/eval/pkgs",
+      "cat /home/eval/pkgs/deps.txt\necho \"--- deps-cycle.txt ---\"\ncat /home/eval/pkgs/deps-cycle.txt\necho \"--- deps-big.txt ---\"\ncat /home/eval/pkgs/deps-big.txt",
+      "awk --version",
+      "mkdir -p /home/eval/pkgs/bin /home/eval/pkgs/build",
+      "cat << 'EOF' > /home/eval/pkgs/bin/order\n#!/usr/bin/env bash\nset -e\nexport LC_ALL=C\n\nif [ \"$#\" -ne 1 ]; then\n    echo \"Usage: $0 <deps-file>\" >&2\n    exit 2\nfi\n\ninput_file=\"$1\"\n\nawk '\nBEGIN {\n    # We will track:\n    # all_pkgs[pkg] = 1\n    # deps[pkg, dep] = 1\n    # dep_count[pkg] = number of distinct deps\n    # rev_deps[dep, pkg] = 1\n}\n\n# Remove comments\n{\n    sub(/#.*/, \"\")\n    # Check if line is empty or only whitespace\n    if ($0 ~ /^[ \\t]*$/) next\n    \n    # Split by colon\n    colon_idx = index($0, \":\")\n    if (colon_idx == 0) next\n    \n    pkg_str = substr($0, 1, colon_idx - 1)\n    deps_str = substr($0, colon_idx + 1)\n    \n    # Trim pkg_str\n    gsub(/^[ \\t]+|[ \\t]+$/, \"\", pkg_str)\n    if (pkg_str == \"\") next\n    \n    all_pkgs[pkg_str] = 1\n    \n    # Parse deps\n    n = split(deps_str, d_arr, /[ \\t]+/)\n    for (i = 1; i <= n; i++) {\n        dep = d_arr[i]\n        if (dep != \"\") {\n            all_pkgs[dep] = 1\n            if (!((pkg_str, dep) in deps)) {\n                deps[pkg_str, dep] = 1\n                dep_count[pkg_str]++\n                rev_deps[dep, pkg_str] = 1\n                rev_count[dep]++\n                rev_list[dep, rev_count[dep]] = pkg_str\n            }\n        }\n    }\n}\n\nEND {\n    # Initialize dep_count for any packages that had no deps\n    for (p in all_pkgs) {\n        if (! (p in dep_count)) {\n            dep_count[p] = 0\n        }\n    }\n\n    # Kahn algorithm with deterministic smallest package selection\n    # We can keep an array of ready packages or just find the min ready package in each step.\n    # Total packages is small (even big is < 100 packages), but let us check size.\n    # Finding min among ready packages:\n    # ready[p] = 1 if dep_count[p] == 0 and not emitted.\n    for (p in all_pkgs) {\n        if (dep_count[p] == 0) {\n            ready[p] = 1\n        }\n    }\n\n    emitted_count = 0\n    total_pkgs = 0\n    for (p in all_pkgs) total_pkgs++\n\n    while (1) {\n        # Find smallest ready package (byte order)\n        found = 0\n        min_p = \"\"\n        for (p in ready) {\n            if (!found || p < min_p) {\n                min_p = p\n                found = 1\n            }\n        }\n        if (!found) break\n\n        # Emit min_p\n        print min_p\n        delete ready[min_p]\n        emitted[min_p] = 1\n        emitted_count++\n\n        # Decrement dep_count for rev_deps\n        rc = rev_count[min_p]\n        for (i = 1; i <= rc; i++) {\n            dependent = rev_list[min_p, i]\n            dep_count[dependent]--\n            if (dep_count[dependent] == 0) {\n                ready[dependent] = 1\n            }\n        }\n    }\n\n    if (emitted_count < total_pkgs) {\n        # Collect remaining packages\n        rem_count = 0\n        for (p in all_pkgs) {\n            if (! (p in emitted)) {\n                rem_count++\n                rem_pkgs[rem_count] = p\n            }\n        }\n        # Sort remaining packages\n        # Simple selection sort or insertion sort\n        for (i = 1; i <= rem_count; i++) {\n            min_idx = i\n            for (j = i + 1; j <= rem_count; j++) {\n                if (rem_pkgs[j] < rem_pkgs[min_idx]) {\n                    min_idx = j\n                }\n            }\n            if (min_idx != i) {\n                tmp = rem_pkgs[i]\n                rem_pkgs[i] = rem_pkgs[min_idx]\n                rem_pkgs[min_idx] = tmp\n            }\n        }\n\n        # Print to stderr: \"cycle: \" followed by remaining sorted separated by spaces\n        err_msg = \"cycle:\"\n        for (i = 1; i <= rem_count; i++) {\n            err_msg = err_msg \" \" rem_pkgs[i]\n        }\n        print err_msg > \"/dev/stderr\"\n        exit 1\n    }\n}\n' \"$input_file\"\nEOF\nchmod +x /home/eval/pkgs/bin/order",
+      "/home/eval/pkgs/bin/order /home/eval/pkgs/deps.txt",
+      "/home/eval/pkgs/bin/order /home/eval/pkgs/deps-cycle.txt",
+      "/home/eval/pkgs/bin/order /home/eval/pkgs/deps-big.txt",
+      "python3 -c '\nwith open(\"/home/eval/pkgs/deps-big.txt\") as f:\n    lines = f.readlines()\n\ndeps = {}\nall_pkgs = set()\nfor line in lines:\n    line = line.split(\"#\")[0].strip()\n    if not line: continue\n    pkg, dlist = line.split(\":\")\n    pkg = pkg.strip()\n    all_pkgs.add(pkg)\n    if pkg not in deps: deps[pkg] = set()\n    for d in dlist.split():\n        all_pkgs.add(d)\n        deps[pkg].add(d)\n\nfor p in all_pkgs:\n    if p not in deps: deps[p] = set()\n\norder = []\nready = sorted([p for p in all_pkgs if len(deps[p]) == 0])\nwhile ready:\n    curr = ready.pop(0)\n    order.append(curr)\n    for p in sorted(all_pkgs):\n        if curr in deps[p]:\n            deps[p].remove(curr)\n            if len(deps[p]) == 0 and p not in order and p not in ready:\n                ready.append(p)\n                ready.sort()\n\nprint(\"Py count:\", len(order), \"total:\", len(all_pkgs))\nfor p in order:\n    print(p)\n' > /tmp/py-order.txt\n\n/home/eval/pkgs/bin/order /home/eval/pkgs/deps-big.txt > /tmp/awk-order.txt\ndiff -u /tmp/py-order.txt /tmp/awk-order.txt",
+      "tail -n +2 /tmp/py-order.txt | diff -u - /tmp/awk-order.txt",
+      "/home/eval/pkgs/bin/order /dev/null",
+      "echo $?",
+      "cd /home/eval/pkgs\nmkdir -p build\n\n./bin/order deps.txt > build/order.txt\necho \"deps.txt rc: $?\"\n\n./bin/order deps-big.txt > build/big-order.txt\necho \"deps-big.txt rc: $?\"\n\n./bin/order deps-cycle.txt > build/cycle-order.txt 2> build/cycle.txt\necho $? > build/cycle.rc\necho \"deps-cycle.txt rc: $(cat build/cycle.rc)\"",
+      "cat build/cycle.rc\necho \"--- cycle.txt ---\"\ncat build/cycle.txt\necho \"--- cycle-order.txt ---\"\ncat build/cycle-order.txt",
+      "ls -la /home/eval/pkgs/build"
+    ],
+    "usage": {
+      "input_tokens": 40577,
+      "output_tokens": 3896,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 73429
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 15.0,
+      "tool_calls_err": 2.0,
+      "tool_calls_ok": 13.0,
+      "turns": 16.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /home/eval/pkgs",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--      551 2026-10-09 18:00 deps-big.txt\n-rw-r--r--       41 2026-10-09 18:00 deps-cycle.txt\n-rw-r--r--      217 2026-10-09 18:00 deps.txt\n"
+          },
+          {
+            "commands": "cat /home/eval/pkgs/deps.txt\necho \"--- deps-cycle.txt ---\"\ncat /home/eval/pkgs/deps-cycle.txt\necho \"--- deps-big.txt ---\"\ncat /home/eval/pkgs/deps-big.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# package: dependencies (each must be built before the package)\napp: web  db   log\nweb: http log\nhttp: net\ndb: net log\nlog:\ncli: app\nnet:\ndocs:\n\n# repeated entries are allowed; deps accumulate\nweb: log\ntest: app mock\n--- deps-cycle.txt ---\na: b\nb: c\nc: a\nd: a\ne:\nf: e\n  g :  f   d\n--- deps-big.txt ---\nlog:\tzlib-9\nutil-0:  tls  net-9  math\nyaml-1: tls term\nsig-9: csv\nnet-9: log\ncore:  zlib-9  log\n\nsig-9:\tcsv\tnet-9\ncli-1:\nfmt: json-8\nmock:\tbench\nbench: net-9\ncsv:  log\ncolor:\tcsv\nfmt: json-8 bench zlib-9\nproc:  docs  json-8  util-0\ncache-3: core auth\n# --\ntest-0: csv math\nfs:  zlib-9  core\nuuid-2: core\nzlib-9:\nauth:  zlib-9  log  math\ntime-2:  math\njson-8:  zlib-9\nregex:\ndocs:\tcore\tutil-0\ntls:\tcore\tmath\tlog\nhttp: io-8\nxml:\tfmt\tmock\nio-8: csv\nio-8: csv test-0 uuid-2\nnet-9:  log  zlib-9\nmath:\nterm: docs\ndb-9:\tauth\tterm\n# generated dependency list\n"
+          },
+          {
+            "commands": "awk --version",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "GNU Awk 5.2.1 (bashkit)\n"
+          },
+          {
+            "commands": "mkdir -p /home/eval/pkgs/bin /home/eval/pkgs/build",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "cat << 'EOF' > /home/eval/pkgs/bin/order\n#!/usr/bin/env bash\nset -e\nexport LC_ALL=C\n\nif [ \"$#\" -ne 1 ]; then\n    echo \"Usage: $0 <deps-file>\" >&2\n    exit 2\nfi\n\ninput_file=\"$1\"\n\nawk '\nBEGIN {\n    # We will track:\n    # all_pkgs[pkg] = 1\n    # deps[pkg, dep] = 1\n    # dep_count[pkg] = number of distinct deps\n    # rev_deps[dep, pkg] = 1\n}\n\n# Remove comments\n{\n    sub(/#.*/, \"\")\n    # Check if line is empty or only whitespace\n    if ($0 ~ /^[ \\t]*$/) next\n    \n    # Split by colon\n    colon_idx = index($0, \":\")\n    if (colon_idx == 0) next\n    \n    pkg_str = substr($0, 1, colon_idx - 1)\n    deps_str = substr($0, colon_idx + 1)\n    \n    # Trim pkg_str\n    gsub(/^[ \\t]+|[ \\t]+$/, \"\", pkg_str)\n    if (pkg_str == \"\") next\n    \n    all_pkgs[pkg_str] = 1\n    \n    # Parse deps\n    n = split(deps_str, d_arr, /[ \\t]+/)\n    for (i = 1; i <= n; i++) {\n        dep = d_arr[i]\n        if (dep != \"\") {\n            all_pkgs[dep] = 1\n            if (!((pkg_str, dep) in deps)) {\n                deps[pkg_str, dep] = 1\n                dep_count[pkg_str]++\n                rev_deps[dep, pkg_str] = 1\n                rev_count[dep]++\n                rev_list[dep, rev_count[dep]] = pkg_str\n            }\n        }\n    }\n}\n\nEND {\n    # Initialize dep_count for any packages that had no deps\n    for (p in all_pkgs) {\n        if (! (p in dep_count)) {\n            dep_count[p] = 0\n        }\n    }\n\n    # Kahn algorithm with deterministic smallest package selection\n    # We can keep an array of ready packages or just find the min ready package in each step.\n    # Total packages is small (even big is < 100 packages), but let us check size.\n    # Finding min among ready packages:\n    # ready[p] = 1 if dep_count[p] == 0 and not emitted.\n    for (p in all_pkgs) {\n        if (dep_count[p] == 0) {\n            ready[p] = 1\n        }\n    }\n\n    emitted_count = 0\n    total_pkgs = 0\n    for (p in all_pkgs) total_pkgs++\n\n    while (1) {\n        # Find smallest ready package (byte order)\n        found = 0\n        min_p = \"\"\n        for (p in ready) {\n            if (!found || p < min_p) {\n                min_p = p\n                found = 1\n            }\n        }\n        if (!found) break\n\n        # Emit min_p\n        print min_p\n        delete ready[min_p]\n        emitted[min_p] = 1\n        emitted_count++\n\n        # Decrement dep_count for rev_deps\n        rc = rev_count[min_p]\n        for (i = 1; i <= rc; i++) {\n            dependent = rev_list[min_p, i]\n            dep_count[dependent]--\n            if (dep_count[dependent] == 0) {\n                ready[dependent] = 1\n            }\n        }\n    }\n\n    if (emitted_count < total_pkgs) {\n        # Collect remaining packages\n        rem_count = 0\n        for (p in all_pkgs) {\n            if (! (p in emitted)) {\n                rem_count++\n                rem_pkgs[rem_count] = p\n            }\n        }\n        # Sort remaining packages\n        # Simple selection sort or insertion sort\n        for (i = 1; i <= rem_count; i++) {\n            min_idx = i\n            for (j = i + 1; j <= rem_count; j++) {\n                if (rem_pkgs[j] < rem_pkgs[min_idx]) {\n                    min_idx = j\n                }\n            }\n            if (min_idx != i) {\n                tmp = rem_pkgs[i]\n                rem_pkgs[i] = rem_pkgs[min_idx]\n                rem_pkgs[min_idx] = tmp\n            }\n        }\n\n        # Print to stderr: \"cycle: \" followed by remaining sorted separated by spaces\n        err_msg = \"cycle:\"\n        for (i = 1; i <= rem_count; i++) {\n            err_msg = err_msg \" \" rem_pkgs[i]\n        }\n        print err_msg > \"/dev/stderr\"\n        exit 1\n    }\n}\n' \"$input_file\"\nEOF\nchmod +x /home/eval/pkgs/bin/order",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "/home/eval/pkgs/bin/order /home/eval/pkgs/deps.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "docs\nlog\nmock\nnet\ndb\nhttp\nweb\napp\ncli\ntest\n"
+          },
+          {
+            "commands": "/home/eval/pkgs/bin/order /home/eval/pkgs/deps-cycle.txt",
+            "exit_code": 1,
+            "stderr": "cycle: a b c d g\n",
+            "stdout": "e\nf\n"
+          },
+          {
+            "commands": "/home/eval/pkgs/bin/order /home/eval/pkgs/deps-big.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "cli-1\nmath\nregex\ntime-2\nzlib-9\njson-8\nlog\nauth\ncore\ncache-3\ncsv\ncolor\nfs\nnet-9\nbench\nfmt\nmock\nsig-9\ntest-0\ntls\nutil-0\ndocs\nproc\nterm\ndb-9\nuuid-2\nio-8\nhttp\nxml\nyaml-1\n"
+          },
+          {
+            "commands": "python3 -c '\nwith open(\"/home/eval/pkgs/deps-big.txt\") as f:\n    lines = f.readlines()\n\ndeps = {}\nall_pkgs = set()\nfor line in lines:\n    line = line.split(\"#\")[0].strip()\n    if not line: continue\n    pkg, dlist = line.split(\":\")\n    pkg = pkg.strip()\n    all_pkgs.add(pkg)\n    if pkg not in deps: deps[pkg] = set()\n    for d in dlist.split():\n        all_pkgs.add(d)\n        deps[pkg].add(d)\n\nfor p in all_pkgs:\n    if p not in deps: deps[p] = set()\n\norder = []\nready = sorted([p for p in all_pkgs if len(deps[p]) == 0])\nwhile ready:\n    curr = ready.pop(0)\n    order.append(curr)\n    for p in sorted(all_pkgs):\n        if curr in deps[p]:\n            deps[p].remove(curr)\n            if len(deps[p]) == 0 and p not in order and p not in ready:\n                ready.append(p)\n                ready.sort()\n\nprint(\"Py count:\", len(order), \"total:\", len(all_pkgs))\nfor p in order:\n    print(p)\n' > /tmp/py-order.txt\n\n/home/eval/pkgs/bin/order /home/eval/pkgs/deps-big.txt > /tmp/awk-order.txt\ndiff -u /tmp/py-order.txt /tmp/awk-order.txt",
+            "exit_code": 1,
+            "stderr": "",
+            "stdout": "--- /tmp/py-order.txt\n+++ /tmp/awk-order.txt\n@@ -1,4 +1,3 @@\n-Py count: 30 total: 30\n cli-1\n math\n regex\n"
+          },
+          {
+            "commands": "tail -n +2 /tmp/py-order.txt | diff -u - /tmp/awk-order.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "/home/eval/pkgs/bin/order /dev/null",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "echo $?",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "0\n"
+          },
+          {
+            "commands": "cd /home/eval/pkgs\nmkdir -p build\n\n./bin/order deps.txt > build/order.txt\necho \"deps.txt rc: $?\"\n\n./bin/order deps-big.txt > build/big-order.txt\necho \"deps-big.txt rc: $?\"\n\n./bin/order deps-cycle.txt > build/cycle-order.txt 2> build/cycle.txt\necho $? > build/cycle.rc\necho \"deps-cycle.txt rc: $(cat build/cycle.rc)\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "deps.txt rc: 0\ndeps-big.txt rc: 0\ndeps-cycle.txt rc: 1\n"
+          },
+          {
+            "commands": "cat build/cycle.rc\necho \"--- cycle.txt ---\"\ncat build/cycle.txt\necho \"--- cycle-order.txt ---\"\ncat build/cycle-order.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "1\n--- cycle.txt ---\ncycle: a b c d g\n--- cycle-order.txt ---\ne\nf\n"
+          },
+          {
+            "commands": "ls -la /home/eval/pkgs/build",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--      166 2026-10-09 18:01 big-order.txt\n-rw-r--r--        4 2026-10-09 18:01 cycle-order.txt\n-rw-r--r--        2 2026-10-09 18:01 cycle.rc\n-rw-r--r--       17 2026-10-09 18:01 cycle.txt\n-rw-r--r--       43 2026-10-09 18:01 order.txt\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

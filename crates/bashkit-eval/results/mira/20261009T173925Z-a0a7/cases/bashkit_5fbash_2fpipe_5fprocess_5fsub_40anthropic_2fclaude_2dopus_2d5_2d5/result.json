@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "pipe_process_sub",
+  "target": "anthropic/claude-opus-5-5",
+  "input": [
+    "Use process substitution to compare two sorted lists without creating temporary files. /data/installed.txt contains currently installed packages. /data/required.txt contains required packages. Use diff with process substitution (diff <(sort file1) <(sort file2)) to find: 1) packages in installed but not required (to remove), 2) packages in required but not installed (to install). Print 'To install:' followed by missing packages, and 'To remove:' followed by extra packages."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I compared the two lists with `diff` and process substitution, so no temporary files were created.\n\n```bash\nd=$(diff <(sort /data/installed.txt) <(sort /data/required.txt))\necho \"To install:\"; echo \"$d\" | sed -n 's/^> //p'\necho \"To remove:\";  echo \"$d\" | sed -n 's/^< //p'\n```\n\n**Output:**\n```\nTo install:\nnodejs\nredis\nTo remove:\nnginx\nvim\n```\n\n**How it works:**\n- Each `<(sort file)` runs `sort` and passes `diff` its output as if it were a file. This lets `diff` compare two sorted lists in memory.\n- Lines starting with `>` are only in `required.txt`, so they're the packages **to install**.\n- Lines starting with `<` are only in `installed.txt`, so they're the packages **to remove**.\n- `sed -n 's/^> //p'` (and the `<` version) keeps only those lines and strips the marker. `diff`'s other lines, like `3c3` and `---`, are left out.\n- `curl`, `git`, `python3` and `wget` are in both lists, so they don't appear in either section.\n\n`diff` exits with code 1 when the lists differ. That's expected here and doesn't mean anything went wrong.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cat /data/installed.txt; echo ---; cat /data/required.txt; echo ---; diff <(sort /data/installed.txt) <(sort /data/required.txt)",
+      "d=$(diff <(sort /data/installed.txt) <(sort /data/required.txt))\necho \"To install:\"; echo \"$d\" | sed -n 's/^> //p'\necho \"To remove:\"; echo \"$d\" | sed -n 's/^< //p'"
+    ],
+    "usage": {
+      "input_tokens": 3863,
+      "output_tokens": 681,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 7891
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 1.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat /data/installed.txt; echo ---; cat /data/required.txt; echo ---; diff <(sort /data/installed.txt) <(sort /data/required.txt)",
+            "exit_code": 1,
+            "stderr": "",
+            "stdout": "curl\ngit\nnginx\nvim\nwget\npython3\n---\ncurl\ngit\nnodejs\npython3\nwget\nredis\n---\n3c3\n< nginx\n---\n> nodejs\n5c5\n< vim\n---\n> redis\n"
+          },
+          {
+            "commands": "d=$(diff <(sort /data/installed.txt) <(sort /data/required.txt))\necho \"To install:\"; echo \"$d\" | sed -n 's/^> //p'\necho \"To remove:\"; echo \"$d\" | sed -n 's/^< //p'",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "To install:\nnodejs\nredis\nTo remove:\nnginx\nvim\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "complex_markdown_toc",
+  "target": "anthropic/claude-sonnet-5-5",
+  "input": [
+    "Read /doc/README.md and generate a table of contents from its headings (lines starting with # or ##). Insert the TOC after the first heading, formatted as a markdown list with '- [Heading Text](#anchor)' where anchor is the heading text lowercased with spaces replaced by hyphens. Write the result back to the file."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I added the table of contents to `/doc/README.md`, right after the first heading (`# Project Alpha`), and saved the file.\n\nIt has one entry for each `#` and `##` heading:\n\n```\n- [Project Alpha](#project-alpha)\n- [Installation](#installation)\n- [Usage](#usage)\n- [API Reference](#api-reference)\n- [Contributing](#contributing)\n```\n\nThe first heading, \"Project Alpha\", is listed in the TOC alongside the others because it also starts with `#`. I didn't check that the links work. The anchors are just the heading text lowercased with spaces turned into hyphens, as you specified.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cat -A /doc/README.md | head -100",
+      "cd /doc\ntoc=$(grep -E '^##? ' README.md | while IFS= read -r l; do\n  t=$(echo \"$l\" | sed -E 's/^#+ +//')\n  a=$(echo \"$t\" | tr 'A-Z' 'a-z' | tr ' ' '-')\n  echo \"- [$t](#$a)\"\ndone)\n{ head -n 1 README.md; echo; echo \"$toc\"; tail -n +2 README.md; } > /tmp/new.md\ncp /tmp/new.md README.md\ncat README.md"
+    ],
+    "usage": {
+      "input_tokens": 2817,
+      "output_tokens": 593,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 8565
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat -A /doc/README.md | head -100",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# Project Alpha$\n$\nIntroduction to the project.$\n$\n## Installation$\n$\nRun the installer.$\n$\n## Usage$\n$\nHow to use it.$\n$\n## API Reference$\n$\nEndpoint documentation.$\n$\n## Contributing$\n$\nPR guidelines.$\n"
+          },
+          {
+            "commands": "cd /doc\ntoc=$(grep -E '^##? ' README.md | while IFS= read -r l; do\n  t=$(echo \"$l\" | sed -E 's/^#+ +//')\n  a=$(echo \"$t\" | tr 'A-Z' 'a-z' | tr ' ' '-')\n  echo \"- [$t](#$a)\"\ndone)\n{ head -n 1 README.md; echo; echo \"$toc\"; tail -n +2 README.md; } > /tmp/new.md\ncp /tmp/new.md README.md\ncat README.md",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# Project Alpha\n\n- [Project Alpha](#project-alpha)\n- [Installation](#installation)\n- [Usage](#usage)\n- [API Reference](#api-reference)\n- [Contributing](#contributing)\n\nIntroduction to the project.\n\n## Installation\n\nRun the installer.\n\n## Usage\n\nHow to use it.\n\n## API Reference\n\nEndpoint documentation.\n\n## Contributing\n\nPR guidelines.\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

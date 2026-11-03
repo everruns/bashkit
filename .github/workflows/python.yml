@@ -44,7 +44,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
 
       - name: Ruff check
         run: uvx ruff check crates/bashkit-python
@@ -52,7 +52,7 @@ jobs:
       - name: Ruff format
         run: uvx ruff format --check crates/bashkit-python
 
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
 
@@ -69,7 +69,16 @@ jobs:
   test:
     name: Test (Python ${{ matrix.python-version }})
     needs: [build-wheel]
-    runs-on: ubuntu-latest
+    # Pinned, not `ubuntu-latest`: Ubuntu 26.04 ships no hosted 3.9 build, and
+    # `setup-python` has no fallback, so the 3.9 leg died the moment
+    # `ubuntu-latest` began rolling onto it ("The version '3.9' with
+    # architecture 'x64' was not found for Ubuntu 26.04"). The wheel is
+    # cp39-abi3 and the package claims >=3.9, so the fix is an image that can
+    # host the whole declared range, not a smaller matrix. Unpin when 3.9
+    # support is dropped; `publish-python.yml`'s `test-builds` is pinned for
+    # the same reason and the two matrices are kept in step by
+    # `just check-workflow-parity`.
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -79,13 +88,13 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: ${{ matrix.python-version }}
 
       # The single abi3 wheel produced once by build-wheel; install it on each
       # version to prove one wheel runs across the whole 3.9–3.14 range.
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: python-wheel
           path: crates/bashkit-python/dist
@@ -93,7 +102,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
 
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
 
       - name: Install maturin
         run: python -m pip install "maturin${MATURIN_VERSION}"
@@ -101,7 +110,8 @@ jobs:
       - name: Install wheel and test dependencies
         run: |
           pip install bashkit --no-index --find-links crates/bashkit-python/dist --force-reinstall
-          pip install pytest pytest-asyncio langchain-core langgraph fastapi httpx maturin
+          pip install pytest pytest-asyncio pytest-timeout langchain-core langgraph fastapi httpx maturin
+          pip install uvloop
 
       - name: Install Deep Agents integration dependencies
         if: matrix.python-version != '3.9' && matrix.python-version != '3.10'
@@ -118,7 +128,45 @@ jobs:
 
       - name: Run tests
         working-directory: crates/bashkit-python
-        run: pytest tests/ -v
+        run: pytest tests/ -v --timeout=30 --timeout-method=thread
+
+  # Loop ownership differs on Windows (Proactor) and Unix (Selector/uvloop).
+  # Test the native callback bridge on each platform instead of relying only
+  # on the Linux abi3 wheel matrix above. No random-FS fixture is needed here.
+  callback-platforms:
+    name: Callback loops (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - name: Build and install native wheel
+        run: |
+          python -m pip install "maturin${{ env.MATURIN_VERSION }}"
+          python -m maturin build -m crates/bashkit-python/Cargo.toml --out dist
+          python -m pip install bashkit --no-index --find-links dist
+          python -m pip install pytest pytest-asyncio pytest-timeout langchain-core deepagents fastapi httpx
+      - name: Install uvloop on Unix
+        if: runner.os != 'Windows'
+        run: python -m pip install uvloop
+      - name: Test callback execution models
+        run: >-
+          python -m pytest --timeout=30 --timeout-method=thread
+          crates/bashkit-python/tests/test_external_functions.py
+          crates/bashkit-python/tests/test_typescript_external_functions.py
+          crates/bashkit-python/tests/test_registered_tools.py
+          crates/bashkit-python/tests/test_async_callbacks.py
+          crates/bashkit-python/tests/test_jupyter_compat.py
+          crates/bashkit-python/tests/test_teardown_determinism.py
 
   examples:
     name: Examples
@@ -128,16 +176,16 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
 
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
 
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
 
       - name: Install maturin
         run: python -m pip install "maturin${MATURIN_VERSION}"
@@ -172,6 +220,8 @@ jobs:
         run: |
           jupyter nbconvert --to notebook --execute --ExecutePreprocessor.timeout=120 \
             examples/jupyter_basics.ipynb --output /tmp/jupyter_basics_out.ipynb
+          jupyter nbconvert --to notebook --execute --ExecutePreprocessor.timeout=120 \
+            examples/runtime_external_functions.ipynb --output /tmp/runtime_external_functions_out.ipynb
 
   # Verify wheel builds and passes twine check
   build-wheel:
@@ -182,7 +232,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
 
@@ -198,7 +248,7 @@ jobs:
           pip install twine
           twine check crates/bashkit-python/dist/*
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: python-wheel
           path: crates/bashkit-python/dist
@@ -226,7 +276,7 @@ jobs:
       # Python 3.13 selects pyodide-build's modern config (Pyodide 0.29.x,
       # Emscripten 4.0.9), whose binaryen understands the wasm target-features
       # modern LLVM emits and whose runtime supports wasm exception handling.
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.13"
 
@@ -243,7 +293,7 @@ jobs:
           toolchain: ${{ env.RUST_NIGHTLY }}
           targets: wasm32-unknown-emscripten
 
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
 
       # pyodide-build manages its own matching emsdk via the cross-build env, so
       # no separate setup-emsdk step is needed.
@@ -285,7 +335,7 @@ jobs:
           print('wasm smoke test OK')
           "
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: python-wheel-emscripten
           path: crates/bashkit-python/dist

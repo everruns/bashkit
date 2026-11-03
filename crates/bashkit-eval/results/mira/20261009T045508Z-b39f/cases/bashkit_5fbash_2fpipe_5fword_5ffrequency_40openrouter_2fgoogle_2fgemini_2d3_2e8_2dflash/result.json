@@ -1,0 +1,99 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "pipe_word_frequency",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "Read /data/poem.txt and find the 3 most frequently used words. Print each word with its count, one per line, sorted by frequency descending."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "The 3 most frequently used words in `/data/poem.txt` sorted by frequency descending:\n\nthe: 8\non: 3\ncat: 2",
+    "iterations": 8,
+    "tool_calls_count": 7,
+    "tool_calls": [
+      "ls -la /data/poem.txt",
+      "cat /data/poem.txt",
+      "env; ls -la /home/eval; ls -la /data",
+      "tr -cs '[:alnum:]' '[\\n*]' < /data/poem.txt | tr '[:upper:]' '[:lower:]' | grep -v '^$' | sort | uniq -c | sort -nr | head -n 3",
+      "tr -s ' ' '\\n' < /data/poem.txt | sort | uniq -c | sort -nr | head -n 3",
+      "awk '{for(i=1;i<=NF;i++) count[$i]++} END {for(w in count) print count[w], w}' /data/poem.txt | sort -k1,1nr -k2,2",
+      "awk '{for(i=1;i<=NF;i++) count[$i]++} END {for(w in count) print w, count[w]}' /data/poem.txt | sort -k2,2nr"
+    ],
+    "usage": {
+      "input_tokens": 3262,
+      "output_tokens": 1018,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 16869
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 7.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 7.0,
+      "turns": 8.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /data/poem.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       81 2026-10-09 04:55 /data/poem.txt\n"
+          },
+          {
+            "commands": "cat /data/poem.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "the cat sat on the mat\nthe cat in the hat\nthe dog on the log\nthe frog on the bog\n"
+          },
+          {
+            "commands": "env; ls -la /home/eval; ls -la /data",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "PWD=/home/user\nUSER=eval\n-rw-r--r--       81 2026-10-09 04:55 poem.txt\n"
+          },
+          {
+            "commands": "tr -cs '[:alnum:]' '[\\n*]' < /data/poem.txt | tr '[:upper:]' '[:lower:]' | grep -v '^$' | sort | uniq -c | sort -nr | head -n 3",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "      1 the]cat]sat]on]the]mat]the]cat]in]the]hat]the]dog]on]the]log]the]frog]on]the]bog]\n"
+          },
+          {
+            "commands": "tr -s ' ' '\\n' < /data/poem.txt | sort | uniq -c | sort -nr | head -n 3",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "      8 the\n      3 on\n      2 cat\n"
+          },
+          {
+            "commands": "awk '{for(i=1;i<=NF;i++) count[$i]++} END {for(w in count) print count[w], w}' /data/poem.txt | sort -k1,1nr -k2,2",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "8 the\n3 on\n2 cat\n1 bog\n1 dog\n1 frog\n1 hat\n1 in\n1 log\n1 mat\n1 sat\n"
+          },
+          {
+            "commands": "awk '{for(i=1;i<=NF;i++) count[$i]++} END {for(w in count) print w, count[w]}' /data/poem.txt | sort -k2,2nr",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "the 8\non 3\ncat 2\nbog 1\ndog 1\nfrog 1\nhat 1\nin 1\nlog 1\nmat 1\nsat 1\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

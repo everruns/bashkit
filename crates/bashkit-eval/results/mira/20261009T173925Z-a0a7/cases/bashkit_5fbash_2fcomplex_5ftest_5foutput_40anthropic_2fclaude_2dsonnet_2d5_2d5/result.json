@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "complex_test_output",
+  "target": "anthropic/claude-sonnet-5-5",
+  "input": [
+    "Read /data/test-results.txt which contains test output in a standard format. Parse it to: 1) Count total tests, passed, and failed. 2) Extract the names of all failing tests. 3) Generate a summary report at /reports/test-summary.md with a header '# Test Summary', a line 'Total: N | Passed: N | Failed: N', and a '## Failures' section listing each failed test. Print the summary."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "10/10 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I parsed `/data/test-results.txt` and wrote the report to `/reports/test-summary.md`. Of 12 tests, 9 passed and 3 failed.\n\n```\n# Test Summary\n\nTotal: 12 | Passed: 9 | Failed: 3\n\n## Failures\n- test_login_expired_token\n- test_signup_duplicate_email\n- test_session_timeout\n```",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cat /data/test-results.txt",
+      "mkdir -p /reports\nf=/data/test-results.txt\ntotal=$(grep -cE '^(PASS|FAIL) ' $f)\npass=$(grep -c '^PASS ' $f)\nfail=$(grep -c '^FAIL ' $f)\n{\necho \"# Test Summary\"\necho\necho \"Total: $total | Passed: $pass | Failed: $fail\"\necho\necho \"## Failures\"\ngrep '^FAIL ' $f | awk '{print \"- \"$2}'\n} > /reports/test-summary.md\ncat /reports/test-summary.md"
+    ],
+    "usage": {
+      "input_tokens": 3992,
+      "output_tokens": 425,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 5175
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat /data/test-results.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "PASS test_login_valid\nPASS test_login_invalid_password\nFAIL test_login_expired_token\nPASS test_signup_new_user\nFAIL test_signup_duplicate_email\nPASS test_logout\nPASS test_password_reset\nFAIL test_session_timeout\nPASS test_profile_update\nPASS test_profile_delete\nPASS test_api_rate_limit\nPASS test_api_auth_header\n"
+          },
+          {
+            "commands": "mkdir -p /reports\nf=/data/test-results.txt\ntotal=$(grep -cE '^(PASS|FAIL) ' $f)\npass=$(grep -c '^PASS ' $f)\nfail=$(grep -c '^FAIL ' $f)\n{\necho \"# Test Summary\"\necho\necho \"Total: $total | Passed: $pass | Failed: $fail\"\necho\necho \"## Failures\"\ngrep '^FAIL ' $f | awk '{print \"- \"$2}'\n} > /reports/test-summary.md\ncat /reports/test-summary.md",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# Test Summary\n\nTotal: 12 | Passed: 9 | Failed: 3\n\n## Failures\n- test_login_expired_token\n- test_signup_duplicate_email\n- test_session_timeout\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

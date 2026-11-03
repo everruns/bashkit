@@ -39,6 +39,10 @@ re-exports, `_bashkit.pyi` PEP 561 type stubs + `py.typed`, `langchain.py` /
 Python package version is read dynamically from workspace `Cargo.toml` via maturin
 (`dynamic = ["version"]` in pyproject.toml), no manual sync. Chain:
 workspace `Cargo.toml` → `bashkit-python` `Cargo.toml` (inherits) → maturin → wheel metadata.
+`bashkit.__version__` delegates to the extension's `get_version()` so imported
+package, native API, and distribution metadata identify the same release.
+`tests/test_integration.py::test_package_version_matches_native_and_distribution`
+checks all three against an installed wheel.
 
 ## Supported Platforms
 
@@ -65,6 +69,80 @@ Auth: PyPI trusted publishing (OIDC), no API tokens. Prerequisites: GitHub
 environment `release-python` exists; PyPI trusted publisher configured for
 `everruns/bashkit`, workflow `publish-python.yml`, environment `release-python`.
 
+## Windows Smart App Control
+
+PondGuard reported that the 0.20.1 Windows native module was blocked on Windows
+11 / Python 3.11.9 while 0.20.0 loaded. The published x64 wheels were inspected
+on 2026-10-27: both use maturin 1.15.0, both native PE certificate tables are
+empty, and both PyPI wheel provenance endpoints return 404. The release-tag
+`publish-python.yml` files are identical. Trusted publishing authenticates an
+upload; it does not Authenticode-sign the native module. A missing signature
+introduced in 0.20.1 is therefore not supported by the artifact evidence.
+
+The [Python guide](../../docs/start-python.md#windows-11-smart-app-control)
+records wheel/native hashes, the temporary Windows constraint, and a SAC-On
+comparison with Code Integrity events. The policy failure remains reported,
+not independently reproduced on Windows. Cloud reputation is a hypothesis, not
+a demonstrated root cause; 0.20.0 is not guaranteed to load everywhere.
+
+Decision: preserve SAC, document the reported pin, and require trusted
+Authenticode signing plus import/execution/affected-plugin collection on a
+SAC-On Windows 11 host before declaring a permanent packaging fix. Sign native
+files before final wheel packing (or regenerate `RECORD` when repacking), then
+publish a new patch version. Standard hosted Windows smoke jobs do not prove
+SAC enforcement. See [Release Process](../operations/release-process.md).
+
+### Authenticode release path
+
+The Python release workflow retains the build's Windows wheel as
+`pypi_unsigned-windows-x86_64-manylinux`, outside the publisher's `pypi_files-*`
+glob. After source/tag and archive inspection, `sign-windows` unpacks it,
+Authenticode-signs `.pyd`/`.dll`/`.exe` files with a SHA-256 timestamp, verifies
+every native signature, repacks with fresh `RECORD` hashes, and verifies the
+native signatures extracted from the final archive. Only this job creates the
+publishable Windows artifact; smoke tests and publishing depend on its success.
+There is no unsigned fallback.
+
+`scripts/windows_wheel.py` uses the pinned wheel CLI and refuses changes to
+Python/metadata files or the file set during signing. Its manifest stays outside
+the package. `scripts/verify_windows_signatures.ps1` requires embedded, valid,
+timestamped signatures without installing trust roots. Signing runs in a
+separate OIDC job that never compiles or imports the extension. Public resource
+identifiers live in `scripts/windows-signing.json`; no private key or client
+secret belongs in the repository.
+
+Before enabling this release path, complete publisher identity validation,
+create the `bashkit-public` **Public Trust** certificate profile, configure
+`release-windows-signing` to accept only release tags, and grant the GitHub
+service principal Certificate Profile Signer at that profile's scope. The Azure
+federated subject must be exactly
+`repo:everruns/bashkit:environment:release-windows-signing`.
+Do not merge the release gate before those external prerequisites are ready.
+
+`.github/workflows/windows-signing.yml` exercises real Windows signature
+verification with a copy of the already-signed Python interpreter, plus corrupt
+signatures, unsigned dependencies, wheel hash repair, and metadata tampering.
+This needs neither production credentials nor a self-signed test root. It tests
+packaging on Windows Server, not Windows 11 SAC enforcement. Production signing
+and a SAC-On native import/pytest check remain required release evidence.
+The same workflow downloads the exact two reported PyPI wheels, verifies their
+recorded SHA-256 digests, records native signatures, and imports/executes each
+under Python 3.11.9 as a Windows Server baseline. Its success is not a SAC result.
+
+`sign-windows-wheel.yml` is shared by the publisher and a manual
+`windows-signing-smoke.yml` check. The signer itself verifies that its immutable
+source is reachable from main and its ref is either a stable release tag or a
+`vX.Y.Z-signing-smoke-<12-hex-source-SHA>` tag; callers cannot skip this gate.
+After merging configuration, create such a test tag on the merged main commit
+and dispatch the smoke workflow from it. The smoke workflow hashes the exact
+published 0.20.1 Windows wheel, signs a copy through the production Azure OIDC
+path, verifies signatures and repaired RECORD, then installs it on a separate
+credential-free Windows runner. Pytest explicitly loads a plugin importing the
+native module and executes a sandbox-state check. The resulting
+`windows-signing-validation` artifact is for validation only: no registry upload,
+GitHub release, or replacement of the original PyPI wheel occurs. Use its exact
+bytes for the remaining SAC-On check before a new production patch release.
+
 ## Public API
 
 Full signatures: `crates/bashkit-python/bashkit/_bashkit.pyi`. Runnable
@@ -84,6 +162,127 @@ text-oriented VFS helpers (`read_file`, `write_file`, `append_file`, `mkdir`,
 `exists`, `remove`, `stat`, `chmod`, `symlink`, `read_link`, `read_dir`,
 `ls`, `glob`); LLM metadata (`name`, `short_description`, `description()`,
 `help()`, `system_prompt()`, `input_schema()`, `output_schema()`, `version`).
+
+### Embedded tool runtimes
+
+`BashTool(python=True, typescript=True)` registers Monty Python (`python`/`python3`)
+and ZapCode TypeScript (`ts`/`node`) in the same VFS as Bash. Both flags default
+to `False`. They configure the live interpreter and LLM metadata together, and
+are replayed on `reset()`. The Python crate enables the existing TypeScript
+core feature in native and Emscripten builds; command registration stays opt-in.
+`Bash` keeps its existing Python configuration.
+
+Python's existing host permission remains separate from registration:
+construct with `env={"BASHKIT_ALLOW_INPROCESS_PYTHON": "1"}`. The builtin
+captures this grant at construction, so an agent's `export` cannot enable it.
+Do not infer permission from untrusted script contents. See
+[Python Builtin](python-builtin.md) and [ZapCode Runtime](zapcode-runtime.md).
+
+LangChain's `BashkitTool` / `create_bash_tool`, deepagents' `BashkitMiddleware` /
+`create_bash_middleware`, and `BashkitBackend` forward `python`, `typescript`,
+and `env` to their native tool. Backend-created middleware shares the configured
+tool and VFS. Initial env forwarding lets the host grant Python explicitly
+without weakening the runtime gate.
+
+Snapshot factories (`from_snapshot` / `from_snapshot_keyed`) accept the same
+runtime flags and host env. Hosts supply them when reconstructing a tool;
+snapshot bytes do not grant permission to enable Python. In-place restore and
+reset retain the host's runtime selection.
+
+Regression evidence: `crates/bashkit-python/tests/test_tool_runtimes.py` covers
+defaults, independent runtime selection, metadata, sync/async execution, shared
+VFS, reset, keyed/unkeyed snapshot factories, framework forwarding, invalid
+programs, and rejection of script-only Python opt-in.
+
+### Embedded runtime host functions
+
+`BashTool` exposes Python `external_functions` / `external_handler`, matching
+`Bash`; handlers are async `(name, args, kwargs)` callables. TypeScript has
+separate `typescript_external_functions` / `typescript_external_handler`
+kwargs on `BashTool`, with an async `(name, args)` callable. Both are forwarded
+by LangChain and deepagents. Language selection and the explicit `BashTool`
+Python host-env grant remain mandatory; handlers grant no other runtime access.
+Names appear in tool metadata; hosts supply their function signatures.
+
+Decision: use the existing `PyCallbackEngine` / per-execution
+`PyCallbackSession` via `RuntimeCallContext` request extensions. Do not cache
+caller event loops on handlers or derive them on a Tokio worker. Each async
+execution schedules handlers on its caller's loop and captures that request's
+ContextVars. Sync execution uses the instance's dedicated private-loop worker;
+this includes FastAPI sync endpoints, ordinary threads and synchronous notebook
+cells. A client owned by an outer loop requires async execution instead.
+`Bash.execute_sync()` now supports external handlers through this same engine.
+Deepagents provides native coroutine implementations for backend `aexecute`
+and middleware `ainvoke` rather than offloading sync execution to a thread.
+
+Same-instance calls serialize on the existing interpreter mutex. Reentry
+protection uses a per-instance ContextVar set inside the handler task, not an
+instance-wide activity counter: recursive interpreter/live-FS access fails
+immediately, while unrelated requests can queue during callback I/O. Other
+interpreter instances are usable from a handler. Cancelling a callback session
+marks it synchronously before forwarding cancellation through the native bridge.
+Both buffered and streaming execution check that flag after acquiring the shell
+mutex, so a cancelled queued request cannot begin script side effects while its
+native cancellation wakeup is pending. Other sessions remain independent.
+Private-loop work items carry
+their own cancellation state/task handle so timeout/revocation cancels that
+item even if it has not started; cancelling an old item cannot cancel the next
+request on the shared loop. Worker teardown retains the interpreter-exit guard.
+
+Native result delivery has an additional exit boundary in `src/async_bridge.rs`.
+Decision: retain upstream `pyo3-async-runtimes` cancellation, panic and task-local
+behavior through its generic runtime interface, while enrolling blocking result
+deliveries under a shared shutdown lock. A weak registry first closes private
+loop creation, cancels outstanding private callbacks and joins their workers
+while Python is still attachable. This also drains timeout-cancellation cleanup;
+setting only an exit flag leaves a worker already inside Python racing finalization.
+The atexit hook then closes result-delivery enrollment and
+releases the GIL until enrolled deliveries finish releasing Python references.
+Enrollment is not only for result deliveries: every native task that may attach
+to Python must take an `enroll_python_work()` guard and hold it across its
+Python work *and* the drops of the `Py` values and sessions it owns (a last
+session clone can run `PyPrivateAsyncLoop::drop`, which attaches). The
+`execute_sync` blocking-pool dispatch is enrolled for exactly this reason: a
+timeout abandons it, a blocking task cannot be cancelled, and the private-loop
+join hands it the cancelled result at the very end of the hook — unenrolled, its
+re-attach raced `Py_FinalizeEx` and aborted the process on CPython < 3.13
+(TM-PY-030 variant 4). Joining the private-loop worker is therefore necessary
+but not sufficient: it proves the worker finished, not that the thread waiting
+on it has.
+Without that drain, `call_soon_threadsafe` can wake Python, which exits while
+the native worker still owns attached references; CPython can destroy its thread
+state before tuple cleanup, causing a native crash. Future deliveries skip Python
+after the boundary closes. The deterministic subprocess test delays a native
+delivery after publishing the result and checks Bash, BashTool and ScriptedTool;
+parallel subprocess churn also exercises immediate exit after runtime callbacks.
+Another deterministic test delays cancellation cleanup in private callbacks for
+custom builtins, embedded Python and TypeScript, then immediately exits.
+
+A per-instance count of active handlers on each Python thread protects sync
+entry points too: another task on the handler's own loop cannot synchronously
+wait for the interpreter lock without deadlocking that loop. Those sync calls
+fail fast with an async/to-thread hint; async calls and sync callers on other
+threads still queue. The subprocess regression bounds a native deadlock and
+checks retained live-FS handles as well as execution and snapshot APIs. Guards
+skip Python lookups entirely when no external handlers are configured.
+
+Callbacks are host configuration: preserved on reset/in-place restore, supplied
+again to keyed/unkeyed snapshot factories, never serialized. Both native
+external-handler kwargs fail loudly on Pyodide. TypeScript conversions accept
+JSON-shaped values, map undefined to None, cap nesting at 64, and reject function
+inputs, non-finite numbers, unsupported outputs and integers outside i64.
+Use a final expression or VFS output after TypeScript host calls; upstream
+ZapCode does not retain post-suspension console.log output.
+
+Regression evidence: `tests/test_external_functions.py` shares execution-model
+coverage across Python/TypeScript (sync/async, multiple threads, successive loops,
+Selector/uvloop, callback cancellation, timeout/reuse, reentry, mixed builtins,
+FastAPI and framework invocation). `tests/test_typescript_external_functions.py`
+covers direct TypeScript dispatch/conversion and both languages sharing the VFS.
+`examples/runtime_external_functions.ipynb` runs in a real Jupyter kernel in CI.
+Python CI uses a thread-based per-test watchdog so a native deadlock cannot
+leave a runner hanging indefinitely. It runs the callback suite on macOS/Windows in addition to the Linux
+3.9–3.14 matrix; the Windows default tests Proactor and explicit Selector loops.
 
 ### Runtime host mutations
 
@@ -235,18 +434,39 @@ invocation regardless of mechanism.
 ## Optional Dependencies
 
 `bashkit[langchain]`, `bashkit[deepagents]`, `bashkit[pydantic-ai]`,
-`bashkit[dev]` (pytest, pytest-asyncio).
+`bashkit[dev]` (pytest, pytest-asyncio, pytest-timeout).
 
 ## Deep Agents backend
 
-The optional `deepagents` extra requires Deep Agents 0.7.13 or later and Python
+The optional `deepagents` extra requires Deep Agents 0.7.32 or later and Python
 3.11+ (the upstream framework minimum); the base package remains Python 3.9+.
 CI installs the extra on Python 3.11–3.14 so protocol tests cannot silently skip. `BashkitBackend`
 implements its structured `read`, `ls`, `glob`, `grep`, `write`, `edit`, and
 `delete` results; obsolete `ls_info`, `glob_info`, and `grep_raw` are removed.
-`execute` propagates either native stream's truncation flag. Timeout policy
-remains configured on construction (`timeout_seconds`); per-call timeout
-support is not advertised to the framework.
+`execute` propagates either native stream's truncation flag. The constructor
+`timeout_seconds` is the execution budget. `execute`/`aexecute` accept Deep
+Agents' per-call `timeout` and pass it as the native `timeout_seconds`
+(`ExecOptions::timeout`), which only tightens the budget; `None` and `0` (the
+framework's "no timeout" hint) keep the configured limit. Non-text files (by
+Deep Agents' extension classifier) and text files with invalid UTF-8 read as
+whole-file base64 `FileData` capped at 500 KB, matching upstream sandboxes, so
+multimodal reads work. Upload/download failures map to the protocol's
+`FileOperationError` codes, with the native message kept for anything else.
+
+`BashkitBackend` subclasses Deep Agents' `BaseSandbox` only because the
+framework gates capture-at-source offload on that type; every inherited
+shell/`python3` helper (including the async `als`/`awrite`/`aedit`) is
+overridden with direct VFS code. `enable_capture_offload = True`, and
+`execute_with_offload` uses the native `output_file` tee (10 MiB default cap,
+the framework's) instead of the upstream bash wrapper, whose `( eval … )`
+subshell would drop `cd`/`export` between calls. Output at or under the inline
+budget is returned whole and the file removed; larger output stays at the
+framework's `/large_tool_results/<id>` path, beyond the 1 MB in-memory stdout
+cap, with the same head/tail preview and clip notices as upstream.
+
+`Bash`/`BashTool` `execute` and `execute_sync` accept
+`output_file=`/`max_output_file_bytes=` (absolute VFS path; 10 MiB default);
+not combinable with `on_output`.
 
 File operations use the live native VFS directly, avoiding shell output caps,
 newline insertion, option injection, and colon-delimited path parsing. They
@@ -283,6 +503,17 @@ per version), examples (wheel + `crates/bashkit-python/examples/` +
 `examples/*.ipynb` via `jupyter nbconvert --execute`, cell error fails CI),
 build-wheel (maturin + twine check, produces the shared abi3 wheel artifact),
 python-check (branch-protection gate).
+
+The version matrix runs on a pinned `ubuntu-24.04`, not `ubuntu-latest`, in
+both `python.yml`'s `test` job and `publish-python.yml`'s `test-builds`.
+Ubuntu 26.04 ships no hosted 3.9 build and `setup-python` has no fallback, so
+the 3.9 leg failed outright ("The version '3.9' with architecture 'x64' was
+not found for Ubuntu 26.04") as soon as `ubuntu-latest` began rolling onto
+26.04. The package claims `>=3.9` through one cp39-abi3 wheel, so the matrix
+needs an image that can host the whole declared range; shrinking the matrix
+would stop testing a version the wheel still promises. Unpin when 3.9 support
+is dropped. The two matrices are kept in step by `just check-workflow-parity`,
+which compares version coverage and ignores runner labels.
 
 ## Linting
 

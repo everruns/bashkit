@@ -341,13 +341,13 @@ pub struct JobControl {
     live: Arc<AtomicUsize>,
 }
 
-/// One live job's claim on the session-wide job cap; released on drop
-/// (finish or abort).
-pub struct JobSlot(Arc<AtomicUsize>);
+/// A claim on the session-wide job cap; released on drop (finish or abort).
+/// Pipelines retain a group claim until every producer owner is dropped.
+pub struct JobSlot(Arc<AtomicUsize>, usize);
 
 impl Drop for JobSlot {
     fn drop(&mut self) {
-        self.0.fetch_sub(1, AtomicOrdering::AcqRel);
+        self.0.fetch_sub(self.1, AtomicOrdering::AcqRel);
     }
 }
 
@@ -371,12 +371,19 @@ impl JobControl {
 
     /// Claim a slot under `max` live jobs session-wide (TM-DOS-122).
     pub fn try_claim(&self, max: usize) -> Option<JobSlot> {
+        self.try_claim_many(max, 1)
+    }
+
+    /// Admit every producer before constructing a concurrent pipeline.
+    /// One drop-owned claim keeps its retained forks counted until completion
+    /// or cancellation; nested pipelines and background jobs share this cap.
+    pub(crate) fn try_claim_many(&self, max: usize, count: usize) -> Option<JobSlot> {
         self.live
             .fetch_update(AtomicOrdering::AcqRel, AtomicOrdering::Acquire, |n| {
-                (n < max).then_some(n + 1)
+                n.checked_add(count).filter(|next| *next <= max)
             })
             .ok()
-            .map(|_| JobSlot(Arc::clone(&self.live)))
+            .map(|_| JobSlot(Arc::clone(&self.live), count))
     }
 
     /// Lock the table. Never held across an `.await`.
@@ -462,6 +469,22 @@ pub fn new_shared_job_table() -> SharedJobTable {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn pipeline_admission_claims_atomically_across_forks_and_refunds_on_drop() {
+        let jobs = super::new_shared_job_table();
+        let child = jobs.fork();
+        let occupied = jobs.try_claim(2).unwrap();
+        assert!(child.try_claim_many(2, 2).is_none());
+        let remaining = child.try_claim(2).unwrap();
+        assert!(jobs.try_claim(2).is_none());
+        drop(occupied);
+        drop(remaining);
+        let group = child.try_claim_many(2, 2).unwrap();
+        assert!(jobs.try_claim(2).is_none());
+        drop(group);
+        assert!(jobs.try_claim_many(2, 2).is_some());
+    }
+
     use super::*;
     use std::time::Duration;
 

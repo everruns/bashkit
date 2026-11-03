@@ -9,13 +9,13 @@
     "@everruns/bashkit": "latest"
   },
   "devDependencies": {
-    "@ai-sdk/openai": "^4.0.83",
-    "@langchain/core": "^1.2.14",
-    "@langchain/langgraph": "^1.4.19",
-    "@langchain/openai": "^1.6.2",
-    "ai": "^7.0.127",
-    "openai": "^7.27.0",
-    "zod": "^4.6.5"
+    "@ai-sdk/openai": "^4.0.105",
+    "@langchain/core": "^1.3.2",
+    "@langchain/langgraph": "^1.5.3",
+    "@langchain/openai": "^1.8.0",
+    "ai": "^7.0.157",
+    "openai": "^7.45.1",
+    "zod": "^4.6.7"
   },
   "pnpm": {
     "overrides": {

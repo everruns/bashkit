@@ -1,0 +1,78 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "data_column_transform",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "Read /data/export.tsv which is tab-separated with columns: id, last_name, first_name, email, department. Convert it to /data/import.csv (comma-separated) with columns reordered to: email, first_name, last_name, department (dropping the id column). Include a header row. Print the result."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "6/6 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "The file `/data/export.tsv` has been converted to `/data/import.csv` with the specified column reordering (`email`, `first_name`, `last_name`, `department`) and the `id` column removed.\n\nResult:\n```csv\nemail,first_name,last_name,department\nalice@co.com,Alice,Smith,Eng\nbob@co.com,Bob,Jones,Sales\ncarol@co.com,Carol,Davis,Eng\ndave@co.com,Dave,Wilson,HR\n```",
+    "iterations": 5,
+    "tool_calls_count": 4,
+    "tool_calls": [
+      "ls -la /data\nhead -n 20 /data/export.tsv\nwhich awk sed csvkit mlr jq || true\n",
+      "cat /data/export.tsv",
+      "awk -F'\\t' -v OFS=',' '{print $4, $3, $2, $5}' /data/export.tsv > /data/import.csv\ncat /data/import.csv",
+      "ls -la /data/import.csv"
+    ],
+    "usage": {
+      "input_tokens": 2309,
+      "output_tokens": 433,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 10103
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 4.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 4.0,
+      "turns": 5.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /data\nhead -n 20 /data/export.tsv\nwhich awk sed csvkit mlr jq || true\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--      161 2026-10-09 04:59 export.tsv\nid\tlast_name\tfirst_name\temail\tdepartment\n1\tSmith\tAlice\talice@co.com\tEng\n2\tJones\tBob\tbob@co.com\tSales\n3\tDavis\tCarol\tcarol@co.com\tEng\n4\tWilson\tDave\tdave@co.com\tHR\n/usr/bin/awk\n/usr/bin/sed\n/usr/bin/jq\n"
+          },
+          {
+            "commands": "cat /data/export.tsv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "id\tlast_name\tfirst_name\temail\tdepartment\n1\tSmith\tAlice\talice@co.com\tEng\n2\tJones\tBob\tbob@co.com\tSales\n3\tDavis\tCarol\tcarol@co.com\tEng\n4\tWilson\tDave\tdave@co.com\tHR\n"
+          },
+          {
+            "commands": "awk -F'\\t' -v OFS=',' '{print $4, $3, $2, $5}' /data/export.tsv > /data/import.csv\ncat /data/import.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "email,first_name,last_name,department\nalice@co.com,Alice,Smith,Eng\nbob@co.com,Bob,Jones,Sales\ncarol@co.com,Carol,Davis,Eng\ndave@co.com,Dave,Wilson,HR\n"
+          },
+          {
+            "commands": "ls -la /data/import.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--      150 2026-10-09 04:59 /data/import.csv\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

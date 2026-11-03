@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "data_column_transform",
+  "target": "anthropic/claude-opus-5-5",
+  "input": [
+    "Read /data/export.tsv which is tab-separated with columns: id, last_name, first_name, email, department. Convert it to /data/import.csv (comma-separated) with columns reordered to: email, first_name, last_name, department (dropping the id column). Include a header row. Print the result."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "6/6 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I converted the file and saved it as `/data/import.csv`. It has a header row and 4 data rows, with the columns in the new order and the `id` column removed:\n\n```\nemail,first_name,last_name,department\nalice@co.com,Alice,Smith,Eng\nbob@co.com,Bob,Jones,Sales\ncarol@co.com,Carol,Davis,Eng\ndave@co.com,Dave,Wilson,HR\n```\n\nI used Python's `csv` module so that any value containing a comma or quote would be quoted properly. None of the current values have those characters, so the output is plain comma-separated text.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cat -A /data/export.tsv | head -50; wc -l /data/export.tsv",
+      "python3 -c \"\nimport csv\nwith open('/data/export.tsv', newline='') as f, open('/data/import.csv','w',newline='') as o:\n    r=csv.DictReader(f, delimiter='\\t')\n    cols=['email','first_name','last_name','department']\n    w=csv.DictWriter(o, fieldnames=cols, extrasaction='ignore', lineterminator='\\n')\n    w.writeheader()\n    for row in r: w.writerow({c: row[c] for c in cols})\n\"\ncat /data/import.csv"
+    ],
+    "usage": {
+      "input_tokens": 3928,
+      "output_tokens": 518,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 5957
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat -A /data/export.tsv | head -50; wc -l /data/export.tsv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "id^Ilast_name^Ifirst_name^Iemail^Idepartment$\n1^ISmith^IAlice^Ialice@co.com^IEng$\n2^IJones^IBob^Ibob@co.com^ISales$\n3^IDavis^ICarol^Icarol@co.com^IEng$\n4^IWilson^IDave^Idave@co.com^IHR$\n5 /data/export.tsv\n"
+          },
+          {
+            "commands": "python3 -c \"\nimport csv\nwith open('/data/export.tsv', newline='') as f, open('/data/import.csv','w',newline='') as o:\n    r=csv.DictReader(f, delimiter='\\t')\n    cols=['email','first_name','last_name','department']\n    w=csv.DictWriter(o, fieldnames=cols, extrasaction='ignore', lineterminator='\\n')\n    w.writeheader()\n    for row in r: w.writerow({c: row[c] for c in cols})\n\"\ncat /data/import.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "email,first_name,last_name,department\nalice@co.com,Alice,Smith,Eng\nbob@co.com,Bob,Jones,Sales\ncarol@co.com,Carol,Davis,Eng\ndave@co.com,Dave,Wilson,HR\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

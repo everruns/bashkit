@@ -1,0 +1,57 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "error_missing_file",
+  "target": "openrouter/moonshotai/kimi-k3",
+  "input": [
+    "Read the file /data/input.txt. If it does not exist, create the directory /data if needed, then create the file with the content 'default data', and finally read and print the file contents."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "4/4 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "The file `/data/input.txt` did not exist, so I:\n\n1. **Created the directory** `/data` (using `mkdir -p`, which is safe even if it already existed)\n2. **Created the file** with the content `default data`\n3. **Read and printed the file contents**, which output:\n\n```\ndefault data\n```\n\nIf you run this again later, the file will already exist and its current contents will be printed directly without being overwritten.",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "if [ ! -f /data/input.txt ]; then\n  mkdir -p /data\n  printf 'default data' > /data/input.txt\n  echo \"(File did not exist; created with default content.)\"\nfi\ncat /data/input.txt"
+    ],
+    "usage": {
+      "input_tokens": 842,
+      "output_tokens": 311,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 3458
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "if [ ! -f /data/input.txt ]; then\n  mkdir -p /data\n  printf 'default data' > /data/input.txt\n  echo \"(File did not exist; created with default content.)\"\nfi\ncat /data/input.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "(File did not exist; created with default content.)\ndefault data"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

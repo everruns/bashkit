@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "data_csv_join",
+  "target": "openrouter/moonshotai/kimi-k3",
+  "input": [
+    "Join /data/employees.csv and /data/departments.csv on the department_id field. Produce /data/report.csv with columns: name, department_name, salary. Include a header row. Print the result."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "The join is complete. `/data/report.csv` was created with the following contents:\n\n```\nname,department_name,salary\nAlice,Engineering,120000\nBob,Marketing,95000\nCarol,Engineering,115000\nDave,Sales,88000\nEve,Marketing,92000\n```\n\n**How it was done:**\n1. Loaded `/data/departments.csv` into a lookup dictionary mapping `department_id` → `department_name`\n2. Read each row of `/data/employees.csv`, looked up the department name by `department_id`, and wrote `name`, `department_name`, `salary` to `/data/report.csv` with a header row\n\nAll 5 employees were matched to their departments successfully.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "head -5 /data/employees.csv; echo \"---\"; head -5 /data/departments.csv",
+      "python3 - <<'EOF'\nimport csv\n\n# Load departments into a lookup dict\nwith open('/data/departments.csv', newline='') as f:\n    depts = {row['department_id']: row['department_name'] for row in csv.DictReader(f)}\n\n# Join employees with departments and write report\nwith open('/data/employees.csv', newline='') as fin, open('/data/report.csv', 'w', newline='') as fout:\n    writer = csv.writer(fout)\n    writer.writerow(['name', 'department_name', 'salary'])\n    for row in csv.DictReader(fin):\n        writer.writerow([row['name'], depts.get(row['department_id'], ''), row['salary']])\n\nprint(open('/data/report.csv').read())\nEOF"
+    ],
+    "usage": {
+      "input_tokens": 2256,
+      "output_tokens": 561,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 6813
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "head -5 /data/employees.csv; echo \"---\"; head -5 /data/departments.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "name,department_id,salary\nAlice,1,120000\nBob,2,95000\nCarol,1,115000\nDave,3,88000\n---\ndepartment_id,department_name\n1,Engineering\n2,Marketing\n3,Sales\n"
+          },
+          {
+            "commands": "python3 - <<'EOF'\nimport csv\n\n# Load departments into a lookup dict\nwith open('/data/departments.csv', newline='') as f:\n    depts = {row['department_id']: row['department_name'] for row in csv.DictReader(f)}\n\n# Join employees with departments and write report\nwith open('/data/employees.csv', newline='') as fin, open('/data/report.csv', 'w', newline='') as fout:\n    writer = csv.writer(fout)\n    writer.writerow(['name', 'department_name', 'salary'])\n    for row in csv.DictReader(fin):\n        writer.writerow([row['name'], depts.get(row['department_id'], ''), row['salary']])\n\nprint(open('/data/report.csv').read())\nEOF",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "name,department_name,salary\nAlice,Engineering,120000\nBob,Marketing,95000\nCarol,Engineering,115000\nDave,Sales,88000\nEve,Marketing,92000\n\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

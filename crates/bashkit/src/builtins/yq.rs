@@ -461,16 +461,16 @@ fn parse_json_documents(input: &str) -> DataResult<Vec<serde_json::Value>> {
     Ok(values)
 }
 
-// THREAT[TM-DOS-101]: serde_yaml_ng rejects nesting beyond 128 while this
+// THREAT[TM-DOS-101]: serde_norway rejects nesting beyond 128 while this
 // conversion enforces Bashkit's lower shared structured-data depth of 100.
 fn parse_yaml_documents(input: &str) -> DataResult<Vec<serde_json::Value>> {
     reject_yaml_aliases(input)?;
     let mut values = Vec::new();
-    for document in serde_yaml_ng::Deserializer::from_str(input) {
+    for document in serde_norway::Deserializer::from_str(input) {
         if values.len() >= MAX_DOCUMENTS {
             anyhow::bail!("yq: document limit exceeded ({MAX_DOCUMENTS})");
         }
-        let yaml = serde_yaml_ng::Value::deserialize(document)
+        let yaml = serde_norway::Value::deserialize(document)
             .map_err(|error| anyhow::anyhow!("yq: invalid YAML: {error}"))?;
         let json = yaml_to_json(yaml, 0)?;
         values.push(json);
@@ -478,7 +478,7 @@ fn parse_yaml_documents(input: &str) -> DataResult<Vec<serde_json::Value>> {
     Ok(values)
 }
 
-// THREAT[TM-DOS-101]: serde_yaml_ng resolves aliases while deserializing, before
+// THREAT[TM-DOS-101]: serde_norway resolves aliases while deserializing, before
 // Bashkit can meter the expanded tree. Reject alias tokens with a bounded lexical
 // pass, while ignoring quoted and block scalar content, before invoking libyaml.
 fn reject_yaml_aliases(input: &str) -> DataResult<()> {
@@ -563,38 +563,38 @@ fn is_block_scalar_header(line: &[u8], index: usize) -> bool {
     suffix.is_empty() || suffix[0].is_ascii_whitespace() || suffix[0] == b'#'
 }
 
-fn yaml_to_json(value: serde_yaml_ng::Value, depth: usize) -> DataResult<serde_json::Value> {
+fn yaml_to_json(value: serde_norway::Value, depth: usize) -> DataResult<serde_json::Value> {
     if depth > MAX_DEPTH {
         anyhow::bail!("yq: nesting too deep ({depth} levels, max {MAX_DEPTH})");
     }
     Ok(match value {
-        serde_yaml_ng::Value::Null => serde_json::Value::Null,
-        serde_yaml_ng::Value::Bool(value) => serde_json::Value::Bool(value),
-        serde_yaml_ng::Value::Number(value) => {
+        serde_norway::Value::Null => serde_json::Value::Null,
+        serde_norway::Value::Bool(value) => serde_json::Value::Bool(value),
+        serde_norway::Value::Number(value) => {
             if value.as_f64().is_some_and(|number| !number.is_finite()) {
                 anyhow::bail!("yq: non-finite YAML number cannot be represented as JSON");
             }
             serde_json::to_value(value)
                 .map_err(|_| anyhow::anyhow!("yq: YAML number cannot be represented as JSON"))?
         }
-        serde_yaml_ng::Value::String(value) => serde_json::Value::String(value),
-        serde_yaml_ng::Value::Sequence(values) => serde_json::Value::Array(
+        serde_norway::Value::String(value) => serde_json::Value::String(value),
+        serde_norway::Value::Sequence(values) => serde_json::Value::Array(
             values
                 .into_iter()
                 .map(|value| yaml_to_json(value, depth + 1))
                 .collect::<DataResult<Vec<_>>>()?,
         ),
-        serde_yaml_ng::Value::Mapping(values) => {
+        serde_norway::Value::Mapping(values) => {
             let mut object = serde_json::Map::new();
             for (key, value) in values {
-                let serde_yaml_ng::Value::String(key) = key else {
+                let serde_norway::Value::String(key) = key else {
                     anyhow::bail!("yq: YAML mapping keys must be strings");
                 };
                 object.insert(key, yaml_to_json(value, depth + 1)?);
             }
             serde_json::Value::Object(object)
         }
-        serde_yaml_ng::Value::Tagged(_) => {
+        serde_norway::Value::Tagged(_) => {
             anyhow::bail!("yq: custom YAML tags are not supported");
         }
     })
@@ -665,7 +665,7 @@ fn render_results(values: &[serde_json::Value], args: &Args) -> DataResult<Strin
             output.push_str(value);
             output.push('\n');
         } else {
-            output.push_str(&serde_yaml_ng::to_string(value)?);
+            output.push_str(&serde_norway::to_string(value)?);
         }
     }
     Ok(output)

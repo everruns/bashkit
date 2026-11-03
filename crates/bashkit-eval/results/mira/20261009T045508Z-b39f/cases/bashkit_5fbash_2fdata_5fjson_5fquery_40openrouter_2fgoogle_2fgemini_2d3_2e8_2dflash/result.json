@@ -1,0 +1,71 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "data_json_query",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "Read /data/inventory.json and find all items where the quantity field is less than 10. Print only their names, one per line."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "4/4 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "screws\nwashers\nnails",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "which jq node python python3 perl 2>&1\nls -la /data/inventory.json\nhead -n 20 /data/inventory.json\n",
+      "cat /data/inventory.json",
+      "jq -r '.[] | select(.quantity < 10) | .name' /data/inventory.json"
+    ],
+    "usage": {
+      "input_tokens": 1035,
+      "output_tokens": 353,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 8566
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 3.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "which jq node python python3 perl 2>&1\nls -la /data/inventory.json\nhead -n 20 /data/inventory.json\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/usr/bin/jq\n-rw-r--r--      156 2026-10-09 04:56 /data/inventory.json\n[{\"name\":\"screws\",\"quantity\":5},{\"name\":\"bolts\",\"quantity\":50},{\"name\":\"washers\",\"quantity\":3},{\"name\":\"nuts\",\"quantity\":100},{\"name\":\"nails\",\"quantity\":8}]"
+          },
+          {
+            "commands": "cat /data/inventory.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "[{\"name\":\"screws\",\"quantity\":5},{\"name\":\"bolts\",\"quantity\":50},{\"name\":\"washers\",\"quantity\":3},{\"name\":\"nuts\",\"quantity\":100},{\"name\":\"nails\",\"quantity\":8}]"
+          },
+          {
+            "commands": "jq -r '.[] | select(.quantity < 10) | .name' /data/inventory.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "screws\nwashers\nnails\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

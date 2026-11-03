@@ -1,0 +1,63 @@
+{
+  "eval": "bashkit_generate",
+  "sample": "gen_path_parts",
+  "target": "openrouter/moonshotai/kimi-k3",
+  "input": [
+    "Write a bash script that splits file paths into parts.\n\nStarting files:\n--- /home/eval/data/paths.txt ---\n/var/log/nginx/access.log\n/home/eval/archive.tar.gz\n/etc/hosts\nrelative/dir/README\n/home/eval/.bashrc\n/opt/app/v1.2/run.sh\n--- end ---\n\nFor each path, in order, write one line `DIR|BASE|STEM|EXT` to /home/eval/data/parts.txt:\n- DIR: everything before the last `/` (every path here contains a `/`);\n- BASE: everything after the last `/`;\n- EXT: the text after the last `.` in BASE, or empty when BASE has no `.` other than a leading one (e.g. `.bashrc` has no extension);\n- STEM: BASE without `.EXT` (BASE itself when EXT is empty).\nExit 0."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "```bash\n#!/usr/bin/env bash\nset -uo pipefail\n\nin=/home/eval/data/paths.txt\nout=/home/eval/data/parts.txt\n\n: > \"$out\"\n\nwhile IFS= read -r path || [[ -n \"$path\" ]]; do\n    if [[ -z \"$path\" ]]; then\n        continue\n    fi\n\n    dir=${path%/*}\n    base=${path##*/}\n\n    # Check for a dot that is not the leading character of BASE\n    rest=$base\n    if [[ \"$rest\" == .* ]]; then\n        rest=${rest:1}\n    fi\n\n    if [[ \"$rest\" == *.* ]]; then\n        ext=${base##*.}\n        stem=${base%.*}\n    else\n        ext=\n        stem=$base\n    fi\n\n    printf '%s|%s|%s|%s\\n' \"$dir\" \"$base\" \"$stem\" \"$ext\" >> \"$out\"\ndone < \"$in\"\n\nexit 0\n```",
+    "iterations": 1,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "#!/usr/bin/env bash\nset -uo pipefail\n\nin=/home/eval/data/paths.txt\nout=/home/eval/data/parts.txt\n\n: > \"$out\"\n\nwhile IFS= read -r path || [[ -n \"$path\" ]]; do\n    if [[ -z \"$path\" ]]; then\n        continue\n    fi\n\n    dir=${path%/*}\n    base=${path##*/}\n\n    # Check for a dot that is not the leading character of BASE\n    rest=$base\n    if [[ \"$rest\" == .* ]]; then\n        rest=${rest:1}\n    fi\n\n    if [[ \"$rest\" == *.* ]]; then\n        ext=${base##*.}\n        stem=${base%.*}\n    else\n        ext=\n        stem=$base\n    fi\n\n    printf '%s|%s|%s|%s\\n' \"$dir\" \"$base\" \"$stem\" \"$ext\" >> \"$out\"\ndone < \"$in\"\n\nexit 0\n"
+    ],
+    "usage": {
+      "input_tokens": 556,
+      "output_tokens": 1913,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 19003
+    },
+    "metrics": {
+      "exec_ms": 4.0,
+      "exit_code": 0.0,
+      "extracted": 1.0,
+      "generate_ms": 18999.0,
+      "script_bytes": 616.0,
+      "script_found": 1.0,
+      "timed_out": 0.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "#!/usr/bin/env bash\nset -uo pipefail\n\nin=/home/eval/data/paths.txt\nout=/home/eval/data/parts.txt\n\n: > \"$out\"\n\nwhile IFS= read -r path || [[ -n \"$path\" ]]; do\n    if [[ -z \"$path\" ]]; then\n        continue\n    fi\n\n    dir=${path%/*}\n    base=${path##*/}\n\n    # Check for a dot that is not the leading character of BASE\n    rest=$base\n    if [[ \"$rest\" == .* ]]; then\n        rest=${rest:1}\n    fi\n\n    if [[ \"$rest\" == *.* ]]; then\n        ext=${base##*.}\n        stem=${base%.*}\n    else\n        ext=\n        stem=$base\n    fi\n\n    printf '%s|%s|%s|%s\\n' \"$dir\" \"$base\" \"$stem\" \"$ext\" >> \"$out\"\ndone < \"$in\"\n\nexit 0\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          }
+        ]
+      },
+      "generate": {
+        "extraction": "fenced",
+        "timed_out": false
+      }
+    }
+  },
+  "skipped": false
+}

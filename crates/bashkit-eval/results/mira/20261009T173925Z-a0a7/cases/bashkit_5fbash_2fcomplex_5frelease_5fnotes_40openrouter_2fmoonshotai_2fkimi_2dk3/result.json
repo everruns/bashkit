@@ -1,0 +1,71 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "complex_release_notes",
+  "target": "openrouter/moonshotai/kimi-k3",
+  "input": [
+    "Read /data/commits.log containing conventional commit messages (one per line, format: 'type(scope): message'). Parse each line, group by type, and generate /release/CHANGELOG.md with sections: '## Features' for 'feat' commits, '## Bug Fixes' for 'fix' commits, and '## Other' for all remaining types. Under each section list items as '- scope: message'. Print the generated changelog."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "8/8 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Done. I parsed all 10 commits from `/data/commits.log`, grouped them by type, and generated `/release/CHANGELOG.md`.\n\n**Summary of processing:**\n- Parsed each line with the pattern `type(scope): message` using regex\n- Grouped into three buckets: `feat` → Features, `fix` → Bug Fixes, everything else → Other\n- Preserved original file order within each section\n\n**Results:**\n- **Features (4):** auth/OAuth2, ui/dark mode, api/pagination, db/connection pooling\n- **Bug Fixes (4):** api/null body, auth/token race, ui/alignment, api/404 status\n- **Other (2):** chore(deps)/lodash update, docs(readme)/install instructions\n\nThe changelog was written to `/release/CHANGELOG.md` and printed above.",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "cat /data/commits.log; echo \"---\"; wc -l /data/commits.log",
+      "mkdir -p /release && cat > /tmp/gen_changelog.py << 'EOF'\nimport re\nfrom collections import OrderedDict\n\npattern = re.compile(r'^(\\w+)(?:\\(([^)]*)\\))?:\\s*(.+)$')\n\ngroups = {'feat': [], 'fix': [], 'other': []}\n\nwith open('/data/commits.log') as f:\n    for line in f:\n        line = line.strip()\n        if not line:\n            continue\n        m = pattern.match(line)\n        if not m:\n            continue\n        ctype, scope, message = m.groups()\n        scope = scope if scope else 'none'\n        item = f\"- {scope}: {message}\"\n        if ctype == 'feat':\n            groups['feat'].append(item)\n        elif ctype == 'fix':\n            groups['fix'].append(item)\n        else:\n            groups['other'].append(item)\n\nsections = [\n    ('## Features', groups['feat']),\n    ('## Bug Fixes', groups['fix']),\n    ('## Other', groups['other']),\n]\n\nlines = ['# Changelog', '']\nfor title, items in sections:\n    lines.append(title)\n    lines.append('')\n    lines.extend(items)\n    lines.append('')\n\nchangelog = '\\n'.join(lines).rstrip() + '\\n'\n\nwith open('/release/CHANGELOG.md', 'w') as f:\n    f.write(changelog)\n\nprint(changelog)\nEOF\npython3 /tmp/gen_changelog.py",
+      "ls -la /release/ && echo \"===\" && cat /release/CHANGELOG.md"
+    ],
+    "usage": {
+      "input_tokens": 4132,
+      "output_tokens": 786,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 10452
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 3.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat /data/commits.log; echo \"---\"; wc -l /data/commits.log",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "feat(auth): add OAuth2 support\nfix(api): handle null response body\nfeat(ui): dark mode toggle\nchore(deps): update lodash to 4.17.21\nfix(auth): token refresh race condition\nfeat(api): add pagination support\nfix(ui): button alignment on mobile\ndocs(readme): update install instructions\nfeat(db): add connection pooling\nfix(api): correct status code for 404\n---\n10 /data/commits.log\n"
+          },
+          {
+            "commands": "mkdir -p /release && cat > /tmp/gen_changelog.py << 'EOF'\nimport re\nfrom collections import OrderedDict\n\npattern = re.compile(r'^(\\w+)(?:\\(([^)]*)\\))?:\\s*(.+)$')\n\ngroups = {'feat': [], 'fix': [], 'other': []}\n\nwith open('/data/commits.log') as f:\n    for line in f:\n        line = line.strip()\n        if not line:\n            continue\n        m = pattern.match(line)\n        if not m:\n            continue\n        ctype, scope, message = m.groups()\n        scope = scope if scope else 'none'\n        item = f\"- {scope}: {message}\"\n        if ctype == 'feat':\n            groups['feat'].append(item)\n        elif ctype == 'fix':\n            groups['fix'].append(item)\n        else:\n            groups['other'].append(item)\n\nsections = [\n    ('## Features', groups['feat']),\n    ('## Bug Fixes', groups['fix']),\n    ('## Other', groups['other']),\n]\n\nlines = ['# Changelog', '']\nfor title, items in sections:\n    lines.append(title)\n    lines.append('')\n    lines.extend(items)\n    lines.append('')\n\nchangelog = '\\n'.join(lines).rstrip() + '\\n'\n\nwith open('/release/CHANGELOG.md', 'w') as f:\n    f.write(changelog)\n\nprint(changelog)\nEOF\npython3 /tmp/gen_changelog.py",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# Changelog\n\n## Features\n\n- auth: add OAuth2 support\n- ui: dark mode toggle\n- api: add pagination support\n- db: add connection pooling\n\n## Bug Fixes\n\n- api: handle null response body\n- auth: token refresh race condition\n- ui: button alignment on mobile\n- api: correct status code for 404\n\n## Other\n\n- deps: update lodash to 4.17.21\n- readme: update install instructions\n\n"
+          },
+          {
+            "commands": "ls -la /release/ && echo \"===\" && cat /release/CHANGELOG.md",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--      370 2026-10-09 17:43 CHANGELOG.md\n===\n# Changelog\n\n## Features\n\n- auth: add OAuth2 support\n- ui: dark mode toggle\n- api: add pagination support\n- db: add connection pooling\n\n## Bug Fixes\n\n- api: handle null response body\n- auth: token refresh race condition\n- ui: button alignment on mobile\n- api: correct status code for 404\n\n## Other\n\n- deps: update lodash to 4.17.21\n- readme: update install instructions\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

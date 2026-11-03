@@ -171,6 +171,18 @@ date -d 'tomorrow' +%Y-%m-%d | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' && echo "
 valid
 ### end
 
+### date_next_weekday
+date -d 'next monday' '+%u %T'
+### expect
+1 00:00:00
+### end
+
+### date_unknown_word_is_invalid
+date -d 'next blursday' 2>/dev/null || echo invalid
+### expect
+invalid
+### end
+
 ### date_set_time
 ### skip: date -s (set time) not implemented and requires privileges
 date -s '2024-01-01 12:00:00' 2>/dev/null || echo "skip"
@@ -230,6 +242,23 @@ date -d '@0' +%Y-%m-%d
 date -d '2024-06-15 - 30 days' +%Y-%m-%d
 ### expect
 2024-05-16
+### end
+
+### date_iso_without_seconds
+date -u -d '2026-10-08 14:30' '+%F %T'
+### expect
+2026-10-08 14:30:00
+### end
+
+### date_iso_zone_suffix
+# Named zones, Z, and git's %ci numeric offset
+date -u -d '2026-10-08 14:30:15 UTC' '+%F %T'
+date -u -d '2026-10-08T14:30Z' '+%F %T'
+date -u -d '2026-10-08 14:30:15 +0200' '+%F %T'
+### expect
+2026-10-08 14:30:15
+2026-10-08 14:30:00
+2026-10-08 12:30:15
 ### end
 
 ### date_compound_date_plus_days

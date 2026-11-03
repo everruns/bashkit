@@ -1,0 +1,63 @@
+{
+  "eval": "bashkit_generate",
+  "sample": "gen_assoc_inventory",
+  "target": "openai/gpt-6-luna",
+  "input": [
+    "Write a bash script (use bash associative arrays) that aggregates an inventory.\n\nStarting files:\n--- /home/eval/data/inventory.txt ---\n# warehouse sku qty\nberlin bolt 120\nparis nut 40\nberlin nut 15\nlyon bolt 30\nparis  bolt 5\nberlin washer 300\nlyon nut 0\n--- end ---\n\nLines starting with `#` are comments; fields are separated by one or more spaces.\n\n1. Write /home/eval/data/sku_totals.txt: one line `SKU TOTAL_QTY` per SKU, sorted by SKU.\n2. Write /home/eval/data/warehouses.txt: one line `WAREHOUSE N` per warehouse, sorted by warehouse, where N is the number of distinct SKUs that warehouse holds with qty > 0.\nExit 0."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "3/3 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "```bash\n#!/usr/bin/env bash\n\ninput=/home/eval/data/inventory.txt\ndata_dir=/home/eval/data\nsku_tmp=\"$data_dir/.sku_totals.tmp\"\nwarehouse_tmp=\"$data_dir/.warehouses.tmp\"\n\ndeclare -A totals=()\ndeclare -A warehouse_counts=()\ndeclare -A positive_pairs=()\n\nwhile read -r warehouse sku qty _; do\n    [[ -z $warehouse || $warehouse == \\#* ]] && continue\n    [[ -z $sku || -z $qty ]] && continue\n\n    qty_num=$((10#$qty))\n    totals[\"$sku\"]=$((${totals[$sku]:-0} + qty_num))\n\n    if (( qty_num > 0 )); then\n        pair=\"$warehouse|$sku\"\n        if [[ -z ${positive_pairs[$pair]+present} ]]; then\n            positive_pairs[\"$pair\"]=1\n            warehouse_counts[\"$warehouse\"]=$((${warehouse_counts[$warehouse]:-0} + 1))\n        fi\n    fi\ndone < \"$input\"\n\n: > \"$sku_tmp\"\nfor sku in \"${!totals[@]}\"; do\n    printf '%s %s\\n' \"$sku\" \"${totals[$sku]}\" >> \"$sku_tmp\"\ndone\nsort -k1,1 \"$sku_tmp\" > \"$data_dir/sku_totals.txt\"\n\n: > \"$warehouse_tmp\"\nfor warehouse in \"${!warehouse_counts[@]}\"; do\n    printf '%s %s\\n' \"$warehouse\" \"${warehouse_counts[$warehouse]}\" >> \"$warehouse_tmp\"\ndone\nsort -k1,1 \"$warehouse_tmp\" > \"$data_dir/warehouses.txt\"\n\nrm -f \"$sku_tmp\" \"$warehouse_tmp\"\nexit 0\n```",
+    "iterations": 1,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "#!/usr/bin/env bash\n\ninput=/home/eval/data/inventory.txt\ndata_dir=/home/eval/data\nsku_tmp=\"$data_dir/.sku_totals.tmp\"\nwarehouse_tmp=\"$data_dir/.warehouses.tmp\"\n\ndeclare -A totals=()\ndeclare -A warehouse_counts=()\ndeclare -A positive_pairs=()\n\nwhile read -r warehouse sku qty _; do\n    [[ -z $warehouse || $warehouse == \\#* ]] && continue\n    [[ -z $sku || -z $qty ]] && continue\n\n    qty_num=$((10#$qty))\n    totals[\"$sku\"]=$((${totals[$sku]:-0} + qty_num))\n\n    if (( qty_num > 0 )); then\n        pair=\"$warehouse|$sku\"\n        if [[ -z ${positive_pairs[$pair]+present} ]]; then\n            positive_pairs[\"$pair\"]=1\n            warehouse_counts[\"$warehouse\"]=$((${warehouse_counts[$warehouse]:-0} + 1))\n        fi\n    fi\ndone < \"$input\"\n\n: > \"$sku_tmp\"\nfor sku in \"${!totals[@]}\"; do\n    printf '%s %s\\n' \"$sku\" \"${totals[$sku]}\" >> \"$sku_tmp\"\ndone\nsort -k1,1 \"$sku_tmp\" > \"$data_dir/sku_totals.txt\"\n\n: > \"$warehouse_tmp\"\nfor warehouse in \"${!warehouse_counts[@]}\"; do\n    printf '%s %s\\n' \"$warehouse\" \"${warehouse_counts[$warehouse]}\" >> \"$warehouse_tmp\"\ndone\nsort -k1,1 \"$warehouse_tmp\" > \"$data_dir/warehouses.txt\"\n\nrm -f \"$sku_tmp\" \"$warehouse_tmp\"\nexit 0\n"
+    ],
+    "usage": {
+      "input_tokens": 469,
+      "output_tokens": 1125,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 12288
+    },
+    "metrics": {
+      "exec_ms": 10.0,
+      "exit_code": 0.0,
+      "extracted": 1.0,
+      "generate_ms": 12278.0,
+      "script_bytes": 1163.0,
+      "script_found": 1.0,
+      "timed_out": 0.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "#!/usr/bin/env bash\n\ninput=/home/eval/data/inventory.txt\ndata_dir=/home/eval/data\nsku_tmp=\"$data_dir/.sku_totals.tmp\"\nwarehouse_tmp=\"$data_dir/.warehouses.tmp\"\n\ndeclare -A totals=()\ndeclare -A warehouse_counts=()\ndeclare -A positive_pairs=()\n\nwhile read -r warehouse sku qty _; do\n    [[ -z $warehouse || $warehouse == \\#* ]] && continue\n    [[ -z $sku || -z $qty ]] && continue\n\n    qty_num=$((10#$qty))\n    totals[\"$sku\"]=$((${totals[$sku]:-0} + qty_num))\n\n    if (( qty_num > 0 )); then\n        pair=\"$warehouse|$sku\"\n        if [[ -z ${positive_pairs[$pair]+present} ]]; then\n            positive_pairs[\"$pair\"]=1\n            warehouse_counts[\"$warehouse\"]=$((${warehouse_counts[$warehouse]:-0} + 1))\n        fi\n    fi\ndone < \"$input\"\n\n: > \"$sku_tmp\"\nfor sku in \"${!totals[@]}\"; do\n    printf '%s %s\\n' \"$sku\" \"${totals[$sku]}\" >> \"$sku_tmp\"\ndone\nsort -k1,1 \"$sku_tmp\" > \"$data_dir/sku_totals.txt\"\n\n: > \"$warehouse_tmp\"\nfor warehouse in \"${!warehouse_counts[@]}\"; do\n    printf '%s %s\\n' \"$warehouse\" \"${warehouse_counts[$warehouse]}\" >> \"$warehouse_tmp\"\ndone\nsort -k1,1 \"$warehouse_tmp\" > \"$data_dir/warehouses.txt\"\n\nrm -f \"$sku_tmp\" \"$warehouse_tmp\"\nexit 0\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          }
+        ]
+      },
+      "generate": {
+        "extraction": "fenced",
+        "timed_out": false
+      }
+    }
+  },
+  "skipped": false
+}

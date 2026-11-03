@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "db_csv_group_by",
+  "target": "openrouter/moonshotai/kimi-k3",
+  "input": [
+    "Read /data/sales.csv with columns: region, product, amount. Compute total amount per region (like SQL GROUP BY region, SUM(amount)). Print results as 'region: total' sorted by total descending."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "**Results (total amount per region, sorted descending):**\n\n```\nnorth: 850\nsouth: 750\neast: 650\n```\n\n**How it works:**\n\n1. **Inspect the file** — confirmed the CSV has a header row (`region,product,amount`) plus 8 data rows.\n\n2. **Aggregate with awk:**\n   ```bash\n   awk -F',' 'NR>1 {sum[$1] += $3} END {for (r in sum) printf \"%s: %d\\n\", r, sum[r]}' /data/sales.csv\n   ```\n   - `-F','` — split on commas\n   - `NR>1` — skip the header row\n   - `sum[$1] += $3` — accumulate `amount` (column 3) into an associative array keyed by `region` (column 1), equivalent to `GROUP BY region, SUM(amount)`\n   - `END` block — print each region and its total\n\n3. **Sort descending by total:**\n   ```bash\n   sort -t: -k2 -nr\n   ```\n   - `-t:` — use `:` as field delimiter\n   - `-k2 -nr` — sort on the 2nd field (the total), numerically, in reverse (descending) order\n\nSanity check: north = 500+200+150 = 850, south = 300+350+100 = 750, east = 400+250 = 650 ✓",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "head -20 /data/sales.csv && echo \"---\" && wc -l /data/sales.csv",
+      "awk -F',' 'NR>1 {sum[$1] += $3} END {for (r in sum) printf \"%s: %d\\n\", r, sum[r]}' /data/sales.csv | sort -t: -k2 -nr"
+    ],
+    "usage": {
+      "input_tokens": 1508,
+      "output_tokens": 554,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 11445
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "head -20 /data/sales.csv && echo \"---\" && wc -l /data/sales.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "region,product,amount\nnorth,widgets,500\nsouth,gadgets,300\nnorth,bolts,200\neast,widgets,400\nsouth,widgets,350\nnorth,gadgets,150\neast,bolts,250\nsouth,bolts,100\n---\n9 /data/sales.csv\n"
+          },
+          {
+            "commands": "awk -F',' 'NR>1 {sum[$1] += $3} END {for (r in sum) printf \"%s: %d\\n\", r, sum[r]}' /data/sales.csv | sort -t: -k2 -nr",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "north: 850\nsouth: 750\neast: 650\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

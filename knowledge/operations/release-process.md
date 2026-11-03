@@ -84,27 +84,24 @@ silently failed.
      `.crate` must stay under crates.io's 10 MiB limit (it embeds the CPython
      snapshot as xz; ~7.8 MiB with requests/httpx and urllib.request preloaded). `bashkit` depends on the same version
      of it, so `publish.yml` publishes it first and the `bashkit` dry-run only
-     resolves once that version is live.
-   - `cargo publish --dry-run -p bashkit-coreutils-wasm` must succeed (~2 MB
-     crate, xz guest); `publish.yml` also publishes it before `bashkit`.
-   - `cargo publish --dry-run -p bashkit` must succeed. Package
-     `bashkit-cli` and `bashkit-scripted-tool` in a disposable copy against the latest published
-     registry core version (remove the local path in the copy) as a structural
-     proxy; Cargo cannot resolve the CLI's new
-     registry dependency until the core crate is live. The proxy may only ask
-     the published core for features it already exposes, so
-     `scripts/cli_publish_proxy.py` reads that crate's feature set from
-     crates.io and drops the ones added in the current cycle (plus `python`,
-     which predates Monty's crates.io publication) from the disposable copy
-     only. Direct CLI-to-core feature aliases are checked independently of the
-     features requested on the core dependency, because default CLI features
-     need not appear in that dependency list. A failure there is real packaging
-     drift, not a missing feature. Normal workspace checks still compile the CLI
-     against the new local core, and `publish.yml` waits for the core registry
-     version before publishing the CLI. Packaging caught
-     the v0.4.0 → v0.4.1 incident: the rustdoc guide lived outside the crate
-     dir, so `cargo publish` couldn't find it; local `cargo build` did not catch
-     it.
+     resolves once that version is live. Cargo 1.95 leaves publish dry-run
+     archives under temporary staging directories. Run `cargo package -p
+     bashkit-cpython-wasm` to finalize the verified `.crate` under
+     `target/package/` before the size check; measuring the old publish output
+     path stopped 0.19.0 before any Rust crate upload. Regression coverage
+     exercises both sides of the 10 MiB boundary without registry credentials.
+   - Verify all five exact release packages together with the pinned Cargo:
+     `cargo publish --dry-run -p bashkit-cpython-wasm -p bashkit-coreutils-wasm -p bashkit -p bashkit-cli -p bashkit-scripted-tool`
+     (`--allow-dirty` during preparation). Cargo stages selected workspace
+     packages in a temporary registry and builds the packaged dependency graph,
+     including new internal crates that do not exist on crates.io yet. A lone
+     core dry-run cannot resolve the unpublished CPython dependency; a proxy
+     against an older published core would miss the new package graph. No
+     manifest rewriting or `--no-verify` is needed. `just release-check` runs
+     this exact preflight. Individual dry-runs in `publish.yml` still follow
+     dependency order after each prerequisite reaches crates.io. Packaging
+     caught the v0.4.0 → v0.4.1 incident: a rustdoc guide outside the crate
+     directory built locally but was absent from the archive.
    - PyPI / npm: confirm the feeding pipelines still build (`maturin build
      --release`, `napi build`, browser WASM build smokes) when changes touch
      packaging.
@@ -144,6 +141,30 @@ fetch process exits before examples execute. See the
 - On Release published, `publish.yml` / `publish-js.yml` /
   `publish-wasm.yml` / `publish-python.yml` publish to crates.io, npm, PyPI;
   each includes a published-version verification step.
+
+## crates.io trusted publishing
+
+The publishing workflow uses GitHub OIDC instead of a stored registry token.
+Each publish job obtains a masked, short-lived token only after the package has
+been verified without registry credentials. The pinned official authentication
+action revokes the token when the job finishes; only the upload step receives it.
+Token issuance alone does not prove a crate was published: retain the existing
+registry verification and record the first successful OIDC release separately.
+
+Before enabling the workflow, configure every published crate on crates.io to
+trust this repository, the publishing workflow filename, and the `release`
+environment. The workflow is [`publish.yml`](../../.github/workflows/publish.yml).
+The GitHub `release` environment must allow only the `main` branch and `v*`
+tags, preserving the existing main-based recovery path. The validated immutable
+release source and dependency order remain mandatory. Check all four crates:
+`bashkit-cpython-wasm`, `bashkit`, `bashkit-cli`, and `bashkit-scripted-tool`.
+
+A new crate needs its first version published by an owner with a suitably scoped
+API token before crates.io permits a trusted publisher. Complete that bootstrap
+and configure trust before adding a new name to automated publication. Trusted
+publishing cannot yank versions. Preserve any token needed for separate yank or
+bootstrap operations; remove obsolete publishing credentials only after a real
+OIDC publication succeeds and their other consumers have been checked.
 
 ## Pre-Release Checklist
 
@@ -209,6 +230,16 @@ verification poll failed at 00:47:32; the `latest` tag moved at 00:48:10. The
 poll window now clears the 300s cache (`ATTEMPTS`/`SLEEP_SECONDS` in
 `publish-js.yml`, guarded by `scripts/tests/test_release_workflow.py`).
 
+Both npm lanes use `scripts/publish_npm.py`: pack once with lifecycle scripts
+disabled, retain and hash those bytes, then publish that archive with provenance.
+A staged-version E409 is recoverable only when the public registry reports the
+same SHA-512 integrity and intended dist-tag within the bounded verification
+window. Other upload failures remain errors. The helper never approves private
+stages or changes credentials. The 0.19.0 browser upload returned E409 while the
+exact version was already public as `latest`; treating that response alone as
+failure made the workflow disagree with the registry. Unit coverage rejects
+wrong bytes, wrong tags, authentication failures, and versions that stay private.
+
 ## Changelog Format
 
 Use the latest entries in `CHANGELOG.md` as the template. Rules:
@@ -256,7 +287,9 @@ Dispatched by release.yml after tag verification. Accepts only stable
 tag, and the tag commit is reachable from `origin/main` before building.
 Builds prebuilt CLI binaries (macOS aarch64/x86_64, Linux x86_64), uploads
 to the Release, and pushes a Homebrew formula to `everruns/homebrew-tap`
-(`brew install everruns/tap/bashkit`). Secret: `DOPPLER_TOKEN`
+(`brew install everruns/tap/bashkit`). Formula license matches the workspace
+license; generated tap commits use the repository's configured human release
+identity, never a bot identity. Secret: `DOPPLER_TOKEN`
 (Doppler-managed GitHub PAT for the tap push).
 
 ### publish.yml
@@ -267,9 +300,18 @@ without registry credentials. The following `cargo publish --no-verify` upload
 receives the step-scoped `CARGO_REGISTRY_TOKEN`, so dependency compilation never
 inherits that credential. The CLI and `bashkit-scripted-tool` dry-runs run after the core is published.
 
-CLI and C ABI release validation resolve the fetched tag once, validate the
+Rust, CLI, and C ABI release validation resolve the fetched tag once, validate the
 manifest at that immutable commit, and pass its SHA to build checkouts. The tag
 remains the release upload destination, never the build source after validation.
+For Rust workflow-only recovery, merge the repair, then dispatch
+`gh workflow run publish.yml --ref main -f tag=vMAJOR.MINOR.PATCH`.
+The workflow ref must be the matching tag or current main; every crate is built
+from the validated tag SHA, even when main has advanced. Registry verification
+runs code from the trusted workflow revision and reads its expected version from
+the validated tag rather than main's manifest. Never move an existing
+release tag or rebuild already published registry versions. The CPython size gate
+runs verified `cargo package` before measuring its finalized archive because
+Cargo 1.95 publish dry-runs retain only a temporary archive.
 Regression coverage: `scripts/tests/test_release_security.py`.
 
 ### publish-python.yml
@@ -280,23 +322,59 @@ to PyPI via trusted publishing (OIDC, no secrets; environment
 `release-python` must exist in repo settings). Python version is read
 dynamically from `Cargo.toml` via maturin (`dynamic = ["version"]`).
 
+Windows wheels additionally require Authenticode signing in the separate
+`release-windows-signing` environment. Its Azure OIDC identity has only the
+Certificate Profile Signer role at the validated Public Trust profile's scope;
+the environment must restrict deployment to release tags. The account, tenant,
+client and profile identifiers in `scripts/windows-signing.json` are public
+configuration, not secrets. Publisher identity validation is a human portal
+step; do not substitute a Private Trust or test profile.
+
+The source inspection job gates signing credentials. Unsigned Windows build
+outputs use the `pypi_unsigned-*` namespace; only the signing job's verified,
+repacked archive enters `pypi_files-*`. Native files require valid embedded
+signatures and timestamps, and Python/metadata content cannot change during
+signing. A signing/configuration/verification failure blocks publication rather
+than falling back to the original wheel. The credential-free smoke jobs consume
+the final archive. Unit and Windows integration coverage lives in
+`scripts/tests/test_windows_signing.py`; see
+[Python Package](../runtimes/python-package.md#authenticode-release-path) for
+provisioning prerequisites and the remaining SAC enforcement check.
+
+Before a new Python release, run `windows-signing-smoke.yml` from a
+main-reachable `vX.Y.Z-signing-smoke-<12-hex-source-SHA>` tag. It uses the same
+reusable signing job as publication and validates Azure OIDC, actual signing,
+timestamps, repaired wheel metadata, pytest plugin loading and native execution.
+Its artifact is a signed copy of the hash-checked historical 0.20.1 Windows wheel
+for controlled comparison, never a registry release. Retain the run and artifact
+digest as evidence; Windows Server success does not prove SAC-On enforcement.
+
 ### publish-js.yml
 
 Trigger: Release published (parallel). Builds native NAPI-RS bindings
 (macOS x86_64/aarch64, Linux x86_64/aarch64, Windows x86_64,
 wasm32-wasip1-threads), tests on Node 20/22/24 (Node 20 runs the
 runtime-compat suite, not the ava suites, since ava >= 8 needs Node 22.20+),
-publishes to npm. Secret:
-`NPM_TOKEN` (Automation token); provenance via `id-token: write` OIDC +
-`--provenance`, same pattern as everruns/sdk. JS package version is synced
+publishes to npm via npm trusted publishing (GitHub OIDC, `id-token: write`,
+npm >= 11.5.1, provenance automatic); no `NPM_TOKEN`. JS package version is synced
 from the workspace `Cargo.toml` by `build.rs` updating `package.json`.
 
 Only a run whose ref is the release tag (`refs/tags/vX.Y.Z`, version matching
-`package.json`) publishes as npm `latest`; every other ref, including a manual
-dispatch from `main`, publishes under `next`. So a failed npm publish cannot be
-recovered by re-dispatching from `main`: fix the cause and cut a patch release,
-whose tag then publishes `latest`. v0.17.0 landed on `next` this way, and
-v0.17.1 is what put the native package back on `latest`.
+`package.json`) publishes as npm `latest`; every other ref, including a plain
+manual dispatch from `main`, publishes under `next`. v0.17.0 landed on `next`
+this way, and v0.17.1 is what put the native package back on `latest`.
+
+To recover a release whose npm lane failed without cutting a new version,
+dispatch `publish-js.yml` / `publish-wasm.yml` from `main` with the `tag`
+input (`gh workflow run publish-js.yml --ref main -f tag=v0.20.1`).
+`scripts/resolve_publish_source.sh` then builds the tag's exact commit and
+publishes it as `latest`; the workflow definition must be the tag's or current
+`main`'s, and the tag must be reachable from `main`. Package bytes come from
+the tag, but `publish-js.yml` gates them with the workflow commit's
+`crates/bashkit-js/__test__` (tests are not in the tarball), so a test fix
+landed after the tag (v0.20.1's Rosetta timeout, #2780) still applies. Use this
+when the failure was in the workflow or credentials, not in the shipped code;
+a code bug still needs a patch release.
 
 The publish job never runs `tsc`; it ships whatever the `js-stubs` artifact
 carries. That artifact must list every `tsc` output (`.js` + `.d.ts` for each
@@ -304,13 +382,32 @@ carries. That artifact must list every `tsc` output (`.js` + `.d.ts` for each
 without `langchain.js`/`ai.js`/`anthropic.js`/`openai.js` while `package.json`
 exported them. Guarded by `scripts/tests/test_js_publish_files.py`.
 
+`tsconfig.json`'s `include` must name every `.ts` source in the package, even
+one reached only through an import. tsc compiles a reachable import whether or
+not it is listed, so an omission breaks no build: it narrows what the guard
+above treats as a `tsc` output, disabling the guard for exactly the file it
+left out. `runtime-functions.ts` landed that way in #2740, so v0.20.0 reached
+the registry on crates.io and PyPI while all fifteen `Publish JS` test jobs
+died on `ERR_MODULE_NOT_FOUND` for `runtime-functions.js`, leaving both npm
+packages on 0.19.0. `include` completeness is now itself guarded by that same
+test file -- treat `include`, the `js-stubs` list and `package.json` `files` as
+one invariant, since each is a hand-maintained copy of the same set.
+
 ### publish-wasm.yml
 
 Dispatched by `release.yml` from the verified release tag. Builds the
 single-threaded `wasm32-unknown-unknown` browser bundle, runs the headless Node
 integration suite, and publishes `@everruns/bashkit-wasm` to npm with
-provenance. Uses the same `NPM_TOKEN` as `publish-js.yml`; the package version
+provenance via npm trusted publishing, same as `publish-js.yml`; the package version
 is synced manually from the workspace version during release preparation.
+
+CI and publication both use the `wasm-release` profile and run the package's
+GNU Bash compatibility sample, compressed-size budgets, and npm archive tests.
+The archive includes `build-info.json` with source commit and the shipped WASM
+hash; inspect those fields after publication as well as npm version/dist-tags.
+A current source checkout can still say `0.18.2` while containing hundreds of
+commits absent from the published `0.18.2`, so version equality does not prove
+artifact parity. See [Browser Package](../runtimes/browser-package.md).
 
 ### c-api-binaries.yml
 
@@ -329,7 +426,17 @@ from `main`; build checkout remains pinned to the tag.
 
 - `CARGO_REGISTRY_TOKEN` (crates.io token, publish scopes) in GitHub Actions secrets.
 - PyPI trusted publishing: configure publisher at pypi.org for repo `everruns/bashkit`, workflow `publish-python.yml`, environment `release-python`.
-- `NPM_TOKEN` (Automation token) in GitHub Actions secrets; no separate GitHub environment required.
+- npm trusted publishing (GitHub OIDC), no npm token secret. On npmjs.com, each
+  package's Settings > Trusted publisher: GitHub Actions, organization `everruns`,
+  repository `bashkit`, workflow `publish-js.yml` (`@everruns/bashkit`) or
+  `publish-wasm.yml` (`@everruns/bashkit-wasm`), environment empty. Publish jobs
+  need `id-token: write` and npm >= 11.5.1 (the step upgrades to a pinned npm if
+  Node's bundled one is older). Do not set setup-node `registry-url`: its `.npmrc`
+  carries a placeholder `NODE_AUTH_TOKEN`. The long-lived `NPM_TOKEN` was rejected
+  before 0.20.1 and npm reported the auth failure as a 404 on
+  `@everruns/bashkit-wasm`; an npm publish 404 on an existing package means auth,
+  check the trusted publisher config first. Guarded by
+  `scripts/tests/test_release_workflow.py`.
 
 ## Post-Release Verification
 

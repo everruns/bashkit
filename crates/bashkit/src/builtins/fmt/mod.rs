@@ -4,9 +4,11 @@
 //! from uutils/coreutils `fmt` (MIT, `linebreak.rs`, `parasplit.rs`), a
 //! Knuth-Plass optimal-fit filler, not a greedy one. Bashkit is MIT, so GNU
 //! `fmt.c` (GPL) must not be ported; uutils already targets GNU-compatible
-//! output. Only option parsing and I/O are bashkit's. Width and goal follow
-//! GNU's documented rules: goal defaults to 93% of the width, `-g` alone
+//! output. Option parsing, I/O and budget enforcement are bashkit's. Width and
+//! goal follow GNU's documented rules: goal defaults to 93% of the width, `-g` alone
 //! sets the width to goal + 10, width is capped at 2500.
+//! Output capacity is leased before allocation; synchronous rendering and
+//! optimal-fit searches charge the shared work/cancellation/deadline budget.
 
 mod linebreak;
 mod parasplit;
@@ -16,6 +18,7 @@ use async_trait::async_trait;
 use super::{Builtin, BuiltinHelper, Context, resolve_path};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
+use crate::limits::{BudgetedBytes, ExecutionBudget};
 
 /// The fmt builtin.
 ///
@@ -226,21 +229,49 @@ fn parse_tab_width(value: &str) -> std::result::Result<usize, ExecResult> {
         .map_err(|_| err(format!("invalid tab width: '{value}'")))
 }
 
+// THREAT[TM-DOS-103]: indentation and prefixes can multiply output size.
+// Keep the capacity lease with the sink, and check work before each copy.
+struct FmtOutput {
+    bytes: BudgetedBytes,
+    budget: Option<ExecutionBudget>,
+}
+
+impl FmtOutput {
+    fn new(budget: Option<ExecutionBudget>) -> Result<Self> {
+        Ok(Self {
+            bytes: BudgetedBytes::new(budget.as_ref())?,
+            budget,
+        })
+    }
+
+    fn consume_work(&self, units: u64) -> Result<()> {
+        if let Some(budget) = &self.budget {
+            budget.consume_work(units)?;
+        }
+        Ok(())
+    }
+
+    fn write_all(&mut self, bytes: &[u8]) -> Result<()> {
+        self.consume_work(1 + bytes.len() as u64)?;
+        self.bytes.try_extend_from_slice(bytes)?;
+        Ok(())
+    }
+}
+
 /// Format one input into `out` with the vendored engine.
-fn format_input(opts: &FmtOptions, input: Vec<u8>, out: &mut Vec<u8>) {
+fn format_input(opts: &FmtOptions, input: Vec<u8>, out: &mut FmtOutput) -> Result<()> {
     let mut reader: FileOrStdReader = std::io::Cursor::new(input);
     for para in parasplit::ParagraphStream::new(opts, &mut reader) {
+        out.consume_work(1)?;
         match para {
             Err(line) => {
-                out.extend_from_slice(&line);
-                out.push(b'\n');
+                out.write_all(&line)?;
+                out.write_all(b"\n")?;
             }
-            // Writes to a Vec never fail.
-            Ok(para) => {
-                let _ = linebreak::break_lines(&para, opts, out);
-            }
+            Ok(para) => linebreak::break_lines(&para, opts, out)?,
         }
     }
+    Ok(())
 }
 
 #[async_trait]
@@ -253,7 +284,15 @@ impl Builtin for Fmt {
             Ok(v) => v,
             Err(e) => return Ok(e),
         };
-        let mut out = Vec::new();
+        let budget = ctx
+            .execution_budget()
+            .map(|budget| {
+                budget
+                    .try_with(Clone::clone)
+                    .map_err(|_| crate::Error::Cancelled)
+            })
+            .transpose()?;
+        let mut out = FmtOutput::new(budget)?;
         let mut stderr = String::new();
         let mut exit_code = 0;
         for file in files {
@@ -274,9 +313,10 @@ impl Builtin for Fmt {
                 }
             };
             ctx.consume_budget_work(1 + (input.len() / 1024) as u64)?;
-            format_input(&opts, input, &mut out);
+            format_input(&opts, input, &mut out)?;
         }
-        let mut result = ExecResult::with_code(crate::StreamData::from(out), exit_code);
+        let (bytes, _output_lease) = out.bytes.into_parts();
+        let mut result = ExecResult::with_code(crate::StreamData::from(bytes), exit_code);
         result.stderr = stderr.into();
         Ok(result)
     }
@@ -291,9 +331,61 @@ mod tests {
         let Ok((opts, _)) = parse_args(&args) else {
             panic!("valid args");
         };
-        let mut out = Vec::new();
-        format_input(&opts, input.as_bytes().to_vec(), &mut out);
-        String::from_utf8(out).unwrap()
+        let mut out = FmtOutput::new(None).unwrap();
+        format_input(&opts, input.as_bytes().to_vec(), &mut out).unwrap();
+        String::from_utf8(out.bytes.into_parts().0).unwrap()
+    }
+
+    #[test]
+    fn output_capacity_boundary_is_checked_before_copy() {
+        use crate::{ExecutionBudgetExceeded, ExecutionLimits, LimitExceeded};
+        let token = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let budget = ExecutionBudget::new(
+            &ExecutionLimits::new().max_live_intermediate_bytes(8),
+            token,
+        );
+        let mut out = FmtOutput::new(Some(budget)).unwrap();
+        out.write_all(b"12345678").unwrap();
+        assert!(matches!(
+            out.write_all(b"9"),
+            Err(crate::Error::ResourceLimit(LimitExceeded::ExecutionBudget(
+                ExecutionBudgetExceeded::LiveBytes { used: 16, limit: 8 }
+            )))
+        ));
+        assert_eq!(&*out.bytes, b"12345678");
+    }
+
+    #[test]
+    fn synchronous_sink_observes_cancellation_and_deadline() {
+        use crate::{ExecutionLimits, LimitExceeded};
+        use std::sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        };
+        for cancel in [true, false] {
+            let token = Arc::new(AtomicBool::new(false));
+            let budget = ExecutionBudget::new(
+                &ExecutionLimits::new().timeout(std::time::Duration::from_millis(1)),
+                token.clone(),
+            );
+            let mut out = FmtOutput::new(Some(budget)).unwrap();
+            out.write_all(b"a").unwrap();
+            if cancel {
+                token.store(true, Ordering::Relaxed);
+            } else {
+                std::thread::sleep(std::time::Duration::from_millis(120));
+            }
+            let error = out.write_all(b"b").unwrap_err();
+            if cancel {
+                assert!(matches!(error, crate::Error::Cancelled));
+            } else {
+                assert!(matches!(
+                    error,
+                    crate::Error::ResourceLimit(LimitExceeded::Timeout(_))
+                ));
+            }
+            assert_eq!(&*out.bytes, b"a");
+        }
     }
 
     #[test]

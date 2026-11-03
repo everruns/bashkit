@@ -1,0 +1,71 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "script_trap_cleanup",
+  "target": "anthropic/claude-sonnet-5-5",
+  "input": [
+    "Write a bash script /scripts/deploy.sh that: 1) Creates a temp directory using mktemp -d and stores path in TMPDIR. 2) Sets a trap on EXIT that removes the temp directory and prints 'Cleanup: removed temp dir'. 3) Copies /app/config.json to the temp dir. 4) Simulates work by creating /app/deploy.log with the line 'deployed at TMPDIR_PATH' (using actual path). 5) Exits with code 0. Run the script. After it runs, verify the temp directory was cleaned up by checking it no longer exists, and verify /app/deploy.log exists."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I wrote `/scripts/deploy.sh` and ran it. It exited with code 0 and printed `Cleanup: removed temp dir`.\n\nThe script does these things in order:\n1. It creates a temp directory with `mktemp -d` and stores the path in `TMPDIR`.\n2. It sets an `EXIT` trap that removes that directory and prints the cleanup message.\n3. It copies `/app/config.json` into the temp directory.\n4. It writes `deployed at <actual path>` to `/app/deploy.log`.\n5. It exits with `exit 0`.\n\nI checked the results after the run:\n- **Temp directory:** `/tmp/tmp.GTtEdqOjBz` no longer exists, so the cleanup worked.\n- **Log file:** `/app/deploy.log` exists and contains `deployed at /tmp/tmp.GTtEdqOjBz`.\n\nThe script assigns to `TMPDIR`, which is also the variable `mktemp` uses to choose its base directory. That is harmless here because the assignment comes after the `mktemp` call.",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "ls -la /app /scripts 2>&1",
+      "ls -la /app; echo ---; ls -ld /app",
+      "mkdir -p /scripts && cat > /scripts/deploy.sh <<'EOF'\n#!/usr/bin/env bash\nset -euo pipefail\n\n# 1) Create temp dir, store in TMPDIR\nTMPDIR=$(mktemp -d)\n\n# 2) Cleanup trap on EXIT\ntrap 'rm -rf \"$TMPDIR\"; echo \"Cleanup: removed temp dir\"' EXIT\n\n# 3) Copy config\ncp /app/config.json \"$TMPDIR/\"\n\n# 4) Simulate work\necho \"deployed at $TMPDIR\" > /app/deploy.log\n\n# 5) Exit 0 (trap runs on exit)\nexit 0\nEOF\nchmod +x /scripts/deploy.sh\n/scripts/deploy.sh; echo \"exit=$?\"\necho \"--- log:\"; cat /app/deploy.log\nP=$(awk '{print $3}' /app/deploy.log)\n[ -e \"$P\" ] && echo \"FAIL: $P still exists\" || echo \"OK: $P no longer exists\"\n[ -f /app/deploy.log ] && echo \"OK: /app/deploy.log exists\""
+    ],
+    "usage": {
+      "input_tokens": 4334,
+      "output_tokens": 1103,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 9740
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 2.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /app /scripts 2>&1",
+            "exit_code": 2,
+            "stderr": "",
+            "stdout": "ls: cannot access '/scripts': No such file or directory\n"
+          },
+          {
+            "commands": "ls -la /app; echo ---; ls -ld /app",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       36 2026-10-09 05:01 config.json\n---\ndrwxr-xr-x        0 2026-10-09 05:01 /app\n"
+          },
+          {
+            "commands": "mkdir -p /scripts && cat > /scripts/deploy.sh <<'EOF'\n#!/usr/bin/env bash\nset -euo pipefail\n\n# 1) Create temp dir, store in TMPDIR\nTMPDIR=$(mktemp -d)\n\n# 2) Cleanup trap on EXIT\ntrap 'rm -rf \"$TMPDIR\"; echo \"Cleanup: removed temp dir\"' EXIT\n\n# 3) Copy config\ncp /app/config.json \"$TMPDIR/\"\n\n# 4) Simulate work\necho \"deployed at $TMPDIR\" > /app/deploy.log\n\n# 5) Exit 0 (trap runs on exit)\nexit 0\nEOF\nchmod +x /scripts/deploy.sh\n/scripts/deploy.sh; echo \"exit=$?\"\necho \"--- log:\"; cat /app/deploy.log\nP=$(awk '{print $3}' /app/deploy.log)\n[ -e \"$P\" ] && echo \"FAIL: $P still exists\" || echo \"OK: $P no longer exists\"\n[ -f /app/deploy.log ] && echo \"OK: /app/deploy.log exists\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Cleanup: removed temp dir\nexit=0\n--- log:\ndeployed at /tmp/tmp.GTtEdqOjBz\nOK: /tmp/tmp.GTtEdqOjBz no longer exists\nOK: /app/deploy.log exists\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

@@ -5,7 +5,7 @@
 //! Unit-level coverage of each AST node kind lives in `src/analysis.rs`.
 
 use bashkit::hooks::{HookAction, ToolEvent};
-use bashkit::{Bash, CommandContext, ScriptAnalysis};
+use bashkit::{Bash, CommandPlacement, ScriptAnalysis};
 use std::sync::{Arc, Mutex};
 
 fn analyze(script: &str) -> ScriptAnalysis {
@@ -247,7 +247,7 @@ fn contexts_separate_what_runs_now_from_what_may_run_later() {
     let direct: Vec<_> = analysis
         .commands
         .iter()
-        .filter(|c| c.context == CommandContext::Direct)
+        .filter(|c| c.context == CommandPlacement::Direct)
         .filter_map(|c| c.name.as_deref())
         .collect();
     assert_eq!(direct, ["ls"]);

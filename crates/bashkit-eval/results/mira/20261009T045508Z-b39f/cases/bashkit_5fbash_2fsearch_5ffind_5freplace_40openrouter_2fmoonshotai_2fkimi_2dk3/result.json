@@ -1,0 +1,127 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "search_find_replace",
+  "target": "openrouter/moonshotai/kimi-k3",
+  "input": [
+    "Search all .js files under /src for the string 'console.log'. Replace every occurrence with 'logger.info' in-place. Print each modified filename and how many replacements were made per file. At the end, print 'Files modified: N' with the total count of files changed."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "6/6 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "The replacement worked. Now let me verify the files were actually modified correctly.",
+    "iterations": 10,
+    "tool_calls_count": 11,
+    "tool_calls": [
+      "ls -la /src 2>/dev/null && echo \"---\" && find /src -type f -name \"*.js\" 2>/dev/null",
+      "for f in /src/app.js /src/index.js /src/middleware.js /src/utils.js; do echo \"=== $f ===\"; cat \"$f\"; echo; done",
+      "grep -c 'console\\.log' /src/*.js 2>/dev/null; echo \"---\"; grep -o 'console\\.log' /src/*.js 2>/dev/null | sort | uniq -c",
+      "cat > /tmp/replace.sh << 'EOF'\n#!/bin/bash\ntotal_files=0\nwhile IFS= read -r -d '' file; do\n    # Count occurrences before replacement\n    count=$(grep -o 'console\\.log' \"$file\" | wc -l)\n    if [ \"$count\" -gt 0 ]; then\n        # Replace all occurrences in-place\n        sed -i 's/console\\.log/logger.info/g' \"$file\"\n        echo \"$file: $count replacements\"\n        total_files=$((total_files + 1))\n    fi\ndone < <(find /src -type f -name \"*.js\" -print0 | sort -z)\necho \"Files modified: $total_files\"\nEOF\nbash /tmp/replace.sh",
+      "# Check if find with -print0 works and if the files still contain console.log\necho \"--- find output ---\"\nfind /src -type f -name \"*.js\" -print0 | sort -z | tr '\\0' '\\n'\necho \"--- grep check ---\"\ngrep -c 'console\\.log' /src/*.js\necho \"--- test count on one file ---\"\ngrep -o 'console\\.log' /src/app.js | wc -l",
+      "cat -A /tmp/replace.sh | head -20; echo \"===\"; echo \"--- test individual components ---\"\nfile=/src/app.js\ncount=$(grep -o 'console\\.log' \"$file\" | wc -l)\necho \"count=[$count]\"\nif [ \"$count\" -gt 0 ]; then echo \"comparison works\"; else echo \"comparison FAILED\"; fi",
+      "bash -x /tmp/replace.sh 2>&1 | head -30",
+      "echo \"--- test process substitution ---\"\nbash -c 'while IFS= read -r -d \"\" f; do echo \"GOT: $f\"; done < <(find /src -type f -name \"*.js\" -print0)'\necho \"exit: $?\"\necho \"--- test without -d ---\"\nbash -c 'while read -r f; do echo \"GOT: $f\"; done < <(find /src -type f -name \"*.js\")'\necho \"--- test sort -z ---\"\nfind /src -type f -name \"*.js\" -print0 | sort -z | tr \"\\0\" \"\\n\"\necho \"exit: $?\"",
+      "echo \"--- test 1: read -d with simple printf ---\"\nprintf 'a\\0b\\0' | bash -c 'while IFS= read -r -d \"\" x; do echo \"GOT: $x\"; done; echo \"done\"'\necho \"--- test 2: using find directly ---\"\nbash -c 'while IFS= read -r -d \"\" x; do echo \"GOT: $x\"; done < <(printf \"a\\0b\\0\")'\necho \"--- test 3: newline-delimited read ---\"\nbash -c 'while IFS= read -r x; do echo \"GOT: $x\"; done < <(find /src -type f -name \"*.js\")'",
+      "cat > /tmp/replace.sh << 'EOF'\n#!/bin/bash\ntotal_files=0\nwhile IFS= read -r file; do\n    count=$(grep -o 'console\\.log' \"$file\" | wc -l)\n    if [ \"$count\" -gt 0 ]; then\n        sed -i 's/console\\.log/logger.info/g' \"$file\"\n        echo \"$file: $count replacements\"\n        total_files=$((total_files + 1))\n    fi\ndone < <(find /src -type f -name \"*.js\" | sort)\necho \"Files modified: $total_files\"\nEOF\nbash /tmp/replace.sh",
+      "for f in /src/app.js /src/index.js /src/middleware.js /src/utils.js; do echo \"=== $f ===\"; cat \"$f\"; echo; done\necho \"=== Verification: any remaining console.log? ===\"\ngrep -rn 'console\\.log' /src/ && echo \"FOUND REMAINING\" || echo \"None remaining - clean\"\necho \"=== Verification: logger.info occurrences ===\"\ngrep -c 'logger\\.info' /src/*.js"
+    ],
+    "usage": {
+      "input_tokens": 16220,
+      "output_tokens": 1930,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 21031
+    },
+    "metrics": {
+      "natural_stop": 0.0,
+      "tool_calls": 11.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 11.0,
+      "turns": 10.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /src 2>/dev/null && echo \"---\" && find /src -type f -name \"*.js\" 2>/dev/null",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--      172 2026-10-09 05:00 app.js\n-rw-r--r--      119 2026-10-09 05:00 index.js\n-rw-r--r--      214 2026-10-09 05:00 middleware.js\n-rw-r--r--       65 2026-10-09 05:00 utils.js\n---\n/src/app.js\n/src/index.js\n/src/middleware.js\n/src/utils.js\n"
+          },
+          {
+            "commands": "for f in /src/app.js /src/index.js /src/middleware.js /src/utils.js; do echo \"=== $f ===\"; cat \"$f\"; echo; done",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "=== /src/app.js ===\nconst express = require('express');\nconst app = express();\n\napp.get('/', (req, res) => {\n  console.log('Request received');\n  res.send('Hello');\n});\n\nmodule.exports = app;\n\n=== /src/index.js ===\nconst app = require('./app');\nconsole.log('Server starting');\napp.listen(3000);\nconsole.log('Listening on port 3000');\n\n=== /src/middleware.js ===\nfunction auth(req, res, next) {\n  console.log('Auth check');\n  if (req.headers.auth) {\n    next();\n  } else {\n    console.log('Auth failed');\n    res.status(401).send('Unauthorized');\n  }\n}\n\nmodule.exports = auth;\n\n=== /src/utils.js ===\nfunction helper() {\n  return 42;\n}\n\nmodule.exports = { helper };\n\n"
+          },
+          {
+            "commands": "grep -c 'console\\.log' /src/*.js 2>/dev/null; echo \"---\"; grep -o 'console\\.log' /src/*.js 2>/dev/null | sort | uniq -c",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/src/app.js:1\n/src/index.js:2\n/src/middleware.js:2\n/src/utils.js:0\n---\n      1 /src/app.js:console.log\n      2 /src/index.js:console.log\n      2 /src/middleware.js:console.log\n"
+          },
+          {
+            "commands": "cat > /tmp/replace.sh << 'EOF'\n#!/bin/bash\ntotal_files=0\nwhile IFS= read -r -d '' file; do\n    # Count occurrences before replacement\n    count=$(grep -o 'console\\.log' \"$file\" | wc -l)\n    if [ \"$count\" -gt 0 ]; then\n        # Replace all occurrences in-place\n        sed -i 's/console\\.log/logger.info/g' \"$file\"\n        echo \"$file: $count replacements\"\n        total_files=$((total_files + 1))\n    fi\ndone < <(find /src -type f -name \"*.js\" -print0 | sort -z)\necho \"Files modified: $total_files\"\nEOF\nbash /tmp/replace.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Files modified: 0\n"
+          },
+          {
+            "commands": "# Check if find with -print0 works and if the files still contain console.log\necho \"--- find output ---\"\nfind /src -type f -name \"*.js\" -print0 | sort -z | tr '\\0' '\\n'\necho \"--- grep check ---\"\ngrep -c 'console\\.log' /src/*.js\necho \"--- test count on one file ---\"\ngrep -o 'console\\.log' /src/app.js | wc -l",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "--- find output ---\n/src/app.js\n/src/index.js\n/src/middleware.js\n/src/utils.js\n--- grep check ---\n/src/app.js:1\n/src/index.js:2\n/src/middleware.js:2\n/src/utils.js:0\n--- test count on one file ---\n1\n"
+          },
+          {
+            "commands": "cat -A /tmp/replace.sh | head -20; echo \"===\"; echo \"--- test individual components ---\"\nfile=/src/app.js\ncount=$(grep -o 'console\\.log' \"$file\" | wc -l)\necho \"count=[$count]\"\nif [ \"$count\" -gt 0 ]; then echo \"comparison works\"; else echo \"comparison FAILED\"; fi",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "#!/bin/bash$\ntotal_files=0$\nwhile IFS= read -r -d '' file; do$\n    # Count occurrences before replacement$\n    count=$(grep -o 'console\\.log' \"$file\" | wc -l)$\n    if [ \"$count\" -gt 0 ]; then$\n        # Replace all occurrences in-place$\n        sed -i 's/console\\.log/logger.info/g' \"$file\"$\n        echo \"$file: $count replacements\"$\n        total_files=$((total_files + 1))$\n    fi$\ndone < <(find /src -type f -name \"*.js\" -print0 | sort -z)$\necho \"Files modified: $total_files\"$\n===\n--- test individual components ---\ncount=[1]\ncomparison works\n"
+          },
+          {
+            "commands": "bash -x /tmp/replace.sh 2>&1 | head -30",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "+ total_files=0\n+ IFS=\n+ read -r -d '' file\n+ echo 'Files modified: 0'\nFiles modified: 0\n"
+          },
+          {
+            "commands": "echo \"--- test process substitution ---\"\nbash -c 'while IFS= read -r -d \"\" f; do echo \"GOT: $f\"; done < <(find /src -type f -name \"*.js\" -print0)'\necho \"exit: $?\"\necho \"--- test without -d ---\"\nbash -c 'while read -r f; do echo \"GOT: $f\"; done < <(find /src -type f -name \"*.js\")'\necho \"--- test sort -z ---\"\nfind /src -type f -name \"*.js\" -print0 | sort -z | tr \"\\0\" \"\\n\"\necho \"exit: $?\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "--- test process substitution ---\nexit: 0\n--- test without -d ---\nGOT: /src/app.js\nGOT: /src/index.js\nGOT: /src/middleware.js\nGOT: /src/utils.js\n--- test sort -z ---\n/src/app.js\n/src/index.js\n/src/middleware.js\n/src/utils.js\nexit: 0\n"
+          },
+          {
+            "commands": "echo \"--- test 1: read -d with simple printf ---\"\nprintf 'a\\0b\\0' | bash -c 'while IFS= read -r -d \"\" x; do echo \"GOT: $x\"; done; echo \"done\"'\necho \"--- test 2: using find directly ---\"\nbash -c 'while IFS= read -r -d \"\" x; do echo \"GOT: $x\"; done < <(printf \"a\\0b\\0\")'\necho \"--- test 3: newline-delimited read ---\"\nbash -c 'while IFS= read -r x; do echo \"GOT: $x\"; done < <(find /src -type f -name \"*.js\")'",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "--- test 1: read -d with simple printf ---\nGOT: a\nGOT: b\ndone\n--- test 2: using find directly ---\n--- test 3: newline-delimited read ---\nGOT: /src/app.js\nGOT: /src/index.js\nGOT: /src/middleware.js\nGOT: /src/utils.js\n"
+          },
+          {
+            "commands": "cat > /tmp/replace.sh << 'EOF'\n#!/bin/bash\ntotal_files=0\nwhile IFS= read -r file; do\n    count=$(grep -o 'console\\.log' \"$file\" | wc -l)\n    if [ \"$count\" -gt 0 ]; then\n        sed -i 's/console\\.log/logger.info/g' \"$file\"\n        echo \"$file: $count replacements\"\n        total_files=$((total_files + 1))\n    fi\ndone < <(find /src -type f -name \"*.js\" | sort)\necho \"Files modified: $total_files\"\nEOF\nbash /tmp/replace.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/src/app.js: 1 replacements\n/src/index.js: 2 replacements\n/src/middleware.js: 2 replacements\nFiles modified: 3\n"
+          },
+          {
+            "commands": "for f in /src/app.js /src/index.js /src/middleware.js /src/utils.js; do echo \"=== $f ===\"; cat \"$f\"; echo; done\necho \"=== Verification: any remaining console.log? ===\"\ngrep -rn 'console\\.log' /src/ && echo \"FOUND REMAINING\" || echo \"None remaining - clean\"\necho \"=== Verification: logger.info occurrences ===\"\ngrep -c 'logger\\.info' /src/*.js",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "=== /src/app.js ===\nconst express = require('express');\nconst app = express();\n\napp.get('/', (req, res) => {\n  logger.info('Request received');\n  res.send('Hello');\n});\n\nmodule.exports = app;\n\n=== /src/index.js ===\nconst app = require('./app');\nlogger.info('Server starting');\napp.listen(3000);\nlogger.info('Listening on port 3000');\n\n=== /src/middleware.js ===\nfunction auth(req, res, next) {\n  logger.info('Auth check');\n  if (req.headers.auth) {\n    next();\n  } else {\n    logger.info('Auth failed');\n    res.status(401).send('Unauthorized');\n  }\n}\n\nmodule.exports = auth;\n\n=== /src/utils.js ===\nfunction helper() {\n  return 42;\n}\n\nmodule.exports = { helper };\n\n=== Verification: any remaining console.log? ===\nNone remaining - clean\n=== Verification: logger.info occurrences ===\n/src/app.js:1\n/src/index.js:2\n/src/middleware.js:2\n/src/utils.js:0\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

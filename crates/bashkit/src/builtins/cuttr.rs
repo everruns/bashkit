@@ -357,7 +357,7 @@ impl Builtin for Tr {
         // `yes | tr y n | head -1` ends with SIGPIPE. Squeezing looks across
         // piece boundaries, so `-s` reads everything first.
         if !squeeze && let Some(out) = ctx.stdout_stream() {
-            let mut input = super::InputChunks::stdin(&ctx);
+            let mut input = super::InputChunks::stdin(&ctx)?;
             let cut = |data: &[u8]| {
                 if spec.c_locale {
                     data.len()
@@ -365,20 +365,21 @@ impl Builtin for Tr {
                     super::cut_utf8(data)
                 }
             };
-            while let Some(piece) = input.next(cut).await {
+            while let Some(piece) = input.next(cut).await? {
                 ctx.consume_budget_work(1)?;
-                let output = match spec.apply(&piece.into()) {
+                let piece = ctx.collected_input(piece)?;
+                let output = match spec.apply(&piece) {
                     Ok(output) => output,
                     Err(msg) => return Ok(Self::err(&msg, 1)),
                 };
-                if !output.is_empty() && !out.write(&output).await {
+                if !output.is_empty() && !out.write(&output).await? {
                     return Ok(ExecResult::with_code(String::new(), 141));
                 }
             }
             return Ok(ExecResult::ok(String::new()));
         }
 
-        let stdin = ctx.stdin_to_end().await.unwrap_or_default();
+        let stdin = ctx.stdin_to_end().await?;
         match spec.apply(&stdin) {
             Ok(output) => Ok(ExecResult::ok_bytes(output)),
             Err(msg) => Ok(Self::err(&msg, 1)),

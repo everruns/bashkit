@@ -272,6 +272,17 @@ export const DOC_META: DocMeta[] = [
     editPath: "crates/bashkit/docs/sqlite.md",
   },
   {
+    slug: "markkit-fetchkit",
+    title: "markkit and fetchkit",
+    summary: "Document-to-Markdown and URL fetching builtins with the standalone CLIs' interface.",
+    seoTitle: "Bashkit markkit and fetchkit builtins",
+    seoDescription:
+      "Convert PDF, DOCX and HTML to Markdown and fetch URLs inside Bashkit with the exact markkit and fetchkit CLIs, sandboxed.",
+    section: "Runtimes",
+    collection: "rustdocs",
+    editPath: "crates/bashkit/docs/markkit-fetchkit.md",
+  },
+  {
     slug: "ssh",
     title: "SSH support",
     summary: "Sandboxed ssh, scp, and sftp builtins with host allowlists.",
@@ -357,6 +368,16 @@ export const DOC_META: DocMeta[] = [
     section: "Extending",
     sourceId: "custom_builtins_js",
     editPath: "docs/custom_builtins_js.md",
+  },
+  {
+    slug: "streaming",
+    title: "Streaming commands and execution",
+    summary: "Live byte commands, async sinks, bounded capture, and runtime support.",
+    seoTitle: "Stream Bashkit commands in Rust, Python and JavaScript",
+    seoDescription:
+      "Use Bashkit streaming commands in Rust, Python and JavaScript with async byte sinks, explicit capture, migration guidance and a runtime support matrix.",
+    section: "Extending",
+    editPath: "docs/streaming.md",
   },
   {
     slug: "clap-builtins",

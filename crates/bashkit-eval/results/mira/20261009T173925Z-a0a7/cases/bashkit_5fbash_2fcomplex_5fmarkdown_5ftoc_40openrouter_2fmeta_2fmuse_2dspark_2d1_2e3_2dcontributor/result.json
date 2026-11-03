@@ -1,0 +1,71 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "complex_markdown_toc",
+  "target": "openrouter/meta/muse-spark-1.3-contributor",
+  "input": [
+    "Read /doc/README.md and generate a table of contents from its headings (lines starting with # or ##). Insert the TOC after the first heading, formatted as a markdown list with '- [Heading Text](#anchor)' where anchor is the heading text lowercased with spaces replaced by hyphens. Write the result back to the file."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "TOC inserted into `/doc/README.md` after the first heading:\n\n```markdown\n# Project Alpha\n\n- [Project Alpha](#project-alpha)\n- [Installation](#installation)\n- [Usage](#usage)\n- [API Reference](#api-reference)\n- [Contributing](#contributing)\n\nIntroduction to the project.\n\n## Installation\n\nRun the installer.\n\n## Usage\n\nHow to use it.\n\n## API Reference\n\nEndpoint documentation.\n\n## Contributing\n\nPR guidelines.\n```\n",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "cat /doc/README.md; echo \"---EXIT:$?---\"\nls -R /doc 2>&1\npwd; ls -la",
+      "cat -A /doc/README.md\necho \"---\"\nhexdump -C /doc/README.md | head\nwc -l /doc/README.md",
+      "python3 - << 'PY'\nfrom pathlib import Path\n\npath = Path(\"/doc/README.md\")\ntext = path.read_text()\nlines = text.splitlines()\n\n# Find headings: lines starting with # or ##\n# Interpret as lstrip starts with '#'\nheadings = []\nfirst_heading_idx = None\nfor i, line in enumerate(lines):\n    stripped = line.lstrip()\n    if stripped.startswith(\"#\"):\n        # Ensure it looks like heading: starts with # \n        # Extract heading text: strip leading #'s and spaces\n        # Per task: lines starting with # or ##\n        # We'll treat any line starting with # as heading\n        heading_text = stripped.lstrip(\"#\").strip()\n        if heading_text:\n            headings.append(heading_text)\n            if first_heading_idx is None:\n                first_heading_idx = i\n        else:\n            # empty heading? still consider first?\n            if first_heading_idx is None:\n                first_heading_idx = i\n\nprint(f\"headings={headings}\")\nprint(f\"first_idx={first_heading_idx}\")\n\ndef anchor(t):\n    return t.lower().replace(\" \", \"-\")\n\ntoc_lines = [f\"- [{t}](#{anchor(t)})\" for t in headings]\nprint(toc_lines)\n\n# Insert TOC after first heading\nif first_heading_idx is not None:\n    # Insert with blank lines for markdown readability:\n    # after first heading line, insert blank line if not already blank? \n    # Simplest robust: insert toc immediately after first heading line,\n    # with a blank line before and after if needed.\n    # We'll construct: lines[:first+1] + [\"\"] + toc + [\"\"] + rest skipping leading blanks? \n    # But to keep it simple and preserve original blank lines, we do:\n    # lines[:first+1] + toc + lines[first+1:]\n    # However that would produce \"# Project Alpha\\n- [...]\\n\\nIntroduction\" without blank between heading and TOC.\n    # Better: insert blank-separated block.\n    # Let's do: head = lines[:first_heading_idx+1], tail = lines[first_heading_idx+1:]\n    # Then new_lines = head + [\"\"] + toc_lines + tail\n    # But if tail already starts with \"\", we'd get double blank? So handle.\n    head = lines[:first_heading_idx+1]\n    tail = lines[first_heading_idx+1:]\n    # Ensure exactly one blank line between head and toc, and toc and tail?\n    # Approach: if tail starts with blank(s), keep them as separator after TOC, and add one blank before TOC.\n    # i.e., new = head + [\"\"] + toc + tail\n    # If tail[0]==\"\" then we get head + [\"\"] + toc + [\"\", ...] => blank before and after good.\n    # If tail[0]!=\"\" then we get head + [\"\"] + toc + tail (missing blank after) -> add blank after.\n    if tail and tail[0].strip() == \"\":\n        new_lines = head + [\"\"] + toc_lines + tail\n    else:\n        new_lines = head + [\"\"] + toc_lines + [\"\"] + tail\n    # Edge: if head already ends with blank? head ends with heading, so no.\n    # But if we added [\"\"] and original tail blank, we need to avoid double? Actually head=[\"# Project Alpha\"], tail=[\"\", \"Introduction\"...]\n    # new = [\"# Project Alpha\", \"\", toc..., \"\", \"Introduction\"...] -> correct with blanks around.\n    print(\"---NEW---\")\n    print(\"\\n\".join(new_lines))\n    path.write_text(\"\\n\".join(new_lines) + (\"\\n\" if text.endswith(\"\\n\") else \"\"))\n    print(\"written\")\nelse:\n    print(\"no heading found\")\nPY\ncat /doc/README.md"
+    ],
+    "usage": {
+      "input_tokens": 6700,
+      "output_tokens": 3158,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 29864
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 3.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat /doc/README.md; echo \"---EXIT:$?---\"\nls -R /doc 2>&1\npwd; ls -la",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# Project Alpha\n\nIntroduction to the project.\n\n## Installation\n\nRun the installer.\n\n## Usage\n\nHow to use it.\n\n## API Reference\n\nEndpoint documentation.\n\n## Contributing\n\nPR guidelines.\n---EXIT:0---\n/doc:\nREADME.md\n/home/user\n"
+          },
+          {
+            "commands": "cat -A /doc/README.md\necho \"---\"\nhexdump -C /doc/README.md | head\nwc -l /doc/README.md",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# Project Alpha$\n$\nIntroduction to the project.$\n$\n## Installation$\n$\nRun the installer.$\n$\n## Usage$\n$\nHow to use it.$\n$\n## API Reference$\n$\nEndpoint documentation.$\n$\n## Contributing$\n$\nPR guidelines.$\n---\n00000000  23 20 50 72 6f 6a 65 63  74 20 41 6c 70 68 61 0a  |# Project Alpha.|\n00000010  0a 49 6e 74 72 6f 64 75  63 74 69 6f 6e 20 74 6f  |.Introduction to|\n00000020  20 74 68 65 20 70 72 6f  6a 65 63 74 2e 0a 0a 23  | the project...#|\n00000030  23 20 49 6e 73 74 61 6c  6c 61 74 69 6f 6e 0a 0a  |# Installation..|\n00000040  52 75 6e 20 74 68 65 20  69 6e 73 74 61 6c 6c 65  |Run the installe|\n00000050  72 2e 0a 0a 23 23 20 55  73 61 67 65 0a 0a 48 6f  |r...## Usage..Ho|\n00000060  77 20 74 6f 20 75 73 65  20 69 74 2e 0a 0a 23 23  |w to use it...##|\n00000070  20 41 50 49 20 52 65 66  65 72 65 6e 63 65 0a 0a  | API Reference..|\n00000080  45 6e 64 70 6f 69 6e 74  20 64 6f 63 75 6d 65 6e  |Endpoint documen|\n00000090  74 61 74 69 6f 6e 2e 0a  0a 23 23 20 43 6f 6e 74  |tation...## Cont|\n19 /doc/README.md\n"
+          },
+          {
+            "commands": "python3 - << 'PY'\nfrom pathlib import Path\n\npath = Path(\"/doc/README.md\")\ntext = path.read_text()\nlines = text.splitlines()\n\n# Find headings: lines starting with # or ##\n# Interpret as lstrip starts with '#'\nheadings = []\nfirst_heading_idx = None\nfor i, line in enumerate(lines):\n    stripped = line.lstrip()\n    if stripped.startswith(\"#\"):\n        # Ensure it looks like heading: starts with # \n        # Extract heading text: strip leading #'s and spaces\n        # Per task: lines starting with # or ##\n        # We'll treat any line starting with # as heading\n        heading_text = stripped.lstrip(\"#\").strip()\n        if heading_text:\n            headings.append(heading_text)\n            if first_heading_idx is None:\n                first_heading_idx = i\n        else:\n            # empty heading? still consider first?\n            if first_heading_idx is None:\n                first_heading_idx = i\n\nprint(f\"headings={headings}\")\nprint(f\"first_idx={first_heading_idx}\")\n\ndef anchor(t):\n    return t.lower().replace(\" \", \"-\")\n\ntoc_lines = [f\"- [{t}](#{anchor(t)})\" for t in headings]\nprint(toc_lines)\n\n# Insert TOC after first heading\nif first_heading_idx is not None:\n    # Insert with blank lines for markdown readability:\n    # after first heading line, insert blank line if not already blank? \n    # Simplest robust: insert toc immediately after first heading line,\n    # with a blank line before and after if needed.\n    # We'll construct: lines[:first+1] + [\"\"] + toc + [\"\"] + rest skipping leading blanks? \n    # But to keep it simple and preserve original blank lines, we do:\n    # lines[:first+1] + toc + lines[first+1:]\n    # However that would produce \"# Project Alpha\\n- [...]\\n\\nIntroduction\" without blank between heading and TOC.\n    # Better: insert blank-separated block.\n    # Let's do: head = lines[:first_heading_idx+1], tail = lines[first_heading_idx+1:]\n    # Then new_lines = head + [\"\"] + toc_lines + tail\n    # But if tail already starts with \"\", we'd get double blank? So handle.\n    head = lines[:first_heading_idx+1]\n    tail = lines[first_heading_idx+1:]\n    # Ensure exactly one blank line between head and toc, and toc and tail?\n    # Approach: if tail starts with blank(s), keep them as separator after TOC, and add one blank before TOC.\n    # i.e., new = head + [\"\"] + toc + tail\n    # If tail[0]==\"\" then we get head + [\"\"] + toc + [\"\", ...] => blank before and after good.\n    # If tail[0]!=\"\" then we get head + [\"\"] + toc + tail (missing blank after) -> add blank after.\n    if tail and tail[0].strip() == \"\":\n        new_lines = head + [\"\"] + toc_lines + tail\n    else:\n        new_lines = head + [\"\"] + toc_lines + [\"\"] + tail\n    # Edge: if head already ends with blank? head ends with heading, so no.\n    # But if we added [\"\"] and original tail blank, we need to avoid double? Actually head=[\"# Project Alpha\"], tail=[\"\", \"Introduction\"...]\n    # new = [\"# Project Alpha\", \"\", toc..., \"\", \"Introduction\"...] -> correct with blanks around.\n    print(\"---NEW---\")\n    print(\"\\n\".join(new_lines))\n    path.write_text(\"\\n\".join(new_lines) + (\"\\n\" if text.endswith(\"\\n\") else \"\"))\n    print(\"written\")\nelse:\n    print(\"no heading found\")\nPY\ncat /doc/README.md",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "headings=['Project Alpha', 'Installation', 'Usage', 'API Reference', 'Contributing']\nfirst_idx=0\n['- [Project Alpha](#project-alpha)', '- [Installation](#installation)', '- [Usage](#usage)', '- [API Reference](#api-reference)', '- [Contributing](#contributing)']\n---NEW---\n# Project Alpha\n\n- [Project Alpha](#project-alpha)\n- [Installation](#installation)\n- [Usage](#usage)\n- [API Reference](#api-reference)\n- [Contributing](#contributing)\n\nIntroduction to the project.\n\n## Installation\n\nRun the installer.\n\n## Usage\n\nHow to use it.\n\n## API Reference\n\nEndpoint documentation.\n\n## Contributing\n\nPR guidelines.\nwritten\n# Project Alpha\n\n- [Project Alpha](#project-alpha)\n- [Installation](#installation)\n- [Usage](#usage)\n- [API Reference](#api-reference)\n- [Contributing](#contributing)\n\nIntroduction to the project.\n\n## Installation\n\nRun the installer.\n\n## Usage\n\nHow to use it.\n\n## API Reference\n\nEndpoint documentation.\n\n## Contributing\n\nPR guidelines.\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

@@ -16,6 +16,7 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
   RG_VERSION: 15.1.0
+  JQ_VERSION: 1.8.1
 
 jobs:
   lint:
@@ -31,7 +32,7 @@ jobs:
         with:
           components: rustfmt, clippy
 
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
 
       - name: Check formatting
         run: cargo fmt --all -- --check
@@ -87,7 +88,10 @@ jobs:
         with:
           targets: wasm32-unknown-unknown, wasm32-wasip2
 
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+
+      - name: Check browser VM source drift
+        run: python3 scripts/check_zapcode_browser.py
 
       - name: Check bashkit for wasm32-unknown-unknown
         run: cargo check -p bashkit -p bashkit-scripted-tool --target wasm32-unknown-unknown --features bashkit/jq,bashkit/wasm_js,bashkit/terminal
@@ -122,7 +126,7 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
 
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
 
       - name: Install wasm-tools
         run: cargo install wasm-tools --version 1.256.0 --locked
@@ -153,7 +157,7 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
 
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
 
       - name: Install wasm-bindgen-cli
         run: bash scripts/install-wasm-bindgen.sh
@@ -166,6 +170,31 @@ jobs:
 
       - name: Integration tests (headless Node)
         run: node --test "crates/bashkit-wasm/__test__/*.test.mjs"
+
+      - name: Browser streaming (main thread and worker)
+        run: |
+          npm install --prefix "$RUNNER_TEMP/bashkit-browser-test" --no-save playwright@1.62.1
+          export PLAYWRIGHT_MODULE="$RUNNER_TEMP/bashkit-browser-test/node_modules/playwright/index.mjs"
+          node "$RUNNER_TEMP/bashkit-browser-test/node_modules/playwright/cli.js" install --with-deps chromium
+          export CHROME_EXECUTABLE=$(node --input-type=module -e 'const {chromium} = await import(process.env.PLAYWRIGHT_MODULE); console.log(chromium.executablePath())')
+          node crates/bashkit-wasm/scripts/test-streaming-browser.mjs
+
+      - name: Build optional runtime bundle
+        run: BASHKIT_WASM_VARIANT=runtimes BASHKIT_WASM_FEATURES=terminal,python,typescript bash crates/bashkit-wasm/scripts/build.sh release
+
+      - name: Embedded runtime callback tests
+        run: BASHKIT_WASM_VARIANT=runtimes node --test crates/bashkit-wasm/__test__/runtime-functions.test.mjs
+
+      - name: Browser runtime callbacks (Chromium and module workers)
+        run: |
+          export PLAYWRIGHT_MODULE="$RUNNER_TEMP/bashkit-browser-test/node_modules/playwright/index.mjs"
+          export CHROME_EXECUTABLE=$(node --input-type=module -e 'const {chromium} = await import(process.env.PLAYWRIGHT_MODULE); console.log(chromium.executablePath())')
+          node crates/bashkit-wasm/scripts/test-runtime-browser.mjs
+
+      - name: Browser compatibility and transfer-size gates
+        run: |
+          node crates/bashkit-wasm/bench/compat.mjs
+          node crates/bashkit-wasm/bench/artifact.mjs crates/bashkit-wasm/pkg --check
 
   audit:
     name: Audit
@@ -185,7 +214,7 @@ jobs:
       # override even for `cargo install`), which broke this job. A prebuilt
       # binary is immune to future tool-dependency MSRV bumps.
       - name: Install cargo-audit
-        uses: taiki-e/install-action@e407f7bafb71fd004bc5c2da3032e5470cbb6ef0 # v2
+        uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2
         with:
           tool: cargo-audit
 
@@ -199,9 +228,9 @@ jobs:
           version: 10.33.0
 
       - name: Setup Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
         with:
-          node-version: "22"
+          node-version: "22.23.4"
 
       - name: Security audit (cargo, npm, PyPI)
         # Lockfile discovery and the advisory suppression lists live in the
@@ -218,7 +247,7 @@ jobs:
           command: check licenses sources
 
       - name: Install cargo-vet
-        uses: taiki-e/install-action@e407f7bafb71fd004bc5c2da3032e5470cbb6ef0 # v2
+        uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2
         with:
           # 0.10.2+ parses trusted-publisher entries in imports.lock (wasmtime
           # crates publish via GitHub trusted publishing); 0.10.0 rejects them.
@@ -229,7 +258,14 @@ jobs:
 
   test:
     name: Test
-    runs-on: ubuntu-latest
+    # Pinned, not `ubuntu-latest`: this job's `*_match_gnu` differential tests
+    # need real GNU coreutils as the oracle, and 24.04 is the last image that
+    # ships it as the default. Ubuntu 26.04 installs uutils as `coreutils`
+    # instead, so `dd`/`join`/`od`/`pr` stopped reporting "GNU coreutils" and
+    # those tests fail closed by design rather than skipping. Unpin once the
+    # GNU oracle is installed explicitly, the way `rg` and `jq` already are;
+    # see "Pinned External Oracles" in knowledge/operations/testing.md.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -238,7 +274,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
 
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
 
       # Pre-installed on `ubuntu-latest` images, but make the dependency
       # explicit so a future runner image change can't silently turn the
@@ -262,7 +298,7 @@ jobs:
       - name: Install uutils coreutils multicall for differential tests
         id: install_uutils
         continue-on-error: true
-        uses: taiki-e/install-action@e407f7bafb71fd004bc5c2da3032e5470cbb6ef0 # v2
+        uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2
         with:
           tool: coreutils
       - name: Verify uutils on PATH
@@ -273,6 +309,12 @@ jobs:
       # binary so upstream formatting/path semantics cannot drift under CI.
       - name: Install pinned ripgrep for differential tests
         run: scripts/install-ripgrep-ci.sh "$RG_VERSION"
+
+      # Same reason for `jq`, and the runner image already proved it: an
+      # unpinned oracle made the jq parity suite a function of which
+      # `ubuntu-latest` image the job landed on.
+      - name: Install pinned jq for differential tests
+        run: scripts/install-jq-ci.sh "$JQ_VERSION"
 
       # Examples have a dedicated job below; skipping them here avoids
       # duplicated example links that can exhaust runner disk on main.
@@ -341,6 +383,15 @@ jobs:
           cargo test -p bashkit --features terminal --test integration -- terminal_tests l_term_
           cargo test -p bashkit --features terminal --doc terminal
 
+      # markkit/fetchkit builtins are `cfg(markkit|fetchkit)` (off by default),
+      # so the main "Run tests" step compiles them out entirely.
+      - name: Run markkit/fetchkit builtin tests
+        run: |
+          cargo test -p bashkit --features markkit,fetchkit --lib -- builtins::markkit:: builtins::fetchkit::
+          cargo test -p bashkit --features markkit,fetchkit --test integration -- markkit_builtin_tests fetchkit_builtin_tests
+          cargo test -p bashkit --features markkit --test integration -- markkit_builtin_tests
+          cargo test -p bashkit --features markkit,fetchkit --doc -- markkit_fetchkit_guide
+
       - name: Run fail-point tests (single-threaded)
         run: cargo test --features failpoints --test security_failpoint_tests -- --test-threads=1
 
@@ -348,6 +399,42 @@ jobs:
         run: cargo test --test proptest_security -- --test-threads=1
         env:
           PROPTEST_CASES: 50
+
+  cpython-platforms:
+    # COFF rejects 64 KiB-aligned statics; Mach-O can lose their alignment at
+    # load time. Keep the actual embedding, module load and execution covered.
+    name: CPython (${{ matrix.os }}, Rust ${{ matrix.rust }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            rust: "1.95.0"
+          - os: macos-latest
+            rust: "1.95.0"
+          - os: windows-2025
+            rust: "1.96.0"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
+        with:
+          toolchain: ${{ matrix.rust }}
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+
+      - name: Probe embedding object generation and aligned storage
+        run: python -m unittest discover -s scripts/tests -p test_cpython_embedding.py -v
+
+      - name: Test CPython module loading and alignment
+        run: cargo test --locked -p bashkit-cpython-wasm --lib
+
+      - name: Execute CPython through the shell
+        run: cargo test --locked -p bashkit --features cpython --test integration -- cpython_integration_tests
 
   windows-containment:
     # THREAT[TM-ESC-033]: Windows path parsing has drive, UNC, device, and
@@ -362,7 +449,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
 
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           shared-key: windows-containment
 
@@ -378,8 +465,8 @@ jobs:
       # The C ABI mount-root guard is Windows-conditional, so the Linux
       # workspace test run compiles it out. Nothing else runs bashkit-capi's
       # tests on Windows, which left them never executing anywhere.
-      - name: Test C ABI mount-root validation
-        run: cargo test -p bashkit-capi --lib
+      - name: Test C ABI mount-root validation and runtime callbacks
+        run: cargo test -p bashkit-capi --lib --test runtime_functions
 
   # The adoption shape this covers — bashkit as an agent's shell, with commands
   # bridged to host processes — exists to work on Windows without a real bash.
@@ -397,7 +484,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
 
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           shared-key: windows-adoption
 
@@ -427,7 +514,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
 
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
 
       - name: Build examples
         run: cargo build --examples --features "git,http_client,ssh,sqlite"
@@ -453,6 +540,7 @@ jobs:
           cargo run --example realfs_readwrite --features realfs
           cargo run --example sqlite_basic --features sqlite
           cargo run --example sqlite_workflow --features sqlite
+          cargo run --example markkit_fetchkit --features markkit,fetchkit
           cargo run --example terminal_vi --features terminal
           cargo run --example terminal_record --features terminal
 
@@ -569,6 +657,11 @@ jobs:
 
       - name: Install Rust nightly
         uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2 # nightly
+        with:
+          # Pinned: nightly 2026-10-31 (rustc f9ceb4a4d) fails to compile bashkit
+          # (E0391 async-drop cycle on parser::ast::CommandList). Unpin once a
+          # later nightly builds `cargo +nightly check -p bashkit --lib`.
+          toolchain: nightly-2026-10-30
 
       - name: Install cargo-fuzz
         uses: taiki-e/cache-cargo-install-action@9ee83daaa7b96a6fab930949ecf1122bba04a389 # v3
@@ -579,15 +672,15 @@ jobs:
       - name: Verify fuzz targets compile
         working-directory: crates/bashkit
         run: |
-          cargo +nightly fuzz build
-          cargo +nightly fuzz build --features cpython cpython_fuzz
-          cargo +nightly fuzz build --features cpython cpython_http_fuzz
+          cargo +nightly-2026-10-30 fuzz build
+          cargo +nightly-2026-10-30 fuzz build --features cpython cpython_fuzz
+          cargo +nightly-2026-10-30 fuzz build --features cpython cpython_http_fuzz
 
   # Gate job for branch protection — name must stay "Check"
   check:
     name: Check
     if: always()
-    needs: [lint, audit, test, windows-containment, test-windows, examples, fuzz-check, wasm, wasm-component, wasm-web]
+    needs: [lint, audit, test, cpython-platforms, windows-containment, test-windows, examples, fuzz-check, wasm, wasm-component, wasm-web]
     runs-on: ubuntu-latest
     steps:
       - name: Verify all jobs passed
@@ -595,6 +688,7 @@ jobs:
           if [[ "${{ needs.lint.result }}" != "success" ]] || \
              [[ "${{ needs.audit.result }}" != "success" ]] || \
              [[ "${{ needs.test.result }}" != "success" ]] || \
+             [[ "${{ needs.cpython-platforms.result }}" != "success" ]] || \
              [[ "${{ needs.windows-containment.result }}" != "success" ]] || \
              [[ "${{ needs.test-windows.result }}" != "success" ]] || \
              [[ "${{ needs.examples.result }}" != "success" ]] || \

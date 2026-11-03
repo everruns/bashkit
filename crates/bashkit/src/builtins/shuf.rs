@@ -67,13 +67,16 @@ impl Builtin for Shuf {
         let zero_terminated = matches.get_flag("zero-terminated");
         // The generated args declare value_parsers that pre-parse these
         // values for us — we read the typed result, not the raw String.
+        // `input-range` is the exception; see `read_input_range`.
         let head_count: Option<u64> = matches
             .get_many::<u64>("head-count")
             .and_then(|mut vs| vs.next_back().copied());
         let output_path = matches.get_one::<std::path::PathBuf>("output").cloned();
-        let input_range = matches
-            .get_one::<RangeInclusive<u64>>("input-range")
-            .cloned();
+        let input_range = match read_input_range(&matches) {
+            Some(Ok(range)) => Some(range),
+            Some(Err(stderr)) => return Ok(ExecResult::err(stderr, 1)),
+            None => None,
+        };
         let positionals: Vec<String> = matches
             .get_many::<OsString>("file-or-args")
             .map(|vs| vs.map(|v| v.to_string_lossy().into_owned()).collect())
@@ -134,6 +137,63 @@ impl Builtin for Shuf {
         }
 
         Ok(ExecResult::ok(out))
+    }
+}
+
+/// Read `-i LO-HI` under either value type the generated surface carries.
+///
+/// Decision: at the pinned rev the ported surface declares
+/// `.value_parser(parse_range)` on `input-range`, so clap hands back a
+/// `RangeInclusive<u64>`. Upstream has since dropped that value parser and
+/// parses the raw string in its own `uumain`, so the regenerated surface
+/// stores a plain `String` and a consumer naming only the pre-parsed type
+/// reads nothing — `shuf -i 1-5` printed empty output and failed the weekly
+/// drift run (run 39753862402). The drift PR is generated-only and cannot
+/// fix its own consumers (`knowledge/runtimes/coreutils-args-port.md` § The
+/// drift PR cannot fix its own consumers), so this reads both and stays
+/// valid against the pin and upstream HEAD alike — the same rationale as
+/// `helpers::string_value`.
+///
+/// `None` means no `-i` was given; `Some(Err(_))` is a GNU-shaped diagnostic
+/// for a malformed range.
+fn read_input_range(
+    matches: &clap::ArgMatches,
+) -> Option<std::result::Result<RangeInclusive<u64>, String>> {
+    // Pinned surface: clap already parsed the range. An `Err` here is a
+    // value-type mismatch, i.e. the regenerated surface, not a bad value.
+    if let Ok(range) = matches.try_get_one::<RangeInclusive<u64>>("input-range") {
+        return range.cloned().map(Ok);
+    }
+    super::helpers::string_value(matches, "input-range").map(|raw| parse_input_range(&raw))
+}
+
+/// Parse `LO-HI` the way GNU `shuf` does, including its diagnostics.
+///
+/// Mirrors upstream's own `parse_range`, which is body code rather than
+/// argument surface and so is not vendored: GNU reports the range as a
+/// whole rather than the offending bound, and distinguishes only the
+/// does-not-fit-in-`u64` case. Exit status is 1, matching upstream's
+/// `USimpleError::new(1, ...)` — clap's own rejection under the pinned
+/// surface exits 2 instead, so this path is strictly closer to GNU.
+fn parse_input_range(raw: &str) -> std::result::Result<RangeInclusive<u64>, String> {
+    let invalid = || format!("shuf: invalid input range: '{raw}'\n");
+    let Some((from, to)) = raw.split_once('-') else {
+        return Err(invalid());
+    };
+    let parse = |bound: &str| match bound.parse::<u64>() {
+        Ok(n) => Ok(n),
+        Err(e) if *e.kind() == std::num::IntErrorKind::PosOverflow => Err(format!(
+            "shuf: invalid input range: '{raw}': Value too large to be stored in data type\n"
+        )),
+        Err(_) => Err(invalid()),
+    };
+    let begin = parse(from)?;
+    let end = parse(to)?;
+    // `begin == end + 1` is GNU's spelling of an empty range, e.g. `-i 5-4`.
+    if begin <= end || begin == end + 1 {
+        Ok(begin..=end)
+    } else {
+        Err(invalid())
     }
 }
 
@@ -434,6 +494,89 @@ mod tests {
         assert_eq!(
             split_separated("a\nb\nc", '\n'),
             vec!["a".to_string(), "b".into(), "c".into()]
+        );
+    }
+
+    /// The regenerated surface: upstream dropped `.value_parser(parse_range)`,
+    /// so `-i` stores a plain `String`. Built by hand rather than by
+    /// regenerating, so the guard holds without a live upstream checkout.
+    fn head_shaped_cmd() -> clap::Command {
+        clap::Command::new("shuf").no_binary_name(true).arg(
+            clap::Arg::new("input-range")
+                .short('i')
+                .long("input-range")
+                .value_name("LO-HI"),
+        )
+    }
+
+    /// The pinned surface: clap pre-parses `-i` into a `RangeInclusive<u64>`.
+    fn pinned_shaped_cmd() -> clap::Command {
+        clap::Command::new("shuf").no_binary_name(true).arg(
+            clap::Arg::new("input-range")
+                .short('i')
+                .long("input-range")
+                .value_name("LO-HI")
+                .value_parser(|s: &str| parse_input_range(s).map_err(|e| e.trim().to_string())),
+        )
+    }
+
+    #[test]
+    fn reads_input_range_under_both_value_types() {
+        for cmd in [pinned_shaped_cmd(), head_shaped_cmd()] {
+            let m = cmd.try_get_matches_from(["-i", "1-5"]).unwrap();
+            assert_eq!(read_input_range(&m), Some(Ok(1..=5)));
+        }
+    }
+
+    #[test]
+    fn absent_input_range_reads_none_under_both_value_types() {
+        for cmd in [pinned_shaped_cmd(), head_shaped_cmd()] {
+            let m = cmd.try_get_matches_from::<_, &str>([]).unwrap();
+            assert_eq!(read_input_range(&m), None);
+        }
+    }
+
+    #[test]
+    fn malformed_range_on_regenerated_surface_reports_like_gnu() {
+        let m = head_shaped_cmd()
+            .try_get_matches_from(["-i", "1x5"])
+            .unwrap();
+        assert_eq!(
+            read_input_range(&m),
+            Some(Err("shuf: invalid input range: '1x5'\n".to_string()))
+        );
+    }
+
+    #[test]
+    fn parse_input_range_accepts_gnu_empty_range() {
+        // GNU spells the empty range `LO-HI` with `LO == HI + 1`. Asserted
+        // through the bounds rather than a `5..=4` literal, which clippy
+        // reads as a reversed-range typo.
+        let empty = parse_input_range("5-4").expect("LO == HI + 1 is the empty range");
+        assert_eq!((*empty.start(), *empty.end()), (5, 4));
+        assert!(empty.is_empty());
+        // One further apart is a genuine inversion and is rejected.
+        assert!(parse_input_range("6-4").is_err());
+    }
+
+    #[test]
+    fn parse_input_range_rejects_malformed_input() {
+        for raw in ["", "5", "a-b", "1-", "-", "1-2-3"] {
+            assert!(
+                parse_input_range(raw).is_err(),
+                "expected '{raw}' to be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_input_range_distinguishes_overflow() {
+        let too_big = "1-18446744073709551616";
+        assert_eq!(
+            parse_input_range(too_big),
+            Err(format!(
+                "shuf: invalid input range: '{too_big}': Value too large to be stored in data type\n"
+            ))
         );
     }
 

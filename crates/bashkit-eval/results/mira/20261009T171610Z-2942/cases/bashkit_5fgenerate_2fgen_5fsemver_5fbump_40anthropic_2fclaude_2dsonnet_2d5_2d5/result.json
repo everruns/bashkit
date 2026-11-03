@@ -1,0 +1,63 @@
+{
+  "eval": "bashkit_generate",
+  "sample": "gen_semver_bump",
+  "target": "anthropic/claude-sonnet-5-5",
+  "input": [
+    "Write a bash script that cuts a release.\n\nStarting files:\n--- /home/eval/app/VERSION ---\n1.9.3\n--- end ---\n--- /home/eval/app/changes.txt ---\nfix: handle empty config\nfeat: add --dry-run flag\ndocs: typo in README\nfix: retry on 503\n--- end ---\n--- /home/eval/app/CHANGELOG.md ---\n# Changelog\n\n## Unreleased\n\n## 1.9.3 (2026-09-01)\n- fix: crash on start\n--- end ---\n\n1. Decide the bump from /home/eval/app/changes.txt: if any line starts with `BREAKING` or has `!:` right after its type (e.g. `feat!: ...`), bump major; otherwise if any line starts with `feat:`, bump minor; otherwise bump patch. Lower parts reset to 0. Version parts are integers.\n2. Write the new version to /home/eval/app/VERSION (single line).\n3. In /home/eval/app/CHANGELOG.md, keep the `## Unreleased` heading and insert right after it: a blank line, the heading `## <new version> (2026-10-09)`, then one line `- <change>` for each `feat`/`fix` line of changes.txt in original order (other types are omitted). The existing blank line before `## 1.9.3` must remain, so the file reads:\n```\n# Changelog\n\n## Unreleased\n\n## 1.10.0 (2026-10-09)\n- fix: handle empty config\n- feat: add --dry-run flag\n- fix: retry on 503\n\n## 1.9.3 (2026-09-01)\n- fix: crash on start\n```\n4. Print `1.9.3 -> <new version>` to stdout and exit 0."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "4/4 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "```bash\n#!/bin/bash\nset -u\ndir=/home/eval/app\nver_file=\"$dir/VERSION\"\nchanges=\"$dir/changes.txt\"\ncl=\"$dir/CHANGELOG.md\"\n\nold=$(head -n1 \"$ver_file\" | tr -d '[:space:]')\nIFS=. read -r major minor patch <<< \"$old\"\nmajor=$((10#${major:-0})); minor=$((10#${minor:-0})); patch=$((10#${patch:-0}))\n\nbreaking=0; feat=0\nitems=()\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  line=\"${line%$'\\r'}\"\n  [[ -z \"$line\" ]] && continue\n  if [[ \"$line\" == BREAKING* ]] || [[ \"$line\" =~ ^[A-Za-z0-9_-]+(\\([^\\)]*\\))?!: ]]; then\n    breaking=1\n  fi\n  if [[ \"$line\" == feat:* ]]; then\n    feat=1\n  fi\n  if [[ \"$line\" =~ ^(feat|fix)(\\([^\\)]*\\))?!?: ]]; then\n    items+=(\"$line\")\n  fi\ndone < \"$changes\"\n\nif (( breaking )); then\n  major=$((major+1)); minor=0; patch=0\nelif (( feat )); then\n  minor=$((minor+1)); patch=0\nelse\n  patch=$((patch+1))\nfi\nnew=\"$major.$minor.$patch\"\n\necho \"$new\" > \"$ver_file\"\n\ntmp=$(mktemp)\ndone_ins=0\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  printf '%s\\n' \"$line\" >> \"$tmp\"\n  if (( ! done_ins )) && [[ \"$line\" == \"## Unreleased\" ]]; then\n    printf '\\n## %s (2026-10-09)\\n' \"$new\" >> \"$tmp\"\n    for it in \"${items[@]+\"${items[@]}\"}\"; do\n      printf -- '- %s\\n' \"$it\" >> \"$tmp\"\n    done\n    done_ins=1\n  fi\ndone < \"$cl\"\ncat \"$tmp\" > \"$cl\"\nrm -f \"$tmp\"\n\necho \"$old -> $new\"\nexit 0\n```",
+    "iterations": 1,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "#!/bin/bash\nset -u\ndir=/home/eval/app\nver_file=\"$dir/VERSION\"\nchanges=\"$dir/changes.txt\"\ncl=\"$dir/CHANGELOG.md\"\n\nold=$(head -n1 \"$ver_file\" | tr -d '[:space:]')\nIFS=. read -r major minor patch <<< \"$old\"\nmajor=$((10#${major:-0})); minor=$((10#${minor:-0})); patch=$((10#${patch:-0}))\n\nbreaking=0; feat=0\nitems=()\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  line=\"${line%$'\\r'}\"\n  [[ -z \"$line\" ]] && continue\n  if [[ \"$line\" == BREAKING* ]] || [[ \"$line\" =~ ^[A-Za-z0-9_-]+(\\([^\\)]*\\))?!: ]]; then\n    breaking=1\n  fi\n  if [[ \"$line\" == feat:* ]]; then\n    feat=1\n  fi\n  if [[ \"$line\" =~ ^(feat|fix)(\\([^\\)]*\\))?!?: ]]; then\n    items+=(\"$line\")\n  fi\ndone < \"$changes\"\n\nif (( breaking )); then\n  major=$((major+1)); minor=0; patch=0\nelif (( feat )); then\n  minor=$((minor+1)); patch=0\nelse\n  patch=$((patch+1))\nfi\nnew=\"$major.$minor.$patch\"\n\necho \"$new\" > \"$ver_file\"\n\ntmp=$(mktemp)\ndone_ins=0\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  printf '%s\\n' \"$line\" >> \"$tmp\"\n  if (( ! done_ins )) && [[ \"$line\" == \"## Unreleased\" ]]; then\n    printf '\\n## %s (2026-10-09)\\n' \"$new\" >> \"$tmp\"\n    for it in \"${items[@]+\"${items[@]}\"}\"; do\n      printf -- '- %s\\n' \"$it\" >> \"$tmp\"\n    done\n    done_ins=1\n  fi\ndone < \"$cl\"\ncat \"$tmp\" > \"$cl\"\nrm -f \"$tmp\"\n\necho \"$old -> $new\"\nexit 0\n"
+    ],
+    "usage": {
+      "input_tokens": 1013,
+      "output_tokens": 762,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 4947
+    },
+    "metrics": {
+      "exec_ms": 17.0,
+      "exit_code": 0.0,
+      "extracted": 1.0,
+      "generate_ms": 4930.0,
+      "script_bytes": 1288.0,
+      "script_found": 1.0,
+      "timed_out": 0.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "#!/bin/bash\nset -u\ndir=/home/eval/app\nver_file=\"$dir/VERSION\"\nchanges=\"$dir/changes.txt\"\ncl=\"$dir/CHANGELOG.md\"\n\nold=$(head -n1 \"$ver_file\" | tr -d '[:space:]')\nIFS=. read -r major minor patch <<< \"$old\"\nmajor=$((10#${major:-0})); minor=$((10#${minor:-0})); patch=$((10#${patch:-0}))\n\nbreaking=0; feat=0\nitems=()\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  line=\"${line%$'\\r'}\"\n  [[ -z \"$line\" ]] && continue\n  if [[ \"$line\" == BREAKING* ]] || [[ \"$line\" =~ ^[A-Za-z0-9_-]+(\\([^\\)]*\\))?!: ]]; then\n    breaking=1\n  fi\n  if [[ \"$line\" == feat:* ]]; then\n    feat=1\n  fi\n  if [[ \"$line\" =~ ^(feat|fix)(\\([^\\)]*\\))?!?: ]]; then\n    items+=(\"$line\")\n  fi\ndone < \"$changes\"\n\nif (( breaking )); then\n  major=$((major+1)); minor=0; patch=0\nelif (( feat )); then\n  minor=$((minor+1)); patch=0\nelse\n  patch=$((patch+1))\nfi\nnew=\"$major.$minor.$patch\"\n\necho \"$new\" > \"$ver_file\"\n\ntmp=$(mktemp)\ndone_ins=0\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  printf '%s\\n' \"$line\" >> \"$tmp\"\n  if (( ! done_ins )) && [[ \"$line\" == \"## Unreleased\" ]]; then\n    printf '\\n## %s (2026-10-09)\\n' \"$new\" >> \"$tmp\"\n    for it in \"${items[@]+\"${items[@]}\"}\"; do\n      printf -- '- %s\\n' \"$it\" >> \"$tmp\"\n    done\n    done_ins=1\n  fi\ndone < \"$cl\"\ncat \"$tmp\" > \"$cl\"\nrm -f \"$tmp\"\n\necho \"$old -> $new\"\nexit 0\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "1.9.3 -> 1.10.0\n"
+          }
+        ]
+      },
+      "generate": {
+        "extraction": "fenced",
+        "timed_out": false
+      }
+    }
+  },
+  "skipped": false
+}

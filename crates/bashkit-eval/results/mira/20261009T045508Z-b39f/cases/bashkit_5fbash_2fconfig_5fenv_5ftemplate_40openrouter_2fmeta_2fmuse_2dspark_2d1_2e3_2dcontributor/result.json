@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "config_env_template",
+  "target": "openrouter/meta/muse-spark-1.3-contributor",
+  "input": [
+    "Read /config/template.env which has lines like 'KEY=${VALUE:-default}'. For each line, check if the key exists in /config/overrides.txt (format: KEY=value). If it does, use the override value; otherwise use the default from the template. Write the final KEY=value pairs to /app/.env and print the result."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Resolved `/config/template.env` with overrides from `/config/overrides.txt` and wrote final config to `/app/.env`:\n\n```\nDB_HOST=db.prod.internal\nDB_PORT=5432\nDB_NAME=myapp\nREDIS_URL=redis://localhost:6379\nLOG_LEVEL=warn\n```\n",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cat /config/template.env; echo \"---overrides---\"; cat /config/overrides.txt; echo \"---appdir---\"; ls -la /app/ 2>&1; ls -la /config/ 2>&1",
+      "mkdir -p /app\ndeclare -A overrides\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  # skip empty lines and comments\n  [[ -z \"$line\" ]] && continue\n  [[ \"$line\" =~ ^[[:space:]]*# ]] && continue\n  # split on first =\n  if [[ \"$line\" == *\"=\"* ]]; then\n    k=\"${line%%=*}\"\n    v=\"${line#*=}\"\n    # trim whitespace around key (remove leading/trailing spaces)\n    k=\"$(echo \"$k\" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')\"\n    # keep value as-is (do not trim? but trim trailing CR)\n    v=\"${v%$'\\r'}\"\n    overrides[\"$k\"]=\"$v\"\n  fi\ndone < /config/overrides.txt\n\n# debug: show loaded overrides\necho \"Loaded overrides:\" >&2\nfor k in \"${!overrides[@]}\"; do echo \"  $k=${overrides[$k]}\" >&2; done\n\n> /app/.env\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  [[ -z \"$line\" ]] && continue\n  [[ \"$line\" =~ ^[[:space:]]*# ]] && continue\n  # template line expected: KEY=${VALUE:-default}\n  key=\"${line%%=*}\"\n  rhs=\"${line#*=}\"\n  # trim key whitespace\n  key=\"$(echo \"$key\" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')\"\n  rhs=\"${rhs%$'\\r'}\"\n  # extract default if rhs looks like ${...:-...}\n  def=\"$rhs\"\n  if [[ \"$rhs\" == *'${'*':-'*'}'* ]]; then\n    tmp=\"${rhs#*:-}\"\n    def=\"${tmp%\\}}\"\n    # if there are trailing chars after } (shouldn't happen), strip them? keep only up to first }\n    # Actually above removes last }. Better to remove from first } onward if extra?\n    # For simple case it's fine. Handle case like ${VAR:-default} with extra suffix? Not needed.\n  fi\n  if [[ -v overrides[\"$key\"] ]]; then\n    val=\"${overrides[$key]}\"\n  else\n    val=\"$def\"\n  fi\n  echo \"${key}=${val}\" >> /app/.env\ndone < /config/template.env\n\necho \"--- /app/.env ---\"\ncat /app/.env"
+    ],
+    "usage": {
+      "input_tokens": 3453,
+      "output_tokens": 2137,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 40127
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat /config/template.env; echo \"---overrides---\"; cat /config/overrides.txt; echo \"---appdir---\"; ls -la /app/ 2>&1; ls -la /config/ 2>&1",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "DB_HOST=${DB_HOST:-localhost}\nDB_PORT=${DB_PORT:-5432}\nDB_NAME=${DB_NAME:-myapp}\nREDIS_URL=${REDIS_URL:-redis://localhost:6379}\nLOG_LEVEL=${LOG_LEVEL:-info}\n---overrides---\nDB_HOST=db.prod.internal\nLOG_LEVEL=warn\n---appdir---\nls: cannot access '/app/': No such file or directory\n-rw-r--r--       40 2026-10-09 05:04 overrides.txt\n-rw-r--r--      157 2026-10-09 05:04 template.env\n"
+          },
+          {
+            "commands": "mkdir -p /app\ndeclare -A overrides\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  # skip empty lines and comments\n  [[ -z \"$line\" ]] && continue\n  [[ \"$line\" =~ ^[[:space:]]*# ]] && continue\n  # split on first =\n  if [[ \"$line\" == *\"=\"* ]]; then\n    k=\"${line%%=*}\"\n    v=\"${line#*=}\"\n    # trim whitespace around key (remove leading/trailing spaces)\n    k=\"$(echo \"$k\" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')\"\n    # keep value as-is (do not trim? but trim trailing CR)\n    v=\"${v%$'\\r'}\"\n    overrides[\"$k\"]=\"$v\"\n  fi\ndone < /config/overrides.txt\n\n# debug: show loaded overrides\necho \"Loaded overrides:\" >&2\nfor k in \"${!overrides[@]}\"; do echo \"  $k=${overrides[$k]}\" >&2; done\n\n> /app/.env\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  [[ -z \"$line\" ]] && continue\n  [[ \"$line\" =~ ^[[:space:]]*# ]] && continue\n  # template line expected: KEY=${VALUE:-default}\n  key=\"${line%%=*}\"\n  rhs=\"${line#*=}\"\n  # trim key whitespace\n  key=\"$(echo \"$key\" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')\"\n  rhs=\"${rhs%$'\\r'}\"\n  # extract default if rhs looks like ${...:-...}\n  def=\"$rhs\"\n  if [[ \"$rhs\" == *'${'*':-'*'}'* ]]; then\n    tmp=\"${rhs#*:-}\"\n    def=\"${tmp%\\}}\"\n    # if there are trailing chars after } (shouldn't happen), strip them? keep only up to first }\n    # Actually above removes last }. Better to remove from first } onward if extra?\n    # For simple case it's fine. Handle case like ${VAR:-default} with extra suffix? Not needed.\n  fi\n  if [[ -v overrides[\"$key\"] ]]; then\n    val=\"${overrides[$key]}\"\n  else\n    val=\"$def\"\n  fi\n  echo \"${key}=${val}\" >> /app/.env\ndone < /config/template.env\n\necho \"--- /app/.env ---\"\ncat /app/.env",
+            "exit_code": 0,
+            "stderr": "Loaded overrides:\n  LOG_LEVEL=warn\n  DB_HOST=db.prod.internal\n",
+            "stdout": "--- /app/.env ---\nDB_HOST=db.prod.internal\nDB_PORT=5432\nDB_NAME=myapp\nREDIS_URL=redis://localhost:6379\nLOG_LEVEL=warn\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

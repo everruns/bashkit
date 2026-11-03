@@ -91,3 +91,63 @@ async fn bash_n_still_rejects_whole_script() {
         .unwrap();
     assert_eq!(r.stdout, "rc=2\n");
 }
+
+/// A multiline token and long $0 must not multiply diagnostic storage.
+#[tokio::test]
+async fn child_syntax_report_is_bounded() {
+    let script = format!("for x \"{}\"", "a\n".repeat(16));
+    let request = format!("bash -c '{script}' '{}'", "x".repeat(256));
+    let mut bash = Bash::new();
+    let result = bash.exec(&request).await.unwrap();
+    assert_eq!(result.exit_code, 2);
+    assert!(result.stdout.is_empty());
+    assert!(
+        result.stderr.len() <= 1024,
+        "report was {} bytes",
+        result.stderr.len()
+    );
+    assert!(result.stderr.ends_with("[diagnostic truncated]\n"));
+    assert_eq!(bash.exec("echo alive").await.unwrap().stdout, "alive\n");
+}
+
+#[tokio::test]
+async fn small_child_syntax_reports_match_bash() {
+    // Host /bin/bash varies by platform (macOS bash 3.2 reports `-c` input as
+    // `line 0`, modern GNU bash reports `line 1`, matching our parser), so
+    // compare the diagnostic shape with the line number normalized away.
+    fn normalize_line(input: &[u8]) -> Vec<u8> {
+        let mut out = input.to_vec();
+        let mut i = 0;
+        while i + 5 < out.len() {
+            if out[i..].starts_with(b"line ") {
+                let mut j = i + 5;
+                while j < out.len() && out[j].is_ascii_digit() {
+                    j += 1;
+                }
+                if j > i + 5 {
+                    out.splice(i + 5..j, [b'#']);
+                }
+            }
+            i += 1;
+        }
+        out
+    }
+    for script in ["if then fi", "echo kept\nif then", "for x ; wat"] {
+        let expected = std::process::Command::new("bash")
+            .args(["-c", script, "CASE"])
+            .output()
+            .unwrap();
+        let mut bash = Bash::new();
+        let result = bash
+            .exec(&format!("bash -c '{script}' CASE"))
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, expected.status.code().unwrap());
+        assert_eq!(result.stdout.as_bytes(), expected.stdout);
+        assert_eq!(
+            normalize_line(result.stderr.as_bytes()),
+            normalize_line(&expected.stderr),
+            "script: {script:?}"
+        );
+    }
+}

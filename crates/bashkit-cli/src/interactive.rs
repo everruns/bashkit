@@ -16,7 +16,6 @@ use rustyline::hint::{Hint, Hinter};
 use rustyline::validate::Validator;
 use rustyline::{Config, Context, Editor, Helper};
 use std::borrow::Cow;
-use std::io::Write;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -530,19 +529,9 @@ pub async fn run(mut bash: bashkit::Bash, exit_state: Arc<ExitState>) -> Result<
             });
 
             let exec_result = bash
-                .exec_streaming(
-                    &input,
-                    Box::new(|stdout, stderr| {
-                        if !stdout.is_empty() {
-                            print!("{stdout}");
-                            let _ = std::io::stdout().flush();
-                        }
-                        if !stderr.is_empty() {
-                            eprint!("{stderr}");
-                            let _ = std::io::stderr().flush();
-                        }
-                    }),
-                )
+                .execute(&input)
+                .stdout_fn(|bytes| crate::write_output_chunk(tokio::io::stdout(), bytes))
+                .stderr_fn(|bytes| crate::write_output_chunk(tokio::io::stderr(), bytes))
                 .await;
 
             cancel_watcher.abort();

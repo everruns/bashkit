@@ -1,0 +1,190 @@
+{
+  "eval": "bashkit_repo",
+  "sample": "repo_path_bin_tool_fix",
+  "target": "openrouter/meta/muse-spark-1.3-contributor",
+  "input": [
+    "/home/eval/tools is a git repo with helper scripts in bin/. Its README explains how to run the tests. Get `make test` passing: follow the README's setup, then fix the bug in the script under bin/ that the failing test exposes (do not change the tests or the Makefile). Commit the fix with a message starting with `fix:`."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Commit succeeded — running final verification.",
+    "iterations": 20,
+    "tool_calls_count": 20,
+    "tool_calls": [
+      "cd /home/eval/tools && pwd; ls -la; cat README* 2>&1; echo \"---\"; cat Makefile 2>&1; echo \"---\"; ls -R bin 2>&1; git status; git log --oneline -5\n",
+      "cd /home/eval/tools && cat bin/semver-bump; echo \"===\"; cat bin/slugify; echo \"===\"; cat tests/run.sh; echo \"===\"; ls -R tests; echo \"===\"; cat README.md\n",
+      "cd /home/eval/tools && cat tests/assert.sh; echo \"===\"; cat tests/test_semver.sh; echo \"===\"; cat tests/test_slugify.sh\n",
+      "cd /home/eval/tools && export PATH=\"$PWD/bin:$PATH\" && make test; echo \"EXIT:$?\"; echo \"--- build logs ---\"; cat build/*.log 2>&1; cat build/test-report.txt 2>&1\n",
+      "cd /home/eval/tools && cat bin/semver-bump\n# fix minor line: patch should reset to 0\nsed -i 's/minor) echo \"$major.\\$((minor + 1)).\\$patch\"/minor) echo \"$major.$((minor + 1)).0\"/' bin/semver-bump\necho \"--- after ---\"\ncat bin/semver-bump\n# verify diff\ngit diff\n",
+      "cd /home/eval/tools && export PATH=\"$PWD/bin:$PATH\" && make test; echo \"EXIT:$?\"\ncat bin/semver-bump\ngit diff --no-color; echo \"---status---\"; git status",
+      "cd /home/eval/tools && git status --porcelain; echo \"---\"; git diff HEAD --stat; echo \"---\"; git diff --stat; echo \"---\"; ls -l bin/semver-bump; git ls-files -s; echo \"---\"; git show HEAD:bin/semver-bump 2>&1 | cat -A\necho \"=== current file ===\"; cat -A bin/semver-bump",
+      "cd /home/eval/tools\necho \"== git log ==\"; git log --oneline -10\necho \"== git status ==\"; git status\necho \"== git diff HEAD ==\"; git diff HEAD; echo \"ENDDIFF:$?\"\necho \"== git diff ==\"; git diff; echo \"ENDDIFF2:$?\"\necho \"== hash ==\"; sha256sum bin/semver-bump; git hash-object bin/semver-bump; git ls-files -s bin/semver-bump\necho \"== show HEAD ==\"; git show HEAD:bin/semver-bump",
+      "which git; type git; git --help 2>&1 | head -n 100\necho \"===\"; ls -la /home/eval/tools/.git/ 2>&1\necho \"===\"; cat /home/eval/tools/.git/HEAD 2>&1; cat /home/eval/tools/.git/config 2>&1; ls -R /home/eval/tools/.git 2>&1 | head -n 100\n",
+      "cat /usr/bin/git 2>&1 | head -n 200\necho \"===\"; file /usr/bin/git 2>&1\necho \"===\"; ls -l /usr/bin/git*",
+      "ls -la /usr/local/bin/git* /opt/*/bin/git* 2>&1; echo \"---\"; echo $PATH; echo \"---\"; ls /home/eval/ 2>&1; cat /home/eval/tools/.git/commits 2>&1; cat /home/eval/tools/.git/tracked 2>&1; cat /home/eval/tools/.git/refs/heads/master 2>&1\n# try real git locations\nls /bin/git /usr/bin/git.real 2>&1; find / -maxdepth 4 -name \"git\" -type f 2>&1 | head",
+      "cat /bin/git 2>&1 | head -n 300\necho \"===\"; ls -l /bin/git; file /bin/git 2>&1 || true",
+      "cd /home/eval/tools\nfor f in .git/HEAD .git/config .git/commits .git/tracked .git/index .git/refs/heads/master; do echo \"== $f ==\"; cat \"$f\"; echo \"\"; echo \"--end $f--\"; done\nls -la .git/objects/ 2>&1\nls -la .git/refs/heads/ 2>&1\n# Try git help\ngit help 2>&1; echo \"EXIT:$?\"",
+      "# probe which git commands exist in this virtual git\ncd /home/eval/tools\nfor cmd in status log diff add commit show branch checkout stash reset rm mv ls-files rev-parse config; do echo -n \"$cmd: \"; git $cmd 2>&1 | head -n 5; echo \"  [exit:$?]\"; done",
+      "cd /home/eval/tools\necho \"--- commit no args ---\"; git commit 2>&1\necho \"--- commit --help ---\"; git commit --help 2>&1\necho \"--- add --help ---\"; git add --help 2>&1 || true\necho \"--- log --help-ish ---\"; git log --help 2>&1 || true",
+      "cd /home/eval/tools\necho \"try commit with -m\"; git commit -m \"test msg\" 2>&1; echo \"EXIT:$?\"\necho \"===\"; git log 2>&1; echo \"===\"; git status 2>&1",
+      "cd /home/eval/tools\necho \"== tracked cat -A ==\"; cat -A .git/tracked; echo \"== end ==\"\necho \"== commits cat -A ==\"; cat -A .git/commits; echo \"== end ==\"\necho \"== index cat -A ==\"; cat -A .git/index; echo \"== end ==\"\necho \"== refs/heads/master cat -A ==\"; cat -A .git/refs/heads/master; echo \"== end ==\"\necho \"== ls -l bin/ ==\"; ls -l bin/; cat bin/semver-bump; echo \"== sha via cksum ==\"; cksum bin/semver-bump; wc -c bin/semver-bump\n",
+      "cd /home/eval/tools\necho \"== ls-files ==\"; git ls-files 2>&1; echo \"EXIT:$?\"\necho \"== ls-files with arg ==\"; git ls-files -s 2>&1; echo \"EXIT:$?\"\necho \"== status ==\"; git status 2>&1\necho \"== try add ==\"; git add bin/semver-bump 2>&1; echo \"EXIT:$?\"\necho \"== status after add ==\"; git status 2>&1\necho \"== index ==\"; cat .git/index 2>&1; echo \"END\"; cat -A .git/index 2>&1; echo \"END2\"\necho \"== diff ==\"; git diff 2>&1; echo \"EXIT:$?\"\necho \"== diff HEAD ==\"; git diff HEAD 2>&1; echo \"EXIT:$?\"",
+      "cd /home/eval/tools\ngit commit -m \"fix: reset patch to 0 on minor bump\" 2>&1; echo \"EXIT:$?\"\ngit log 2>&1; echo \"===\"; git status 2>&1; cat .git/commits 2>&1; cat .git/refs/heads/master 2>&1; echo \"\"; cat .git/index 2>&1; echo \"ENDINDEX\"",
+      "cd /home/eval/tools\necho \"== log ==\"; git log 2>&1\necho \"== show HEAD ==\"; git show HEAD 2>&1 | head -n 50\necho \"== status ==\"; git status 2>&1\necho \"== make test ==\"; export PATH=\"$PWD/bin:$PATH\"; make test 2>&1; echo \"EXIT:$?\""
+    ],
+    "usage": {
+      "input_tokens": 87870,
+      "output_tokens": 8966,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 129180
+    },
+    "metrics": {
+      "natural_stop": 0.0,
+      "tool_calls": 20.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 20.0,
+      "turns": 20.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cd /home/eval/tools && pwd; ls -la; cat README* 2>&1; echo \"---\"; cat Makefile 2>&1; echo \"---\"; ls -R bin 2>&1; git status; git log --oneline -5\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/home/eval/tools\ndrwxr-xr-x        0 2026-10-09 05:07 .git\n-rw-r--r--       26 2026-10-09 05:07 Makefile\n-rw-r--r--      145 2026-10-09 05:07 README.md\ndrwxr-xr-x        0 2026-10-09 05:07 bin\ndrwxr-xr-x        0 2026-10-09 05:07 tests\n# tools\n\nThe tests call the scripts in `bin/` by name, so put that directory on your PATH first:\n\n    export PATH=\"$PWD/bin:$PATH\"\n    make test\n---\ntest:\n\t@bash tests/run.sh\n---\nbin:\nsemver-bump\nslugify\nOn branch master\n\nnothing to commit, working tree clean\ncommit b465c89b\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 05:07:00 2026 +0000\n\n    initial import\n\n"
+          },
+          {
+            "commands": "cd /home/eval/tools && cat bin/semver-bump; echo \"===\"; cat bin/slugify; echo \"===\"; cat tests/run.sh; echo \"===\"; ls -R tests; echo \"===\"; cat README.md\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "#!/bin/bash\n# usage: semver-bump VERSION major|minor|patch\nIFS=. read -r major minor patch <<< \"$1\"\ncase \"$2\" in\n  major) echo \"$((major + 1)).0.0\" ;;\n  minor) echo \"$major.$((minor + 1)).$patch\" ;;\n  patch) echo \"$major.$minor.$((patch + 1))\" ;;\n  *) echo \"semver-bump: unknown part '$2'\" >&2; exit 2 ;;\nesac\n===\n#!/bin/bash\n# usage: slugify TEXT  -> lower-case, dash-separated\necho \"$*\" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+|-+$//g'\n===\n#!/bin/bash\n# Test runner: runs every tests/test_*.sh, writes build/test-report.txt.\ncd \"$(dirname \"$0\")/..\" || exit 2\nmkdir -p build\npass=0; fail=0; total=0\nfor t in tests/test_*.sh; do\n  name=$(basename \"$t\" .sh)\n  total=$((total + 1))\n  if bash \"$t\" > \"build/$name.log\" 2>&1; then\n    pass=$((pass + 1)); echo \"ok   $name\"\n  else\n    fail=$((fail + 1)); echo \"FAIL $name\"; sed 's/^/    /' \"build/$name.log\"\n  fi\ndone\nif [ \"$fail\" -eq 0 ]; then\n  echo \"PASS $pass/$total\" | tee build/test-report.txt\nelse\n  echo \"FAIL $fail/$total\" | tee build/test-report.txt\n  exit 1\nfi\n===\ntests:\nassert.sh\nrun.sh\ntest_semver.sh\ntest_slugify.sh\n===\n# tools\n\nThe tests call the scripts in `bin/` by name, so put that directory on your PATH first:\n\n    export PATH=\"$PWD/bin:$PATH\"\n    make test\n"
+          },
+          {
+            "commands": "cd /home/eval/tools && cat tests/assert.sh; echo \"===\"; cat tests/test_semver.sh; echo \"===\"; cat tests/test_slugify.sh\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# Minimal assertion helpers for the test suite.\nassert_eq() {\n  if [ \"$1\" != \"$2\" ]; then\n    echo \"assertion failed: ${3:-values differ}: expected '$1', got '$2'\"\n    exit 1\n  fi\n}\n===\n. tests/assert.sh\ncommand -v semver-bump >/dev/null || { echo 'semver-bump not on PATH'; exit 1; }\nassert_eq 2.0.0 \"$(semver-bump 1.4.2 major)\" major\nassert_eq 1.5.0 \"$(semver-bump 1.4.2 minor)\" minor\nassert_eq 1.4.3 \"$(semver-bump 1.4.2 patch)\" patch\n===\n. tests/assert.sh\ncommand -v slugify >/dev/null || { echo 'slugify not on PATH'; exit 1; }\nassert_eq hello-big-world \"$(slugify '  Hello, Big World! ')\" slugify\n"
+          },
+          {
+            "commands": "cd /home/eval/tools && export PATH=\"$PWD/bin:$PATH\" && make test; echo \"EXIT:$?\"; echo \"--- build logs ---\"; cat build/*.log 2>&1; cat build/test-report.txt 2>&1\n",
+            "exit_code": 0,
+            "stderr": "make: *** [Makefile:2: test] Error 1\n",
+            "stdout": "FAIL test_semver\n    assertion failed: minor: expected '1.5.0', got '1.5.2'\nok   test_slugify\nFAIL 1/2\nEXIT:2\n--- build logs ---\nassertion failed: minor: expected '1.5.0', got '1.5.2'\nFAIL 1/2\n"
+          },
+          {
+            "commands": "cd /home/eval/tools && cat bin/semver-bump\n# fix minor line: patch should reset to 0\nsed -i 's/minor) echo \"$major.\\$((minor + 1)).\\$patch\"/minor) echo \"$major.$((minor + 1)).0\"/' bin/semver-bump\necho \"--- after ---\"\ncat bin/semver-bump\n# verify diff\ngit diff\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "#!/bin/bash\n# usage: semver-bump VERSION major|minor|patch\nIFS=. read -r major minor patch <<< \"$1\"\ncase \"$2\" in\n  major) echo \"$((major + 1)).0.0\" ;;\n  minor) echo \"$major.$((minor + 1)).$patch\" ;;\n  patch) echo \"$major.$minor.$((patch + 1))\" ;;\n  *) echo \"semver-bump: unknown part '$2'\" >&2; exit 2 ;;\nesac\n--- after ---\n#!/bin/bash\n# usage: semver-bump VERSION major|minor|patch\nIFS=. read -r major minor patch <<< \"$1\"\ncase \"$2\" in\n  major) echo \"$((major + 1)).0.0\" ;;\n  minor) echo \"$major.$((minor + 1)).0\" ;;\n  patch) echo \"$major.$minor.$((patch + 1))\" ;;\n  *) echo \"semver-bump: unknown part '$2'\" >&2; exit 2 ;;\nesac\n# Diff output (simplified in virtual mode)\n"
+          },
+          {
+            "commands": "cd /home/eval/tools && export PATH=\"$PWD/bin:$PATH\" && make test; echo \"EXIT:$?\"\ncat bin/semver-bump\ngit diff --no-color; echo \"---status---\"; git status",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "ok   test_semver\nok   test_slugify\nPASS 2/2\nEXIT:0\n#!/bin/bash\n# usage: semver-bump VERSION major|minor|patch\nIFS=. read -r major minor patch <<< \"$1\"\ncase \"$2\" in\n  major) echo \"$((major + 1)).0.0\" ;;\n  minor) echo \"$major.$((minor + 1)).0\" ;;\n  patch) echo \"$major.$minor.$((patch + 1))\" ;;\n  *) echo \"semver-bump: unknown part '$2'\" >&2; exit 2 ;;\nesac\n# Diff output (simplified in virtual mode)\n---status---\nOn branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/test-report.txt\n\tbuild/test_semver.log\n\tbuild/test_slugify.log\n"
+          },
+          {
+            "commands": "cd /home/eval/tools && git status --porcelain; echo \"---\"; git diff HEAD --stat; echo \"---\"; git diff --stat; echo \"---\"; ls -l bin/semver-bump; git ls-files -s; echo \"---\"; git show HEAD:bin/semver-bump 2>&1 | cat -A\necho \"=== current file ===\"; cat -A bin/semver-bump",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "On branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/test-report.txt\n\tbuild/test_semver.log\n\tbuild/test_slugify.log\n---\n# Diff output (simplified in virtual mode)\n---\n# Diff output (simplified in virtual mode)\n---\n-rwxr-xr-x      305 2026-10-09 05:07 bin/semver-bump\nMakefile\nREADME.md\nbin/semver-bump\nbin/slugify\ntests/assert.sh\ntests/run.sh\ntests/test_semver.sh\ntests/test_slugify.sh\n---\n#!/bin/bash$\n# usage: semver-bump VERSION major|minor|patch$\nIFS=. read -r major minor patch <<< \"$1\"$\ncase \"$2\" in$\n  major) echo \"$((major + 1)).0.0\" ;;$\n  minor) echo \"$major.$((minor + 1)).0\" ;;$\n  patch) echo \"$major.$minor.$((patch + 1))\" ;;$\n  *) echo \"semver-bump: unknown part '$2'\" >&2; exit 2 ;;$\nesac$\n=== current file ===\n#!/bin/bash$\n# usage: semver-bump VERSION major|minor|patch$\nIFS=. read -r major minor patch <<< \"$1\"$\ncase \"$2\" in$\n  major) echo \"$((major + 1)).0.0\" ;;$\n  minor) echo \"$major.$((minor + 1)).0\" ;;$\n  patch) echo \"$major.$minor.$((patch + 1))\" ;;$\n  *) echo \"semver-bump: unknown part '$2'\" >&2; exit 2 ;;$\nesac$\n"
+          },
+          {
+            "commands": "cd /home/eval/tools\necho \"== git log ==\"; git log --oneline -10\necho \"== git status ==\"; git status\necho \"== git diff HEAD ==\"; git diff HEAD; echo \"ENDDIFF:$?\"\necho \"== git diff ==\"; git diff; echo \"ENDDIFF2:$?\"\necho \"== hash ==\"; sha256sum bin/semver-bump; git hash-object bin/semver-bump; git ls-files -s bin/semver-bump\necho \"== show HEAD ==\"; git show HEAD:bin/semver-bump",
+            "exit_code": 0,
+            "stderr": "git: 'hash-object' is not a git command. See 'git --help'.\n",
+            "stdout": "== git log ==\ncommit b465c89b\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 05:07:00 2026 +0000\n\n    initial import\n\n== git status ==\nOn branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/test-report.txt\n\tbuild/test_semver.log\n\tbuild/test_slugify.log\n== git diff HEAD ==\n# Diff output (simplified in virtual mode)\nENDDIFF:0\n== git diff ==\n# Diff output (simplified in virtual mode)\nENDDIFF2:0\n== hash ==\nc4d4235e4f35c290158f6ac8895cad859384aa80f4f3f78b7ccd94e2d674c126  bin/semver-bump\nMakefile\nREADME.md\nbin/semver-bump\nbin/slugify\ntests/assert.sh\ntests/run.sh\ntests/test_semver.sh\ntests/test_slugify.sh\n== show HEAD ==\n#!/bin/bash\n# usage: semver-bump VERSION major|minor|patch\nIFS=. read -r major minor patch <<< \"$1\"\ncase \"$2\" in\n  major) echo \"$((major + 1)).0.0\" ;;\n  minor) echo \"$major.$((minor + 1)).0\" ;;\n  patch) echo \"$major.$minor.$((patch + 1))\" ;;\n  *) echo \"semver-bump: unknown part '$2'\" >&2; exit 2 ;;\nesac\n"
+          },
+          {
+            "commands": "which git; type git; git --help 2>&1 | head -n 100\necho \"===\"; ls -la /home/eval/tools/.git/ 2>&1\necho \"===\"; cat /home/eval/tools/.git/HEAD 2>&1; cat /home/eval/tools/.git/config 2>&1; ls -R /home/eval/tools/.git 2>&1 | head -n 100\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/usr/bin/git\ngit is hashed (/usr/bin/git)\ngit: '--help' is not a git command. See 'git --help'.\n===\n-rw-r--r--       23 2026-10-09 05:07 HEAD\n-rw-r--r--       72 2026-10-09 05:07 commits\n-rw-r--r--      128 2026-10-09 05:07 config\n-rw-r--r--        0 2026-10-09 05:07 index\ndrwxr-xr-x        0 2026-10-09 05:07 objects\ndrwxr-xr-x        0 2026-10-09 05:07 refs\n-rw-r--r--      118 2026-10-09 05:07 tracked\n===\nref: refs/heads/master\n[core]\n\trepositoryformatversion = 0\n\tfilemode = true\n\tbare = false\n[user]\n\tname = Eval Agent\n\temail = eval@bashkit-eval.invalid\n/home/eval/tools/.git:\nHEAD\ncommits\nconfig\nindex\nobjects\nrefs\ntracked\n\n/home/eval/tools/.git/objects:\n\n/home/eval/tools/.git/refs:\nheads\ntags\n\n/home/eval/tools/.git/refs/heads:\nmaster\n\n/home/eval/tools/.git/refs/tags:\n"
+          },
+          {
+            "commands": "cat /usr/bin/git 2>&1 | head -n 200\necho \"===\"; file /usr/bin/git 2>&1\necho \"===\"; ls -l /usr/bin/git*",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "#!/bin/sh\n# bashkit builtin: git\nexec git \"$@\"\n===\n/usr/bin/git: Bourne-Again shell script\n===\n-rwxr-xr-x       47 2026-10-09 05:07 /usr/bin/git\n"
+          },
+          {
+            "commands": "ls -la /usr/local/bin/git* /opt/*/bin/git* 2>&1; echo \"---\"; echo $PATH; echo \"---\"; ls /home/eval/ 2>&1; cat /home/eval/tools/.git/commits 2>&1; cat /home/eval/tools/.git/tracked 2>&1; cat /home/eval/tools/.git/refs/heads/master 2>&1\n# try real git locations\nls /bin/git /usr/bin/git.real 2>&1; find / -maxdepth 4 -name \"git\" -type f 2>&1 | head",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "ls: cannot access '/usr/local/bin/git*': No such file or directory\n---\n/home/eval/tools/bin:/home/eval/tools/bin:/usr/local/bin:/usr/bin:/bin\n---\ntools\nb465c89b|Eval Agent|eval@bashkit-eval.invalid|1791522420|initial import\nbin/slugify\ntests/assert.sh\ntests/run.sh\ntests/test_semver.sh\nREADME.md\ntests/test_slugify.sh\nMakefile\nbin/semver-bumpb465c89bls: cannot access '/usr/bin/git.real': No such file or directory\n/bin/git\n/usr/bin/git\n"
+          },
+          {
+            "commands": "cat /bin/git 2>&1 | head -n 300\necho \"===\"; ls -l /bin/git; file /bin/git 2>&1 || true",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "#!/bin/sh\n# bashkit builtin: git\nexec git \"$@\"\n===\n-rwxr-xr-x       47 2026-10-09 05:07 /bin/git\n/bin/git: Bourne-Again shell script\n"
+          },
+          {
+            "commands": "cd /home/eval/tools\nfor f in .git/HEAD .git/config .git/commits .git/tracked .git/index .git/refs/heads/master; do echo \"== $f ==\"; cat \"$f\"; echo \"\"; echo \"--end $f--\"; done\nls -la .git/objects/ 2>&1\nls -la .git/refs/heads/ 2>&1\n# Try git help\ngit help 2>&1; echo \"EXIT:$?\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "== .git/HEAD ==\nref: refs/heads/master\n\n--end .git/HEAD--\n== .git/config ==\n[core]\n\trepositoryformatversion = 0\n\tfilemode = true\n\tbare = false\n[user]\n\tname = Eval Agent\n\temail = eval@bashkit-eval.invalid\n\n--end .git/config--\n== .git/commits ==\nb465c89b|Eval Agent|eval@bashkit-eval.invalid|1791522420|initial import\n\n--end .git/commits--\n== .git/tracked ==\nbin/slugify\ntests/assert.sh\ntests/run.sh\ntests/test_semver.sh\nREADME.md\ntests/test_slugify.sh\nMakefile\nbin/semver-bump\n--end .git/tracked--\n== .git/index ==\n\n--end .git/index--\n== .git/refs/heads/master ==\nb465c89b\n--end .git/refs/heads/master--\n-rw-r--r--        8 2026-10-09 05:07 master\ngit: 'help' is not a git command. See 'git --help'.\nEXIT:1\n"
+          },
+          {
+            "commands": "# probe which git commands exist in this virtual git\ncd /home/eval/tools\nfor cmd in status log diff add commit show branch checkout stash reset rm mv ls-files rev-parse config; do echo -n \"$cmd: \"; git $cmd 2>&1 | head -n 5; echo \"  [exit:$?]\"; done",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "status: On branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/test-report.txt\n  [exit:0]\nlog: commit b465c89b\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 05:07:00 2026 +0000\n\n    initial import\n  [exit:0]\ndiff: # Diff output (simplified in virtual mode)\n  [exit:0]\nadd: Nothing specified, nothing added.\nhint: Maybe you wanted to say 'git add .'?\n  [exit:0]\ncommit: error: switch 'm' requires a value\n  [exit:0]\nshow: commit b465c89b\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 05:07:00 2026 +0000\n\n    initial import\n  [exit:0]\nbranch: * master\n  [exit:0]\ncheckout: error: you must specify a branch or commit to checkout\n  [exit:0]\nstash: git: 'stash' is not a git command. See 'git --help'.\n  [exit:0]\nreset: Unstaged changes after reset:\n  [exit:0]\nrm: git: 'rm' is not a git command. See 'git --help'.\n  [exit:0]\nmv: git: 'mv' is not a git command. See 'git --help'.\n  [exit:0]\nls-files: Makefile\nREADME.md\nbin/semver-bump\nbin/slugify\ntests/assert.sh\n  [exit:0]\nrev-parse: usage: git rev-parse [<options>] [<args>...]\n  [exit:0]\nconfig: usage: git config [<options>] <name> [<value>]\n  [exit:0]\n"
+          },
+          {
+            "commands": "cd /home/eval/tools\necho \"--- commit no args ---\"; git commit 2>&1\necho \"--- commit --help ---\"; git commit --help 2>&1\necho \"--- add --help ---\"; git add --help 2>&1 || true\necho \"--- log --help-ish ---\"; git log --help 2>&1 || true",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "--- commit no args ---\nerror: switch 'm' requires a value\n--- commit --help ---\nerror: switch 'm' requires a value\n--- add --help ---\nNothing specified, nothing added.\n--- log --help-ish ---\ncommit b465c89b\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 05:07:00 2026 +0000\n\n    initial import\n\n"
+          },
+          {
+            "commands": "cd /home/eval/tools\necho \"try commit with -m\"; git commit -m \"test msg\" 2>&1; echo \"EXIT:$?\"\necho \"===\"; git log 2>&1; echo \"===\"; git status 2>&1",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "try commit with -m\ninternal error: nothing to commit, working tree clean\nEXIT:1\n===\ncommit b465c89b\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 05:07:00 2026 +0000\n\n    initial import\n\n===\nOn branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/test-report.txt\n\tbuild/test_semver.log\n\tbuild/test_slugify.log\n"
+          },
+          {
+            "commands": "cd /home/eval/tools\necho \"== tracked cat -A ==\"; cat -A .git/tracked; echo \"== end ==\"\necho \"== commits cat -A ==\"; cat -A .git/commits; echo \"== end ==\"\necho \"== index cat -A ==\"; cat -A .git/index; echo \"== end ==\"\necho \"== refs/heads/master cat -A ==\"; cat -A .git/refs/heads/master; echo \"== end ==\"\necho \"== ls -l bin/ ==\"; ls -l bin/; cat bin/semver-bump; echo \"== sha via cksum ==\"; cksum bin/semver-bump; wc -c bin/semver-bump\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "== tracked cat -A ==\nbin/slugify$\ntests/assert.sh$\ntests/run.sh$\ntests/test_semver.sh$\nREADME.md$\ntests/test_slugify.sh$\nMakefile$\nbin/semver-bump== end ==\n== commits cat -A ==\nb465c89b|Eval Agent|eval@bashkit-eval.invalid|1791522420|initial import$\n== end ==\n== index cat -A ==\n== end ==\n== refs/heads/master cat -A ==\nb465c89b== end ==\n== ls -l bin/ ==\n-rwxr-xr-x      305 2026-10-09 05:07 semver-bump\n-rwxr-xr-x      146 2026-10-09 05:07 slugify\n#!/bin/bash\n# usage: semver-bump VERSION major|minor|patch\nIFS=. read -r major minor patch <<< \"$1\"\ncase \"$2\" in\n  major) echo \"$((major + 1)).0.0\" ;;\n  minor) echo \"$major.$((minor + 1)).0\" ;;\n  patch) echo \"$major.$minor.$((patch + 1))\" ;;\n  *) echo \"semver-bump: unknown part '$2'\" >&2; exit 2 ;;\nesac\n== sha via cksum ==\n1710111567 305 bin/semver-bump\n305 bin/semver-bump\n"
+          },
+          {
+            "commands": "cd /home/eval/tools\necho \"== ls-files ==\"; git ls-files 2>&1; echo \"EXIT:$?\"\necho \"== ls-files with arg ==\"; git ls-files -s 2>&1; echo \"EXIT:$?\"\necho \"== status ==\"; git status 2>&1\necho \"== try add ==\"; git add bin/semver-bump 2>&1; echo \"EXIT:$?\"\necho \"== status after add ==\"; git status 2>&1\necho \"== index ==\"; cat .git/index 2>&1; echo \"END\"; cat -A .git/index 2>&1; echo \"END2\"\necho \"== diff ==\"; git diff 2>&1; echo \"EXIT:$?\"\necho \"== diff HEAD ==\"; git diff HEAD 2>&1; echo \"EXIT:$?\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "== ls-files ==\nMakefile\nREADME.md\nbin/semver-bump\nbin/slugify\ntests/assert.sh\ntests/run.sh\ntests/test_semver.sh\ntests/test_slugify.sh\nEXIT:0\n== ls-files with arg ==\nMakefile\nREADME.md\nbin/semver-bump\nbin/slugify\ntests/assert.sh\ntests/run.sh\ntests/test_semver.sh\ntests/test_slugify.sh\nEXIT:0\n== status ==\nOn branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/test-report.txt\n\tbuild/test_semver.log\n\tbuild/test_slugify.log\n== try add ==\nEXIT:0\n== status after add ==\nOn branch master\n\nChanges to be committed:\n  (use \"git restore --staged <file>...\" to unstage)\n\tnew file:   bin/semver-bump\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/test-report.txt\n\tbuild/test_semver.log\n\tbuild/test_slugify.log\n== index ==\nbin/semver-bumpEND\nbin/semver-bumpEND2\n== diff ==\n# Diff output (simplified in virtual mode)\nEXIT:0\n== diff HEAD ==\n# Diff output (simplified in virtual mode)\nEXIT:0\n"
+          },
+          {
+            "commands": "cd /home/eval/tools\ngit commit -m \"fix: reset patch to 0 on minor bump\" 2>&1; echo \"EXIT:$?\"\ngit log 2>&1; echo \"===\"; git status 2>&1; cat .git/commits 2>&1; cat .git/refs/heads/master 2>&1; echo \"\"; cat .git/index 2>&1; echo \"ENDINDEX\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "[master b465c81] fix: reset patch to 0 on minor bump\nEXIT:0\ncommit b465c81f\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 05:09:04 2026 +0000\n\n    fix: reset patch to 0 on minor bump\n\ncommit b465c89b\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 05:07:00 2026 +0000\n\n    initial import\n\n===\nOn branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/test-report.txt\n\tbuild/test_semver.log\n\tbuild/test_slugify.log\nb465c81f|Eval Agent|eval@bashkit-eval.invalid|1791522544|fix: reset patch to 0 on minor bump\nb465c89b|Eval Agent|eval@bashkit-eval.invalid|1791522420|initial import\nb465c81f\nENDINDEX\n"
+          },
+          {
+            "commands": "cd /home/eval/tools\necho \"== log ==\"; git log 2>&1\necho \"== show HEAD ==\"; git show HEAD 2>&1 | head -n 50\necho \"== status ==\"; git status 2>&1\necho \"== make test ==\"; export PATH=\"$PWD/bin:$PATH\"; make test 2>&1; echo \"EXIT:$?\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "== log ==\ncommit b465c81f\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 05:09:04 2026 +0000\n\n    fix: reset patch to 0 on minor bump\n\ncommit b465c89b\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 05:07:00 2026 +0000\n\n    initial import\n\n== show HEAD ==\ncommit b465c81f\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 05:09:04 2026 +0000\n\n    fix: reset patch to 0 on minor bump\n\n== status ==\nOn branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/test-report.txt\n\tbuild/test_semver.log\n\tbuild/test_slugify.log\n== make test ==\nok   test_semver\nok   test_slugify\nPASS 2/2\nEXIT:0\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

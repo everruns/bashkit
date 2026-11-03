@@ -24,6 +24,27 @@ Input → Lexer → Tokens → Parser → AST
 Token types, AST structures, and parser grammar live in
 `crates/bashkit/src/parser/`. They evolve as features are added.
 
+### Native Stack and Substitution Depth
+
+`max_ast_depth` (default and hard ceiling 100) counts compound commands,
+process substitutions, and each child command-substitution parser. A child
+inherits the enclosing depth plus one, the same ceiling, remaining fuel,
+execution budget, options, timeout, and original start time. A simple-command
+`$(...)` cannot reset the depth counter or restart its timeout.
+
+Child parsers stay boxed while parsing by mutable reference. Private grammar
+results also carry boxed command nodes across recursive calls; commands are
+unboxed into the existing public AST vectors. A lone pipeline reuses its first
+boxed command without building an intermediate vector. This avoids retaining
+large command move temporaries on the native stack. Nonrecursive
+braced-parameter parsing and AST assembly are outlined so their debug-build
+stack temporaries are not retained at every recursive level (TM-DOS-044).
+The default 2 MiB Rust test-thread stack must handle depth-50 substitutions
+and reject input beyond the hard ceiling, including oversized caller limits.
+Do not increase thread stacks or reduce the existing ceiling to hide a crash.
+Parser unit tests cover exact depth boundaries and mixed compound/substitution
+nesting; integration tests cover execution, shell recovery, and real Bash parity.
+
 ### Parser Rules (Simplified)
 
 ```
@@ -45,6 +66,16 @@ Bash/POSIX `-p` plus `--` and the practical GNU report flags `-f/--format`,
 
 ### Context-Aware Lexing
 
+**Parameter subscript boundaries.** Parameter parsing, preliminary braced-name
+validation, and indirect-target admission use one subscript scanner. Quotes,
+ordinary and lexer-sentinel escapes, nested brackets, and braced expansions
+cannot expose an internal closing bracket as an operator boundary. An indirect
+target must consume exactly one complete reference before the caller's explicit
+suffix is appended. Indirect reparses share request work/cancellation and inherit
+the caller's command-substitution depth; deferred child-parser errors propagate.
+Tiny parser consumption/configuration fixtures and `indirect_reference_tests`
+cover these contracts without recursive scripts or exhaustion probes (TM-DOS-135).
+
 Handles bash's context-sensitivity:
 - `$var` in double quotes: expand; in single quotes: literal
 - Word splitting after expansion
@@ -62,6 +93,17 @@ globbing uses the escaped text and drops the escapes when nothing matches;
 `expand_word` returns unescaped text for non-glob uses; assignments and
 script analysis unescape literal parts; `case` and `[[ == ]]` build patterns
 with `expand_pattern_word`, which escapes fully quoted words.
+A quote-start word followed by an unquoted expansion also uses this encoding
+when quoted text contains glob syntax or a quoted expansion could produce it:
+`"$prefix"$empty` and `'literal*'$(printf '')` keep the quoted glob literal.
+Expansion escaping and its byte-budget charge use each part's quote flag;
+unquoted expansion output still participates in glob and pattern matching.
+Compound-array expansion uses the same per-part escaping inside a budgeted
+buffer, retaining pending-value capacity leases until subscript evaluation.
+The quote-metadata presence check is cached once per expanded word, avoiding
+quadratic scans when many unquoted expansions precede a quoted suffix.
+The shared marker builder preserves empty quoted spans and ends adjacent
+variable names; sentinel-escaped marker bytes remain literal data.
 
 **Quoted segments of mixed words.** A word that starts quoted and continues
 with an unquoted expansion (`'a b'$x`, `"$y"$x`) also wraps its quoted spans
@@ -146,6 +188,17 @@ the command `ab`, which `analysis` would report to a host permission gate, see
 TM-ESC-032), and the deferred error rejects the script the way bash does.
 Process substitution keeps its part for the same reason, and hard-errors on
 budget failures (TM-DOS-021).
+
+**Bounded syntax diagnostics (TM-DOS-136).** Unexpected-token messages and
+complete `Error::syntax_report` results are capped at 1 KiB during construction,
+including `[diagnostic truncated]` and its trailing newline when text is omitted.
+A fixed-capacity UTF-8 writer stops formatting on the first overflow; neither a
+multiline token, a long `$0`, nor the echoed source line can grow a temporary
+report before stderr capture applies. Short reports keep Bash's text and line
+numbers. This cap is independent of configurable capture and execution budgets.
+Regression coverage: `error::tests::syntax_report_*`,
+`error::tests::parser_bounds_unexpected_token_before_copying`, and
+`partial_parse_tests::{child_syntax_report_is_bounded, small_child_syntax_reports_match_bash}`.
 
 **Partial execution before a syntax error.** Bash reads and runs a script line
 by line, so `echo a` on line 1 runs before `if then` on line 2 is reported
@@ -239,6 +292,11 @@ after a heredoc on the same line lex the same as anywhere else.
 backquotes to `$(...)`; a body that does not parse becomes
 `$(eval 'body')`, which reports the syntax error at run time and never runs
 anything else. `$(...)` keeps rejecting the script at parse time.
+Quote continuations use the same backquote reader as ordinary words, so
+`'x'` followed immediately by a backquoted command is one mixed word.
+Unquoted substitution output still splits; static analysis reports nested
+commands in substitution context, dispatch hooks still gate them, and nested
+execution shares the parent's budget. Missing closing backquotes fail parsing.
 
 **Process substitution end.** `<(...)`/`>(...)` bodies end where the shared
 `subst_scan` scanner closes them (`Lexer::skip_subst_body`), so

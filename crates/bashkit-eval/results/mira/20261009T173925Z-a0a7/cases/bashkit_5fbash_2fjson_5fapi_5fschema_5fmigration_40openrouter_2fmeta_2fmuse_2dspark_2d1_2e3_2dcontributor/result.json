@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "json_api_schema_migration",
+  "target": "openrouter/meta/muse-spark-1.3-contributor",
+  "input": [
+    "Read /data/users_v1.json containing user records in API v1 format. Transform each record to v2 format: combine 'firstName' and 'lastName' into a single 'fullName' field (space-separated), rename 'emailAddress' to 'email', extract the 'city' from the nested 'address' object into a top-level 'location' field, and add a 'migrated' boolean field set to true. Keep the 'id' field. Save the v2 array to /data/users_v2.json and print it."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "8/8 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Transformed 3 records from v1 to v2 format and saved to `/data/users_v2.json`:\n\n```json\n[\n  {\n    \"id\": 1,\n    \"fullName\": \"Alice Smith\",\n    \"email\": \"alice@example.com\",\n    \"location\": \"Seattle\",\n    \"migrated\": true\n  },\n  {\n    \"id\": 2,\n    \"fullName\": \"Bob Jones\",\n    \"email\": \"bob@example.com\",\n    \"location\": \"Portland\",\n    \"migrated\": true\n  },\n  {\n    \"id\": 3,\n    \"fullName\": \"Carol Davis\",\n    \"email\": \"carol@example.com\",\n    \"location\": \"Denver\",\n    \"migrated\": true\n  }\n]\n```\n\nTransformations applied per record:\n- `firstName` + `lastName` → `fullName` (space-separated)\n- `emailAddress` → `email`\n- `address.city` → `location`\n- Added `migrated: true`\n- Kept `id`\n",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cat /data/users_v1.json\nls -l /data/",
+      "python3 -c \"\nimport json\nwith open('/data/users_v1.json') as f:\n    users_v1 = json.load(f)\n\nusers_v2 = []\nfor u in users_v1:\n    users_v2.append({\n        'id': u['id'],\n        'fullName': f\\\"{u['firstName']} {u['lastName']}\\\",\n        'email': u['emailAddress'],\n        'location': u['address']['city'],\n        'migrated': True\n    })\n\nwith open('/data/users_v2.json', 'w') as f:\n    json.dump(users_v2, f, indent=2)\n\nprint(json.dumps(users_v2, indent=2))\n\"\necho \"--- saved file ---\"\ncat /data/users_v2.json"
+    ],
+    "usage": {
+      "input_tokens": 3999,
+      "output_tokens": 682,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 6692
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat /data/users_v1.json\nls -l /data/",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "[{\"id\":1,\"firstName\":\"Alice\",\"lastName\":\"Smith\",\"emailAddress\":\"alice@example.com\",\"address\":{\"street\":\"123 Main St\",\"city\":\"Seattle\",\"state\":\"WA\"}},{\"id\":2,\"firstName\":\"Bob\",\"lastName\":\"Jones\",\"emailAddress\":\"bob@example.com\",\"address\":{\"street\":\"456 Oak Ave\",\"city\":\"Portland\",\"state\":\"OR\"}},{\"id\":3,\"firstName\":\"Carol\",\"lastName\":\"Davis\",\"emailAddress\":\"carol@example.com\",\"address\":{\"street\":\"789 Pine Rd\",\"city\":\"Denver\",\"state\":\"CO\"}}]-rw-r--r--      441 2026-10-09 17:42 users_v1.json\n"
+          },
+          {
+            "commands": "python3 -c \"\nimport json\nwith open('/data/users_v1.json') as f:\n    users_v1 = json.load(f)\n\nusers_v2 = []\nfor u in users_v1:\n    users_v2.append({\n        'id': u['id'],\n        'fullName': f\\\"{u['firstName']} {u['lastName']}\\\",\n        'email': u['emailAddress'],\n        'location': u['address']['city'],\n        'migrated': True\n    })\n\nwith open('/data/users_v2.json', 'w') as f:\n    json.dump(users_v2, f, indent=2)\n\nprint(json.dumps(users_v2, indent=2))\n\"\necho \"--- saved file ---\"\ncat /data/users_v2.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "[\n  {\n    \"id\": 1,\n    \"fullName\": \"Alice Smith\",\n    \"email\": \"alice@example.com\",\n    \"location\": \"Seattle\",\n    \"migrated\": true\n  },\n  {\n    \"id\": 2,\n    \"fullName\": \"Bob Jones\",\n    \"email\": \"bob@example.com\",\n    \"location\": \"Portland\",\n    \"migrated\": true\n  },\n  {\n    \"id\": 3,\n    \"fullName\": \"Carol Davis\",\n    \"email\": \"carol@example.com\",\n    \"location\": \"Denver\",\n    \"migrated\": true\n  }\n]\n--- saved file ---\n[\n  {\n    \"id\": 1,\n    \"fullName\": \"Alice Smith\",\n    \"email\": \"alice@example.com\",\n    \"location\": \"Seattle\",\n    \"migrated\": true\n  },\n  {\n    \"id\": 2,\n    \"fullName\": \"Bob Jones\",\n    \"email\": \"bob@example.com\",\n    \"location\": \"Portland\",\n    \"migrated\": true\n  },\n  {\n    \"id\": 3,\n    \"fullName\": \"Carol Davis\",\n    \"email\": \"carol@example.com\",\n    \"location\": \"Denver\",\n    \"migrated\": true\n  }\n]"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

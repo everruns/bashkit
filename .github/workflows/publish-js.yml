@@ -3,9 +3,13 @@
 # Triggered alongside publish.yml on GitHub Release or manual dispatch.
 # Adapted from https://github.com/pydantic/monty CI JS-building pattern.
 #
-# Prerequisites:
-#   - NPM_TOKEN secret with publish access (GitHub Settings > Secrets > Actions)
-#   - id-token: write permission for npm provenance (OIDC attestation)
+# Auth: npm trusted publishing (GitHub OIDC), no NPM_TOKEN secret.
+#   - npmjs.com @everruns/bashkit > Settings > Trusted publisher:
+#     GitHub Actions, everruns/bashkit, workflow publish-js.yml, no environment
+#   - release-js needs id-token: write; npm >= 11.5.1 exchanges the OIDC token
+#     for a short-lived publish token and attaches provenance automatically
+#   - setup-node has no registry option: it would write an .npmrc carrying a
+#     placeholder auth token
 
 name: Publish JS
 
@@ -13,6 +17,11 @@ on:
   release:
     types: [published]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Re-publish an existing release tag (e.g. v0.20.1) as npm latest; empty builds the selected ref'
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -25,27 +34,29 @@ env:
 
 jobs:
   # ============================================================================
-  # Verify the publish source is on main before running any repo code
+  # Resolve and verify the publish source before running any repo code
   # with secrets. Manual dispatch and release events can target arbitrary
-  # refs; this gate ensures all subsequent jobs see trusted code.
+  # refs; this gate ensures all subsequent jobs see trusted code. A `tag`
+  # input re-publishes that release tag's exact commit (see the script).
   # ============================================================================
   verify-source:
     name: Verify publish source
     runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.source.outputs.sha }}
+      dist_tag: ${{ steps.source.outputs.dist_tag }}
+      version: ${{ steps.source.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
 
-      - name: Verify publish source is reachable from main
-        run: |
-          git fetch --no-tags origin main:refs/remotes/origin/main
-          SOURCE_SHA=$(git rev-parse HEAD)
-          if ! git merge-base --is-ancestor "$SOURCE_SHA" origin/main; then
-            echo "Error: publish source $SOURCE_SHA is not reachable from origin/main"
-            exit 1
-          fi
-          echo "Publish source verified on origin/main: $SOURCE_SHA"
+      - name: Resolve publish source
+        id: source
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: bash scripts/resolve_publish_source.sh
 
   # ============================================================================
   # Build native bindings for each platform
@@ -83,6 +94,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.verify-source.outputs.sha }}
           persist-credentials: false
 
       - name: Setup pnpm
@@ -91,9 +103,9 @@ jobs:
           version: 10.33.0
 
       - name: Setup node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
         with:
-          node-version: 24
+          node-version: "24.22.1"
           cache: pnpm
           cache-dependency-path: crates/bashkit-js/pnpm-lock.yaml
 
@@ -124,7 +136,7 @@ jobs:
         working-directory: crates/bashkit-js
 
       - name: Upload native binding
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: js-bindings-${{ matrix.settings.target }}
           path: |
@@ -135,7 +147,7 @@ jobs:
       # Upload generated JS stubs from one build (they're identical across targets)
       - if: ${{ matrix.settings.target == 'x86_64-unknown-linux-gnu' }}
         name: Upload JS stubs
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: js-stubs
           path: |
@@ -149,6 +161,8 @@ jobs:
             crates/bashkit-js/scripted.d.ts
             crates/bashkit-js/internal.js
             crates/bashkit-js/internal.d.ts
+            crates/bashkit-js/runtime-functions.js
+            crates/bashkit-js/runtime-functions.d.ts
             crates/bashkit-js/langchain.js
             crates/bashkit-js/langchain.d.ts
             crates/bashkit-js/anthropic.js
@@ -168,7 +182,7 @@ jobs:
   # ============================================================================
   test-js-macos-windows:
     name: Test JS on ${{ matrix.settings.target }} - node@${{ matrix.node }}
-    needs: [build-js]
+    needs: [verify-source, build-js]
     strategy:
       fail-fast: false
       matrix:
@@ -182,12 +196,25 @@ jobs:
           - host: macos-latest
             target: x86_64-apple-darwin
             architecture: x64
-        node: ["20", "22", "24"]
+        node: ["20", "22.23.4", "24.22.1"]
     runs-on: ${{ matrix.settings.host }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.verify-source.outputs.sha }}
           persist-credentials: false
+
+      # Re-publishing an older tag: ship the tag's package bytes, but gate them
+      # with this workflow commit's tests (tests are not in the npm tarball).
+      # v0.20.1's own suite had a host-callback timeout too tight for the
+      # Rosetta lane, fixed in #2780.
+      - name: Use the workflow commit's JS tests
+        if: needs.verify-source.outputs.sha != github.sha
+        shell: bash
+        run: |
+          git fetch --no-tags --depth=1 origin "$GITHUB_SHA"
+          rm -rf crates/bashkit-js/__test__
+          git checkout FETCH_HEAD -- crates/bashkit-js/__test__
 
       - name: Setup pnpm
         uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
@@ -195,7 +222,7 @@ jobs:
           version: 10.33.0
 
       - name: Setup node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
         with:
           node-version: ${{ matrix.node }}
           cache: pnpm
@@ -207,13 +234,13 @@ jobs:
         working-directory: crates/bashkit-js
 
       - name: Download native binding
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: js-bindings-${{ matrix.settings.target }}
           path: crates/bashkit-js
 
       - name: Download JS stubs
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: js-stubs
           path: crates/bashkit-js
@@ -274,7 +301,7 @@ jobs:
       # repository code runs. Mask the output before crossing the step boundary.
       - name: Fetch OpenAI example key
         id: openai
-        if: steps.doppler.outputs.available == 'true' && !(runner.os == 'Windows' && matrix.node == '24')
+        if: steps.doppler.outputs.available == 'true' && !(runner.os == 'Windows' && matrix.node == '24.22.1')
         shell: bash
         env:
           DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
@@ -284,7 +311,7 @@ jobs:
           printf 'OPENAI_API_KEY=%s\n' "$key" >> "$GITHUB_OUTPUT"
 
       - name: Run AI examples
-        if: steps.doppler.outputs.available == 'true' && !(runner.os == 'Windows' && matrix.node == '24')
+        if: steps.doppler.outputs.available == 'true' && !(runner.os == 'Windows' && matrix.node == '24.22.1')
         shell: bash
         env:
           OPENAI_API_KEY: ${{ steps.openai.outputs.OPENAI_API_KEY }}
@@ -298,19 +325,32 @@ jobs:
   # ============================================================================
   test-js-linux:
     name: Test JS ${{ matrix.target }} - node@${{ matrix.node }}
-    needs: [build-js]
+    needs: [verify-source, build-js]
     strategy:
       fail-fast: false
       matrix:
         target:
           - x86_64-unknown-linux-gnu
           - aarch64-unknown-linux-gnu
-        node: ["20", "22", "24"]
+        node: ["20", "22.23.4", "24.22.1"]
     runs-on: ${{ contains(matrix.target, 'aarch64') && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.verify-source.outputs.sha }}
           persist-credentials: false
+
+      # Re-publishing an older tag: ship the tag's package bytes, but gate them
+      # with this workflow commit's tests (tests are not in the npm tarball).
+      # v0.20.1's own suite had a host-callback timeout too tight for the
+      # Rosetta lane, fixed in #2780.
+      - name: Use the workflow commit's JS tests
+        if: needs.verify-source.outputs.sha != github.sha
+        shell: bash
+        run: |
+          git fetch --no-tags --depth=1 origin "$GITHUB_SHA"
+          rm -rf crates/bashkit-js/__test__
+          git checkout FETCH_HEAD -- crates/bashkit-js/__test__
 
       - name: Setup pnpm
         uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
@@ -318,7 +358,7 @@ jobs:
           version: 10.33.0
 
       - name: Setup node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
         with:
           node-version: ${{ matrix.node }}
           cache: pnpm
@@ -347,13 +387,13 @@ jobs:
         working-directory: crates/bashkit-js
 
       - name: Download native binding
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: js-bindings-${{ matrix.target }}
           path: crates/bashkit-js
 
       - name: Download JS stubs
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: js-stubs
           path: crates/bashkit-js
@@ -443,7 +483,7 @@ jobs:
   #       with:
   #         version: 10.33.0
   #     - name: Setup node
-  #       uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+  #       uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
   #       with:
   #         node-version: 24
   #         cache: pnpm
@@ -452,12 +492,12 @@ jobs:
   #       run: pnpm install --frozen-lockfile --cpu wasm32
   #       working-directory: crates/bashkit-js
   #     - name: Download native binding
-  #       uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+  #       uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
   #       with:
   #         name: js-bindings-wasm32-wasip1-threads
   #         path: crates/bashkit-js
   #     - name: Download JS stubs
-  #       uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+  #       uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
   #       with:
   #         name: js-stubs
   #         path: crates/bashkit-js
@@ -474,6 +514,7 @@ jobs:
     name: Release to NPM
     runs-on: ubuntu-latest
     needs:
+      - verify-source
       - test-js-macos-windows
       - test-js-linux
 
@@ -485,16 +526,14 @@ jobs:
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.verify-source.outputs.sha }}
+          persist-credentials: false
 
-      - name: Verify publish source is on main
-        run: |
-          git fetch --no-tags origin main:refs/remotes/origin/main
-          SOURCE_SHA=$(git rev-parse HEAD)
-          if ! git merge-base --is-ancestor "$SOURCE_SHA" origin/main; then
-            echo "Error: publish source $SOURCE_SHA is not reachable from origin/main"
-            exit 1
-          fi
-          echo "Publish source verified on origin/main: $SOURCE_SHA"
+      - name: Confirm checkout is the verified publish source
+        env:
+          SOURCE_SHA: ${{ needs.verify-source.outputs.sha }}
+        run: test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
 
       - name: Setup pnpm
         uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
@@ -502,26 +541,37 @@ jobs:
           version: 10.33.0
 
       - name: Setup node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
         with:
-          node-version: 24
+          node-version: "24.22.1"
           cache: pnpm
           cache-dependency-path: crates/bashkit-js/pnpm-lock.yaml
-          registry-url: "https://registry.npmjs.org"
+
+      - name: Require npm with trusted publishing (>= 11.5.1)
+        # npm trusted publishing (GitHub OIDC -> short-lived publish token)
+        # landed in npm 11.5.1. Upgrade to a pinned release if the bundled
+        # npm is older, then assert.
+        run: |
+          npm_ok() {
+            node -e 'const [a,b,c]=process.argv[1].split(".").map(Number);process.exit(a>11||(a==11&&(b>5||(b==5&&c>=1)))?0:1)' "$(npm --version)"
+          }
+          npm_ok || npm install -g npm@11.6.2
+          npm_ok || { echo "::error::npm $(npm --version) lacks trusted publishing"; exit 1; }
+          echo "npm $(npm --version)"
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
         working-directory: crates/bashkit-js
 
       - name: Download all native bindings
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           pattern: js-bindings-*
           merge-multiple: true
           path: crates/bashkit-js
 
       - name: Download JS stubs
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: js-stubs
           path: crates/bashkit-js
@@ -533,35 +583,27 @@ jobs:
       - name: Determine npm dist-tag
         id: dist-tag
         working-directory: crates/bashkit-js
+        env:
+          DIST_TAG: ${{ needs.verify-source.outputs.dist_tag }}
+          TAG_VERSION: ${{ needs.verify-source.outputs.version }}
         run: |
           PKG_VERSION=$(node -p "require('./package.json').version")
           echo "version=$PKG_VERSION"
 
           # Only verified release tags may publish as npm latest. Branch or
           # manually selected refs must not become the default install target.
-          if [[ "$GITHUB_REF" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            TAG_VERSION="${GITHUB_REF#refs/tags/v}"
-            if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
-              echo "Error: Tag version ($TAG_VERSION) does not match package.json version ($PKG_VERSION)"
-              exit 1
-            fi
-            echo "tag=latest" >> "$GITHUB_OUTPUT"
-          else
-            echo "tag=next" >> "$GITHUB_OUTPUT"
+          if [ "$DIST_TAG" = latest ] && [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "Error: Tag version ($TAG_VERSION) does not match package.json version ($PKG_VERSION)"
+            exit 1
           fi
+          echo "tag=$DIST_TAG" >> "$GITHUB_OUTPUT"
 
       - name: Publish
         run: |
           TAG="${{ steps.dist-tag.outputs.tag }}"
           echo "Publishing with dist-tag: $TAG"
-          if [ "$TAG" = "latest" ]; then
-            npm publish --provenance --access public
-          else
-            npm publish --provenance --tag "$TAG" --access public
-          fi
+          python3 "$GITHUB_WORKSPACE/scripts/publish_npm.py" --tag "$TAG"
         working-directory: crates/bashkit-js
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Verify npm publish
         run: |

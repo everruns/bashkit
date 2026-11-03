@@ -1,0 +1,8 @@
+{
+  "tenant-id": "7dfb7e6b-b084-4364-8a35-11c3432c8984",
+  "subscription-id": "717d8bd5-a53b-43a8-b193-36ac59a12071",
+  "client-id": "c2f1bbc7-8e1d-4c63-853f-1fa5ece1e5b8",
+  "endpoint": "https://eus.codesigning.azure.net/",
+  "signing-account-name": "bashkit-signing-717d8bd5",
+  "certificate-profile-name": "bashkit-public"
+}

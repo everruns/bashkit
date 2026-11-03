@@ -1,0 +1,80 @@
+{
+  "eval": "bashkit_repo",
+  "sample": "repo_symlink_release_switch",
+  "target": "anthropic/claude-sonnet-5-5",
+  "input": [
+    "/home/eval/deploy is a git repo of release directories under releases/, with a `current` symlink pointing at the live one. The file TARGET names the release that should be live. Repoint `current` at that release (keep it a symlink; do not copy or rename release directories), then run `make test`. If the check reports a problem in the target release's files, fix it and re-run until `make test` passes. Commit everything with a message starting with `release:`."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "`current` now points at `releases/v1.5.0` and is still a symlink. `make test` passes, printing `OK v1.5.0`.\n\nThe first run failed because `releases/v1.5.0/app.conf` had `port = 8080` with spaces around the `=`. The check needs `port=8080`, so I removed the spaces.\n\nEverything is committed as `release: switch current to v1.5.0 and fix app.conf port line`. `git status` showed every file as a new file, including `build/release-check.txt` from the test run. So this commit seems to be the first one to track any of them.",
+    "iterations": 5,
+    "tool_calls_count": 4,
+    "tool_calls": [
+      "cd /home/eval/deploy; ls -la; cat TARGET; cat Makefile; ls releases; git status --short",
+      "cd /home/eval/deploy; cat bin/check-release; ls -la releases/*; ln -sfn releases/v1.5.0 current; ls -l current; make test",
+      "cd /home/eval/deploy; cat -A releases/v1.5.0/app.conf; cat releases/v1.4.0/app.conf; cat releases/v1.5.0/VERSION",
+      "cd /home/eval/deploy; sed -i 's/^port = 8080$/port=8080/' releases/v1.5.0/app.conf; make test; cat .gitignore; git add -A; git status --short; git commit -qm \"release: switch current to v1.5.0 and fix app.conf port line\"; git status --short"
+    ],
+    "usage": {
+      "input_tokens": 7364,
+      "output_tokens": 672,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 8145
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 4.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 3.0,
+      "turns": 5.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {
+          "/home/eval/deploy/current": "releases/v1.5.0"
+        },
+        "tool_outputs": [
+          {
+            "commands": "cd /home/eval/deploy; ls -la; cat TARGET; cat Makefile; ls releases; git status --short",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "drwxr-xr-x        0 2026-10-09 05:06 .git\n-rw-r--r--       31 2026-10-09 05:06 Makefile\n-rw-r--r--        7 2026-10-09 05:06 TARGET\ndrwxr-xr-x        0 2026-10-09 05:06 bin\nlrwxrwxrwx       15 2026-10-09 05:06 current -> releases/v1.4.0\ndrwxr-xr-x        0 2026-10-09 05:06 releases\nv1.5.0\ntest:\n\t@bash bin/check-release\nv1.4.0\nv1.5.0\nOn branch master\n\nnothing to commit, working tree clean\n"
+          },
+          {
+            "commands": "cd /home/eval/deploy; cat bin/check-release; ls -la releases/*; ln -sfn releases/v1.5.0 current; ls -l current; make test",
+            "exit_code": 2,
+            "stderr": "make: *** [Makefile:2: test] Error 1\n",
+            "stdout": "#!/bin/bash\n# Verify the live release (`current`) is the TARGET release and is well-formed.\nset -u\nmkdir -p build\nwant=$(cat TARGET)\n[ -L current ] || { echo 'current must be a symlink'; exit 1; }\nhave=\"v$(cat current/VERSION)\"\nif [ \"$have\" != \"$want\" ]; then echo \"live release is $have, TARGET is $want\"; exit 1; fi\nfor key in name port workers; do\n  grep -Eq \"^$key=[^ ]+$\" current/app.conf || { echo \"app.conf: missing or malformed '$key=VALUE' line\"; exit 1; }\ndone\necho \"OK $want\" | tee build/release-check.txt\nreleases/v1.4.0:\n-rw-r--r--        6 2026-10-09 05:06 VERSION\n-rw-r--r--       29 2026-10-09 05:06 app.conf\n\nreleases/v1.5.0:\n-rw-r--r--        6 2026-10-09 05:06 VERSION\n-rw-r--r--       31 2026-10-09 05:06 app.conf\nlrwxrwxrwx       15 2026-10-09 05:06 current -> releases/v1.5.0\napp.conf: missing or malformed 'port=VALUE' line\n"
+          },
+          {
+            "commands": "cd /home/eval/deploy; cat -A releases/v1.5.0/app.conf; cat releases/v1.4.0/app.conf; cat releases/v1.5.0/VERSION",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "name=web$\nport = 8080$\nworkers=6$\nname=web\nport=8080\nworkers=4\n1.5.0\n"
+          },
+          {
+            "commands": "cd /home/eval/deploy; sed -i 's/^port = 8080$/port=8080/' releases/v1.5.0/app.conf; make test; cat .gitignore; git add -A; git status --short; git commit -qm \"release: switch current to v1.5.0 and fix app.conf port line\"; git status --short",
+            "exit_code": 0,
+            "stderr": "cat: .gitignore: No such file or directory\n",
+            "stdout": "OK v1.5.0\nOn branch master\n\nChanges to be committed:\n  (use \"git restore --staged <file>...\" to unstage)\n\tnew file:   Makefile\n\tnew file:   TARGET\n\tnew file:   bin/check-release\n\tnew file:   build/release-check.txt\n\tnew file:   current\n\tnew file:   releases/v1.4.0/VERSION\n\tnew file:   releases/v1.4.0/app.conf\n\tnew file:   releases/v1.5.0/VERSION\n\tnew file:   releases/v1.5.0/app.conf\n[master b465c8b] release: switch current to v1.5.0 and fix app.conf port line\nOn branch master\n\nnothing to commit, working tree clean\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

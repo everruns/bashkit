@@ -1,0 +1,99 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "rt_pipeline_mail_domains",
+  "target": "openrouter/moonshotai/kimi-k3",
+  "input": [
+    "Write a bash script /home/eval/report.sh used as `bash /home/eval/report.sh INBOX_DIR OUT_FILE` (it will be run again later on other directories). INBOX_DIR holds message files `*.json` (names may contain spaces; ignore other files). Each is a JSON object whose optional \"to\" and \"cc\" fields are email address-list header strings like `\"Doe, John\" <john@example.com>, ann@x.org` (display names may be quoted and contain commas). Count every recipient address in to and cc by its domain (the part after '@', lowercased).\nFiles that are not valid JSON are skipped and reported on stderr as `skip: <file name>` (base name), in file name order. OUT_FILE gets one line `COUNT DOMAIN` per domain, sorted by count descending then domain. Exit 0.\nRun it on /data/inbox writing /out/domains.txt."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Done. The script `/home/eval/report.sh` is in place and has been run on `/data/inbox`, producing `/out/domains.txt`:\n\n```\n4 x.org\n2 corp.io\n2 example.com\n1 sub.x.org\n```\n\nwith `skip: broken.json` reported on stderr and exit code 0.\n\n**How it works:**\n\n1. **File enumeration** — `find -maxdepth 1 -type f -name '*.json' -printf '%f\\0' | sort -z` lists only top-level `*.json` files, NUL-separated so names with spaces (or any special characters) survive intact, sorted in deterministic LC_ALL=C name order.\n2. **Validation** — each file is parsed with `json.load`; anything unparseable (or not a JSON object) is reported to stderr as `skip: <basename>` and processing continues.\n3. **Address parsing** — a small state machine splits `to`/`cc` header strings on *top-level* commas only, respecting double-quoted display names (so `\"Doe, John\" <john@example.com>` stays one address) and escaped quotes (`\\\"`) inside them. The domain is then the text after each address's `@`, lowercased — quoted display names containing `@` are handled because the regex only captures the domain-shaped token.\n4. **Output** — counts are sorted by count descending, then domain ascending, and written as `COUNT DOMAIN` lines to OUT_FILE.\n\n**Verified behavior:** quoted names with commas and escaped quotes, case-insensitive domains (`Example.com`/`example.COM` merge), empty/missing `to`/`cc`, non-object JSON treated as invalid, files with spaces in names, subdirectories ignored, empty inbox yields an empty OUT_FILE with exit 0, and stderr ordering matches file-name order.",
+    "iterations": 8,
+    "tool_calls_count": 7,
+    "tool_calls": [
+      "ls -la /data/inbox/ | head -50; echo '---'; ls -ld /out 2>/dev/null || echo \"no /out\"; which python3",
+      "cd /data/inbox && for f in *; do echo \"=== $f ===\"; cat -- \"$f\"; echo; done",
+      "cat > /home/eval/report.sh <<'EOF'\n#!/bin/bash\n# report.sh INBOX_DIR OUT_FILE\n# Count recipient domains from \"to\"/\"cc\" address lists in *.json message files.\nset -u\n\nINBOX=${1:?usage: report.sh INBOX_DIR OUT_FILE}\nOUT=${2:?usage: report.sh INBOX_DIR OUT_FILE}\n\n# Emit the *.json files (base names) in LC_ALL=C name order, NUL-separated.\nfind \"$INBOX\" -maxdepth 1 -type f -name '*.json' -printf '%f\\0' | sort -z |\npython3 -c '\nimport sys, os, json, re\n\ninbox, out = sys.argv[1], sys.argv[2]\nnames = [n for n in sys.stdin.buffer.read().split(b\"\\0\") if n]\n\n# Split an address list on top-level commas (commas inside quotes do not split).\n# A display name may contain escaped quotes (\"a\\\"b, c\" <x@y>), so \\\\ is honored.\ndef split_addrs(s):\n    parts, buf, inq, esc = [], [], False, False\n    for ch in s:\n        if esc:\n            buf.append(ch); esc = False\n        elif inq and ch == \"\\\\\":\n            buf.append(ch); esc = True\n        elif ch == \"\\\"\":\n            buf.append(ch); inq = not inq\n        elif ch == \",\" and not inq:\n            parts.append(\"\".join(buf)); buf = []\n        else:\n            buf.append(ch)\n    parts.append(\"\".join(buf))\n    return parts\n\naddr_re = re.compile(r\"@([^\\s@<>()\\[\\],;:]+)\")\n\ncounts = {}\nfor n in names:\n    path = os.path.join(inbox, n.decode(\"utf-8\", \"surrogateescape\"))\n    try:\n        with open(path, \"r\", encoding=\"utf-8\") as f:\n            obj = json.load(f)\n        if not isinstance(obj, dict):\n            raise ValueError(\"not an object\")\n    except Exception:\n        print(\"skip: \" + n.decode(\"utf-8\", \"replace\"), file=sys.stderr)\n        continue\n    for key in (\"to\", \"cc\"):\n        val = obj.get(key)\n        if not isinstance(val, str) or not val.strip():\n            continue\n        for seg in split_addrs(val):\n            for m in addr_re.finditer(seg):      # each address has its own @\n                d = m.group(1).strip().lower()\n                if d:\n                    counts[d] = counts.get(d, 0) + 1\n\nlines = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))\nwith open(out, \"w\", encoding=\"utf-8\") as f:\n    for d, c in lines:\n        f.write(\"%d %s\\n\" % (c, d))\n' \"$INBOX\" \"$OUT\"\nEOF\nchmod +x /home/eval/report.sh\necho \"script written\"",
+      "mkdir -p /out && bash /home/eval/report.sh /data/inbox /out/domains.txt; echo \"exit=$?\"; echo '--- out ---'; cat /out/domains.txt",
+      "mkdir -p /tmp/t1 && cd /tmp/t1\n# edge cases: escaped quotes w/ comma inside name, array JSON (invalid per task), missing to/cc, to as number, empty file, uppercase ext, subdomain\nprintf '%s' '{\"to\": \"\\\"Weird, \\\\\\\"Q\\\\\\\", Jr\\\" <w@A.B>, x@c.d\", \"cc\": \"y@c.d, z@C.D\"}' > 'a b.json'\necho '[1,2,3]' > arr.json\necho '{\"subject\": \"hi\"}' > none.json\necho '{\"to\": 123}' > num.json\n: > empty.json\necho '{\"to\":\"u@UP.IO\"}' > CAPS.JSON\necho '{\"to\":\"u@Sub.X.Org\"}' > 'zzz.json'\nbash /home/eval/report.sh /tmp/t1 /tmp/t1/out.txt > /tmp/t1/stdout.txt 2> /tmp/t1/stderr.txt\necho \"exit=$?\"; echo '-- stdout:'; cat /tmp/t1/stdout.txt; echo '-- stderr:'; cat /tmp/t1/stderr.txt; echo '-- out:'; cat /tmp/t1/out.txt",
+      "mkdir -p /tmp/t2/subdir && cd /tmp/t2\necho 'bad json 1' > 'b bad.json'; echo 'oops' > 'A bad.json'; echo 'nah' > 'á bad.json'\necho '{\"to\":\"a@x.io\"}' > subdir/nested.json   # must be ignored (maxdepth 1)\nLC_ALL=C bash /home/eval/report.sh /tmp/t2 /tmp/t2/out.txt 2>/tmp/t2/err.txt; echo \"exit=$?\"\necho '-- stderr (C locale order: A, á, b):'; cat /tmp/t2/err.txt\necho '-- out:'; cat /tmp/t2/out.txt\n# empty dir\nmkdir -p /tmp/t3 && LC_ALL=C bash /home/eval/report.sh /tmp/t3 /tmp/t3/out.txt; echo \"empty exit=$?\"; wc -c /tmp/t3/out.txt\n# re-run on /data/inbox to confirm idempotence\nLC_ALL=C bash /home/eval/report.sh /data/inbox /out/domains.txt; echo \"exit=$?\"; cat /out/domains.txt",
+      "rm -rf /tmp/t1 /tmp/t2 /tmp/t3; cat /home/eval/report.sh"
+    ],
+    "usage": {
+      "input_tokens": 16487,
+      "output_tokens": 5122,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 129909
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 7.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 7.0,
+      "turns": 8.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /data/inbox/ | head -50; echo '---'; ls -ld /out 2>/dev/null || echo \"no /out\"; which python3",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       87 2026-10-09 18:14 001.json\n-rw-r--r--       95 2026-10-09 18:14 002 reply.json\n-rw-r--r--       37 2026-10-09 18:14 003.json\n-rw-r--r--       99 2026-10-09 18:14 004 fwd fwd.json\n-rw-r--r--       25 2026-10-09 18:14 broken.json\n-rw-r--r--        9 2026-10-09 18:14 notes.txt\n---\nno /out\n/usr/bin/python3\n"
+          },
+          {
+            "commands": "cd /data/inbox && for f in *; do echo \"=== $f ===\"; cat -- \"$f\"; echo; done",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "=== 001.json ===\n{\"from\": \"ops@corp.io\", \"to\": \"\\\"Doe, John\\\" <JOHN@Example.com>, ann@x.org\", \"cc\": \"\"}\n\n=== 002 reply.json ===\n{\"from\": \"a@b.c\", \"to\": \"Team <team@CORP.io>\", \"cc\": \"\\\"Lee, A.\\\" <a.lee@x.org>, b@sub.x.org\"}\n\n=== 003.json ===\n{\"from\": \"z@z.z\", \"to\": \"ann@x.org\"}\n\n=== 004 fwd fwd.json ===\n{\"from\": \"x@y.z\", \"to\": \"\\\"Smith, J\\\" <js@example.COM>, \\\"Ops\\\" <ops@corp.io>\", \"cc\": \"dan@x.org\"}\n\n=== broken.json ===\n{\"from\": \"q@q.q\", \"to\": \n\n=== notes.txt ===\nnot mail\n\n"
+          },
+          {
+            "commands": "cat > /home/eval/report.sh <<'EOF'\n#!/bin/bash\n# report.sh INBOX_DIR OUT_FILE\n# Count recipient domains from \"to\"/\"cc\" address lists in *.json message files.\nset -u\n\nINBOX=${1:?usage: report.sh INBOX_DIR OUT_FILE}\nOUT=${2:?usage: report.sh INBOX_DIR OUT_FILE}\n\n# Emit the *.json files (base names) in LC_ALL=C name order, NUL-separated.\nfind \"$INBOX\" -maxdepth 1 -type f -name '*.json' -printf '%f\\0' | sort -z |\npython3 -c '\nimport sys, os, json, re\n\ninbox, out = sys.argv[1], sys.argv[2]\nnames = [n for n in sys.stdin.buffer.read().split(b\"\\0\") if n]\n\n# Split an address list on top-level commas (commas inside quotes do not split).\n# A display name may contain escaped quotes (\"a\\\"b, c\" <x@y>), so \\\\ is honored.\ndef split_addrs(s):\n    parts, buf, inq, esc = [], [], False, False\n    for ch in s:\n        if esc:\n            buf.append(ch); esc = False\n        elif inq and ch == \"\\\\\":\n            buf.append(ch); esc = True\n        elif ch == \"\\\"\":\n            buf.append(ch); inq = not inq\n        elif ch == \",\" and not inq:\n            parts.append(\"\".join(buf)); buf = []\n        else:\n            buf.append(ch)\n    parts.append(\"\".join(buf))\n    return parts\n\naddr_re = re.compile(r\"@([^\\s@<>()\\[\\],;:]+)\")\n\ncounts = {}\nfor n in names:\n    path = os.path.join(inbox, n.decode(\"utf-8\", \"surrogateescape\"))\n    try:\n        with open(path, \"r\", encoding=\"utf-8\") as f:\n            obj = json.load(f)\n        if not isinstance(obj, dict):\n            raise ValueError(\"not an object\")\n    except Exception:\n        print(\"skip: \" + n.decode(\"utf-8\", \"replace\"), file=sys.stderr)\n        continue\n    for key in (\"to\", \"cc\"):\n        val = obj.get(key)\n        if not isinstance(val, str) or not val.strip():\n            continue\n        for seg in split_addrs(val):\n            for m in addr_re.finditer(seg):      # each address has its own @\n                d = m.group(1).strip().lower()\n                if d:\n                    counts[d] = counts.get(d, 0) + 1\n\nlines = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))\nwith open(out, \"w\", encoding=\"utf-8\") as f:\n    for d, c in lines:\n        f.write(\"%d %s\\n\" % (c, d))\n' \"$INBOX\" \"$OUT\"\nEOF\nchmod +x /home/eval/report.sh\necho \"script written\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "script written\n"
+          },
+          {
+            "commands": "mkdir -p /out && bash /home/eval/report.sh /data/inbox /out/domains.txt; echo \"exit=$?\"; echo '--- out ---'; cat /out/domains.txt",
+            "exit_code": 0,
+            "stderr": "skip: broken.json\n",
+            "stdout": "exit=0\n--- out ---\n4 x.org\n2 corp.io\n2 example.com\n1 sub.x.org\n"
+          },
+          {
+            "commands": "mkdir -p /tmp/t1 && cd /tmp/t1\n# edge cases: escaped quotes w/ comma inside name, array JSON (invalid per task), missing to/cc, to as number, empty file, uppercase ext, subdomain\nprintf '%s' '{\"to\": \"\\\"Weird, \\\\\\\"Q\\\\\\\", Jr\\\" <w@A.B>, x@c.d\", \"cc\": \"y@c.d, z@C.D\"}' > 'a b.json'\necho '[1,2,3]' > arr.json\necho '{\"subject\": \"hi\"}' > none.json\necho '{\"to\": 123}' > num.json\n: > empty.json\necho '{\"to\":\"u@UP.IO\"}' > CAPS.JSON\necho '{\"to\":\"u@Sub.X.Org\"}' > 'zzz.json'\nbash /home/eval/report.sh /tmp/t1 /tmp/t1/out.txt > /tmp/t1/stdout.txt 2> /tmp/t1/stderr.txt\necho \"exit=$?\"; echo '-- stdout:'; cat /tmp/t1/stdout.txt; echo '-- stderr:'; cat /tmp/t1/stderr.txt; echo '-- out:'; cat /tmp/t1/out.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "exit=0\n-- stdout:\n-- stderr:\nskip: arr.json\nskip: empty.json\n-- out:\n3 c.d\n1 a.b\n1 sub.x.org\n"
+          },
+          {
+            "commands": "mkdir -p /tmp/t2/subdir && cd /tmp/t2\necho 'bad json 1' > 'b bad.json'; echo 'oops' > 'A bad.json'; echo 'nah' > 'á bad.json'\necho '{\"to\":\"a@x.io\"}' > subdir/nested.json   # must be ignored (maxdepth 1)\nLC_ALL=C bash /home/eval/report.sh /tmp/t2 /tmp/t2/out.txt 2>/tmp/t2/err.txt; echo \"exit=$?\"\necho '-- stderr (C locale order: A, á, b):'; cat /tmp/t2/err.txt\necho '-- out:'; cat /tmp/t2/out.txt\n# empty dir\nmkdir -p /tmp/t3 && LC_ALL=C bash /home/eval/report.sh /tmp/t3 /tmp/t3/out.txt; echo \"empty exit=$?\"; wc -c /tmp/t3/out.txt\n# re-run on /data/inbox to confirm idempotence\nLC_ALL=C bash /home/eval/report.sh /data/inbox /out/domains.txt; echo \"exit=$?\"; cat /out/domains.txt",
+            "exit_code": 0,
+            "stderr": "skip: broken.json\n",
+            "stdout": "exit=0\n-- stderr (C locale order: A, á, b):\nskip: A bad.json\nskip: b bad.json\nskip: á bad.json\n-- out:\nempty exit=0\n0 /tmp/t3/out.txt\nexit=0\n4 x.org\n2 corp.io\n2 example.com\n1 sub.x.org\n"
+          },
+          {
+            "commands": "rm -rf /tmp/t1 /tmp/t2 /tmp/t3; cat /home/eval/report.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "#!/bin/bash\n# report.sh INBOX_DIR OUT_FILE\n# Count recipient domains from \"to\"/\"cc\" address lists in *.json message files.\nset -u\n\nINBOX=${1:?usage: report.sh INBOX_DIR OUT_FILE}\nOUT=${2:?usage: report.sh INBOX_DIR OUT_FILE}\n\n# Emit the *.json files (base names) in LC_ALL=C name order, NUL-separated.\nfind \"$INBOX\" -maxdepth 1 -type f -name '*.json' -printf '%f\\0' | sort -z |\npython3 -c '\nimport sys, os, json, re\n\ninbox, out = sys.argv[1], sys.argv[2]\nnames = [n for n in sys.stdin.buffer.read().split(b\"\\0\") if n]\n\n# Split an address list on top-level commas (commas inside quotes do not split).\n# A display name may contain escaped quotes (\"a\\\"b, c\" <x@y>), so \\\\ is honored.\ndef split_addrs(s):\n    parts, buf, inq, esc = [], [], False, False\n    for ch in s:\n        if esc:\n            buf.append(ch); esc = False\n        elif inq and ch == \"\\\\\":\n            buf.append(ch); esc = True\n        elif ch == \"\\\"\":\n            buf.append(ch); inq = not inq\n        elif ch == \",\" and not inq:\n            parts.append(\"\".join(buf)); buf = []\n        else:\n            buf.append(ch)\n    parts.append(\"\".join(buf))\n    return parts\n\naddr_re = re.compile(r\"@([^\\s@<>()\\[\\],;:]+)\")\n\ncounts = {}\nfor n in names:\n    path = os.path.join(inbox, n.decode(\"utf-8\", \"surrogateescape\"))\n    try:\n        with open(path, \"r\", encoding=\"utf-8\") as f:\n            obj = json.load(f)\n        if not isinstance(obj, dict):\n            raise ValueError(\"not an object\")\n    except Exception:\n        print(\"skip: \" + n.decode(\"utf-8\", \"replace\"), file=sys.stderr)\n        continue\n    for key in (\"to\", \"cc\"):\n        val = obj.get(key)\n        if not isinstance(val, str) or not val.strip():\n            continue\n        for seg in split_addrs(val):\n            for m in addr_re.finditer(seg):      # each address has its own @\n                d = m.group(1).strip().lower()\n                if d:\n                    counts[d] = counts.get(d, 0) + 1\n\nlines = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))\nwith open(out, \"w\", encoding=\"utf-8\") as f:\n    for d, c in lines:\n        f.write(\"%d %s\\n\" % (c, d))\n' \"$INBOX\" \"$OUT\"\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

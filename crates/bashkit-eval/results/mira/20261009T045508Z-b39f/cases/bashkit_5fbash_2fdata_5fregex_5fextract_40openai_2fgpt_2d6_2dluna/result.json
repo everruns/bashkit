@@ -1,0 +1,57 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "data_regex_extract",
+  "target": "openai/gpt-6-luna",
+  "input": [
+    "Read /data/access.log where each line has format '[TIMESTAMP] STATUS_CODE METHOD URL DURATION_MS'. Use bash regex matching ([[ =~ ]]) with BASH_REMATCH to extract each field. Find all requests that took longer than 500ms. Print them as 'SLOW: METHOD URL took DURATIONms (STATUS)'. At the end, print 'Slow requests: N of M total'."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "6/6 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "SLOW: POST /api/orders took 850ms (200)\nSLOW: GET /api/reports took 1200ms (200)\nSLOW: POST /api/payments took 2000ms (500)\nSLOW: PUT /api/users took 620ms (200)\nSlow requests: 4 of 8 total",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "if [[ ! -f /data/access.log ]]; then printf 'Error: /data/access.log not found\\n' >&2; exit 1; fi\nslow=0\ntotal=0\nwhile IFS= read -r line || [[ -n $line ]]; do\n  if [[ $line =~ ^\\[([^]]+)\\][[:space:]]+([0-9]+)[[:space:]]+([^[:space:]]+)[[:space:]]+([^[:space:]]+)[[:space:]]+([0-9]+)$ ]]; then\n    timestamp=${BASH_REMATCH[1]}\n    status=${BASH_REMATCH[2]}\n    method=${BASH_REMATCH[3]}\n    url=${BASH_REMATCH[4]}\n    duration=${BASH_REMATCH[5]}\n    ((total += 1))\n    if (( duration > 500 )); then\n      printf 'SLOW: %s %s took %sms (%s)\\n' \"$method\" \"$url\" \"$duration\" \"$status\"\n      ((slow += 1))\n    fi\n  fi\ndone < /data/access.log\nprintf 'Slow requests: %d of %d total\\n' \"$slow\" \"$total\""
+    ],
+    "usage": {
+      "input_tokens": 875,
+      "output_tokens": 373,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 7180
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "if [[ ! -f /data/access.log ]]; then printf 'Error: /data/access.log not found\\n' >&2; exit 1; fi\nslow=0\ntotal=0\nwhile IFS= read -r line || [[ -n $line ]]; do\n  if [[ $line =~ ^\\[([^]]+)\\][[:space:]]+([0-9]+)[[:space:]]+([^[:space:]]+)[[:space:]]+([^[:space:]]+)[[:space:]]+([0-9]+)$ ]]; then\n    timestamp=${BASH_REMATCH[1]}\n    status=${BASH_REMATCH[2]}\n    method=${BASH_REMATCH[3]}\n    url=${BASH_REMATCH[4]}\n    duration=${BASH_REMATCH[5]}\n    ((total += 1))\n    if (( duration > 500 )); then\n      printf 'SLOW: %s %s took %sms (%s)\\n' \"$method\" \"$url\" \"$duration\" \"$status\"\n      ((slow += 1))\n    fi\n  fi\ndone < /data/access.log\nprintf 'Slow requests: %d of %d total\\n' \"$slow\" \"$total\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "SLOW: POST /api/orders took 850ms (200)\nSLOW: GET /api/reports took 1200ms (200)\nSLOW: POST /api/payments took 2000ms (500)\nSLOW: PUT /api/users took 620ms (200)\nSlow requests: 4 of 8 total\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

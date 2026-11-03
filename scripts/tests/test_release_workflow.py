@@ -130,15 +130,67 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("npm view @everruns/bashkit", step)
         self.assertIn("exit 1", step)
 
-    def test_cli_publish_proxy_uses_the_published_core(self) -> None:
+    def test_release_check_verifies_the_exact_unpublished_package_graph(self) -> None:
         justfile = (ROOT / "justfile").read_text()
+        recipe = justfile.split("\nrelease-check:\n", 1)[1].split("\n# Create and push", 1)[0]
 
-        # The proxy manifest rewrite lives in scripts/cli_publish_proxy.py so it
-        # can be unit tested; release-check must still call it.
-        self.assertIn(
-            'python3 scripts/cli_publish_proxy.py "$CLI_TOML" "$LATEST_CORE"', justfile
-        )
-        self.assertTrue((ROOT / "scripts/cli_publish_proxy.py").is_file())
+        # New internal dependencies are absent from crates.io until publication.
+        # Cargo stages them together only when every release package is selected.
+        for package in ("bashkit-cpython-wasm", "bashkit", "bashkit-cli", "bashkit-scripted-tool"):
+            self.assertRegex(recipe, rf"-p {package}(?:\s|$)")
+        self.assertIn("--dry-run", recipe)
+        self.assertNotIn("--no-verify", recipe)
+        self.assertNotIn("LATEST_CORE", recipe)
+        self.assertNotIn("cli_publish_proxy", recipe)
+
+    def test_homebrew_release_metadata_matches_repository_policy(self) -> None:
+        workflow = (ROOT / ".github/workflows/cli-binaries.yml").read_text()
+
+        self.assertIn('git config user.name "Mykhailo Chalyi"', workflow)
+        self.assertIn('git config user.email "mike@chaliy.name"', workflow)
+        self.assertNotIn("github-actions[bot]", workflow)
+        license_match = re.search(r'^license = "([^"]+)"', (ROOT / "Cargo.toml").read_text(), re.MULTILINE)
+        self.assertIsNotNone(license_match)
+        self.assertIn(f'license "{license_match.group(1)}"', workflow)
+
+    def test_npm_publish_lanes_share_exact_archive_verification(self) -> None:
+        for name in ("publish-js.yml", "publish-wasm.yml"):
+            workflow = (ROOT / ".github/workflows" / name).read_text()
+            with self.subTest(workflow=name):
+                self.assertIn('python3 "$GITHUB_WORKSPACE/scripts/publish_npm.py" --tag "$TAG"', workflow)
+
+    def test_npm_publish_lanes_use_trusted_publishing(self) -> None:
+        """npm auth is GitHub OIDC trusted publishing, never a long-lived token.
+
+        A rejected NPM_TOKEN made npm answer the 0.20.1 wasm publish with a
+        misleading 404. setup-node's registry-url writes an .npmrc carrying a
+        placeholder NODE_AUTH_TOKEN, so it stays off too.
+        """
+        for name, job in (("publish-js.yml", "release-js"), ("publish-wasm.yml", "publish-wasm")):
+            workflow = (ROOT / ".github/workflows" / name).read_text()
+            with self.subTest(workflow=name):
+                self.assertNotIn("secrets.NPM_TOKEN", workflow)
+                self.assertNotIn("NODE_AUTH_TOKEN", workflow)
+                self.assertNotIn("registry-url:", workflow)
+                body = workflow.split(f"\n  {job}:\n", 1)[1]
+                self.assertIn("id-token: write", body.split("\n    steps:\n", 1)[0])
+                self.assertIn("npm install -g npm@11.6.2", body)
+
+    def test_npm_publish_lanes_build_only_the_resolved_source(self) -> None:
+        """A `tag` input re-publishes that tag; every job must build the same commit."""
+        for name in ("publish-js.yml", "publish-wasm.yml"):
+            workflow = (ROOT / ".github/workflows" / name).read_text()
+            with self.subTest(workflow=name):
+                self.assertIn("run: bash scripts/resolve_publish_source.sh", workflow)
+                self.assertIn("INPUT_TAG: ${{ inputs.tag }}", workflow)
+                self.assertNotIn("GITHUB_REF", workflow)
+                jobs = workflow.split("\njobs:\n", 1)[1]
+                for job in re.split(r"\n  (?=[a-z][a-z-]*:\n)", jobs):
+                    if job.startswith(("verify-source:", "#")) or "actions/checkout@" not in job:
+                        continue
+                    with self.subTest(job=job.split(":", 1)[0]):
+                        self.assertIn("ref: ${{ needs.verify-source.outputs.sha }}", job)
+                        self.assertRegex(job, r"needs: \[?[^\n]*verify-source|needs:\n(\s+- [a-z-]+\n)*\s+- verify-source")
 
     def test_web_ci_exercises_release_wasm_optimization(self) -> None:
         build_script = (ROOT / "crates/bashkit-wasm/scripts/build.sh").read_text()

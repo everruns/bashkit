@@ -1044,7 +1044,8 @@ async fn execute_curl_request(
                     response.body.clone()
                 };
 
-                // Format output
+                // Keep response bytes canonical for files, redirects, and
+                // pipelines. Only text consumers may decode invalid UTF-8.
                 let output = if head_only {
                     // For -I, output headers
                     let mut header_output = format!("HTTP/1.1 {} OK\r\n", response.status);
@@ -1052,15 +1053,15 @@ async fn execute_curl_request(
                         header_output.push_str(&format!("{}: {}\r\n", name, value));
                     }
                     header_output.push_str("\r\n");
-                    header_output
+                    header_output.into_bytes()
                 } else {
-                    String::from_utf8_lossy(&body_bytes).into_owned()
+                    body_bytes
                 };
 
                 // Write to file if -o specified
                 if let Some(file_path) = output_file {
                     let full_path = resolve_path(ctx.cwd, file_path);
-                    if let Err(e) = ctx.fs.write_file(&full_path, output.as_bytes()).await {
+                    if let Err(e) = ctx.fs.write_file(&full_path, &output).await {
                         return Ok(ExecResult::err(
                             format!("curl: failed to write to {}: {}\n", file_path, e),
                             23,
@@ -1075,10 +1076,12 @@ async fn execute_curl_request(
                 }
 
                 // Append write-out format if specified
-                let mut final_output = verbose_output;
-                final_output.push_str(&output);
+                let mut final_output = verbose_output.into_bytes();
+                final_output.extend_from_slice(&output);
                 if let Some(fmt) = write_out {
-                    final_output.push_str(&format_write_out(fmt, &response, output.len()));
+                    final_output.extend_from_slice(
+                        format_write_out(fmt, &response, output.len()).as_bytes(),
+                    );
                 }
 
                 return Ok(ExecResult::ok(final_output));
@@ -1491,7 +1494,7 @@ async fn execute_wget_request(
             let output_path = if let Some(file) = output_file {
                 if file == "-" {
                     // Output to stdout
-                    return Ok(ExecResult::ok(response.body_string()));
+                    return Ok(ExecResult::ok(response.body));
                 }
                 file.to_string()
             } else {

@@ -46,6 +46,31 @@ Implemented
   becomes 128+signal.
 - Limit: `max_background_jobs` (TM-DOS-122).
 
+## Concurrent pipeline admission
+
+Non-final streaming producers atomically claim slots from the same
+`max_background_jobs` counter as background jobs and descendants before any
+fork or producer-vector allocation. A pipeline retains its entire group claim
+until all producer owners drop; the final stage uses the caller's shell and
+needs no extra slot. Refused admission returns `MaxConcurrentJobs` rather than
+falling back to sequential execution. Sequential mode needs no producer slots.
+
+`pipeline_admission.rs` inventories the owned fields copied by `fork_for_job`:
+local frames/arrays/positional values, builtin names/table capacity, source-frame
+names, paths, descriptors, completion/bindings and substitution-fd metadata.
+The first producer also admits both representations of copied stdin.
+Its shared-budget checkpoints charge construction work and check cancellation
+and deadlines; a storage lease is acquired before copying. Environment/scoped
+state and immutable Git configuration remain Arc-shared. Stage commands borrow
+the existing AST. Producer vectors and status slots use `BudgetedVec`; each
+future's actual layout is leased before boxing. Pipe metadata owns its own
+lease; cancelled-request reconciliation and the next host reset release the
+caller's transient pipe references. Leases survive until producer
+owners drop on completion, partial admission failure, error or cancellation.
+Keep the inventory aligned with fork ownership changes. Two-stage fixtures in
+`pipeline_admission_tests` cover Bash parity, export isolation, sequential mode
+and lastpipe; unit fixtures cover shared admission and lease/slot cleanup.
+
 ## Coprocesses
 
 `coproc [NAME] cmd` is a background job whose stdin and stdout are two

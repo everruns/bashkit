@@ -1,0 +1,88 @@
+# Exercise the real signing identity without publishing or rebuilding a registry
+# version. The input is the exact reported PyPI wheel, verified by SHA-256.
+name: Windows signing smoke
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    name: Prepare known published wheel
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Require a signing-smoke tag
+        shell: bash
+        run: |
+          [[ "$GITHUB_REF" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+-signing-smoke-[0-9a-f]{12}$ ]]
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Download and verify the original Windows artifact
+        run: |
+          python -m pip download --index-url https://pypi.org/simple --platform win_amd64 --only-binary=:all: --no-deps --no-cache-dir --dest unsigned-dist bashkit==0.20.1
+          echo "948f3f73a3e1289caeba7581330732fd145d5b26e5c018d97345c1bd92ce9099  unsigned-dist/bashkit-0.20.1-cp39-abi3-win_amd64.whl" | sha256sum --check --strict
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: pypi_unsigned-signing-smoke
+          path: unsigned-dist
+
+  sign:
+    needs: [prepare]
+    uses: ./.github/workflows/sign-windows-wheel.yml
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      unsigned-artifact-name: pypi_unsigned-signing-smoke
+      signed-artifact-name: windows-signing-validation
+
+  verify:
+    name: Install signed wheel and test pytest loading
+    needs: [sign]
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.11.9"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: windows-signing-validation
+          path: dist
+      - name: Install verification tooling
+        run: >-
+          python -m pip install --only-binary=:all: wheel==0.48.0 pytest==9.1.1
+      - name: Unpack the exact final wheel
+        id: unpack
+        run: python scripts/windows_wheel.py prepare --source dist --work final-wheel
+      - name: Verify the production signatures and timestamps
+        shell: pwsh
+        env:
+          WHEEL_ROOT: ${{ steps.unpack.outputs.root }}
+        run: ./scripts/verify_windows_signatures.ps1 -Root $env:WHEEL_ROOT
+      - name: Install the signed wheel
+        run: python -m pip install --no-index --find-links dist --no-deps bashkit==0.20.1
+      - name: Test native import during pytest plugin loading and execution
+        shell: pwsh
+        working-directory: ${{ runner.temp }}
+        run: |
+          'from bashkit import BashTool' | Set-Content bashkit_validation_plugin.py
+          @'
+          from bashkit import BashTool
+
+          def test_signed_native_execution():
+              tool = BashTool()
+              assert tool.execute_sync('export SIGNING_TEST=verified').exit_code == 0
+              result = tool.execute_sync('echo $SIGNING_TEST')
+              assert result.exit_code == 0
+              assert result.stdout.strip() == 'verified'
+          '@ | Set-Content test_signed_wheel.py
+          python -m pytest -p bashkit_validation_plugin test_signed_wheel.py -q

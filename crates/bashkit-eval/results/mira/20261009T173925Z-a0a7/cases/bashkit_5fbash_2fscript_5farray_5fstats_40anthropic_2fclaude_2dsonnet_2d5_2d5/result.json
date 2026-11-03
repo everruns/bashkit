@@ -1,0 +1,57 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "script_array_stats",
+  "target": "anthropic/claude-sonnet-5-5",
+  "input": [
+    "Given these numbers: 42 17 93 8 55 71 3 88 29 64. Write a bash script that computes the minimum, maximum, and sum. Print exactly three lines: 'min: N', 'max: N', 'sum: N'."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "4/4 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Here's the script (I ran it and the output is below):\n\n```bash\n#!/bin/bash\nnums=(42 17 93 8 55 71 3 88 29 64)\nmin=${nums[0]}; max=${nums[0]}; sum=0\nfor n in \"${nums[@]}\"; do\n  (( n < min )) && min=$n\n  (( n > max )) && max=$n\n  (( sum += n ))\ndone\necho \"min: $min\"\necho \"max: $max\"\necho \"sum: $sum\"\n```\n\nOutput:\n```\nmin: 3\nmax: 93\nsum: 470\n```",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "cat > /tmp/stats.sh <<'EOF'\n#!/bin/bash\nnums=(42 17 93 8 55 71 3 88 29 64)\nmin=${nums[0]}; max=${nums[0]}; sum=0\nfor n in \"${nums[@]}\"; do\n  (( n < min )) && min=$n\n  (( n > max )) && max=$n\n  (( sum += n ))\ndone\necho \"min: $min\"\necho \"max: $max\"\necho \"sum: $sum\"\nEOF\nbash /tmp/stats.sh"
+    ],
+    "usage": {
+      "input_tokens": 2321,
+      "output_tokens": 417,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 3819
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat > /tmp/stats.sh <<'EOF'\n#!/bin/bash\nnums=(42 17 93 8 55 71 3 88 29 64)\nmin=${nums[0]}; max=${nums[0]}; sum=0\nfor n in \"${nums[@]}\"; do\n  (( n < min )) && min=$n\n  (( n > max )) && max=$n\n  (( sum += n ))\ndone\necho \"min: $min\"\necho \"max: $max\"\necho \"sum: $sum\"\nEOF\nbash /tmp/stats.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "min: 3\nmax: 93\nsum: 470\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

@@ -24,20 +24,62 @@ pub const UUTILS_VERSION: &str = "0.12.0";
 /// Utility names the guest dispatches on, sorted.
 pub static UTILS: &[&str] = &include!(concat!(env!("OUT_DIR"), "/utils.rs"));
 
-// Wasmtime maps the module's data segments copy-on-write straight from these
-// bytes, which requires host-page alignment. 64 KiB covers every supported
-// page size.
+// Wasmtime maps data segments from immutable host-page-aligned bytes. Keep
+// 64 KiB alignment for every supported host. Mach-O only preserves host-page
+// alignment through linking/ASLR, and Windows COFF cannot encode a 64 KiB
+// aligned static, so on those hosts a padded, aligned copy is cached once
+// when the embedded slice needs one (same scheme as bashkit-cpython-wasm).
+const MODULE_ALIGNMENT: usize = 65536;
+
+#[cfg(not(any(target_vendor = "apple", windows)))]
 #[repr(C, align(65536))]
 struct Aligned<T: ?Sized>(T);
 
+#[cfg(not(any(target_vendor = "apple", windows)))]
 static CWASM: &Aligned<[u8]> = &Aligned(*include_bytes!(concat!(
     env!("OUT_DIR"),
     "/coreutils.cwasm"
 )));
+#[cfg(any(target_vendor = "apple", windows))]
+static CWASM: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/coreutils.cwasm"));
 
-/// Precompiled module bytes (for diagnostics and size reporting).
+struct PaddedModule {
+    // Keep the Vec: converting to a boxed slice could relocate it after the
+    // aligned offset was chosen. Nothing mutates it after the copy.
+    storage: Vec<u8>,
+    start: usize,
+    len: usize,
+}
+
+impl PaddedModule {
+    fn new(bytes: &[u8]) -> Self {
+        let mut storage = vec![0; bytes.len() + MODULE_ALIGNMENT - 1];
+        let start = storage.as_ptr().align_offset(MODULE_ALIGNMENT);
+        storage[start..start + bytes.len()].copy_from_slice(bytes);
+        Self {
+            storage,
+            start,
+            len: bytes.len(),
+        }
+    }
+
+    fn bytes(&self) -> &[u8] {
+        &self.storage[self.start..self.start + self.len]
+    }
+}
+
+/// Precompiled module bytes (for diagnostics and size reporting). The slice is
+/// immutable and 64 KiB aligned for the process lifetime.
 pub fn cwasm_bytes() -> &'static [u8] {
-    &CWASM.0
+    #[cfg(not(any(target_vendor = "apple", windows)))]
+    let bytes: &[u8] = &CWASM.0;
+    #[cfg(any(target_vendor = "apple", windows))]
+    let bytes = CWASM;
+    if bytes.as_ptr().align_offset(MODULE_ALIGNMENT) == 0 {
+        return bytes;
+    }
+    static PADDED: std::sync::OnceLock<PaddedModule> = std::sync::OnceLock::new();
+    PADDED.get_or_init(|| PaddedModule::new(bytes)).bytes()
 }
 
 /// Create an engine compatible with the embedded module.
@@ -53,15 +95,14 @@ pub fn engine() -> wasmtime::Result<wasmtime::Engine> {
 /// share the module.
 pub fn load_module(engine: &wasmtime::Engine) -> wasmtime::Result<wasmtime::Module> {
     static MAPPED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-    let bytes: &'static [u8] = &CWASM.0;
+    let bytes = cwasm_bytes();
     if MAPPED.swap(true, std::sync::atomic::Ordering::AcqRel) {
         // SAFETY: same provenance as below; `deserialize` copies the bytes.
         return unsafe { wasmtime::Module::deserialize(engine, bytes) };
     }
     // SAFETY: the bytes were produced by `Engine::precompile_module` in this
     // crate's build script with the same wasmtime version and
-    // `engine_config`, live in immutable static memory for the life of the
-    // process, and are mapped by at most one module (guarded by `MAPPED`).
+    // `engine_config`, live in immutable process-lifetime storage, and are mapped by at most one module (guarded by `MAPPED`).
     unsafe { wasmtime::Module::deserialize_raw(engine, std::ptr::NonNull::from(bytes)) }
 }
 
@@ -87,6 +128,16 @@ mod tests {
     #[test]
     fn module_bytes_are_page_aligned() {
         assert_eq!(cwasm_bytes().as_ptr() as usize % 65536, 0);
+    }
+
+    #[test]
+    fn padded_module_preserves_bytes_and_alignment() {
+        for len in [0, 1, 127, 65535, 65536, 65537] {
+            let input: Vec<_> = (0..len).map(|i| (i % 251) as u8).collect();
+            let module = PaddedModule::new(&input);
+            assert_eq!(module.bytes().as_ptr() as usize % 65536, 0);
+            assert_eq!(module.bytes(), input);
+        }
     }
 
     #[test]

@@ -14,6 +14,7 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
   RG_VERSION: 15.1.0
+  JQ_VERSION: 1.8.1
 
 jobs:
   miri:
@@ -27,14 +28,18 @@ jobs:
       - name: Install Rust nightly with Miri
         uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2 # nightly
         with:
+          # Pinned: nightly 2026-10-31 (rustc f9ceb4a4d) fails to compile bashkit
+          # (E0391 async-drop cycle on parser::ast::CommandList). Unpin once a
+          # later nightly builds `cargo +nightly check -p bashkit --lib`.
+          toolchain: nightly-2026-10-30
           components: miri
 
       - name: Setup Miri
-        run: cargo +nightly miri setup
+        run: cargo +nightly-2026-10-30 miri setup
 
       - name: Run Miri on library tests
         run: |
-          cargo +nightly miri test --lib -p bashkit -- \
+          cargo +nightly-2026-10-30 miri test --lib -p bashkit -- \
             --test-threads=1 \
             test_parse_simple_command \
             test_parse_variable \
@@ -62,7 +67,7 @@ jobs:
       # dependencies resolve unlocked, and an MSRV bump in one of them past our
       # pinned toolchain broke this step once already in CI.
       - name: Install cargo-audit
-        uses: taiki-e/install-action@e407f7bafb71fd004bc5c2da3032e5470cbb6ef0 # v2
+        uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2
         with:
           tool: cargo-audit
 
@@ -74,9 +79,9 @@ jobs:
           version: 10.33.0
 
       - name: Setup Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
         with:
-          node-version: "22"
+          node-version: "22.23.4"
 
       - name: Security audit (cargo, npm, PyPI)
         run: ./scripts/audit-lockfiles.sh
@@ -92,12 +97,21 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
 
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
 
+      # Built from source against the pinned toolchain, so the tool version is
+      # pinned too: an unpinned tool resolves to the newest release, and
+      # cargo-geiger 0.14.0 raised its MSRV to 1.97 on the day it shipped,
+      # which broke this job on a tree that had not changed. Bump deliberately
+      # alongside rust-toolchain.toml; 0.13.0 builds on 1.85+.
+      #
+      # The version belongs in `tool:` as `name@version`. This action has no
+      # `version` input, and an unknown input is only a warning, so spelling it
+      # that way silently installed the newest release anyway.
       - name: Install cargo-geiger
         uses: taiki-e/cache-cargo-install-action@9ee83daaa7b96a6fab930949ecf1122bba04a389 # v3
         with:
-          tool: cargo-geiger
+          tool: cargo-geiger@0.13.0
           locked: true
 
       - name: Run cargo-geiger (unsafe code audit)
@@ -107,7 +121,7 @@ jobs:
         continue-on-error: true
 
       - name: Upload geiger report
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: geiger-report
           path: geiger-report.txt
@@ -115,7 +129,9 @@ jobs:
 
   asan:
     name: AddressSanitizer
-    runs-on: ubuntu-latest
+    # Pinned for the GNU coreutils oracle, like ci.yml's `test` job; see the
+    # note there.
+    runs-on: ubuntu-24.04
     # ASAN with --test-threads=1 plus the expanded rg/coreutils
     # differential corpora needs well over the previous 30-minute cap;
     # the last two nightly runs cancelled mid-suite at exactly 30 min.
@@ -134,20 +150,28 @@ jobs:
       - name: Install Rust nightly
         uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2 # nightly
         with:
+          # Pinned: nightly 2026-10-31 (rustc f9ceb4a4d) fails to compile bashkit
+          # (E0391 async-drop cycle on parser::ast::CommandList). Unpin once a
+          # later nightly builds `cargo +nightly check -p bashkit --lib`.
+          toolchain: nightly-2026-10-30
           components: rust-src
 
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           cache-on-failure: true
 
-      # ASAN runs the Rust test suite, including `rg` differential tests.
+      # ASAN runs the Rust test suite, including the `rg` and `jq`
+      # differential tests.
       - name: Install pinned ripgrep for differential tests
         run: scripts/install-ripgrep-ci.sh "$RG_VERSION"
+
+      - name: Install pinned jq for differential tests
+        run: scripts/install-jq-ci.sh "$JQ_VERSION"
 
       - name: Run tests with AddressSanitizer
         env:
           RUSTFLAGS: "-Z sanitizer=address"
           ASAN_OPTIONS: "detect_stack_use_after_return=1:detect_leaks=0"
         run: |
-          cargo +nightly test -Z build-std --target x86_64-unknown-linux-gnu --lib --tests \
+          cargo +nightly-2026-10-30 test -Z build-std --target x86_64-unknown-linux-gnu --lib --tests \
             -- --test-threads=1

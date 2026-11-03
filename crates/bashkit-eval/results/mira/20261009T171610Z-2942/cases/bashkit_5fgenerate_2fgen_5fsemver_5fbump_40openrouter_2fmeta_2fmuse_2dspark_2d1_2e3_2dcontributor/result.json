@@ -1,0 +1,63 @@
+{
+  "eval": "bashkit_generate",
+  "sample": "gen_semver_bump",
+  "target": "openrouter/meta/muse-spark-1.3-contributor",
+  "input": [
+    "Write a bash script that cuts a release.\n\nStarting files:\n--- /home/eval/app/VERSION ---\n1.9.3\n--- end ---\n--- /home/eval/app/changes.txt ---\nfix: handle empty config\nfeat: add --dry-run flag\ndocs: typo in README\nfix: retry on 503\n--- end ---\n--- /home/eval/app/CHANGELOG.md ---\n# Changelog\n\n## Unreleased\n\n## 1.9.3 (2026-09-01)\n- fix: crash on start\n--- end ---\n\n1. Decide the bump from /home/eval/app/changes.txt: if any line starts with `BREAKING` or has `!:` right after its type (e.g. `feat!: ...`), bump major; otherwise if any line starts with `feat:`, bump minor; otherwise bump patch. Lower parts reset to 0. Version parts are integers.\n2. Write the new version to /home/eval/app/VERSION (single line).\n3. In /home/eval/app/CHANGELOG.md, keep the `## Unreleased` heading and insert right after it: a blank line, the heading `## <new version> (2026-10-09)`, then one line `- <change>` for each `feat`/`fix` line of changes.txt in original order (other types are omitted). The existing blank line before `## 1.9.3` must remain, so the file reads:\n```\n# Changelog\n\n## Unreleased\n\n## 1.10.0 (2026-10-09)\n- fix: handle empty config\n- feat: add --dry-run flag\n- fix: retry on 503\n\n## 1.9.3 (2026-09-01)\n- fix: crash on start\n```\n4. Print `1.9.3 -> <new version>` to stdout and exit 0."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "4/4 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "```bash\n#!/bin/bash\nVERSION_FILE=\"/home/eval/app/VERSION\"\nCHANGES_FILE=\"/home/eval/app/changes.txt\"\nCHANGELOG_FILE=\"/home/eval/app/CHANGELOG.md\"\nRELEASE_DATE=\"2026-10-09\"\n\nold=$(head -n 1 \"$VERSION_FILE\" | tr -d ' \\t\\r\\n')\nIFS='.' read -r major minor patch <<< \"$old\"\nmajor=$(printf '%s' \"$major\" | tr -d ' \\t\\r\\n')\nminor=$(printf '%s' \"$minor\" | tr -d ' \\t\\r\\n')\npatch=$(printf '%s' \"$patch\" | tr -d ' \\t\\r\\n')\n\nif grep -qE '^BREAKING|^[^ :]*!:' \"$CHANGES_FILE\"; then\n  bump=\"major\"\nelif grep -q '^feat:' \"$CHANGES_FILE\"; then\n  bump=\"minor\"\nelse\n  bump=\"patch\"\nfi\n\ncase \"$bump\" in\n  major)\n    major=$((10#$major + 1))\n    minor=0\n    patch=0\n    ;;\n  minor)\n    minor=$((10#$minor + 1))\n    patch=0\n    ;;\n  patch)\n    patch=$((10#$patch + 1))\n    ;;\nesac\n\nnew=\"${major}.${minor}.${patch}\"\nprintf '%s\\n' \"$new\" > \"$VERSION_FILE\"\n\ntmpbullets=$(mktemp)\ngrep -E '^(feat|fix):' \"$CHANGES_FILE\" | sed 's/^/- /' > \"$tmpbullets\" || true\n# ensure empty file exists if no matches (grep exit 1)\ntouch \"$tmpbullets\"\n\ntmpout=$(mktemp)\nawk -v ver=\"$new\" -v date=\"$RELEASE_DATE\" -v bullets=\"$tmpbullets\" '\n  /^## Unreleased$/ {\n    print\n    print \"\"\n    print \"## \" ver \" (\" date \")\"\n    while ((getline line < bullets) > 0) {\n      print line\n    }\n    close(bullets)\n    next\n  }\n  { print }\n' \"$CHANGELOG_FILE\" > \"$tmpout\"\nmv \"$tmpout\" \"$CHANGELOG_FILE\"\nrm -f \"$tmpbullets\"\n\nprintf '%s -> %s\\n' \"$old\" \"$new\"\nexit 0\n```",
+    "iterations": 1,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "#!/bin/bash\nVERSION_FILE=\"/home/eval/app/VERSION\"\nCHANGES_FILE=\"/home/eval/app/changes.txt\"\nCHANGELOG_FILE=\"/home/eval/app/CHANGELOG.md\"\nRELEASE_DATE=\"2026-10-09\"\n\nold=$(head -n 1 \"$VERSION_FILE\" | tr -d ' \\t\\r\\n')\nIFS='.' read -r major minor patch <<< \"$old\"\nmajor=$(printf '%s' \"$major\" | tr -d ' \\t\\r\\n')\nminor=$(printf '%s' \"$minor\" | tr -d ' \\t\\r\\n')\npatch=$(printf '%s' \"$patch\" | tr -d ' \\t\\r\\n')\n\nif grep -qE '^BREAKING|^[^ :]*!:' \"$CHANGES_FILE\"; then\n  bump=\"major\"\nelif grep -q '^feat:' \"$CHANGES_FILE\"; then\n  bump=\"minor\"\nelse\n  bump=\"patch\"\nfi\n\ncase \"$bump\" in\n  major)\n    major=$((10#$major + 1))\n    minor=0\n    patch=0\n    ;;\n  minor)\n    minor=$((10#$minor + 1))\n    patch=0\n    ;;\n  patch)\n    patch=$((10#$patch + 1))\n    ;;\nesac\n\nnew=\"${major}.${minor}.${patch}\"\nprintf '%s\\n' \"$new\" > \"$VERSION_FILE\"\n\ntmpbullets=$(mktemp)\ngrep -E '^(feat|fix):' \"$CHANGES_FILE\" | sed 's/^/- /' > \"$tmpbullets\" || true\n# ensure empty file exists if no matches (grep exit 1)\ntouch \"$tmpbullets\"\n\ntmpout=$(mktemp)\nawk -v ver=\"$new\" -v date=\"$RELEASE_DATE\" -v bullets=\"$tmpbullets\" '\n  /^## Unreleased$/ {\n    print\n    print \"\"\n    print \"## \" ver \" (\" date \")\"\n    while ((getline line < bullets) > 0) {\n      print line\n    }\n    close(bullets)\n    next\n  }\n  { print }\n' \"$CHANGELOG_FILE\" > \"$tmpout\"\nmv \"$tmpout\" \"$CHANGELOG_FILE\"\nrm -f \"$tmpbullets\"\n\nprintf '%s -> %s\\n' \"$old\" \"$new\"\nexit 0\n"
+    ],
+    "usage": {
+      "input_tokens": 703,
+      "output_tokens": 5261,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 42445
+    },
+    "metrics": {
+      "exec_ms": 22.0,
+      "exit_code": 0.0,
+      "extracted": 1.0,
+      "generate_ms": 42423.0,
+      "script_bytes": 1401.0,
+      "script_found": 1.0,
+      "timed_out": 0.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "#!/bin/bash\nVERSION_FILE=\"/home/eval/app/VERSION\"\nCHANGES_FILE=\"/home/eval/app/changes.txt\"\nCHANGELOG_FILE=\"/home/eval/app/CHANGELOG.md\"\nRELEASE_DATE=\"2026-10-09\"\n\nold=$(head -n 1 \"$VERSION_FILE\" | tr -d ' \\t\\r\\n')\nIFS='.' read -r major minor patch <<< \"$old\"\nmajor=$(printf '%s' \"$major\" | tr -d ' \\t\\r\\n')\nminor=$(printf '%s' \"$minor\" | tr -d ' \\t\\r\\n')\npatch=$(printf '%s' \"$patch\" | tr -d ' \\t\\r\\n')\n\nif grep -qE '^BREAKING|^[^ :]*!:' \"$CHANGES_FILE\"; then\n  bump=\"major\"\nelif grep -q '^feat:' \"$CHANGES_FILE\"; then\n  bump=\"minor\"\nelse\n  bump=\"patch\"\nfi\n\ncase \"$bump\" in\n  major)\n    major=$((10#$major + 1))\n    minor=0\n    patch=0\n    ;;\n  minor)\n    minor=$((10#$minor + 1))\n    patch=0\n    ;;\n  patch)\n    patch=$((10#$patch + 1))\n    ;;\nesac\n\nnew=\"${major}.${minor}.${patch}\"\nprintf '%s\\n' \"$new\" > \"$VERSION_FILE\"\n\ntmpbullets=$(mktemp)\ngrep -E '^(feat|fix):' \"$CHANGES_FILE\" | sed 's/^/- /' > \"$tmpbullets\" || true\n# ensure empty file exists if no matches (grep exit 1)\ntouch \"$tmpbullets\"\n\ntmpout=$(mktemp)\nawk -v ver=\"$new\" -v date=\"$RELEASE_DATE\" -v bullets=\"$tmpbullets\" '\n  /^## Unreleased$/ {\n    print\n    print \"\"\n    print \"## \" ver \" (\" date \")\"\n    while ((getline line < bullets) > 0) {\n      print line\n    }\n    close(bullets)\n    next\n  }\n  { print }\n' \"$CHANGELOG_FILE\" > \"$tmpout\"\nmv \"$tmpout\" \"$CHANGELOG_FILE\"\nrm -f \"$tmpbullets\"\n\nprintf '%s -> %s\\n' \"$old\" \"$new\"\nexit 0\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "1.9.3 -> 1.10.0\n"
+          }
+        ]
+      },
+      "generate": {
+        "extraction": "fenced",
+        "timed_out": false
+      }
+    }
+  },
+  "skipped": false
+}

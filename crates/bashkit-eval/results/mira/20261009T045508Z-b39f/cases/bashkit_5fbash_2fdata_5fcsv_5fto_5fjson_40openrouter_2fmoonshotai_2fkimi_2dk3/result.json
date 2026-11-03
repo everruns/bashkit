@@ -1,0 +1,71 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "data_csv_to_json",
+  "target": "openrouter/moonshotai/kimi-k3",
+  "input": [
+    "Convert /data/users.csv to a JSON array where each row becomes an object with the column headers as keys. Print the resulting JSON to stdout."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Done. The resulting JSON is:\n\n```json\n[\n  {\n    \"name\": \"alice\",\n    \"age\": \"30\",\n    \"city\": \"seattle\"\n  },\n  {\n    \"name\": \"bob\",\n    \"age\": \"25\",\n    \"city\": \"portland\"\n  },\n  {\n    \"name\": \"charlie\",\n    \"age\": \"35\",\n    \"city\": \"denver\"\n  }\n]\n```\n\n**How it works** — the final command was:\n\n```bash\njq -Rs '[split(\"\\n\")[] | select(length > 0) | split(\",\")] | .[0] as $h | .[1:] | map([$h, .] | transpose | map({(.[0]): .[1]}) | add)' /data/users.csv\n```\n\n1. **`-Rs`** reads the entire file as one raw string (my first attempt failed because `-s` after the filter was parsed as a filename, and without slurping the raw input first, `split` only saw line chunks).\n2. **`split(\"\\n\")`** breaks the file into lines, dropping the empty trailing line; each line is then split on commas into fields.\n3. **`.[0] as $h`** captures the header row (`name, age, city`).\n4. For each remaining row, **`[$h, .] | transpose`** pairs each header with its value, and **`map({(.[0]): .[1]}) | add`** builds the object.\n\nNote: values are strings (e.g. `\"age\": \"30\"`). If you'd prefer numeric types where applicable, that's a small addition with `tonumber?` — just let me know.",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "cat -A /data/users.csv | head -20; echo \"---\"; wc -l /data/users.csv; which jq awk",
+      "jq -R 'split(\",\")' -s '.[0] as $h | .[1:] | map([$h, .] | transpose | map({(.[0]): .[1]}) | add)' /data/users.csv",
+      "jq -Rs '[split(\"\\n\")[] | select(length > 0) | split(\",\")] | .[0] as $h | .[1:] | map([$h, .] | transpose | map({(.[0]): .[1]}) | add)' /data/users.csv"
+    ],
+    "usage": {
+      "input_tokens": 2510,
+      "output_tokens": 1013,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 8382
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 2.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat -A /data/users.csv | head -20; echo \"---\"; wc -l /data/users.csv; which jq awk",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "name,age,city$\nalice,30,seattle$\nbob,25,portland$\ncharlie,35,denver$\n---\n4 /data/users.csv\n/usr/bin/jq\n/usr/bin/awk\n"
+          },
+          {
+            "commands": "jq -R 'split(\",\")' -s '.[0] as $h | .[1:] | map([$h, .] | transpose | map({(.[0]): .[1]}) | add)' /data/users.csv",
+            "exit_code": 2,
+            "stderr": "jq: error: Could not open file .[0] as $h | .[1:] | map([$h, .] | transpose | map({(.[0]): .[1]}) | add): No such file or directory\n",
+            "stdout": "[\n  \"name\",\n  \"age\",\n  \"city\\nalice\",\n  \"30\",\n  \"seattle\\nbob\",\n  \"25\",\n  \"portland\\ncharlie\",\n  \"35\",\n  \"denver\\n\"\n]\n"
+          },
+          {
+            "commands": "jq -Rs '[split(\"\\n\")[] | select(length > 0) | split(\",\")] | .[0] as $h | .[1:] | map([$h, .] | transpose | map({(.[0]): .[1]}) | add)' /data/users.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "[\n  {\n    \"name\": \"alice\",\n    \"age\": \"30\",\n    \"city\": \"seattle\"\n  },\n  {\n    \"name\": \"bob\",\n    \"age\": \"25\",\n    \"city\": \"portland\"\n  },\n  {\n    \"name\": \"charlie\",\n    \"age\": \"35\",\n    \"city\": \"denver\"\n  }\n]\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

@@ -26,7 +26,8 @@ use crate::StreamData;
 use crate::error::Result;
 use crate::fs::FileSystem;
 use crate::interpreter::ExecResult;
-use expand::{Expander, Message, Need, Oracle, Origin, Stop, Var, Vars};
+use crate::limits::{BudgetedString, ExecutionBudget};
+use expand::{Expander, Message, Need, Oracle, Origin, Stop, Text, Var, Vars};
 use parse::{Makefile, ParseInput, RecipeLine};
 
 /// `$(MAKE)` recursion cap. Each level nests make, `sh -c` and the
@@ -297,6 +298,14 @@ impl Builtin for Make {
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
         env_vars.sort();
+        let budget = ctx
+            .execution_budget()
+            .map(|budget| {
+                budget
+                    .try_with(Clone::clone)
+                    .map_err(|_| crate::Error::Cancelled)
+            })
+            .transpose()?;
         let stdin = ctx.stdin.map(|s| s.text_lossy().into_owned());
         Ok(Some(ExecutionPlan::Driver(Box::new(MakeRun::new(
             ctx.fs.clone(),
@@ -305,6 +314,7 @@ impl Builtin for Make {
             level,
             env_vars,
             stdin,
+            budget,
         )))))
     }
 
@@ -357,7 +367,7 @@ struct Frame {
 }
 
 struct Prepared {
-    cmd: String,
+    cmd: Text,
     echo: bool,
     ignore: bool,
     run_in_dry: bool,
@@ -384,6 +394,7 @@ enum Awaiting {
 
 struct MakeRun {
     fs: Arc<dyn FileSystem>,
+    budget: Option<ExecutionBudget>,
     dir: PathBuf,
     curdir: String,
     opts: Opts,
@@ -413,7 +424,7 @@ struct MakeRun {
     exit: Option<i32>,
     entered: bool,
     /// Variables exported to recipes.
-    exports: Vec<(String, String)>,
+    exports: Vec<(String, Text)>,
     /// Bytes of `stdout`/`stderr` already streamed (by an `Emit` or by the
     /// sub-command that produced them).
     emitted: (usize, usize),
@@ -429,6 +440,7 @@ impl MakeRun {
         level: u32,
         env_vars: Vec<(String, String)>,
         stdin: Option<String>,
+        budget: Option<ExecutionBudget>,
     ) -> Self {
         let prog = if level == 0 {
             "make".to_string()
@@ -438,6 +450,7 @@ impl MakeRun {
         let curdir = dir.to_string_lossy().into_owned();
         Self {
             fs,
+            budget,
             dir,
             curdir,
             opts,
@@ -639,7 +652,7 @@ impl MakeRun {
             vars.insert(
                 k.to_string(),
                 Var {
-                    value: v.to_string(),
+                    value: v.to_string().into(),
                     recursive: false,
                     origin,
                 },
@@ -670,7 +683,7 @@ impl MakeRun {
             vars.insert(
                 k.clone(),
                 Var {
-                    value: v.clone(),
+                    value: v.clone().into(),
                     recursive: true,
                     origin: Origin::CommandLine,
                 },
@@ -737,6 +750,7 @@ impl MakeRun {
                 vars,
                 curdir: &self.curdir,
                 env_override: self.opts.env_override,
+                budget: self.budget.as_ref(),
             },
             &self.oracle,
             partial,
@@ -776,7 +790,7 @@ impl MakeRun {
         };
         self.goals = goals.into();
         // Variables exported to recipes.
-        let mut exports: Vec<(String, String)> = Vec::new();
+        let mut exports: Vec<(String, Text)> = Vec::new();
         let mut flags = String::new();
         for (on, c) in [
             (self.opts.always, 'B'),
@@ -798,8 +812,8 @@ impl MakeRun {
                 makeflags.push_str(&format!(" {k}={v}"));
             }
         }
-        exports.push(("MAKEFLAGS".to_string(), makeflags));
-        exports.push(("MAKELEVEL".to_string(), (self.level + 1).to_string()));
+        exports.push(("MAKEFLAGS".to_string(), makeflags.into()));
+        exports.push(("MAKELEVEL".to_string(), (self.level + 1).to_string().into()));
         let names: Vec<String> = {
             let mut n: Vec<String> = self
                 .mk
@@ -822,7 +836,8 @@ impl MakeRun {
         };
         for n in names {
             let oracle = Oracle::default();
-            let mut e = Expander::new(&self.mk.vars, &oracle, &self.curdir, None);
+            let mut e = Expander::new(&self.mk.vars, &oracle, &self.curdir, None)
+                .with_budget(self.budget.as_ref());
             if let Ok(v) = e.lookup(&n) {
                 exports.push((n, v));
             }
@@ -1017,6 +1032,7 @@ impl MakeRun {
                 &self.curdir,
                 Some((l.file.to_string(), l.line)),
             )
+            .with_budget(self.budget.as_ref())
             .with_target_vars(tv)
             .with_locals(autos.clone());
             let text = e.expand(&l.text)?;
@@ -1028,14 +1044,24 @@ impl MakeRun {
             let (first, l) = &expanded[0];
             let (mut echo, mut ignore, mut force) = (true, false, false);
             let body = strip_prefixes(first, &mut echo, &mut ignore, &mut force);
-            let mut cmd = body.to_string();
-            for (t, _) in &expanded[1..] {
-                cmd.push('\n');
-                cmd.push_str(t.trim_start_matches(['@', '-', '+']));
+            let mut cmd =
+                BudgetedString::new(self.budget.as_ref()).map_err(|error| Stop::Fatal {
+                    loc: Some((l.file.to_string(), l.line)),
+                    msg: error.to_string(),
+                })?;
+            for part in std::iter::once(body).chain(
+                expanded[1..]
+                    .iter()
+                    .flat_map(|(t, _)| ["\n", t.trim_start_matches(['@', '-', '+'])]),
+            ) {
+                cmd.try_push_str(part).map_err(|error| Stop::Fatal {
+                    loc: Some((l.file.to_string(), l.line)),
+                    msg: error.to_string(),
+                })?;
             }
             out.push_back(Prepared {
                 run_in_dry: force || mentions_make(&cmd),
-                cmd,
+                cmd: Text::from_buffer(cmd),
                 echo: echo && !silent_target,
                 ignore: ignore || self.opts.ignore || self.mk.ignore_all,
                 file: l.file.clone(),
@@ -1047,13 +1073,16 @@ impl MakeRun {
             // One recipe line may expand to several (`define` bodies).
             for piece in text.split('\n') {
                 let (mut echo, mut ignore, mut force) = (true, false, false);
-                let cmd = strip_prefixes(piece, &mut echo, &mut ignore, &mut force).to_string();
+                let cmd = strip_prefixes(piece, &mut echo, &mut ignore, &mut force);
                 if cmd.trim().is_empty() {
                     continue;
                 }
                 out.push_back(Prepared {
                     run_in_dry: force || mentions_make(&l.text),
-                    cmd,
+                    cmd: Text::copy(cmd, self.budget.as_ref()).map_err(|error| Stop::Fatal {
+                        loc: Some((l.file.to_string(), l.line)),
+                        msg: error.to_string(),
+                    })?,
                     echo: echo && !silent_target,
                     ignore: ignore || self.opts.ignore || self.mk.ignore_all,
                     file: l.file.clone(),
@@ -1127,9 +1156,13 @@ impl MakeRun {
                     return Ok(Some(PlanStep::Run {
                         command: SubCommand {
                             name: "sh".to_string(),
-                            args: vec!["-c".to_string(), cmd],
+                            args: vec!["-c".to_string(), cmd.to_string()],
                             stdin: None,
-                            assignments: self.exports.clone(),
+                            assignments: self
+                                .exports
+                                .iter()
+                                .map(|(name, value)| (name.clone(), value.to_string()))
+                                .collect(),
                         },
                         cwd: Some(self.dir.clone()),
                     }));
@@ -1259,7 +1292,7 @@ impl MakeRun {
         PlanStep::Capture {
             command: SubCommand {
                 name: "sh".to_string(),
-                args: vec!["-c".to_string(), cmd],
+                args: vec!["-c".to_string(), cmd.to_string()],
                 stdin: None,
                 assignments: Vec::new(),
             },

@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "config_ini_merge",
+  "target": "openrouter/meta/muse-spark-1.3-contributor",
+  "input": [
+    "Merge /config/defaults.ini and /config/custom.ini. Custom values should override defaults within the same section. Keys only in defaults should be preserved. Write the merged result to /config/merged.ini and print it. Sections are denoted by [section_name] headers."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Merged `/config/defaults.ini` and `/config/custom.ini` (custom overrides defaults) to `/config/merged.ini`:\n\n```\n[server]\nhost=0.0.0.0\nport=9090\nworkers=8\n\n[database]\nhost=localhost\nport=5432\npool_size=5\n\n[logging]\nlevel=debug\nformat=json\n```",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cat /config/defaults.ini; echo \"---CUSTOM---\"; cat /config/custom.ini; echo \"---LS---\"; ls -l /config/",
+      "python3 - << 'PY'\nfrom collections import OrderedDict\nimport re\n\ndef parse(path):\n    sections = OrderedDict()\n    order = []\n    current = None\n    with open(path) as f:\n        for line in f:\n            stripped = line.strip()\n            if not stripped or stripped.startswith(('#',';')):\n                continue\n            m = re.match(r'^\\[(.+?)\\]$', stripped)\n            if m:\n                current = m.group(1).strip()\n                if current not in sections:\n                    sections[current] = OrderedDict()\n                    order.append(current)\n            elif '=' in line and current is not None:\n                k, v = line.split('=', 1)\n                k=k.strip(); v=v.strip()\n                # preserve order: if key exists, keep position but update value\n                if k not in sections[current]:\n                    pass\n                sections[current][k]=v\n            elif '=' in line and current is None:\n                continue\n    return sections\n\ndefaults = parse('/config/defaults.ini')\ncustom = parse('/config/custom.ini')\n\n# merge\nmerged = OrderedDict()\nfor sec, kv in defaults.items():\n    merged[sec]=OrderedDict(kv)\n\nfor sec, kv in custom.items():\n    if sec not in merged:\n        merged[sec]=OrderedDict()\n    for k,v in kv.items():\n        merged[sec][k]=v\n\n# write\nwith open('/config/merged.ini','w') as out:\n    first=True\n    for sec, kv in merged.items():\n        if not first:\n            out.write('\\n')\n        first=False\n        out.write(f'[{sec}]\\n')\n        for k,v in kv.items():\n            out.write(f'{k}={v}\\n')\n\n# print\nwith open('/config/merged.ini') as f:\n    print(f.read(), end='')\nPY\n"
+    ],
+    "usage": {
+      "input_tokens": 3796,
+      "output_tokens": 957,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 8606
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat /config/defaults.ini; echo \"---CUSTOM---\"; cat /config/custom.ini; echo \"---LS---\"; ls -l /config/",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "[server]\nhost=0.0.0.0\nport=8080\nworkers=4\n\n[database]\nhost=localhost\nport=5432\npool_size=5\n\n[logging]\nlevel=info\nformat=text\n---CUSTOM---\n[server]\nport=9090\nworkers=8\n\n[logging]\nlevel=debug\nformat=json\n---LS---\n-rw-r--r--       64 2026-10-09 17:46 custom.ini\n-rw-r--r--      125 2026-10-09 17:46 defaults.ini\n"
+          },
+          {
+            "commands": "python3 - << 'PY'\nfrom collections import OrderedDict\nimport re\n\ndef parse(path):\n    sections = OrderedDict()\n    order = []\n    current = None\n    with open(path) as f:\n        for line in f:\n            stripped = line.strip()\n            if not stripped or stripped.startswith(('#',';')):\n                continue\n            m = re.match(r'^\\[(.+?)\\]$', stripped)\n            if m:\n                current = m.group(1).strip()\n                if current not in sections:\n                    sections[current] = OrderedDict()\n                    order.append(current)\n            elif '=' in line and current is not None:\n                k, v = line.split('=', 1)\n                k=k.strip(); v=v.strip()\n                # preserve order: if key exists, keep position but update value\n                if k not in sections[current]:\n                    pass\n                sections[current][k]=v\n            elif '=' in line and current is None:\n                continue\n    return sections\n\ndefaults = parse('/config/defaults.ini')\ncustom = parse('/config/custom.ini')\n\n# merge\nmerged = OrderedDict()\nfor sec, kv in defaults.items():\n    merged[sec]=OrderedDict(kv)\n\nfor sec, kv in custom.items():\n    if sec not in merged:\n        merged[sec]=OrderedDict()\n    for k,v in kv.items():\n        merged[sec][k]=v\n\n# write\nwith open('/config/merged.ini','w') as out:\n    first=True\n    for sec, kv in merged.items():\n        if not first:\n            out.write('\\n')\n        first=False\n        out.write(f'[{sec}]\\n')\n        for k,v in kv.items():\n            out.write(f'{k}={v}\\n')\n\n# print\nwith open('/config/merged.ini') as f:\n    print(f.read(), end='')\nPY\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "[server]\nhost=0.0.0.0\nport=9090\nworkers=8\n\n[database]\nhost=localhost\nport=5432\npool_size=5\n\n[logging]\nlevel=debug\nformat=json\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

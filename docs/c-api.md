@@ -139,12 +139,35 @@ Calls against one Bashkit instance are serialized. Independent instances may
 run concurrently. The caller owns handle lifetime synchronization and must not
 free a handle while another thread is using it.
 
-## Initial exclusions
+## Streaming output
 
-ABI v1 does not expose callbacks, custom builtins, streaming output, async
-execution, host filesystem mounts, transport hooks, snapshots, or the existing
-cross-addon filesystem-handle ABI. These require separate callback, reentrancy,
-and library-unload contracts.
+`bashkit_execute_streaming(bash, script, capture_limit, callback, context,
+&result, &error)` drives async engine output through synchronous byte callbacks
+on the calling thread. The callback receives stream 1 (stdout) or 2 (stderr),
+and a byte view borrowed only until the callback returns. Return zero to accept
+the chunk; a nonzero return aborts execution with an error. A slow callback
+backpressures the engine. Do not block indefinitely inside a callback: the
+engine cannot preempt native callback code.
+
+`capture_limit` bounds retained bytes per stream; zero disables capture. The
+callback still receives all delivered bytes when capture truncates. A null
+callback discards delivery. Free the final result normally. See the runnable
+[streaming C example](../crates/bashkit-capi/examples/streaming.c).
+Runtime host functions configured on the handle also work with streaming
+execution, including replies completed from another thread.
+
+Callbacks must not call blocking APIs on any handle; same-thread reentry is
+rejected rather than waiting on a mutex or nesting runtimes. Cross-thread calls
+that wait for a callback to return must not be joined from that callback.
+Lock-free `bashkit_cancel()` is permitted. Do not
+free the handle or unload the library while execution or a callback is active.
+Independent handles may run concurrently. Cancellation cannot roll back host
+side effects already performed by a callback.
+
+ABI v1 does not expose custom-command registration, asynchronous shell execution,
+transport hooks, snapshots or external filesystem providers. These need their
+own lifetime and unload contracts. See [Streaming execution](streaming.md) for
+the runtime support matrix and remaining whole-buffer boundaries.
 
 ## Compatibility
 
@@ -174,3 +197,36 @@ major.
 - [Get started](start.md), choose another Bashkit package or runtime.
 - [Sandbox configuration and limits](configuration.md), common sandbox controls.
 - [Security](security.md), trust boundaries and resource protections.
+
+## Embedded runtime host functions
+
+Opt into Python and/or TypeScript through config schema v1. Use
+`bashkit_create_with_runtime_handler_v1` when supplying `external_functions`
+(Python) or `typescript_external_functions`. The callback receives one owned
+`BashkitRuntimeCall` with a JSON request containing `language`, `name`, `args`,
+and Python `kwargs`. Respond with `bashkit_runtime_call_respond_json`, then call
+`bashkit_runtime_call_free`. A response is a JSON value, such as `42` or an object.
+
+The dispatcher runs on the execution caller's thread. For asynchronous I/O,
+transfer the call to a worker and return immediately; the worker responds and
+frees it. Poll `bashkit_runtime_call_cancelled` to stop I/O after a timeout or
+cancellation. Late responses return `BASHKIT_CANCELLED`. An unanswered call fails
+the script when freed. Use `bashkit_runtime_call_fail` for a generic script error;
+log sensitive host diagnostics separately.
+
+JSON values support null, booleans, finite numbers, signed 64-bit integers,
+strings, arrays and string-key objects, with depth <=64 and <=10 MB of JSON.
+Numbers outside the signed 64-bit range are rejected, including JSON integer
+literals that a parser would otherwise round into floating-point values.
+Bytes, functions and other language objects fail explicitly.
+
+Blocking APIs invoked from the dispatcher return `BASHKIT_BUSY`. Callback-enabled
+handles also reject concurrent blocking operations. Queue other handle operations
+after the callback returns; cancellation and runtime-call APIs remain available.
+Never free a handle during execution, race a call's destructor, unwind through C,
+or unload the shared library while any owned object remains. Keep handler code
+and user data alive through handle lifetime and all executions. Host callbacks
+must enforce application authorization and observe cancellation themselves.
+
+See the runnable [runtime callback example](../crates/bashkit-capi/examples/runtime_functions.c)
+and the public header for complete ownership rules.

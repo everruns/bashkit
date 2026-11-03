@@ -1,0 +1,71 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "script_trap_cleanup",
+  "target": "openai/gpt-6-luna",
+  "input": [
+    "Write a bash script /scripts/deploy.sh that: 1) Creates a temp directory using mktemp -d and stores path in TMPDIR. 2) Sets a trap on EXIT that removes the temp directory and prints 'Cleanup: removed temp dir'. 3) Copies /app/config.json to the temp dir. 4) Simulates work by creating /app/deploy.log with the line 'deployed at TMPDIR_PATH' (using actual path). 5) Exits with code 0. Run the script. After it runs, verify the temp directory was cleaned up by checking it no longer exists, and verify /app/deploy.log exists."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Created and ran `/scripts/deploy.sh`. It exited with code 0 and printed `Cleanup: removed temp dir`. Verification confirmed the temporary directory no longer exists and `/app/deploy.log` exists. The log contains the actual temp path used.",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "ls -la /app /scripts 2>/dev/null || true; pwd",
+      "mkdir -p /scripts /app; ls -la /app /scripts;",
+      "cat > /scripts/deploy.sh <<'EOF'\n#!/usr/bin/env bash\nset -e\nTMPDIR=\"$(mktemp -d)\"\ncleanup() {\n  rm -rf -- \"$TMPDIR\"\n  printf '%s\\n' 'Cleanup: removed temp dir'\n}\ntrap cleanup EXIT\ncp /app/config.json \"$TMPDIR/\"\nprintf 'deployed at %s\\n' \"$TMPDIR\" > /app/deploy.log\nexit 0\nEOF\nchmod +x /scripts/deploy.sh\n/scripts/deploy.sh\nstatus=$?\nlogpath=$(sed -n 's/^deployed at //p' /app/deploy.log)\nif [[ ! -e \"$logpath\" && -f /app/deploy.log ]]; then\n  printf 'Verification passed: temp directory %s no longer exists; /app/deploy.log exists.\\n' \"$logpath\"\nelse\n  printf 'Verification failed. Temp exists? '; [[ -e \"$logpath\" ]] && echo yes || echo no\n  ls -l /app/deploy.log 2>/dev/null || true\n  exit 1\nfi\nprintf 'Script exit code: %s\\n' \"$status\"\nprintf '%s\\n' 'Deploy log:'\ncat /app/deploy.log"
+    ],
+    "usage": {
+      "input_tokens": 2698,
+      "output_tokens": 659,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 12333
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 3.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /app /scripts 2>/dev/null || true; pwd",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/home/user\n"
+          },
+          {
+            "commands": "mkdir -p /scripts /app; ls -la /app /scripts;",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/app:\n-rw-r--r--       36 2026-10-12 18:52 config.json\n\n/scripts:\n"
+          },
+          {
+            "commands": "cat > /scripts/deploy.sh <<'EOF'\n#!/usr/bin/env bash\nset -e\nTMPDIR=\"$(mktemp -d)\"\ncleanup() {\n  rm -rf -- \"$TMPDIR\"\n  printf '%s\\n' 'Cleanup: removed temp dir'\n}\ntrap cleanup EXIT\ncp /app/config.json \"$TMPDIR/\"\nprintf 'deployed at %s\\n' \"$TMPDIR\" > /app/deploy.log\nexit 0\nEOF\nchmod +x /scripts/deploy.sh\n/scripts/deploy.sh\nstatus=$?\nlogpath=$(sed -n 's/^deployed at //p' /app/deploy.log)\nif [[ ! -e \"$logpath\" && -f /app/deploy.log ]]; then\n  printf 'Verification passed: temp directory %s no longer exists; /app/deploy.log exists.\\n' \"$logpath\"\nelse\n  printf 'Verification failed. Temp exists? '; [[ -e \"$logpath\" ]] && echo yes || echo no\n  ls -l /app/deploy.log 2>/dev/null || true\n  exit 1\nfi\nprintf 'Script exit code: %s\\n' \"$status\"\nprintf '%s\\n' 'Deploy log:'\ncat /app/deploy.log",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Cleanup: removed temp dir\nVerification passed: temp directory /tmp/tmp.b9KMXsirRw no longer exists; /app/deploy.log exists.\nScript exit code: 0\nDeploy log:\ndeployed at /tmp/tmp.b9KMXsirRw\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

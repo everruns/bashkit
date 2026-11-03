@@ -15,13 +15,17 @@
 //! visible error instead of dropping the write.
 
 use bashkit::{Bash, ExecutionLimits, MemoryLimits};
+use std::time::Duration;
+
+// Resource ceilings must trip before deadlines under instrumented builds.
+const CAP_TEST_TIMEOUT: Duration = Duration::from_secs(600);
 
 /// 64 KiB of headroom: enough for a handful of small entries, far below the
 /// megabyte-scale values these tests park in arrays.
 fn bounded() -> Bash {
     Bash::builder()
         .memory_limits(MemoryLimits::new().max_total_variable_bytes(64 * 1024))
-        .limits(ExecutionLimits::new())
+        .limits(ExecutionLimits::new().timeout(CAP_TEST_TIMEOUT))
         .build()
 }
 
@@ -166,4 +170,155 @@ async fn default_limits_admit_a_realistic_array_workload() {
         .unwrap();
     assert_eq!(result.exit_code, 0, "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "2000 row-2000\n");
+}
+
+/// Repeated replacement must charge retained state, not cumulative read volume.
+#[tokio::test]
+async fn mapfile_replacement_releases_entries_and_bytes() {
+    for options in ["-t", "-t -O 0"] {
+        let mut bash = Bash::builder()
+            .memory_limits(
+                MemoryLimits::new()
+                    .max_array_entries(4)
+                    .max_total_variable_bytes(4096),
+            )
+            .build();
+        let script = format!(
+            "export a=old; for i in {{1..12}}; do mapfile {options} a <<<'one\ntwo\nthree'; echo ${{#a[@]}}; done; b=(ok); echo ${{b[0]}}; if env | grep -q '^a='; then echo leaked; fi"
+        );
+        let result = bash.exec(&script).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, format!("{}ok\n", "3\n".repeat(12)));
+        let result = bash
+            .exec("mapfile -t a <<<'last'; b=(x y); echo ${a[*]} ${#b[@]}")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "last 2\n");
+    }
+}
+
+#[tokio::test]
+async fn mapfile_empty_replacement_releases_budget() {
+    let mut bash = Bash::builder()
+        .memory_limits(MemoryLimits::new().max_array_entries(3))
+        .limits(ExecutionLimits::new().timeout(CAP_TEST_TIMEOUT))
+        .build();
+    let result = bash
+        .exec("a=(one two three); mapfile -t a </dev/null; b=(x y z); echo ${#a[@]} ${#b[@]}")
+        .await
+        .unwrap();
+    assert_eq!(result.stdout, "0 3\n");
+}
+
+#[tokio::test]
+async fn mapfile_entry_refusal_is_visible_and_recoverable() {
+    for script in [
+        "mapfile -t a <<<'one\ntwo\nthree\nfour'",
+        "a=(old); mapfile -t -O 1 a <<<'one\ntwo\nthree'",
+        "read -ra a <<<'one two three four'",
+        "a=(one two three); b[0]=four",
+        "a=(one two three); declare -A b; b[key]=four",
+    ] {
+        let mut bash = Bash::builder()
+            .memory_limits(MemoryLimits::new().max_array_entries(3))
+            .limits(ExecutionLimits::new().timeout(CAP_TEST_TIMEOUT))
+            .build();
+        let error = bash
+            .exec(script)
+            .await
+            .expect_err("entry refusal must be visible");
+        assert!(
+            error.to_string().contains("array entry limit (3)"),
+            "{error}"
+        );
+        let result = bash
+            .exec("unset a b; c=(x y z); echo ${#c[@]}")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "3\n", "after {script}");
+    }
+}
+
+#[tokio::test]
+async fn mapfile_origin_merges_without_losing_old_entries_on_refusal() {
+    let mut bash = Bash::builder()
+        .memory_limits(MemoryLimits::new().max_array_entries(3))
+        .limits(ExecutionLimits::new().timeout(CAP_TEST_TIMEOUT))
+        .build();
+    bash.exec("a=(one two three)").await.unwrap();
+    let result = bash
+        .exec("mapfile -t -O 1 a <<<'new'; echo ${a[*]}")
+        .await
+        .unwrap();
+    assert_eq!(result.stdout, "one new three\n");
+    assert!(bash.exec("mapfile -t -O 3 a <<<'extra'").await.is_err());
+    let result = bash
+        .exec("echo ${a[*]}; unset a; b=(x y z); echo ${#b[@]}")
+        .await
+        .unwrap();
+    assert_eq!(result.stdout, "one new three\n3\n");
+}
+
+#[tokio::test]
+async fn mapfile_replacement_releases_large_values() {
+    let mut bash = bounded();
+    let line = "a".repeat(24_000);
+    bash.fs()
+        .write_file(
+            std::path::Path::new("/large"),
+            format!("{line}\n{line}\n").as_bytes(),
+        )
+        .await
+        .unwrap();
+    for _ in 0..4 {
+        let result = bash
+            .exec("mapfile -t a </large; echo ${#a[@]} ${#a[0]}")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "2 24000\n");
+    }
+    assert!(bash.exec("mapfile -t -O 2 a </large").await.is_err());
+    let result = bash
+        .exec("echo ${#a[@]}; unset a; mapfile -t b </large; echo ${#b[@]}")
+        .await
+        .unwrap();
+    assert_eq!(result.stdout, "2\n2\n");
+}
+
+/// The independent brush-web reproduction, with default limits.
+#[tokio::test]
+async fn repeated_large_mapfile_does_not_corrupt_session_arrays() {
+    let mut bash = Bash::new();
+    let result = bash.exec("seq 50000 > /tmp/s; for i in 1 2 3; do mapfile -t a < /tmp/s; echo \"mapfile=$? n=${#a[@]}\"; done; b=(x y z); echo \"b=${#b[@]}\"").await.unwrap();
+    assert_eq!(result.exit_code, 0);
+    assert_eq!(
+        result.stdout,
+        "mapfile=0 n=50000\nmapfile=0 n=50000\nmapfile=0 n=50000\nb=3\n"
+    );
+    let result = bash.exec("c=(still works); echo ${c[*]}").await.unwrap();
+    assert_eq!(result.stdout, "still works\n");
+}
+
+/// Debug-stack metadata is uncharged: mapfile must not refund it as user data.
+#[tokio::test]
+async fn mapfile_cannot_refund_interpreter_metadata() {
+    for name in ["FUNCNAME", "BASH_SOURCE", "BASH_LINENO"] {
+        for options in ["-t", "-t -O 0"] {
+            let mut bash = Bash::builder()
+                .memory_limits(MemoryLimits::new().max_array_entries(3))
+                .limits(ExecutionLimits::new().timeout(CAP_TEST_TIMEOUT))
+                .build();
+            let script =
+                format!("a=(one two three); f() {{ mapfile {options} {name} </dev/null; }}; f");
+            let result = bash.exec(&script).await.unwrap();
+            assert_eq!(result.exit_code, 1, "{script}");
+            let error = bash.exec("b[0]=extra").await.unwrap_err();
+            assert!(error.to_string().contains("array entry limit (3)"));
+            let result = bash
+                .exec("unset a; b=(x y z); echo ${#b[@]}")
+                .await
+                .unwrap();
+            assert_eq!(result.stdout, "3\n");
+        }
+    }
 }

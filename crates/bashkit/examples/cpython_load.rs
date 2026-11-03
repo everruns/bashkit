@@ -9,7 +9,7 @@
 //!
 //! Run: cargo run --release --example cpython_load --features cpython -- 1 16 64 256 1024
 
-use bashkit::{Bash, CPython};
+use bashkit::Bash;
 use std::time::{Duration, Instant};
 
 /// Calls per tenant; override with `CPYTHON_LOAD_CALLS`.
@@ -72,7 +72,7 @@ async fn main() {
     } else {
         levels
     };
-    CPython::warm_up().expect("load CPython");
+    bashkit::warm_up().expect("load CPython");
     println!(
         "| Tenants | Calls | Wall (s) | Calls/s | p50 (ms) | p99 (ms) | max (ms) | Failures | Peak RSS (MB) |"
     );

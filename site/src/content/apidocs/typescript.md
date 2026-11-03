@@ -41,6 +41,14 @@ Safe to call at any time — the new builtin is visible to the next
 `execute*()` invocation with no interpreter rebuild or VFS disturbance.
 Survives `reset()`.
 
+### `addCommand`
+
+```typescript
+bash.addCommand(name: string, callback: CommandCallback): void
+```
+
+Register a live command with async byte I/O and separate exit status.
+
 ### `analyze`
 
 ```typescript
@@ -226,6 +234,14 @@ bash.ls(path?: string): string[]
 
 List entry names in a directory. Returns empty array if directory does not exist.
 
+### `lstat`
+
+```typescript
+bash.lstat(path: string): { created: number; fileType: string; mode: number; modified: number; size: number }
+```
+
+Like `stat`, but a symlink reports itself (`fileType: "symlink"`).
+
 ### `mkdir`
 
 ```typescript
@@ -385,7 +401,7 @@ Use for snapshots crossing trust boundaries.
 bash.stat(path: string): { created: number; fileType: string; mode: number; modified: number; size: number }
 ```
 
-Get metadata for a path (fileType, size, mode, timestamps).
+Get metadata for a path (fileType, size, mode, timestamps), following symlinks.
 
 ### `symlink`
 
@@ -432,7 +448,7 @@ const bash = await Bash.create({
 ### `fromSnapshot`
 
 ```typescript
-Bash.fromSnapshot(data: Uint8Array, options?: SnapshotOptions): Bash
+Bash.fromSnapshot(data: Uint8Array, snapshotOptions?: SnapshotOptions, options?: BashOptions): Bash
 ```
 
 Create a new Bash instance from a snapshot.
@@ -445,7 +461,7 @@ const restored = Bash.fromSnapshot(snapshot);
 ### `fromSnapshotKeyed`
 
 ```typescript
-Bash.fromSnapshotKeyed(data: Uint8Array, key: Uint8Array): Bash
+Bash.fromSnapshotKeyed(data: Uint8Array, key: Uint8Array, options?: BashOptions): Bash
 ```
 
 Create a new Bash instance from a HMAC-protected snapshot.
@@ -505,6 +521,14 @@ bashTool.addBuiltin(name: string, callback: BuiltinCallback): void
 ```
 
 Register a JS callback as a custom builtin. See `Bash.addBuiltin`.
+
+### `addCommand`
+
+```typescript
+bashTool.addCommand(name: string, callback: CommandCallback): void
+```
+
+Register a live command with async byte I/O and separate exit status.
 
 ### `analyze`
 
@@ -660,6 +684,14 @@ bashTool.ls(path?: string): string[]
 
 List entry names in a directory. Returns empty array if directory does not exist.
 
+### `lstat`
+
+```typescript
+bashTool.lstat(path: string): { created: number; fileType: string; mode: number; modified: number; size: number }
+```
+
+Like `stat`, but a symlink reports itself (`fileType: "symlink"`).
+
 ### `mkdir`
 
 ```typescript
@@ -800,7 +832,7 @@ Serialize interpreter state with HMAC-SHA256 using a caller-provided key.
 bashTool.stat(path: string): { created: number; fileType: string; mode: number; modified: number; size: number }
 ```
 
-Get metadata for a path (fileType, size, mode, timestamps).
+Get metadata for a path (fileType, size, mode, timestamps), following symlinks.
 
 ### `symlink`
 
@@ -894,6 +926,12 @@ fileSystem.copy(fromPath: string, toPath: string): void
 fileSystem.exists(path: string): boolean
 ```
 
+### `lstat`
+
+```typescript
+fileSystem.lstat(path: string): { created: number; fileType: string; mode: number; modified: number; size: number }
+```
+
 ### `mkdir`
 
 ```typescript
@@ -963,7 +1001,7 @@ FileSystem.fromExternal(external: unknown): FileSystem
 ### `fromNative`
 
 ```typescript
-FileSystem.fromNative(nativeFs: any): FileSystem
+FileSystem.fromNative(nativeFs: any, owner?: object): FileSystem
 ```
 
 ### `real`
@@ -992,6 +1030,164 @@ new BashError(result: ExecResult): BashError
 ```typescript
 bashError.display(): string
 ```
+
+## Terminal
+
+Interactive bash session on an in-memory terminal: type keys, run until
+the shell needs input, read the screen as text. `vi`, `less` and `more`
+work.
+
+```typescript
+const t = new Terminal({ rows: 24, cols: 80 });
+await t.call("vi notes.txt<Enter>");
+const out = await t.call("ihello<Esc>:wq<Enter>");
+out.commands[0].exit_code; // 0
+```
+
+### Constructor
+
+```typescript
+new Terminal(options?: TerminalOptions): Terminal
+```
+
+### `exitCode`
+
+```typescript
+exitCode: null | number
+```
+
+Shell exit code once the session has exited.
+
+### `activity`
+
+```typescript
+terminal.activity(): TerminalActivityInfo
+```
+
+What the session is doing.
+
+### `call`
+
+```typescript
+terminal.call(input: string | TerminalCallArgs, waitMs?: number): Promise<TerminalCallResult>
+```
+
+Agent step: type `input` in Vim key notation (`"ls<Enter>"`,
+`"ihi<Esc>:wq<Enter>"`, `"<C-c>"`), wait up to `waitMs` (default 5000),
+and report the screen, activity and finished commands. Pass an object
+to forward a model's tool call as is (`wait_for`, `screen`, ...).
+
+### `cursor`
+
+```typescript
+terminal.cursor(): [number, number]
+```
+
+Cursor position `[row, col]`, zero-based.
+
+### `historyText`
+
+```typescript
+terminal.historyText(): string
+```
+
+Screen plus up to 1000 lines of scrollback.
+
+### `inputPrompt`
+
+```typescript
+terminal.inputPrompt(): null | string
+```
+
+While `read`/`select` waits for a typed line, the question on the cursor line; else null.
+
+### `isAlternateScreen`
+
+```typescript
+terminal.isAlternateScreen(): boolean
+```
+
+True while a full-screen program such as `vi` is open.
+
+### `readFile`
+
+```typescript
+terminal.readFile(path: string): Promise<Buffer<ArrayBufferLike>>
+```
+
+Read a file from the session's virtual filesystem.
+
+### `resize`
+
+```typescript
+terminal.resize(rows: number, cols: number): void
+```
+
+Resize the terminal; a running `vi` redraws.
+
+### `runUntilIdle`
+
+```typescript
+terminal.runUntilIdle(timeoutMs?: number): Promise<"exited" | "idle" | "timeout">
+```
+
+Run until the session needs input or exits, or `timeoutMs` passes.
+
+### `screenText`
+
+```typescript
+terminal.screenText(): string
+```
+
+Visible screen as plain text.
+
+### `send`
+
+```typescript
+terminal.send(data: string | Uint8Array<ArrayBufferLike>): number
+```
+
+Queue raw input as if typed (`"\r"` Enter, `"\x1b"` Escape, `"\x03"` Ctrl-C).
+
+### `size`
+
+```typescript
+terminal.size(): [number, number]
+```
+
+`[rows, cols]`.
+
+### `systemPrompt`
+
+```typescript
+terminal.systemPrompt(): string
+```
+
+Terse usage guide for a system prompt.
+
+### `takeOutput`
+
+```typescript
+terminal.takeOutput(): Buffer
+```
+
+Raw output bytes since the last call, for a renderer such as xterm.js.
+
+### `takeTranscript`
+
+```typescript
+terminal.takeTranscript(): TerminalCommandRecord[]
+```
+
+Commands that finished since the last call.
+
+### `toolDefinition`
+
+```typescript
+terminal.toolDefinition(): TerminalToolDefinition
+```
+
+OpenAI-compatible function definition for `Terminal.call`.
 
 ## getVersion()
 
@@ -1118,6 +1314,7 @@ Options for creating a Bash or BashTool instance.
 
   Required for `mounts` and runtime `mount()` APIs. Mount targets must
   resolve under one of these prefixes; otherwise the call is rejected.
+- **`commands?`** — `Record<string, CommandCallback>`
 - **`customBuiltins?`** — `Record<string, BuiltinCallback>`
 
   Custom JS callbacks registered as bash builtins.
@@ -1151,6 +1348,7 @@ Options for creating a Bash or BashTool instance.
 
   These function names become available as Python builtins within
   the embedded interpreter. When called, they invoke the external handler.
+- **`externalHandler?`** — `ExternalHandler`
 - **`files?`** — `Record<string, FileValue>`
 
   Files to mount in the virtual filesystem.
@@ -1209,6 +1407,9 @@ Options for creating a Bash or BashTool instance.
 
   When set, commands that exceed this duration are aborted with
   exit code 124 (matching the bash `timeout` convention).
+- **`typescript?`** — `boolean`
+- **`typescriptExternalFunctions?`** — `string[]`
+- **`typescriptExternalHandler?`** — `TypeScriptExternalHandler`
 - **`username?`** — `string`
 
 ## BuiltinContext
@@ -1254,6 +1455,21 @@ The environment that produced a commit.
 - **`builtins`** — `string[]`
 - **`features`** — `string[]`
 - **`fsBackend`** — `string`
+
+## CommandContext
+
+Request-scoped byte I/O for a live shell command.
+
+### Fields
+
+- **`argv`** — `string[]`
+- **`cwd`** — `string`
+- **`env`** — `Record<string, string>`
+- **`fs`** — `FileSystem`
+- **`name`** — `string`
+- **`stderr`** — `{ write:  }`
+- **`stdin`** — `AsyncIterable<Uint8Array<ArrayBufferLike>, any, any> & { readChunk:  }`
+- **`stdout`** — `{ write:  }`
 
 ## CommitOptions
 
@@ -1305,6 +1521,9 @@ Result from executing bash commands.
 
 ### Fields
 
+- **`capture?`** — `number`
+
+  Capture this many bytes per stream in addition to optional live sinks.
 - **`onOutput?`** — `OnOutput`
 
   Live chunk callback. Must be synchronous.
@@ -1314,6 +1533,10 @@ Result from executing bash commands.
   binding rejects same-instance re-entry to avoid deadlocks and runtime
   panics.
 - **`signal?`** — `AbortSignal`
+- **`stderr?`** — `(bytes: Uint8Array) => void | Promise<void>`
+- **`stdout?`** — `(bytes: Uint8Array) => void | Promise<void>`
+
+  Awaited byte sinks apply backpressure. Omitted capture retains no output.
 
 ## FileSystemRealOptions
 
@@ -1323,6 +1546,14 @@ Standalone filesystem handle for direct VFS operations and native addon interop.
 
 - **`allowedMountPaths`** — `string[]`
 - **`writable?`** — `boolean`
+
+## HostFunctionContext
+
+### Fields
+
+- **`signal`** — `AbortSignal`
+
+  Aborted when execution is cancelled, times out, or completes.
 
 ## NetworkCredential
 
@@ -1536,6 +1767,130 @@ What changed between two commits.
   or network trust boundaries. Recommended for any snapshot accepted from
   users, shared storage, or remote callers.
 
+## TerminalActivityInfo
+
+What the session is doing.
+
+### Fields
+
+- **`command?`** — `string`
+
+  The running command line (state `"running"`).
+- **`exitCode?`** — `number`
+
+  Shell exit code (state `"exited"`).
+- **`state`** — `string`
+
+  `"prompt"`, `"continuation"`, `"running"` or `"exited"`.
+
+## TerminalCallArgs
+
+Arguments of `Terminal.call`, named as in `toolDefinition()`.
+
+### Fields
+
+- **`close?`** — `boolean`
+
+  Close the named session instead of typing into it.
+- **`input?`** — `string`
+
+  Keys in Vim notation (`"ls<Enter>"`, `"<C-c>"`).
+- **`screen?`** — `"full" | "changes" | "none"`
+
+  `full` (default), `changes` (only changed rows) or `none`.
+- **`session?`** — `string`
+
+  Terminal tab to use (default `main`); created on first use, files shared.
+- **`wait_for?`** — `string`
+
+  Regex: return as soon as command output printed during the call matches.
+- **`wait_ms?`** — `number`
+
+  How long to wait for the session to need input (default 5000).
+
+## TerminalCallResult
+
+### Fields
+
+- **`activity`** — `"input" | "prompt" | "continuation" | "running" | "exited"`
+
+  `input`: a running command waits for a typed line (see `input_prompt`).
+- **`closed?`** — `boolean`
+
+  The session was closed (`close: true`).
+- **`commands`** — `({ command: string; exit_code: number; output: string; output_truncated?: boolean })[]`
+
+  Commands that finished during this call.
+- **`cursor?`** — `{ col: number; row: number }`
+
+  Cursor position, 0-based (screen `changes`).
+- **`exit_code?`** — `number`
+
+  Shell exit code (activity `exited`).
+- **`full_screen`** — `boolean`
+
+  A full-screen program such as vi or less is open.
+- **`input_prompt?`** — `string`
+
+  Question on the cursor line while activity is `input`.
+- **`matched?`** — `boolean`
+
+  Whether `wait_for` matched (only when it was given).
+- **`restarted?`** — `boolean`
+
+  The session had exited and a fresh shell started for this call.
+- **`running_command?`** — `string`
+
+  Command line still running (activity `running`).
+- **`screen?`** — `string`
+
+  Visible screen as plain text (screen `full`).
+- **`screen_changes?`** — `({ row: number; text: string })[]`
+
+  Rows changed since the previous call (screen `changes`).
+- **`session?`** — `string`
+
+  Session this result is for, when more than one is open.
+- **`sessions?`** — `({ activity: string; name: string })[]`
+
+  Every open session and its activity, when more than one is open.
+- **`waiting_for_input`** — `boolean`
+
+  False when `waitMs` ran out while a command was still working.
+
+## TerminalCommandRecord
+
+One finished command line.
+
+### Fields
+
+- **`command`** — `string`
+- **`exitCode`** — `number`
+- **`output`** — `string`
+
+  Combined stdout and stderr with `\n` line endings.
+- **`outputTruncated`** — `boolean`
+
+## TerminalOptions
+
+### Fields
+
+- **`cols?`** — `number`
+- **`cwd?`** — `string`
+- **`env?`** — `Record<string, string>`
+- **`hostname?`** — `string`
+- **`rows?`** — `number`
+- **`username?`** — `string`
+
+## TerminalToolDefinition
+
+OpenAI-compatible function definition returned by `Terminal.toolDefinition()`.
+
+### Fields
+
+- **`function`** — `{ description: string; name: string; parameters: { properties: Record<string, Record<string, unknown>>; required?: string[]; type: "object" } }`
+- **`type`** — `"function"`
+
 ## BuiltinCallback
 
 Callback signature for custom builtins. Return the stdout to emit.
@@ -1559,10 +1914,22 @@ fine, so snapshots keep restoring after a bashkit upgrade adds one.
 type CheckoutPolicy = "strict" | "superset" | "force"
 ```
 
+## CommandCallback
+
+```typescript
+type CommandCallback = (ctx: CommandContext) => Promise<number | { exitCode: number }>
+```
+
 ## ExecutionProfileName
 
 ```typescript
 type ExecutionProfileName = typeof ExecutionProfile[keyof typeof ExecutionProfile]
+```
+
+## ExternalHandler
+
+```typescript
+type ExternalHandler = (name: string, args: RuntimeValue[], kwargs: Record<string, RuntimeValue>, context: HostFunctionContext) => RuntimeValue | undefined | Promise<RuntimeValue | undefined>
 ```
 
 ## FileValue
@@ -1580,6 +1947,18 @@ type FileValue = string | () => string | () => Promise<string>
 
 ```typescript
 type OnOutput = (chunk: OutputChunk) => void
+```
+
+## RuntimeValue
+
+```typescript
+type RuntimeValue = null | boolean | number | string | RuntimeValue[] | object
+```
+
+## TypeScriptExternalHandler
+
+```typescript
+type TypeScriptExternalHandler = (name: string, args: RuntimeValue[], context: HostFunctionContext) => RuntimeValue | undefined | Promise<RuntimeValue | undefined>
 ```
 
 ---
@@ -1926,6 +2305,7 @@ Options for configuring the bash tool adapter.
 
   Required for `mounts` and runtime `mount()` APIs. Mount targets must
   resolve under one of these prefixes; otherwise the call is rejected.
+- **`commands?`** — `Record<string, CommandCallback>`
 - **`customBuiltins?`** — `Record<string, BuiltinCallback>`
 
   Custom JS callbacks registered as bash builtins.
@@ -1959,6 +2339,7 @@ Options for configuring the bash tool adapter.
 
   These function names become available as Python builtins within
   the embedded interpreter. When called, they invoke the external handler.
+- **`externalHandler?`** — `ExternalHandler`
 - **`files?`** — `Record<string, string>`
 
   Pre-populate VFS files. Keys are absolute paths, values are file contents.
@@ -2032,6 +2413,9 @@ Options for configuring the bash tool adapter.
   Commands exceeding this duration are aborted with exit code 124.
   Framework-level timeouts can be propagated here to ensure bashkit
   stops execution when the framework cancels a tool call.
+- **`typescript?`** — `boolean`
+- **`typescriptExternalFunctions?`** — `string[]`
+- **`typescriptExternalHandler?`** — `TypeScriptExternalHandler`
 - **`username?`** — `string`
 
 ### HandlerOptions
@@ -2151,6 +2535,7 @@ Options for configuring the bash tool adapter.
 
   Required for `mounts` and runtime `mount()` APIs. Mount targets must
   resolve under one of these prefixes; otherwise the call is rejected.
+- **`commands?`** — `Record<string, CommandCallback>`
 - **`customBuiltins?`** — `Record<string, BuiltinCallback>`
 
   Custom JS callbacks registered as bash builtins.
@@ -2184,6 +2569,7 @@ Options for configuring the bash tool adapter.
 
   These function names become available as Python builtins within
   the embedded interpreter. When called, they invoke the external handler.
+- **`externalHandler?`** — `ExternalHandler`
 - **`files?`** — `Record<string, string>`
 
   Pre-populate VFS files. Keys are absolute paths, values are file contents.
@@ -2253,6 +2639,9 @@ Options for configuring the bash tool adapter.
   Commands exceeding this duration are aborted with exit code 124.
   Framework-level timeouts can be propagated here to ensure bashkit
   stops execution when the framework cancels a tool call.
+- **`typescript?`** — `boolean`
+- **`typescriptExternalFunctions?`** — `string[]`
+- **`typescriptExternalHandler?`** — `TypeScriptExternalHandler`
 - **`username?`** — `string`
 
 ### HandlerOptions
@@ -2357,6 +2746,7 @@ Options for configuring the bash tool adapter.
 
   Required for `mounts` and runtime `mount()` APIs. Mount targets must
   resolve under one of these prefixes; otherwise the call is rejected.
+- **`commands?`** — `Record<string, CommandCallback>`
 - **`customBuiltins?`** — `Record<string, BuiltinCallback>`
 
   Custom JS callbacks registered as bash builtins.
@@ -2390,6 +2780,7 @@ Options for configuring the bash tool adapter.
 
   These function names become available as Python builtins within
   the embedded interpreter. When called, they invoke the external handler.
+- **`externalHandler?`** — `ExternalHandler`
 - **`files?`** — `Record<string, string>`
 
   Pre-populate VFS files. Keys are absolute paths, values are file contents.
@@ -2444,4 +2835,7 @@ Options for configuring the bash tool adapter.
 
   When set, commands that exceed this duration are aborted with
   exit code 124 (matching the bash `timeout` convention).
+- **`typescript?`** — `boolean`
+- **`typescriptExternalFunctions?`** — `string[]`
+- **`typescriptExternalHandler?`** — `TypeScriptExternalHandler`
 - **`username?`** — `string`

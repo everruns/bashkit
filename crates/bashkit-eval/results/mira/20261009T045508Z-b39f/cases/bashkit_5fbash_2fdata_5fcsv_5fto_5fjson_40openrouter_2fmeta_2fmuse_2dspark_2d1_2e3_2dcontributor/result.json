@@ -1,0 +1,106 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "data_csv_to_json",
+  "target": "openrouter/meta/muse-spark-1.3-contributor",
+  "input": [
+    "Convert /data/users.csv to a JSON array where each row becomes an object with the column headers as keys. Print the resulting JSON to stdout."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "```json\n[\n  {\n    \"name\": \"alice\",\n    \"age\": \"30\",\n    \"city\": \"seattle\"\n  },\n  {\n    \"name\": \"bob\",\n    \"age\": \"25\",\n    \"city\": \"portland\"\n  },\n  {\n    \"name\": \"charlie\",\n    \"age\": \"35\",\n    \"city\": \"denver\"\n  }\n]\n```",
+    "iterations": 9,
+    "tool_calls_count": 8,
+    "tool_calls": [
+      "cat /data/users.csv; echo \"---\"; ls -l /data/",
+      "which jq python3 python perl ruby node miller csvjson 2>&1; jq --version 2>&1; echo EXIT:$?\nls /usr/bin/ | tr '\\n' ' ' | fold -w 150\necho\ncat /etc/os-release 2>&1 | head",
+      "ls /usr/bin/ | tr '\\n' '\\n' | sort\necho \"=== yq ===\"; yq --version 2>&1; yq --help 2>&1 | head -n 100\necho \"=== tomlq ===\"; tomlq --help 2>&1 | head -n 20\necho \"=== jq help ===\"; jq --help 2>&1 | head -n 40",
+      "csv --help 2>&1 | head -n 100; echo \"====\"; json --help 2>&1 | head -n 100",
+      "csv 2>&1 | head -n 100; echo \"====EXIT:$?\"; echo \"---\"; json 2>&1 | head -n 100; echo \"====EXIT:$?\"",
+      "csv headers /data/users.csv 2>&1\necho \"---\"\ncsv count /data/users.csv 2>&1\necho \"---\"\ncsv select --help 2>&1 | head -n 100\ncsv select 2>&1 | head -n 100\ncsv headers 2>&1 | head -n 100\necho \"--- json ---\"\njson pretty 2>&1 | head -n 50\necho '{\"a\":1}' | json pretty 2>&1 | head -n 50\ncat -A /data/users.csv\nhexdump -C /data/users.csv\ngawk --version 2>&1 | head",
+      "gawk '\nBEGIN { FPAT = \"([^,]*)|(\\\"([^\\\"]|\\\"\\\")*\\\")\" }\nfunction csv_decode(f) {\n  if (substr(f,1,1) == \"\\\"\") {\n    f = substr(f, 2, length(f)-2)\n    gsub(/\"\"/, \"\\\"\", f)\n  }\n  return f\n}\nfunction json_escape(s) {\n  gsub(/\\\\/, \"\\\\\\\\\", s)\n  gsub(/\"/, \"\\\\\\\"\", s)\n  gsub(/\\010/, \"\\\\b\", s)\n  gsub(/\\014/, \"\\\\f\", s)\n  gsub(/\\n/, \"\\\\n\", s)\n  gsub(/\\r/, \"\\\\r\", s)\n  gsub(/\\t/, \"\\\\t\", s)\n  return s\n}\nNR==1 { for (i=1;i<=NF;i++) h[i]=csv_decode($i); n=NF; next }\n{\n  # skip empty lines\n  if (NF==0) next\n  if (NF==1 && $1==\"\") next\n  printf \"%s{\", (NR>2 ? \",\\n\" : \"[\\n\")\n  for (i=1;i<=n;i++) {\n    v = (i<=NF ? csv_decode($i) : \"\")\n    printf \"%s\\\"%s\\\": \\\"%s\\\"\", (i>1?\", \":\"\"), json_escape(h[i]), json_escape(v)\n  }\n  printf \"}\"\n}\nEND { print \"\\n]\" }\n' /data/users.csv\necho \"--- via jq ---\"\ngawk '\nBEGIN { FPAT = \"([^,]*)|(\\\"([^\\\"]|\\\"\\\")*\\\")\" }\nfunction csv_decode(f) {\n  if (substr(f,1,1) == \"\\\"\") {\n    f = substr(f, 2, length(f)-2)\n    gsub(/\"\"/, \"\\\"\", f)\n  }\n  return f\n}\nfunction json_escape(s) {\n  gsub(/\\\\/, \"\\\\\\\\\", s)\n  gsub(/\"/, \"\\\\\\\"\", s)\n  gsub(/\\010/, \"\\\\b\", s)\n  gsub(/\\014/, \"\\\\f\", s)\n  gsub(/\\n/, \"\\\\n\", s)\n  gsub(/\\r/, \"\\\\r\", s)\n  gsub(/\\t/, \"\\\\t\", s)\n  return s\n}\nNR==1 { for (i=1;i<=NF;i++) h[i]=csv_decode($i); n=NF; next }\n{\n  if (NF==0) next\n  if (NF==1 && $1==\"\") next\n  printf \"%s{\", (NR>2 ? \",\\n\" : \"[\\n\")\n  for (i=1;i<=n;i++) {\n    v = (i<=NF ? csv_decode($i) : \"\")\n    printf \"%s\\\"%s\\\": \\\"%s\\\"\", (i>1?\", \":\"\"), json_escape(h[i]), json_escape(v)\n  }\n  printf \"}\"\n}\nEND { print \"\\n]\" }\n' /data/users.csv | jq .",
+      "gawk '\nBEGIN { FPAT = \"([^,]*)|(\\\"([^\\\"]|\\\"\\\")*\\\")\" }\nfunction csv_decode(f) {\n  if (substr(f,1,1) == \"\\\"\") { f = substr(f, 2, length(f)-2); gsub(/\"\"/, \"\\\"\", f) }\n  return f\n}\nfunction json_escape(s) {\n  gsub(/\\\\/, \"\\\\\\\\\", s); gsub(/\"/, \"\\\\\\\"\", s)\n  gsub(/\\010/, \"\\\\b\", s); gsub(/\\014/, \"\\\\f\", s)\n  gsub(/\\n/, \"\\\\n\", s); gsub(/\\r/, \"\\\\r\", s); gsub(/\\t/, \"\\\\t\", s)\n  return s\n}\nNR==1 { for (i=1;i<=NF;i++) h[i]=csv_decode($i); n=NF; next }\nNF==0 { next }\nNF==1 && $1==\"\" { next }\n{\n  printf \"%s{\", (NR>2 ? \",\\n\" : \"[\\n\")\n  for (i=1;i<=n;i++) {\n    v = (i<=NF ? csv_decode($i) : \"\")\n    printf \"%s\\\"%s\\\": \\\"%s\\\"\", (i>1?\", \":\"\"), json_escape(h[i]), json_escape(v)\n  }\n  printf \"}\"\n}\nEND { print \"\\n]\" }\n' /data/users.csv | jq ."
+    ],
+    "usage": {
+      "input_tokens": 22943,
+      "output_tokens": 6739,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 76644
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 8.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 8.0,
+      "turns": 9.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat /data/users.csv; echo \"---\"; ls -l /data/",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "name,age,city\nalice,30,seattle\nbob,25,portland\ncharlie,35,denver\n---\n-rw-r--r--       65 2026-10-09 04:56 users.csv\n"
+          },
+          {
+            "commands": "which jq python3 python perl ruby node miller csvjson 2>&1; jq --version 2>&1; echo EXIT:$?\nls /usr/bin/ | tr '\\n' ' ' | fold -w 150\necho\ncat /etc/os-release 2>&1 | head",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/usr/bin/jq\njq-1.8\nEXIT:0\n: [ arch assert awk b2sum base32 base64 basename basenc bash bc bind bunzip2 busybox bzcat bzip2 cat chgrp chmod chown cksum clear cmp column comm com\nplete compopt cp csv curl cut date dd df diff dirname dotenv du echo egrep env envsubst expand expr factor false fgrep file find flock fmt fold free g\nawk getconf git glob grep groups gunzip gzip head hexdump hostid hostname http iconv id install join jq json kill less link ln locale log logname ls m\nake man mawk md5sum mkdir mkfifo mktemp more mv nano nawk nice nl nohup nproc numfmt od openssl parallel paste patch pgrep pkill pr printenv printf ps\n pwd read readlink realpath retry rev rg rm rmdir sed semver seq sh sha1sum sha224sum sha256sum sha384sum sha512sum shasum shuf sleep sort split stat \nstrings sudo sum sync tac tail tar tee template test timeout tomlq touch tr tree true truncate tsort tty uname unexpand uniq unlink unzip uptime users\n uuidgen verify vi watch wc wget which who whoami xargs xxd yes yq zip \nPRETTY_NAME=\"Bashkit sandbox\"\nNAME=\"Bashkit\"\nID=bashkit\nVERSION_ID=\"0.18.2\"\nVERSION=\"0.18.2\"\nHOME_URL=\"https://github.com/everruns/bashkit\"\n"
+          },
+          {
+            "commands": "ls /usr/bin/ | tr '\\n' '\\n' | sort\necho \"=== yq ===\"; yq --version 2>&1; yq --help 2>&1 | head -n 100\necho \"=== tomlq ===\"; tomlq --help 2>&1 | head -n 20\necho \"=== jq help ===\"; jq --help 2>&1 | head -n 40",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ":\n[\narch\nassert\nawk\nb2sum\nbase32\nbase64\nbasename\nbasenc\nbash\nbc\nbind\nbunzip2\nbusybox\nbzcat\nbzip2\ncat\nchgrp\nchmod\nchown\ncksum\nclear\ncmp\ncolumn\ncomm\ncomplete\ncompopt\ncp\ncsv\ncurl\ncut\ndate\ndd\ndf\ndiff\ndirname\ndotenv\ndu\necho\negrep\nenv\nenvsubst\nexpand\nexpr\nfactor\nfalse\nfgrep\nfile\nfind\nflock\nfmt\nfold\nfree\ngawk\ngetconf\ngit\nglob\ngrep\ngroups\ngunzip\ngzip\nhead\nhexdump\nhostid\nhostname\nhttp\niconv\nid\ninstall\njoin\njq\njson\nkill\nless\nlink\nln\nlocale\nlog\nlogname\nls\nmake\nman\nmawk\nmd5sum\nmkdir\nmkfifo\nmktemp\nmore\nmv\nnano\nnawk\nnice\nnl\nnohup\nnproc\nnumfmt\nod\nopenssl\nparallel\npaste\npatch\npgrep\npkill\npr\nprintenv\nprintf\nps\npwd\nread\nreadlink\nrealpath\nretry\nrev\nrg\nrm\nrmdir\nsed\nsemver\nseq\nsh\nsha1sum\nsha224sum\nsha256sum\nsha384sum\nsha512sum\nshasum\nshuf\nsleep\nsort\nsplit\nstat\nstrings\nsudo\nsum\nsync\ntac\ntail\ntar\ntee\ntemplate\ntest\ntimeout\ntomlq\ntouch\ntr\ntree\ntrue\ntruncate\ntsort\ntty\nuname\nunexpand\nuniq\nunlink\nunzip\nuptime\nusers\nuuidgen\nverify\nvi\nwatch\nwc\nwget\nwhich\nwho\nwhoami\nxargs\nxxd\nyes\nyq\nzip\n=== yq ===\nyq (bashkit) 0.18.2\nUsage: yq [OPTIONS] [EXPRESSION] [FILE...]\n\nProcess YAML or JSON with Bashkit's jq-compatible expression engine.\n\n-p, --input-format FORMAT    auto, yaml, or json\n-o, --output-format FORMAT   yaml or json (default yaml)\n-r, --raw-output             unwrap scalar strings\n-c, --compact-output         compact JSON output\n-e, --exit-status            fail for no output, null, or false\n-s, --slurp                  read all documents into an array\n-n, --null-input             evaluate once with null input\n-i, --inplace                atomically update one input file\n-I, --indent N               output indentation (0..9)\n-N, --no-doc                 omit YAML document separators\n--expression FILTER      force an ambiguous expression argument\n-h, --help                   display this help\n-V, --version                display version\n=== tomlq ===\ntomlq: no input\n=== jq help ===\nUsage: jq [OPTIONS...] FILTER [FILE...]\n\n\tjq is a command-line JSON processor.\n\nOptions:\n\t-c, --compact-output\tcompact instead of pretty-printed output\n\t-r, --raw-output\toutput strings without escapes and quotes\n\t-R, --raw-input\t\tread each line as string instead of JSON\n\t-s, --slurp\t\tread entire input into a single array\n\t-n, --null-input\tuse null as the single input value\n\t-e, --exit-status\tset exit status code based on output\n\t-S, --sort-keys\t\tsort object keys in output\n\t-j, --join-output\tlike -r without trailing newline\n\t-a, --ascii-output\toutput strings by only ASCII characters using escape sequences\n\t--raw-output0\t\timplies -r and output NUL after each output\n\t--seq\t\t\tparse input/output as application/json-seq\n\t--stream\t\tparse the input value in streaming fashion\n\t--tab\t\t\tuse tabs for indentation\n\t--indent N\t\tuse N spaces for indentation (0..7, default 2)\n\t--arg name value\tset variable $name to string value\n\t--argjson name value\tset variable $name to JSON value\n\t--slurpfile name file\tbind $name to JSON values parsed from file\n\t--rawfile name file\tbind $name to raw string contents of file\n\t-f, --from-file file\tread the filter from file\n\t--args\t\t\tremaining args populate $ARGS.positional as strings\n\t--jsonargs\t\tremaining args populate $ARGS.positional as JSON values\n\t-V, --version\t\toutput version information and exit\n\t-h, --help\t\toutput this help and exit\n"
+          },
+          {
+            "commands": "csv --help 2>&1 | head -n 100; echo \"====\"; json --help 2>&1 | head -n 100",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "csv: unknown subcommand '--help'\n====\njson: unknown subcommand '--help'\n"
+          },
+          {
+            "commands": "csv 2>&1 | head -n 100; echo \"====EXIT:$?\"; echo \"---\"; json 2>&1 | head -n 100; echo \"====EXIT:$?\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "csv: usage: csv <subcommand> [options] [file]\nSubcommands: select, count, headers, filter, sort\n====EXIT:0\n---\njson: usage: json <subcommand> [args...]\nSubcommands: get, set, keys, length, type, format, pretty\n====EXIT:0\n"
+          },
+          {
+            "commands": "csv headers /data/users.csv 2>&1\necho \"---\"\ncsv count /data/users.csv 2>&1\necho \"---\"\ncsv select --help 2>&1 | head -n 100\ncsv select 2>&1 | head -n 100\ncsv headers 2>&1 | head -n 100\necho \"--- json ---\"\njson pretty 2>&1 | head -n 50\necho '{\"a\":1}' | json pretty 2>&1 | head -n 50\ncat -A /data/users.csv\nhexdump -C /data/users.csv\ngawk --version 2>&1 | head",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "1: name\n2: age\n3: city\n---\n3\n---\ncsv: no input\ncsv: select requires column specifiers\ncsv: no input\n--- json ---\njson: no input (provide file or pipe stdin)\n{\n  \"a\": 1\n}\nname,age,city$\nalice,30,seattle$\nbob,25,portland$\ncharlie,35,denver$\n00000000  6e 61 6d 65 2c 61 67 65  2c 63 69 74 79 0a 61 6c  |name,age,city.al|\n00000010  69 63 65 2c 33 30 2c 73  65 61 74 74 6c 65 0a 62  |ice,30,seattle.b|\n00000020  6f 62 2c 32 35 2c 70 6f  72 74 6c 61 6e 64 0a 63  |ob,25,portland.c|\n00000030  68 61 72 6c 69 65 2c 33  35 2c 64 65 6e 76 65 72  |harlie,35,denver|\n00000040  0a                                                |.|\n00000041\nGNU Awk 5.2.1 (bashkit)\n"
+          },
+          {
+            "commands": "gawk '\nBEGIN { FPAT = \"([^,]*)|(\\\"([^\\\"]|\\\"\\\")*\\\")\" }\nfunction csv_decode(f) {\n  if (substr(f,1,1) == \"\\\"\") {\n    f = substr(f, 2, length(f)-2)\n    gsub(/\"\"/, \"\\\"\", f)\n  }\n  return f\n}\nfunction json_escape(s) {\n  gsub(/\\\\/, \"\\\\\\\\\", s)\n  gsub(/\"/, \"\\\\\\\"\", s)\n  gsub(/\\010/, \"\\\\b\", s)\n  gsub(/\\014/, \"\\\\f\", s)\n  gsub(/\\n/, \"\\\\n\", s)\n  gsub(/\\r/, \"\\\\r\", s)\n  gsub(/\\t/, \"\\\\t\", s)\n  return s\n}\nNR==1 { for (i=1;i<=NF;i++) h[i]=csv_decode($i); n=NF; next }\n{\n  # skip empty lines\n  if (NF==0) next\n  if (NF==1 && $1==\"\") next\n  printf \"%s{\", (NR>2 ? \",\\n\" : \"[\\n\")\n  for (i=1;i<=n;i++) {\n    v = (i<=NF ? csv_decode($i) : \"\")\n    printf \"%s\\\"%s\\\": \\\"%s\\\"\", (i>1?\", \":\"\"), json_escape(h[i]), json_escape(v)\n  }\n  printf \"}\"\n}\nEND { print \"\\n]\" }\n' /data/users.csv\necho \"--- via jq ---\"\ngawk '\nBEGIN { FPAT = \"([^,]*)|(\\\"([^\\\"]|\\\"\\\")*\\\")\" }\nfunction csv_decode(f) {\n  if (substr(f,1,1) == \"\\\"\") {\n    f = substr(f, 2, length(f)-2)\n    gsub(/\"\"/, \"\\\"\", f)\n  }\n  return f\n}\nfunction json_escape(s) {\n  gsub(/\\\\/, \"\\\\\\\\\", s)\n  gsub(/\"/, \"\\\\\\\"\", s)\n  gsub(/\\010/, \"\\\\b\", s)\n  gsub(/\\014/, \"\\\\f\", s)\n  gsub(/\\n/, \"\\\\n\", s)\n  gsub(/\\r/, \"\\\\r\", s)\n  gsub(/\\t/, \"\\\\t\", s)\n  return s\n}\nNR==1 { for (i=1;i<=NF;i++) h[i]=csv_decode($i); n=NF; next }\n{\n  if (NF==0) next\n  if (NF==1 && $1==\"\") next\n  printf \"%s{\", (NR>2 ? \",\\n\" : \"[\\n\")\n  for (i=1;i<=n;i++) {\n    v = (i<=NF ? csv_decode($i) : \"\")\n    printf \"%s\\\"%s\\\": \\\"%s\\\"\", (i>1?\", \":\"\"), json_escape(h[i]), json_escape(v)\n  }\n  printf \"}\"\n}\nEND { print \"\\n]\" }\n' /data/users.csv | jq .",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "[\n{\"name\": \"alice\", \"age\": \"30\", \"city\": \"seattle\"},\n{\"name\": \"bob\", \"age\": \"25\", \"city\": \"portland\"},\n{\"name\": \"charlie\", \"age\": \"35\", \"city\": \"denver\"}\n]\n--- via jq ---\n[\n  {\n    \"name\": \"alice\",\n    \"age\": \"30\",\n    \"city\": \"seattle\"\n  },\n  {\n    \"name\": \"bob\",\n    \"age\": \"25\",\n    \"city\": \"portland\"\n  },\n  {\n    \"name\": \"charlie\",\n    \"age\": \"35\",\n    \"city\": \"denver\"\n  }\n]\n"
+          },
+          {
+            "commands": "gawk '\nBEGIN { FPAT = \"([^,]*)|(\\\"([^\\\"]|\\\"\\\")*\\\")\" }\nfunction csv_decode(f) {\n  if (substr(f,1,1) == \"\\\"\") { f = substr(f, 2, length(f)-2); gsub(/\"\"/, \"\\\"\", f) }\n  return f\n}\nfunction json_escape(s) {\n  gsub(/\\\\/, \"\\\\\\\\\", s); gsub(/\"/, \"\\\\\\\"\", s)\n  gsub(/\\010/, \"\\\\b\", s); gsub(/\\014/, \"\\\\f\", s)\n  gsub(/\\n/, \"\\\\n\", s); gsub(/\\r/, \"\\\\r\", s); gsub(/\\t/, \"\\\\t\", s)\n  return s\n}\nNR==1 { for (i=1;i<=NF;i++) h[i]=csv_decode($i); n=NF; next }\nNF==0 { next }\nNF==1 && $1==\"\" { next }\n{\n  printf \"%s{\", (NR>2 ? \",\\n\" : \"[\\n\")\n  for (i=1;i<=n;i++) {\n    v = (i<=NF ? csv_decode($i) : \"\")\n    printf \"%s\\\"%s\\\": \\\"%s\\\"\", (i>1?\", \":\"\"), json_escape(h[i]), json_escape(v)\n  }\n  printf \"}\"\n}\nEND { print \"\\n]\" }\n' /data/users.csv | jq .",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "[\n  {\n    \"name\": \"alice\",\n    \"age\": \"30\",\n    \"city\": \"seattle\"\n  },\n  {\n    \"name\": \"bob\",\n    \"age\": \"25\",\n    \"city\": \"portland\"\n  },\n  {\n    \"name\": \"charlie\",\n    \"age\": \"35\",\n    \"city\": \"denver\"\n  }\n]\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

@@ -12,7 +12,7 @@
 //! - Engine, pooling, fuel-metered deadlines and budget checks are shared with
 //!   other wasm guests ([`super::wasi_host`]). Every call gets a fresh
 //!   instance mapped copy-on-write from the pre-initialized snapshot; nothing
-//!   survives between calls or tenants.
+//!   survives between calls or tenants. Warm up with [`crate::warm_up`].
 //! - Memory is capped by a store limiter; `memory.grow` past the cap fails and
 //!   surfaces as `MemoryError` inside Python, not as a host error.
 
@@ -162,7 +162,8 @@ impl CPython {
 
     /// Load the embedded interpreter now instead of on the first `python3`
     /// call. Idempotent and process-wide; returns the error text if the
-    /// embedded module cannot be loaded.
+    /// embedded module cannot be loaded. Prefer [`crate::warm_up`], which
+    /// warms every enabled runtime.
     pub fn warm_up() -> std::result::Result<(), String> {
         runtime().map(|_| ()).map_err(str::to_string)
     }

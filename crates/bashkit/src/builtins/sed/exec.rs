@@ -7,6 +7,26 @@
 //!   without one, and the newline is only emitted if more output follows. That
 //!   is what stops `printf 'a' | sed 's/a/b/'` from inventing a terminator and,
 //!   with `-i`, writing it back to the file (finding E).
+//! - Pattern/hold ambush (TM-DOS-018 follow-up): input consumption resets the
+//!   per-cycle step counter but `N` preserves pattern space, so
+//!   `:a;N;100~100{h;G};ba` doubles pattern+hold every 100 lines without
+//!   tripping the step limit (~13 MB from ~3 KB of input at 1500 lines,
+//!   unbounded beyond). Pattern and hold are therefore `BudgetedString`s
+//!   charged against the live-intermediate budget before growth, and every
+//!   command charges aggregate work plus cancellation/deadline checks. Growth
+//!   refusal aborts through the sink error slot (`sed: <error>`, exit 1),
+//!   never warn-and-continue with a silently truncated pattern.
+//! - Retention discipline: the old owner stays charged through its last use.
+//!   Copies go straight from source into a fresh budgeted destination
+//!   (`h`/`g` drop the target charge first, then copy field-to-field with no
+//!   snapshot scratch); rebuilds (`s///`, `y`, `D` drain) keep the moved-out
+//!   owner alive while the replacement charges incrementally, swapping only
+//!   at the end (a non-matching `s///` restores the original instead of
+//!   wiping it). The one unavoidable transient, the input-line clone in
+//!   `read_next`, is admitted as scratch lease before allocation and held
+//!   until the fresh charged copy lands. A dead budget fails every
+//!   construction/replacement closed with the original refusal; nothing
+//!   falls back to unbudgeted storage.
 //! - Range addresses carry explicit [`RangeState`] per program counter, with a
 //!   resolved end line for `,N`, `,+N` and `,~N`, so a closed range cannot
 //!   silently re-open (finding C).
@@ -125,6 +145,9 @@ enum Cycle {
     Silent,
     /// `D` with an embedded newline: rerun the script without reading input.
     Restart,
+    /// Abort the segment now; the error is parked on the output sink and
+    /// surfaced as `Err` by the trailing sink-error check.
+    Break,
 }
 
 pub(super) struct Machine<'a> {
@@ -141,7 +164,7 @@ pub(super) struct Machine<'a> {
     pub(super) write_files: HashMap<String, Sink>,
 
     range: Vec<RangeState>,
-    hold: String,
+    hold: BudgetedString,
     /// GNU tracks "was this line terminated" on the hold space too, and `g`,
     /// `G` and `x` carry it onto the pattern space. The hold space starts out
     /// terminated, which is why `printf 'ab' | sed G` emits a trailing newline
@@ -161,10 +184,21 @@ pub(super) struct Machine<'a> {
     lines: &'a [InputLine],
     cursor: usize,
     line_no: usize,
-    ps: String,
+    ps: BudgetedString,
     ps_had_newline: bool,
     cur_file: usize,
     sub_made: bool,
+}
+
+/// Disjoint output handles for [`Machine::write_out`], so callers can pass
+/// `&self.ps` slices straight in with no clone-scratch transient.
+/// Behavior is identical to the former method form.
+struct WriteHandles<'a> {
+    sep: char,
+    out: &'a mut Sink,
+    err: &'a mut String,
+    files: &'a mut HashMap<String, Sink>,
+    budget: Option<&'a ExecutionBudget>,
 }
 
 impl<'a> Machine<'a> {
@@ -176,21 +210,28 @@ impl<'a> Machine<'a> {
         line_len: usize,
         sep: char,
         execution_budget: Option<ExecutionBudget>,
-    ) -> Self {
+    ) -> Result<Self, LimitExceeded> {
         let out = Sink::with_sep(sep, execution_budget.as_ref());
-        Machine {
+        // Fail closed before any growth: a dead budget refuses the machine
+        // itself instead of running pattern/hold uncharged. Empty buffers
+        // cannot trip a live budget, so only a dead one fails here.
+        if let Some(budget) = &execution_budget {
+            budget.check()?;
+        }
+        let hold = BudgetedString::new(execution_budget.as_ref())?;
+        let ps = BudgetedString::new(execution_budget.as_ref())?;
+        Ok(Machine {
             prog,
             names,
             read_files,
             quiet: quiet || prog.quiet,
             default_line_len: line_len,
             sep,
-            execution_budget,
             out,
             stderr: String::new(),
             write_files: HashMap::new(),
             range: Vec::new(),
-            hold: String::new(),
+            hold,
             hold_had_newline: true,
             appends: Vec::new(),
             read_cursor: HashMap::new(),
@@ -201,15 +242,58 @@ impl<'a> Machine<'a> {
             lines: &[],
             cursor: 0,
             line_no: 0,
-            ps: String::new(),
+            ps,
+            execution_budget,
             ps_had_newline: true,
             cur_file: 0,
             sub_made: false,
-        }
+        })
     }
 
     pub(super) fn finished(&self) -> bool {
         self.exit_code.is_some()
+    }
+
+    /// Refuse pattern/hold growth (or exhausted aggregate work / an expired
+    /// deadline) by parking the error on the output sink. `run_segment`
+    /// already aborts on a sink error, so this surfaces as `Err` ->
+    /// `sed: <error>` with exit 1 instead of warn-and-continue with a
+    /// silently truncated pattern space.
+    fn space_fail(&mut self, error: LimitExceeded) -> Cycle {
+        if self.out.error.is_none() {
+            self.out.error = Some(error);
+        }
+        self.warned = true;
+        Cycle::Break
+    }
+
+    /// A fresh budget-attached scratch buffer. Fails closed with the
+    /// original refusal when the budget is dead: a poisoned/cancelled budget
+    /// must terminate the segment, never silently continue uncharged. A
+    /// genuinely unbudgeted context (`None`) stays exact.
+    fn fresh_space(&self) -> Result<BudgetedString, LimitExceeded> {
+        match &self.execution_budget {
+            Some(budget) => {
+                budget.check()?;
+                BudgetedString::new(Some(budget))
+            }
+            None => BudgetedString::new(None),
+        }
+    }
+
+    /// Take pattern space out, leaving a budget-attached empty behind.
+    /// (`BudgetedString` is not `Default`, so `mem::take` cannot be used.)
+    /// Fails closed like [`Self::fresh_space`] when the budget is dead.
+    fn take_ps(&mut self) -> Result<BudgetedString, LimitExceeded> {
+        let fresh = self.fresh_space()?;
+        Ok(std::mem::replace(&mut self.ps, fresh))
+    }
+
+    /// Replace pattern space, dropping the old charge before taking the new
+    /// one so a same-size rewrite near the limit is not double-counted.
+    fn set_ps(&mut self, text: &str) -> Result<(), LimitExceeded> {
+        self.ps = self.fresh_space()?;
+        self.ps.try_push_str(text)
     }
 
     /// Run one input stream and return everything it wrote to stdout.
@@ -228,6 +312,11 @@ impl<'a> Machine<'a> {
         let mut restarts = 0usize;
         let mut restart_cursor = self.cursor;
         loop {
+            if let Some(budget) = &self.execution_budget
+                && let Err(error) = budget.check()
+            {
+                return Err(error);
+            }
             if self.exit_code.is_some() {
                 break;
             }
@@ -236,16 +325,16 @@ impl<'a> Machine<'a> {
             // line is actually read, so the reset lives in `read_next`.
             if restart {
                 restarts += 1;
+                if restarts > SED_MAX_CYCLE_STEPS {
+                    self.warn_loop_limit();
+                    break;
+                }
                 if self.cursor != restart_cursor {
                     // The restarted cycles consumed input (`$!N;P;D`), so
                     // they are bounded by the input; only count restarts
                     // that read nothing.
                     restarts = 0;
                     restart_cursor = self.cursor;
-                }
-                if restarts > SED_MAX_CYCLE_STEPS {
-                    self.warn_loop_limit();
-                    break;
                 }
             } else {
                 if !self.read_next() {
@@ -257,11 +346,12 @@ impl<'a> Machine<'a> {
             restart = false;
 
             match self.cycle() {
+                Cycle::Break => {
+                    break;
+                }
                 Cycle::Auto => {
                     if !self.quiet {
-                        let (ps, nl) = (std::mem::take(&mut self.ps), self.ps_had_newline);
-                        self.out.line(&ps, nl);
-                        self.ps = ps;
+                        self.out.line(&self.ps, self.ps_had_newline);
                     }
                     self.flush_appends();
                 }
@@ -297,6 +387,11 @@ impl<'a> Machine<'a> {
             if self.cursor != step_cursor {
                 step_cursor = self.cursor;
                 steps = 0;
+            }
+            if let Some(budget) = &self.execution_budget
+                && let Err(error) = budget.check().and_then(|()| budget.consume_work(1))
+            {
+                return self.space_fail(error);
             }
             steps += 1;
             if steps > SED_MAX_CYCLE_STEPS {
@@ -361,46 +456,72 @@ impl<'a> Machine<'a> {
                         }
                     }
                 }
-                Kind::Substitute(subst) => self.substitute(subst),
+                Kind::Substitute(subst) => {
+                    if let Err(error) = self.substitute(subst) {
+                        return self.space_fail(error);
+                    }
+                }
                 Kind::Transliterate(map) => {
-                    self.ps = self
-                        .ps
-                        .chars()
-                        .map(|c| {
-                            map.iter()
-                                .find(|(from, _)| *from == c)
-                                .map_or(c, |(_, to)| *to)
-                        })
-                        .collect();
+                    // Keep the old owner charged through the last use: build
+                    // the translation into a fresh budgeted buffer reading
+                    // straight from pattern space (local destination, no
+                    // scratch String), then swap. Peak is ~2x pattern, all
+                    // charged; a dead budget fails closed via space_fail.
+                    let mut translated = match BudgetedString::new(self.execution_budget.as_ref()) {
+                        Ok(buf) => buf,
+                        Err(error) => return self.space_fail(error),
+                    };
+                    let mut failed = None;
+                    for c in self.ps.chars() {
+                        let mapped = map
+                            .iter()
+                            .find(|(from, _)| *from == c)
+                            .map_or(c, |(_, to)| *to);
+                        if let Err(error) = translated.try_push(mapped) {
+                            failed = Some(error);
+                            break;
+                        }
+                    }
+                    if let Some(error) = failed {
+                        return self.space_fail(error);
+                    }
+                    self.ps = translated;
                 }
                 Kind::Delete => return Cycle::Silent,
                 Kind::DeleteFirstLine => {
                     return match self.ps.find(self.sep) {
                         Some(idx) => {
-                            self.ps.drain(..=idx);
+                            // No snapshot scratch: build the remainder into a
+                            // fresh budgeted buffer while pattern space stays
+                            // charged, then swap (old released after last use).
+                            let start = idx + self.sep.len_utf8();
+                            let mut rest = match BudgetedString::new(self.execution_budget.as_ref())
+                            {
+                                Ok(buf) => buf,
+                                Err(error) => return self.space_fail(error),
+                            };
+                            if let Err(error) = rest.try_push_str(&self.ps[start..]) {
+                                return self.space_fail(error);
+                            }
+                            self.ps = rest;
                             Cycle::Restart
                         }
                         None => Cycle::Silent,
                     };
                 }
                 Kind::Print => {
-                    let (ps, nl) = (std::mem::take(&mut self.ps), self.ps_had_newline);
-                    self.out.line(&ps, nl);
-                    self.ps = ps;
+                    self.out.line(&self.ps, self.ps_had_newline);
                 }
-                Kind::PrintFirstLine => {
-                    let ps = std::mem::take(&mut self.ps);
-                    match ps.find(self.sep) {
-                        Some(idx) => self.out.line(&ps[..idx], true),
-                        None => self.out.line(&ps, self.ps_had_newline),
+                Kind::PrintFirstLine => match self.ps.find(self.sep) {
+                    Some(idx) => {
+                        let end = idx;
+                        self.out.line(&self.ps[..end], true);
                     }
-                    self.ps = ps;
-                }
+                    None => self.out.line(&self.ps, self.ps_had_newline),
+                },
                 Kind::Next => {
                     if !self.quiet {
-                        let (ps, nl) = (std::mem::take(&mut self.ps), self.ps_had_newline);
-                        self.out.line(&ps, nl);
-                        self.ps = ps;
+                        self.out.line(&self.ps, self.ps_had_newline);
                     }
                     self.flush_appends();
                     if !self.read_next() {
@@ -417,8 +538,18 @@ impl<'a> Machine<'a> {
                     }
                     let line = &self.lines[self.cursor];
                     // GNU joins with the buffer delimiter (NUL under -z).
-                    self.ps.push(self.sep);
-                    self.ps.push_str(&line.text);
+                    if let Err(error) = self
+                        .ps
+                        .try_push(self.sep)
+                        .and_then(|()| self.ps.try_push_str(&line.text))
+                    {
+                        return self.space_fail(error);
+                    }
+                    if let Some(budget) = &self.execution_budget
+                        && let Err(error) = budget.consume_input(line.text.len())
+                    {
+                        return self.space_fail(error);
+                    }
                     self.ps_had_newline = line.had_newline;
                     self.cur_file = line.file;
                     self.cursor += 1;
@@ -449,21 +580,50 @@ impl<'a> Machine<'a> {
                     return Cycle::Silent;
                 }
                 Kind::HoldCopy => {
-                    self.hold.clone_from(&self.ps);
+                    // No snapshot scratch: drop the old hold charge first,
+                    // then copy straight from pattern space into the
+                    // budgeted destination (disjoint fields, both charged).
+                    // A dead budget fails closed here via space_fail.
+                    self.hold = match BudgetedString::new(self.execution_budget.as_ref()) {
+                        Ok(buf) => buf,
+                        Err(error) => return self.space_fail(error),
+                    };
+                    if let Err(error) = self.hold.try_push_str(&self.ps) {
+                        return self.space_fail(error);
+                    }
                     self.hold_had_newline = self.ps_had_newline;
                 }
                 Kind::HoldAppend => {
-                    self.hold.push(self.sep);
-                    self.hold.push_str(&self.ps);
+                    if let Err(error) = self
+                        .hold
+                        .try_push(self.sep)
+                        .and_then(|()| self.hold.try_push_str(&self.ps))
+                    {
+                        return self.space_fail(error);
+                    }
                     self.hold_had_newline = self.ps_had_newline;
                 }
                 Kind::GetCopy => {
-                    self.ps.clone_from(&self.hold);
+                    // No snapshot scratch: drop the old pattern charge first,
+                    // then copy straight from hold space into the budgeted
+                    // destination (disjoint fields, both charged).
+                    self.ps = match BudgetedString::new(self.execution_budget.as_ref()) {
+                        Ok(buf) => buf,
+                        Err(error) => return self.space_fail(error),
+                    };
+                    if let Err(error) = self.ps.try_push_str(&self.hold) {
+                        return self.space_fail(error);
+                    }
                     self.ps_had_newline = self.hold_had_newline;
                 }
                 Kind::GetAppend => {
-                    self.ps.push(self.sep);
-                    self.ps.push_str(&self.hold);
+                    if let Err(error) = self
+                        .ps
+                        .try_push(self.sep)
+                        .and_then(|()| self.ps.try_push_str(&self.hold))
+                    {
+                        return self.space_fail(error);
+                    }
                     self.ps_had_newline = self.hold_had_newline;
                 }
                 Kind::Exchange => {
@@ -482,22 +642,44 @@ impl<'a> Machine<'a> {
                 Kind::ReadFile(name) => self.appends.push(Append::File(name.clone())),
                 Kind::ReadLine(name) => self.appends.push(Append::FileLine(name.clone())),
                 Kind::WriteFile(name) => {
-                    let (ps, nl) = (std::mem::take(&mut self.ps), self.ps_had_newline);
-                    self.write_out(name, &ps, nl);
-                    self.ps = ps;
+                    let nl = self.ps_had_newline;
+                    let mut handles = WriteHandles {
+                        sep: self.sep,
+                        out: &mut self.out,
+                        err: &mut self.stderr,
+                        files: &mut self.write_files,
+                        budget: self.execution_budget.as_ref(),
+                    };
+                    Self::write_out(&mut handles, name, &self.ps, nl);
                 }
-                Kind::WriteFirstLine(name) => {
-                    let ps = std::mem::take(&mut self.ps);
-                    match ps.find('\n') {
-                        Some(idx) => {
-                            let head = ps[..idx].to_string();
-                            self.write_out(name, &head, true);
-                        }
-                        None => self.write_out(name, &ps, self.ps_had_newline),
+                Kind::WriteFirstLine(name) => match self.ps.find('\n') {
+                    Some(idx) => {
+                        let end = idx;
+                        let mut handles = WriteHandles {
+                            sep: self.sep,
+                            out: &mut self.out,
+                            err: &mut self.stderr,
+                            files: &mut self.write_files,
+                            budget: self.execution_budget.as_ref(),
+                        };
+                        Self::write_out(&mut handles, name, &self.ps[..end], true);
                     }
-                    self.ps = ps;
-                }
-                Kind::Zap => self.ps.clear(),
+                    None => {
+                        let nl = self.ps_had_newline;
+                        let mut handles = WriteHandles {
+                            sep: self.sep,
+                            out: &mut self.out,
+                            err: &mut self.stderr,
+                            files: &mut self.write_files,
+                            budget: self.execution_budget.as_ref(),
+                        };
+                        Self::write_out(&mut handles, name, &self.ps, nl);
+                    }
+                },
+                Kind::Zap => match self.fresh_space() {
+                    Ok(buf) => self.ps = buf,
+                    Err(error) => return self.space_fail(error),
+                },
                 Kind::FileName => {
                     let name = self
                         .names
@@ -534,10 +716,43 @@ impl<'a> Machine<'a> {
             return false;
         }
         let line = &self.lines[self.cursor];
-        self.ps.clear();
-        self.ps.push_str(&line.text);
-        self.ps_had_newline = line.had_newline;
-        self.cur_file = line.file;
+        // Admit the transient line clone as scratch BEFORE allocating it:
+        // the clone lives until set_ps stores a fresh charged copy, so its
+        // bytes stay charged the whole time. Admission itself fails closed.
+        let _scratch = match &self.execution_budget {
+            Some(budget) => match budget.lease_bytes(line.text.len()) {
+                Ok(lease) => Some(lease),
+                Err(error) => {
+                    if self.out.error.is_none() {
+                        self.out.error = Some(error);
+                    }
+                    self.warned = true;
+                    return false;
+                }
+            },
+            None => None,
+        };
+        let text = line.text.clone();
+        let had_newline = line.had_newline;
+        let file = line.file;
+        if let Some(budget) = &self.execution_budget
+            && let Err(error) = budget.consume_input(text.len())
+        {
+            if self.out.error.is_none() {
+                self.out.error = Some(error);
+            }
+            self.warned = true;
+            return false;
+        }
+        if let Err(error) = self.set_ps(&text) {
+            if self.out.error.is_none() {
+                self.out.error = Some(error);
+            }
+            self.warned = true;
+            return false;
+        }
+        self.ps_had_newline = had_newline;
+        self.cur_file = file;
         self.cursor += 1;
         self.line_no += 1;
         // Reading a line clears the `t`/`T` flag, as GNU's read_pattern_space does.
@@ -553,22 +768,24 @@ impl<'a> Machine<'a> {
             .unwrap_or(self.prog.cmds.len())
     }
 
-    fn write_out(&mut self, name: &str, text: &str, had_newline: bool) {
+    /// File/output routing without borrowing all of `self`: taking the
+    /// touched pieces as disjoint parameters lets callers pass `&self.ps`
+    /// slices straight in, with no clone-scratch transient. Behavior is
+    /// identical to the former method form.
+    fn write_out(h: &mut WriteHandles<'_>, name: &str, text: &str, had_newline: bool) {
         match name {
-            "/dev/stdout" => self.out.line(text, had_newline),
+            "/dev/stdout" => h.out.line(text, had_newline),
             "/dev/stderr" => {
-                self.stderr.push_str(text);
+                h.err.push_str(text);
                 if had_newline {
-                    self.stderr.push('\n');
+                    h.err.push('\n');
                 }
             }
-            _ => {
-                let sep = self.sep;
-                self.write_files
-                    .entry(name.to_string())
-                    .or_insert_with(|| Sink::with_sep(sep, self.execution_budget.as_ref()))
-                    .line(text, had_newline)
-            }
+            _ => h
+                .files
+                .entry(name.to_string())
+                .or_insert_with(|| Sink::with_sep(h.sep, h.budget))
+                .line(text, had_newline),
         }
     }
 
@@ -761,16 +978,21 @@ impl<'a> Machine<'a> {
 
     // ----- substitution ----------------------------------------------------
 
-    fn substitute(&mut self, subst: &Subst) {
+    fn substitute(&mut self, subst: &Subst) -> Result<(), LimitExceeded> {
         let Some(re) = self.resolve(&subst.re) else {
-            return;
+            return Ok(());
         };
         let spans = re.matches(&self.ps);
         if spans.len() < subst.occurrence {
-            return;
+            return Ok(());
         }
 
-        let mut out = String::with_capacity(self.ps.len());
+        // Keep the old owner charged through the last use: move pattern
+        // space aside (its lease stays live) and build the replacement into
+        // a fresh budgeted buffer, then swap. Peak is ~2x pattern, all
+        // charged; a dead budget fails here before growth.
+        let old = self.take_ps()?;
+        let mut out = BudgetedString::new(self.execution_budget.as_ref())?;
         let mut cursor = 0usize;
         let mut replaced = false;
 
@@ -779,30 +1001,38 @@ impl<'a> Machine<'a> {
             if nth < subst.occurrence || (nth > subst.occurrence && !subst.global) {
                 continue;
             }
-            out.push_str(&self.ps[cursor..span.start]);
-            expand(&subst.parts, &self.ps, span, &mut out);
+            out.try_push_str(&old[cursor..span.start])?;
+            expand(&subst.parts, &old, span, &mut out)?;
             cursor = span.end;
             replaced = true;
         }
 
         if !replaced {
-            return;
+            // No match at this occurrence: restore the charged original
+            // instead of dropping it (an empty pattern here would silently
+            // wipe pattern space for every non-matching `s///`).
+            self.ps = old;
+            return Ok(());
         }
-        out.push_str(&self.ps[cursor..]);
+        out.try_push_str(&old[cursor..])?;
         self.ps = out;
         self.sub_made = true;
 
         if subst.print {
-            let (ps, nl) = (std::mem::take(&mut self.ps), self.ps_had_newline);
-            self.out.line(&ps, nl);
-            self.ps = ps;
+            self.out.line(&self.ps, self.ps_had_newline);
         }
         if let Some(name) = &subst.wfile {
-            let name = name.clone();
-            let (ps, nl) = (std::mem::take(&mut self.ps), self.ps_had_newline);
-            self.write_out(&name, &ps, nl);
-            self.ps = ps;
+            let nl = self.ps_had_newline;
+            let mut handles = WriteHandles {
+                sep: self.sep,
+                out: &mut self.out,
+                err: &mut self.stderr,
+                files: &mut self.write_files,
+                budget: self.execution_budget.as_ref(),
+            };
+            Self::write_out(&mut handles, name, &self.ps, nl);
         }
+        Ok(())
     }
 }
 
@@ -812,34 +1042,55 @@ struct CaseState {
     one: Option<bool>,
 }
 
-fn push_cased(out: &mut String, text: &str, state: &mut CaseState) {
+fn push_cased(
+    out: &mut BudgetedString,
+    text: &str,
+    state: &mut CaseState,
+) -> Result<(), LimitExceeded> {
     for ch in text.chars() {
         if let Some(upper) = state.one.take() {
-            if upper {
-                out.extend(ch.to_uppercase());
+            let mapped: Vec<char> = if upper {
+                ch.to_uppercase().collect()
             } else {
-                out.extend(ch.to_lowercase());
+                ch.to_lowercase().collect()
+            };
+            for c in mapped {
+                out.try_push(c)?;
             }
             continue;
         }
         match state.span {
-            Some(true) => out.extend(ch.to_uppercase()),
-            Some(false) => out.extend(ch.to_lowercase()),
-            None => out.push(ch),
+            Some(true) => {
+                for c in ch.to_uppercase() {
+                    out.try_push(c)?;
+                }
+            }
+            Some(false) => {
+                for c in ch.to_lowercase() {
+                    out.try_push(c)?;
+                }
+            }
+            None => out.try_push(ch)?,
         }
     }
+    Ok(())
 }
 
-fn expand(parts: &[RepPart], subject: &str, span: &super::pattern::MatchSpan, out: &mut String) {
+fn expand(
+    parts: &[RepPart],
+    subject: &str,
+    span: &super::pattern::MatchSpan,
+    out: &mut BudgetedString,
+) -> Result<(), LimitExceeded> {
     let mut state = CaseState::default();
     for part in parts {
         match part {
-            RepPart::Lit(text) => push_cased(out, text, &mut state),
-            RepPart::Group(0) => push_cased(out, &subject[span.start..span.end], &mut state),
+            RepPart::Lit(text) => push_cased(out, text, &mut state)?,
+            RepPart::Group(0) => push_cased(out, &subject[span.start..span.end], &mut state)?,
             RepPart::Group(n) => {
                 if let Some(Some((s, e))) = span.groups.get(n - 1) {
-                    let text = subject[*s..*e].to_string();
-                    push_cased(out, &text, &mut state);
+                    // Borrow the match slice directly: no transient String.
+                    push_cased(out, &subject[*s..*e], &mut state)?;
                 }
             }
             RepPart::Case(op) => match op {
@@ -860,6 +1111,7 @@ fn expand(parts: &[RepPart], subject: &str, span: &super::pattern::MatchSpan, ou
             },
         }
     }
+    Ok(())
 }
 
 /// Render the pattern space the way `l` does: unambiguous escapes, `$`
@@ -898,4 +1150,239 @@ pub(super) fn list_format(text: &str, width: usize) -> String {
 
     out.push('$');
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::limits::ExecutionLimits;
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
+
+    fn parse_script(script: &str) -> Program {
+        match super::super::script::parse_with(script, false, false) {
+            Ok(prog) => prog,
+            Err(_) => panic!("test script parses"),
+        }
+    }
+
+    fn test_program() -> Program {
+        parse_script("p")
+    }
+
+    fn test_empty_program() -> Program {
+        parse_script("")
+    }
+
+    fn test_lines() -> Vec<InputLine> {
+        vec![InputLine {
+            text: "x".to_string(),
+            had_newline: true,
+            file: 0,
+        }]
+    }
+
+    fn test_machine(
+        prog: &Program,
+        budget: Option<ExecutionBudget>,
+    ) -> Result<Machine<'_>, LimitExceeded> {
+        // The empty file map must outlive the machine; a `&'static` empty
+        // map is the simplest owner. Lazily leaked once per test process.
+        use std::sync::OnceLock;
+        static EMPTY: OnceLock<HashMap<String, String>> = OnceLock::new();
+        let files = EMPTY.get_or_init(HashMap::new);
+        Machine::new(prog, &[], files, true, 0, '\n', budget)
+    }
+
+    /// TM-DOS-018 follow-up: the synchronous segment loop cannot be
+    /// interrupted by the async timeout on its own, so the per-command
+    /// budget checkpoints must refuse a cancelled/expired budget before
+    /// running anything. Pre-cancelled here for determinism (no timing).
+    #[test]
+    fn cancelled_budget_refuses_segment() {
+        let prog = test_program();
+        let cancelled = Arc::new(AtomicBool::new(true));
+        let budget = ExecutionBudget::new(&ExecutionLimits::new(), cancelled);
+        // A dead budget fails the machine itself (fail closed before any
+        // growth); assert on construction directly.
+        assert!(
+            test_machine(&prog, Some(budget)).is_err(),
+            "dead budget must refuse construction"
+        );
+    }
+
+    /// The loop-top checkpoint is the only one that can fire when nothing
+    /// allocates and no command ever runs (empty program, empty input), so
+    /// a cancelled budget must refuse even then.
+    #[test]
+    fn cancelled_budget_refuses_empty_program() {
+        let prog = test_empty_program();
+        let cancelled = Arc::new(AtomicBool::new(true));
+        let budget = ExecutionBudget::new(&ExecutionLimits::new(), cancelled);
+        assert!(
+            test_machine(&prog, Some(budget)).is_err(),
+            "dead budget must refuse construction"
+        );
+    }
+
+    /// Same-shape control: an uncancelled budget runs the script fine, so the
+    /// refusals above come from the checkpoints, not the harness.
+    #[test]
+    fn live_budget_runs_segment() {
+        let prog = test_program();
+        let budget =
+            ExecutionBudget::new(&ExecutionLimits::new(), Arc::new(AtomicBool::new(false)));
+        let mut machine = match test_machine(&prog, Some(budget)) {
+            Ok(machine) => machine,
+            Err(error) => panic!("live budget must construct: {error:?}"), // debug-ok: test assertion
+        };
+        let result = machine.run_segment(&test_lines());
+        assert!(result.is_ok(), "live budget must run, got {result:?}"); // debug-ok: test assertion
+    }
+
+    fn many_x_lines(count: usize) -> Vec<InputLine> {
+        (0..count)
+            .map(|_| InputLine {
+                text: "x".to_string(),
+                had_newline: true,
+                file: 0,
+            })
+            .collect()
+    }
+
+    /// TM-DOS-018 follow-up, unit level: the `N`-preserves-pattern / `h;G`
+    /// doubling loop cannot outgrow a small live budget. Growth model:
+    /// 1500 x-lines (~3 KB in) need ~13 MB of pattern against 256 KB cap.
+    #[test]
+    fn doubling_loop_refuses_live_budget() {
+        let prog = parse_script(":a;N;100~100{h;G};ba");
+        let limits = ExecutionLimits::new().max_live_intermediate_bytes(1 << 18);
+        let budget = ExecutionBudget::new(&limits, Arc::new(AtomicBool::new(false)));
+        let mut machine = match test_machine(&prog, Some(budget)) {
+            Ok(machine) => machine,
+            Err(error) => panic!("live budget must construct: {error:?}"), // debug-ok: test assertion
+        };
+        let result = machine.run_segment(&many_x_lines(1500));
+        assert!(result.is_err(), "doubling loop must refuse, got {result:?}"); // debug-ok: test assertion
+    }
+
+    /// TM-DOS-018 follow-up, unit level: per-command aggregate-work charges
+    /// refuse a long command list under a tiny work budget.
+    #[test]
+    fn commands_refuse_work_budget() {
+        let prog = parse_script(&"p;".repeat(20));
+        let limits = ExecutionLimits::new().max_work_units(10);
+        let budget = ExecutionBudget::new(&limits, Arc::new(AtomicBool::new(false)));
+        let mut machine = match test_machine(&prog, Some(budget)) {
+            Ok(machine) => machine,
+            Err(error) => panic!("live budget must construct: {error:?}"), // debug-ok: test assertion
+        };
+        let result = machine.run_segment(&test_lines());
+        assert!(result.is_err(), "work budget must refuse, got {result:?}"); // debug-ok: test assertion
+    }
+
+    /// TM-DOS-018 follow-up, unit level: swap moves ownership without
+    /// growth, so `x` fits even when pattern+hold nearly fill a tiny cap.
+    /// Same-shape control proving the cap, not the harness, refuses the
+    /// growth tests above.
+    #[test]
+    fn swap_fits_under_cap() {
+        let prog = parse_script("h;x");
+        let limits = ExecutionLimits::new().max_live_intermediate_bytes(64);
+        let budget = ExecutionBudget::new(&limits, Arc::new(AtomicBool::new(false)));
+        let mut machine = match test_machine(&prog, Some(budget)) {
+            Ok(machine) => machine,
+            Err(error) => panic!("live budget must construct: {error:?}"), // debug-ok: test assertion
+        };
+        let result = machine.run_segment(&many_x_lines(2));
+        assert!(result.is_ok(), "swap must fit, got {result:?}"); // debug-ok: test assertion
+    }
+
+    /// TM-DOS-018 follow-up, unit level: `D` only shrinks pattern space, so
+    /// it fits under a cap the doubling loop trips.
+    #[test]
+    fn delete_first_line_fits_under_cap() {
+        let prog = parse_script("D");
+        let limits = ExecutionLimits::new().max_live_intermediate_bytes(64);
+        let budget = ExecutionBudget::new(&limits, Arc::new(AtomicBool::new(false)));
+        let mut machine = match test_machine(&prog, Some(budget)) {
+            Ok(machine) => machine,
+            Err(error) => panic!("live budget must construct: {error:?}"), // debug-ok: test assertion
+        };
+        let result = machine.run_segment(&many_x_lines(2));
+        assert!(result.is_ok(), "drain must fit, got {result:?}"); // debug-ok: test assertion
+    }
+
+    /// TM-DOS-018 follow-up, unit level: same-size transliteration fits when
+    /// charged twice over (old + new) under the cap.
+    #[test]
+    fn transliterate_same_size_fits() {
+        let prog = parse_script("y/abc/xyz/");
+        let limits = ExecutionLimits::new().max_live_intermediate_bytes(64);
+        let budget = ExecutionBudget::new(&limits, Arc::new(AtomicBool::new(false)));
+        let mut machine = match test_machine(&prog, Some(budget)) {
+            Ok(machine) => machine,
+            Err(error) => panic!("live budget must construct: {error:?}"), // debug-ok: test assertion
+        };
+        let result = machine.run_segment(&many_x_lines(2));
+        assert!(result.is_ok(), "same-size rewrite must fit, got {result:?}"); // debug-ok: test assertion
+    }
+
+    /// TM-DOS-018 follow-up, unit level: widening substitution charges the
+    /// replacement incrementally and refuses past the cap.
+    #[test]
+    fn widening_substitution_refuses() {
+        let prog = parse_script("s/x/xxxxxxxxxx/g");
+        let limits = ExecutionLimits::new().max_live_intermediate_bytes(64);
+        let budget = ExecutionBudget::new(&limits, Arc::new(AtomicBool::new(false)));
+        let mut machine = match test_machine(&prog, Some(budget)) {
+            Ok(machine) => machine,
+            Err(error) => panic!("live budget must construct: {error:?}"), // debug-ok: test assertion
+        };
+        let lines = vec![InputLine {
+            text: "xxxxxxxxxxxxxxxx".to_string(),
+            had_newline: true,
+            file: 0,
+        }];
+        let result = machine.run_segment(&lines);
+        assert!(
+            result.is_err(),
+            "widening rewrite must refuse, got {result:?}" // debug-ok: test assertion
+        );
+    }
+
+    /// TM-DOS-018 follow-up, unit level: repeated hold-appends charge every
+    /// copy and refuse past the cap.
+    #[test]
+    fn hold_append_refuses() {
+        let prog = parse_script("h;H;H;H;H;H;H;H;H;H;H");
+        let limits = ExecutionLimits::new().max_live_intermediate_bytes(64);
+        let budget = ExecutionBudget::new(&limits, Arc::new(AtomicBool::new(false)));
+        let mut machine = match test_machine(&prog, Some(budget)) {
+            Ok(machine) => machine,
+            Err(error) => panic!("live budget must construct: {error:?}"), // debug-ok: test assertion
+        };
+        let lines = vec![InputLine {
+            text: "xxxxxxxxxxxxxxxx".to_string(),
+            had_newline: true,
+            file: 0,
+        }];
+        let result = machine.run_segment(&lines);
+        assert!(result.is_err(), "hold appends must refuse, got {result:?}"); // debug-ok: test assertion
+    }
+
+    /// TM-DOS-018 follow-up, unit level: per-line aggregate-input charges
+    /// refuse reading past a tiny input budget.
+    #[test]
+    fn reads_refuse_input_budget() {
+        let prog = parse_script("p");
+        let limits = ExecutionLimits::new().max_aggregate_input_bytes(5);
+        let budget = ExecutionBudget::new(&limits, Arc::new(AtomicBool::new(false)));
+        let mut machine = match test_machine(&prog, Some(budget)) {
+            Ok(machine) => machine,
+            Err(error) => panic!("live budget must construct: {error:?}"), // debug-ok: test assertion
+        };
+        let result = machine.run_segment(&many_x_lines(10));
+        assert!(result.is_err(), "input budget must refuse, got {result:?}"); // debug-ok: test assertion
+    }
 }

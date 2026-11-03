@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "data_csv_join",
+  "target": "anthropic/claude-sonnet-5-5",
+  "input": [
+    "Join /data/employees.csv and /data/departments.csv on the department_id field. Produce /data/report.csv with columns: name, department_name, salary. Include a header row. Print the result."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I joined the two files on `department_id` and wrote the result to `/data/report.csv`:\n\n```\nname,department_name,salary\nAlice,Engineering,120000\nBob,Marketing,95000\nCarol,Engineering,115000\nDave,Sales,88000\nEve,Marketing,92000\n```\n\nAll five employees matched a department. The output follows the order of `employees.csv`.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "head -5 /data/employees.csv /data/departments.csv; wc -l /data/*.csv",
+      "cd /data; cat -A employees.csv | tail -3; awk -F, 'NR==FNR{if(FNR>1)d[$1]=$2;next} FNR==1{print \"name,department_name,salary\";next} {print $1\",\"d[$2]\",\"$3}' <(tr -d '\\r' <departments.csv) <(tr -d '\\r' <employees.csv) > report.csv; cat report.csv"
+    ],
+    "usage": {
+      "input_tokens": 2687,
+      "output_tokens": 385,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 4963
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "head -5 /data/employees.csv /data/departments.csv; wc -l /data/*.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "==> /data/employees.csv <==\nname,department_id,salary\nAlice,1,120000\nBob,2,95000\nCarol,1,115000\nDave,3,88000\n\n==> /data/departments.csv <==\ndepartment_id,department_name\n1,Engineering\n2,Marketing\n3,Sales\n  4 /data/departments.csv\n  6 /data/employees.csv\n 10 total\n"
+          },
+          {
+            "commands": "cd /data; cat -A employees.csv | tail -3; awk -F, 'NR==FNR{if(FNR>1)d[$1]=$2;next} FNR==1{print \"name,department_name,salary\";next} {print $1\",\"d[$2]\",\"$3}' <(tr -d '\\r' <departments.csv) <(tr -d '\\r' <employees.csv) > report.csv; cat report.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Carol,1,115000$\nDave,3,88000$\nEve,2,92000$\nname,department_name,salary\nAlice,Engineering,120000\nBob,Marketing,95000\nCarol,Engineering,115000\nDave,Sales,88000\nEve,Marketing,92000\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

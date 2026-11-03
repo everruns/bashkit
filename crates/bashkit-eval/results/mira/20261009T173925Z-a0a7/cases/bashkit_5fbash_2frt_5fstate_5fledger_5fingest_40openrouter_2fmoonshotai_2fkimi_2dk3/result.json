@@ -1,0 +1,120 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "rt_state_ledger_ingest",
+  "target": "openrouter/moonshotai/kimi-k3",
+  "input": [
+    "Write /home/eval/ingest.py, run as `python3 /home/eval/ingest.py DB CSV`; it will be run again later on new batches and on batches it has already seen.\n- CSV has header txn_id,account,amount,ts; amount is a decimal string: optional '-', digits, optional '.' with 1-2 digits (e.g. -12.5, 3, 0.10). Anything else is a bad amount.\n- DB is a SQLite file (create it if missing) with tables txns(txn_id TEXT PRIMARY KEY, account TEXT NOT NULL, amount_cents INTEGER NOT NULL, ts TEXT NOT NULL) and balances(account TEXT PRIMARY KEY, balance_cents INTEGER NOT NULL); balances always equals the per-account sum of txns.\n- Process rows in order: a txn_id already stored (from an earlier run or earlier in this file) is a dup and ignored even if its fields differ; otherwise a bad amount is skipped with `bad amount: <txn_id>` on stderr; otherwise the txn is stored.\n- At the end print `new=N dup=D bad=B` to stdout and exit 0.\nThen ingest /inbox/day1.csv and then /inbox/day2.csv into /var/lib/ledger.db, and write /out/balances.csv with header account,balance and balances in units with exactly 2 decimals (e.g. -3.50), sorted by account."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "All done and verified. Summary:\n\n**`/home/eval/ingest.py`** — run as `python3 ingest.py DB CSV`:\n- Creates the DB (and parent dirs) if missing, with `txns(txn_id TEXT PRIMARY KEY, account TEXT NOT NULL, amount_cents INTEGER NOT NULL, ts TEXT NOT NULL)` and `balances(account TEXT PRIMARY KEY, balance_cents INTEGER NOT NULL)`.\n- Validates amounts with `^-?\\d+(?:\\.\\d{1,2})?$` (optional `-`, digits, optional `.` with 1–2 digits) and converts to cents using integer arithmetic only — no float rounding.\n- Processes rows in order: an already-stored `txn_id` counts as a **dup** and is ignored (checked *before* amount validation, so a dup with a bad amount is still a dup); otherwise a bad amount prints `bad amount: <txn_id>` to stderr; otherwise the txn is inserted and the account balance upserted, keeping `balances` exactly equal to the per-account sum of `txns`.\n- Ends with `new=N dup=D bad=B` on stdout, exit 0.\n\n**Ingest results:**\n| Run | stdout | stderr |\n|---|---|---|\n| day1.csv | `new=4 dup=1 bad=1` | `bad amount: t4` (1.999) |\n| day2.csv | `new=2 dup=1 bad=2` | `bad amount: t7` (abc), `bad amount: t9` (.5) |\n\n(t2's second row and day2's t3 were dups — ignored despite differing fields; t6 `-0.05` → −5 cents.)\n\n**Idempotency verified:** re-running both files gives `new=0 dup=5 bad=1` / `new=0 dup=3 bad=2` with the DB unchanged, and edge-case tests confirmed parsing of `1.`, `.5`, `+3`, `1e3`, whitespace, empty, `1.234` as bad, plus exact cents for `-0.05`, `0`, `-0`, and huge values.\n\n**`/var/lib/ledger.db`** — 6 txns; balances: acme 8745, bolt 300, cato 10, dyn −725 (integrity check: balances − Σtxns = 0 for every account).\n\n**`/out/balances.csv`** (sorted, exactly 2 decimals):\n```\naccount,balance\nacme,87.45\nbolt,3.00\ncato,0.10\ndyn,-7.25\n```",
+    "iterations": 11,
+    "tool_calls_count": 10,
+    "tool_calls": [
+      "ls -la /inbox/ 2>&1; echo '--- day1 ---'; cat /inbox/day1.csv 2>&1; echo '--- day2 ---'; cat /inbox/day2.csv 2>&1; echo '--- dirs ---'; ls -ld /var/lib /out /home/eval 2>&1",
+      "for d in /var/lib /out /home/eval; do if [ -d \"$d\" ]; then echo \"EXISTS: $d\"; else echo \"MISSING: $d\"; fi; done; python3 --version",
+      "mkdir -p /var/lib /out && echo \"created\" && ls -ld /var/lib /out",
+      "cat > /home/eval/ingest.py << 'EOF'\n#!/usr/bin/env python3\n\"\"\"Ingest transaction CSVs into a SQLite ledger.\n\nUsage: python3 ingest.py DB CSV\n\n- CSV header: txn_id,account,amount,ts\n- amount is a decimal string: optional '-', then digits, then an optional\n  '.' followed by 1-2 digits (e.g. -12.5, 3, 0.10). Anything else is a\n  bad amount.\n- Duplicate txn_id (already stored from an earlier run or earlier in the\n  same file) is ignored, even if its fields differ -- checked before the\n  amount is validated.\n- Prints 'new=N dup=D bad=B' on stdout and exits 0.\n\"\"\"\n\nimport os\nimport re\nimport sqlite3\nimport sys\n\n# optional '-', digits, optional '.' with 1-2 digits\nAMOUNT_RE = re.compile(r\"^-?\\d+(?:\\.\\d{1,2})?$\")\n\n\ndef amount_to_cents(s):\n    \"\"\"Convert a validated amount string to integer cents, exactly.\"\"\"\n    neg = s.startswith(\"-\")\n    if neg:\n        s = s[1:]\n    if \".\" in s:\n        int_part, frac_part = s.split(\".\")\n    else:\n        int_part, frac_part = s, \"\"\n    cents = int(int_part) * 100 + int((frac_part + \"00\")[:2])\n    return -cents if neg else cents\n\n\ndef main(argv):\n    if len(argv) != 3:\n        print(\"usage: python3 %s DB CSV\" % argv[0], file=sys.stderr)\n        return 2\n    db_path, csv_path = argv[1], argv[2]\n\n    parent = os.path.dirname(db_path)\n    if parent:\n        os.makedirs(parent, exist_ok=True)\n    conn = sqlite3.connect(db_path)\n    conn.execute(\n        \"CREATE TABLE IF NOT EXISTS txns(\"\n        \"txn_id TEXT PRIMARY KEY, \"\n        \"account TEXT NOT NULL, \"\n        \"amount_cents INTEGER NOT NULL, \"\n        \"ts TEXT NOT NULL)\"\n    )\n    conn.execute(\n        \"CREATE TABLE IF NOT EXISTS balances(\"\n        \"account TEXT PRIMARY KEY, \"\n        \"balance_cents INTEGER NOT NULL)\"\n    )\n\n    new = dup = bad = 0\n    with open(csv_path, newline=\"\") as f:\n        header = f.readline()\n        for line in f:\n            line = line.rstrip(\"\\n\").rstrip(\"\\r\")\n            if line == \"\":\n                continue\n            fields = line.split(\",\")\n            if len(fields) != 4:\n                # malformed row: no usable txn_id, cannot count as dup;\n                # treat as a bad row, reported with whatever id we have\n                txn_id = fields[0] if fields else \"\"\n                print(\"bad amount: %s\" % txn_id, file=sys.stderr)\n                bad += 1\n                continue\n            txn_id, account, amount, ts = fields\n            if conn.execute(\n                \"SELECT 1 FROM txns WHERE txn_id = ?\", (txn_id,)\n            ).fetchone():\n                dup += 1  # seen before: ignored even if fields differ\n                continue\n            if not AMOUNT_RE.match(amount):\n                print(\"bad amount: %s\" % txn_id, file=sys.stderr)\n                bad += 1\n                continue\n            cents = amount_to_cents(amount)\n            conn.execute(\n                \"INSERT INTO txns(txn_id, account, amount_cents, ts) \"\n                \"VALUES (?, ?, ?, ?)\",\n                (txn_id, account, cents, ts),\n            )\n            conn.execute(\n                \"INSERT INTO balances(account, balance_cents) VALUES (?, ?) \"\n                \"ON CONFLICT(account) DO UPDATE SET \"\n                \"balance_cents = balance_cents + excluded.balance_cents\",\n                (account, cents),\n            )\n            new += 1\n\n    conn.commit()\n    conn.close()\n    print(\"new=%d dup=%d bad=%d\" % (new, dup, bad))\n    return 0\n\n\nif __name__ == \"__main__\":\n    sys.exit(main(sys.argv))\nEOF\necho \"written\"; python3 -c \"import ast; ast.parse(open('/home/eval/ingest.py').read()); print('syntax OK')\"",
+      "cd /home/eval\necho '--- day1 run ---'\npython3 /home/eval/ingest.py /var/lib/ledger.db /inbox/day1.csv; echo \"exit=$?\"\necho '--- day2 run ---'\npython3 /home/eval/ingest.py /var/lib/ledger.db /inbox/day2.csv; echo \"exit=$?\"",
+      "sqlite /var/lib/ledger.db << 'EOF'\n.headers on\nSELECT * FROM txns ORDER BY txn_id;\nSELECT '---';\nSELECT * FROM balances ORDER BY account;\nSELECT '--- integrity: balances minus computed sum of txns ---';\nSELECT b.account, b.balance_cents, COALESCE(t.s,0) AS txn_sum, b.balance_cents - COALESCE(t.s,0) AS diff\nFROM balances b LEFT JOIN (SELECT account, SUM(amount_cents) s FROM txns GROUP BY account) t\nON b.account = t.account;\nSELECT '--- accounts in txns missing from balances (should be empty) ---';\nSELECT DISTINCT account FROM txns WHERE account NOT IN (SELECT account FROM balances);\nEOF",
+      "cat > /tmp/mk_balances.py << 'EOF'\nimport sqlite3\n\nconn = sqlite3.connect(\"/var/lib/ledger.db\")\nrows = conn.execute(\n    \"SELECT account, balance_cents FROM balances ORDER BY account\"\n).fetchall()\nconn.close()\n\ndef fmt(cents):\n    sign = \"-\" if cents < 0 else \"\"\n    a = abs(cents)\n    return \"%s%d.%02d\" % (sign, a // 100, a % 100)\n\nwith open(\"/out/balances.csv\", \"w\", newline=\"\") as f:\n    f.write(\"account,balance\\n\")\n    for account, cents in rows:\n        f.write(\"%s,%s\\n\" % (account, fmt(cents)))\n\nprint(open(\"/out/balances.csv\").read(), end=\"\")\nEOF\npython3 /tmp/mk_balances.py",
+      "cd /home/eval\necho '--- re-run day1 ---'\npython3 /home/eval/ingest.py /var/lib/ledger.db /inbox/day1.csv; echo \"exit=$?\"\necho '--- re-run day2 ---'\npython3 /home/eval/ingest.py /var/lib/ledger.db /inbox/day2.csv; echo \"exit=$?\"\necho '--- txns after re-runs (should be same 6 rows) ---'\nsqlite /var/lib/ledger.db \"SELECT COUNT(*) FROM txns; SELECT * FROM balances ORDER BY account;\"\necho '--- balances.csv still ---'\ncat /out/balances.csv",
+      "cat > /tmp/edge.csv << 'EOF'\ntxn_id,account,amount,ts\ne1,a,-0.05,ts\ne2,a,0,ts\ne3,a,-0,ts\ne4,a,00.10,ts\ne5,a,1234567890123.99,ts\ne6,a,1.,ts\ne7,a,.5,ts\ne8,a,+3,ts\ne9,a,1e3,ts\ne10,a, 3,ts\ne11,a,3 ,ts\ne12,a,1.2.3,ts\ne13,a,,ts\ne14,a,-,ts\ne15,a,1.234,ts\ne16,a,-7.2,ts\ne16,a,999,ts\ne17,a,-0.07,ts\ne17,a,-0.08,ts\nEOF\nrm -f /tmp/edge.db\npython3 /home/eval/ingest.py /tmp/edge.db /tmp/edge.csv; echo \"exit=$?\"\necho '--- stored ---'\nsqlite /tmp/edge.db \"SELECT * FROM txns ORDER BY txn_id; SELECT '---'; SELECT * FROM balances;\"\necho '--- fresh-db creation in fresh dir ---'\nrm -rf /tmp/freshdir\npython3 /home/eval/ingest.py /tmp/freshdir/sub/ledger.db /inbox/day1.csv; echo \"exit=$?\"\nsqlite /tmp/freshdir/sub/ledger.db \"SELECT COUNT(*) FROM txns;\"",
+      "echo '=== final ledger.db ==='\nsqlite /var/lib/ledger.db \"SELECT * FROM txns ORDER BY txn_id; SELECT '---'; SELECT * FROM balances ORDER BY account;\"\necho '=== /out/balances.csv (with line endings) ==='\nod -c /out/balances.csv | head\necho '=== final rerun smoke test (stdout/exit only) ==='\npython3 /home/eval/ingest.py /var/lib/ledger.db /inbox/day1.csv 2>/dev/null; echo \"exit=$?\"\necho '=== deliverables ==='\nls -la /home/eval/ingest.py /var/lib/ledger.db /out/balances.csv"
+    ],
+    "usage": {
+      "input_tokens": 31500,
+      "output_tokens": 6907,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 121950
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 10.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 9.0,
+      "turns": 11.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /inbox/ 2>&1; echo '--- day1 ---'; cat /inbox/day1.csv 2>&1; echo '--- day2 ---'; cat /inbox/day2.csv 2>&1; echo '--- dirs ---'; ls -ld /var/lib /out /home/eval 2>&1",
+            "exit_code": 2,
+            "stderr": "",
+            "stdout": "-rw-r--r--      232 2026-10-09 18:17 day1.csv\n-rw-r--r--      192 2026-10-09 18:17 day2.csv\n--- day1 ---\ntxn_id,account,amount,ts\nt1,acme,100.00,2026-10-01T09:00:00Z\nt2,acme,-12.5,2026-10-01T10:00:00Z\nt3,bolt,3,2026-10-01T11:00:00Z\nt4,bolt,1.999,2026-10-01T12:00:00Z\nt2,acme,-99.00,2026-10-01T13:00:00Z\nt5,cato,0.10,2026-10-01T14:00:00Z\n--- day2 ---\ntxn_id,account,amount,ts\nt3,bolt,300,2026-10-02T09:00:00Z\nt6,acme,-0.05,2026-10-02T10:00:00Z\nt7,cato,abc,2026-10-02T11:00:00Z\nt8,dyn,-7.25,2026-10-02T12:00:00Z\nt9,cato,.5,2026-10-02T13:00:00Z\n--- dirs ---\nls: cannot access '/var/lib': No such file or directory\n"
+          },
+          {
+            "commands": "for d in /var/lib /out /home/eval; do if [ -d \"$d\" ]; then echo \"EXISTS: $d\"; else echo \"MISSING: $d\"; fi; done; python3 --version",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "MISSING: /var/lib\nMISSING: /out\nEXISTS: /home/eval\nPython 3.14.8\n"
+          },
+          {
+            "commands": "mkdir -p /var/lib /out && echo \"created\" && ls -ld /var/lib /out",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "created\ndrwxr-xr-x        0 2026-10-09 18:18 /var/lib\ndrwxr-xr-x        0 2026-10-09 18:18 /out\n"
+          },
+          {
+            "commands": "cat > /home/eval/ingest.py << 'EOF'\n#!/usr/bin/env python3\n\"\"\"Ingest transaction CSVs into a SQLite ledger.\n\nUsage: python3 ingest.py DB CSV\n\n- CSV header: txn_id,account,amount,ts\n- amount is a decimal string: optional '-', then digits, then an optional\n  '.' followed by 1-2 digits (e.g. -12.5, 3, 0.10). Anything else is a\n  bad amount.\n- Duplicate txn_id (already stored from an earlier run or earlier in the\n  same file) is ignored, even if its fields differ -- checked before the\n  amount is validated.\n- Prints 'new=N dup=D bad=B' on stdout and exits 0.\n\"\"\"\n\nimport os\nimport re\nimport sqlite3\nimport sys\n\n# optional '-', digits, optional '.' with 1-2 digits\nAMOUNT_RE = re.compile(r\"^-?\\d+(?:\\.\\d{1,2})?$\")\n\n\ndef amount_to_cents(s):\n    \"\"\"Convert a validated amount string to integer cents, exactly.\"\"\"\n    neg = s.startswith(\"-\")\n    if neg:\n        s = s[1:]\n    if \".\" in s:\n        int_part, frac_part = s.split(\".\")\n    else:\n        int_part, frac_part = s, \"\"\n    cents = int(int_part) * 100 + int((frac_part + \"00\")[:2])\n    return -cents if neg else cents\n\n\ndef main(argv):\n    if len(argv) != 3:\n        print(\"usage: python3 %s DB CSV\" % argv[0], file=sys.stderr)\n        return 2\n    db_path, csv_path = argv[1], argv[2]\n\n    parent = os.path.dirname(db_path)\n    if parent:\n        os.makedirs(parent, exist_ok=True)\n    conn = sqlite3.connect(db_path)\n    conn.execute(\n        \"CREATE TABLE IF NOT EXISTS txns(\"\n        \"txn_id TEXT PRIMARY KEY, \"\n        \"account TEXT NOT NULL, \"\n        \"amount_cents INTEGER NOT NULL, \"\n        \"ts TEXT NOT NULL)\"\n    )\n    conn.execute(\n        \"CREATE TABLE IF NOT EXISTS balances(\"\n        \"account TEXT PRIMARY KEY, \"\n        \"balance_cents INTEGER NOT NULL)\"\n    )\n\n    new = dup = bad = 0\n    with open(csv_path, newline=\"\") as f:\n        header = f.readline()\n        for line in f:\n            line = line.rstrip(\"\\n\").rstrip(\"\\r\")\n            if line == \"\":\n                continue\n            fields = line.split(\",\")\n            if len(fields) != 4:\n                # malformed row: no usable txn_id, cannot count as dup;\n                # treat as a bad row, reported with whatever id we have\n                txn_id = fields[0] if fields else \"\"\n                print(\"bad amount: %s\" % txn_id, file=sys.stderr)\n                bad += 1\n                continue\n            txn_id, account, amount, ts = fields\n            if conn.execute(\n                \"SELECT 1 FROM txns WHERE txn_id = ?\", (txn_id,)\n            ).fetchone():\n                dup += 1  # seen before: ignored even if fields differ\n                continue\n            if not AMOUNT_RE.match(amount):\n                print(\"bad amount: %s\" % txn_id, file=sys.stderr)\n                bad += 1\n                continue\n            cents = amount_to_cents(amount)\n            conn.execute(\n                \"INSERT INTO txns(txn_id, account, amount_cents, ts) \"\n                \"VALUES (?, ?, ?, ?)\",\n                (txn_id, account, cents, ts),\n            )\n            conn.execute(\n                \"INSERT INTO balances(account, balance_cents) VALUES (?, ?) \"\n                \"ON CONFLICT(account) DO UPDATE SET \"\n                \"balance_cents = balance_cents + excluded.balance_cents\",\n                (account, cents),\n            )\n            new += 1\n\n    conn.commit()\n    conn.close()\n    print(\"new=%d dup=%d bad=%d\" % (new, dup, bad))\n    return 0\n\n\nif __name__ == \"__main__\":\n    sys.exit(main(sys.argv))\nEOF\necho \"written\"; python3 -c \"import ast; ast.parse(open('/home/eval/ingest.py').read()); print('syntax OK')\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "written\nsyntax OK\n"
+          },
+          {
+            "commands": "cd /home/eval\necho '--- day1 run ---'\npython3 /home/eval/ingest.py /var/lib/ledger.db /inbox/day1.csv; echo \"exit=$?\"\necho '--- day2 run ---'\npython3 /home/eval/ingest.py /var/lib/ledger.db /inbox/day2.csv; echo \"exit=$?\"",
+            "exit_code": 0,
+            "stderr": "bad amount: t4\nbad amount: t7\nbad amount: t9\n",
+            "stdout": "--- day1 run ---\nnew=4 dup=1 bad=1\nexit=0\n--- day2 run ---\nnew=2 dup=1 bad=2\nexit=0\n"
+          },
+          {
+            "commands": "sqlite /var/lib/ledger.db << 'EOF'\n.headers on\nSELECT * FROM txns ORDER BY txn_id;\nSELECT '---';\nSELECT * FROM balances ORDER BY account;\nSELECT '--- integrity: balances minus computed sum of txns ---';\nSELECT b.account, b.balance_cents, COALESCE(t.s,0) AS txn_sum, b.balance_cents - COALESCE(t.s,0) AS diff\nFROM balances b LEFT JOIN (SELECT account, SUM(amount_cents) s FROM txns GROUP BY account) t\nON b.account = t.account;\nSELECT '--- accounts in txns missing from balances (should be empty) ---';\nSELECT DISTINCT account FROM txns WHERE account NOT IN (SELECT account FROM balances);\nEOF",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "txn_id|account|amount_cents|ts\nt1|acme|10000|2026-10-01T09:00:00Z\nt2|acme|-1250|2026-10-01T10:00:00Z\nt3|bolt|300|2026-10-01T11:00:00Z\nt5|cato|10|2026-10-01T14:00:00Z\nt6|acme|-5|2026-10-02T10:00:00Z\nt8|dyn|-725|2026-10-02T12:00:00Z\n'---'\n---\naccount|balance_cents\nacme|8745\nbolt|300\ncato|10\ndyn|-725\n'--- integrity: balances minus computed sum of txns ---'\n--- integrity: balances minus computed sum of txns ---\naccount|balance_cents|txn_sum|diff\nacme|8745|8745|0\nbolt|300|300|0\ncato|10|10|0\ndyn|-725|-725|0\n'--- accounts in txns missing from balances (should be empty) ---'\n--- accounts in txns missing from balances (should be empty) ---\n"
+          },
+          {
+            "commands": "cat > /tmp/mk_balances.py << 'EOF'\nimport sqlite3\n\nconn = sqlite3.connect(\"/var/lib/ledger.db\")\nrows = conn.execute(\n    \"SELECT account, balance_cents FROM balances ORDER BY account\"\n).fetchall()\nconn.close()\n\ndef fmt(cents):\n    sign = \"-\" if cents < 0 else \"\"\n    a = abs(cents)\n    return \"%s%d.%02d\" % (sign, a // 100, a % 100)\n\nwith open(\"/out/balances.csv\", \"w\", newline=\"\") as f:\n    f.write(\"account,balance\\n\")\n    for account, cents in rows:\n        f.write(\"%s,%s\\n\" % (account, fmt(cents)))\n\nprint(open(\"/out/balances.csv\").read(), end=\"\")\nEOF\npython3 /tmp/mk_balances.py",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "account,balance\nacme,87.45\nbolt,3.00\ncato,0.10\ndyn,-7.25\n"
+          },
+          {
+            "commands": "cd /home/eval\necho '--- re-run day1 ---'\npython3 /home/eval/ingest.py /var/lib/ledger.db /inbox/day1.csv; echo \"exit=$?\"\necho '--- re-run day2 ---'\npython3 /home/eval/ingest.py /var/lib/ledger.db /inbox/day2.csv; echo \"exit=$?\"\necho '--- txns after re-runs (should be same 6 rows) ---'\nsqlite /var/lib/ledger.db \"SELECT COUNT(*) FROM txns; SELECT * FROM balances ORDER BY account;\"\necho '--- balances.csv still ---'\ncat /out/balances.csv",
+            "exit_code": 0,
+            "stderr": "bad amount: t4\nbad amount: t7\nbad amount: t9\n",
+            "stdout": "--- re-run day1 ---\nnew=0 dup=5 bad=1\nexit=0\n--- re-run day2 ---\nnew=0 dup=3 bad=2\nexit=0\n--- txns after re-runs (should be same 6 rows) ---\n6\nacme|8745\nbolt|300\ncato|10\ndyn|-725\n--- balances.csv still ---\naccount,balance\nacme,87.45\nbolt,3.00\ncato,0.10\ndyn,-7.25\n"
+          },
+          {
+            "commands": "cat > /tmp/edge.csv << 'EOF'\ntxn_id,account,amount,ts\ne1,a,-0.05,ts\ne2,a,0,ts\ne3,a,-0,ts\ne4,a,00.10,ts\ne5,a,1234567890123.99,ts\ne6,a,1.,ts\ne7,a,.5,ts\ne8,a,+3,ts\ne9,a,1e3,ts\ne10,a, 3,ts\ne11,a,3 ,ts\ne12,a,1.2.3,ts\ne13,a,,ts\ne14,a,-,ts\ne15,a,1.234,ts\ne16,a,-7.2,ts\ne16,a,999,ts\ne17,a,-0.07,ts\ne17,a,-0.08,ts\nEOF\nrm -f /tmp/edge.db\npython3 /home/eval/ingest.py /tmp/edge.db /tmp/edge.csv; echo \"exit=$?\"\necho '--- stored ---'\nsqlite /tmp/edge.db \"SELECT * FROM txns ORDER BY txn_id; SELECT '---'; SELECT * FROM balances;\"\necho '--- fresh-db creation in fresh dir ---'\nrm -rf /tmp/freshdir\npython3 /home/eval/ingest.py /tmp/freshdir/sub/ledger.db /inbox/day1.csv; echo \"exit=$?\"\nsqlite /tmp/freshdir/sub/ledger.db \"SELECT COUNT(*) FROM txns;\"",
+            "exit_code": 0,
+            "stderr": "bad amount: e6\nbad amount: e7\nbad amount: e8\nbad amount: e9\nbad amount: e10\nbad amount: e11\nbad amount: e12\nbad amount: e13\nbad amount: e14\nbad amount: e15\nbad amount: t4\n",
+            "stdout": "new=7 dup=2 bad=10\nexit=0\n--- stored ---\ne1|a|-5|ts\ne16|a|-720|ts\ne17|a|-7|ts\ne2|a|0|ts\ne3|a|0|ts\ne4|a|10|ts\ne5|a|123456789012399|ts\n---\na|123456789011677\n--- fresh-db creation in fresh dir ---\nnew=4 dup=1 bad=1\nexit=0\n4\n"
+          },
+          {
+            "commands": "echo '=== final ledger.db ==='\nsqlite /var/lib/ledger.db \"SELECT * FROM txns ORDER BY txn_id; SELECT '---'; SELECT * FROM balances ORDER BY account;\"\necho '=== /out/balances.csv (with line endings) ==='\nod -c /out/balances.csv | head\necho '=== final rerun smoke test (stdout/exit only) ==='\npython3 /home/eval/ingest.py /var/lib/ledger.db /inbox/day1.csv 2>/dev/null; echo \"exit=$?\"\necho '=== deliverables ==='\nls -la /home/eval/ingest.py /var/lib/ledger.db /out/balances.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "=== final ledger.db ===\nt1|acme|10000|2026-10-01T09:00:00Z\nt2|acme|-1250|2026-10-01T10:00:00Z\nt3|bolt|300|2026-10-01T11:00:00Z\nt5|cato|10|2026-10-01T14:00:00Z\nt6|acme|-5|2026-10-02T10:00:00Z\nt8|dyn|-725|2026-10-02T12:00:00Z\n---\nacme|8745\nbolt|300\ncato|10\ndyn|-725\n=== /out/balances.csv (with line endings) ===\n0000000   a   c   c   o   u   n   t   ,   b   a   l   a   n   c   e  \\n\n0000020   a   c   m   e   ,   8   7   .   4   5  \\n   b   o   l   t   ,\n0000040   3   .   0   0  \\n   c   a   t   o   ,   0   .   1   0  \\n   d\n0000060   y   n   ,   -   7   .   2   5  \\n\n0000071\n=== final rerun smoke test (stdout/exit only) ===\nnew=0 dup=5 bad=1\nexit=0\n=== deliverables ===\n-rw-r--r--     3426 2026-10-09 18:18 /home/eval/ingest.py\n-rw-r--r--    20480 2026-10-09 18:19 /var/lib/ledger.db\n-rw-r--r--       57 2026-10-09 18:18 /out/balances.csv\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

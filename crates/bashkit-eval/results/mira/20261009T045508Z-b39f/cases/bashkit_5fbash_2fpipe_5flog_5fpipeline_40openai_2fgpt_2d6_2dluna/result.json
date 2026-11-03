@@ -1,0 +1,57 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "pipe_log_pipeline",
+  "target": "openai/gpt-6-luna",
+  "input": [
+    "Parse /var/log/access.log to find the top 3 most requested URL paths. Each line has format 'METHOD /path STATUS'. Print each URL with its count, sorted by count descending."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "3/3 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "/api/items 4\n/api/users 4\n/api/health 2",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "awk '{count[$2]++} END {for (path in count) print path, count[path]}' /var/log/access.log | sort -k2,2nr | head -3"
+    ],
+    "usage": {
+      "input_tokens": 498,
+      "output_tokens": 126,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 3782
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "awk '{count[$2]++} END {for (path in count) print path, count[path]}' /var/log/access.log | sort -k2,2nr | head -3",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/api/items 4\n/api/users 4\n/api/health 2\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

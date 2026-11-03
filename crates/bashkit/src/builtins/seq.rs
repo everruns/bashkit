@@ -292,7 +292,7 @@ impl Builtin for Seq {
                 && output.len() >= STREAM_CHUNK_BYTES
             {
                 ctx.consume_budget_work(1)?;
-                if !stream.write(output.as_bytes()).await {
+                if !stream.write(output.as_bytes()).await? {
                     return Ok(ExecResult::with_code("", 141));
                 }
                 flushed += output.len();
@@ -319,7 +319,7 @@ impl Builtin for Seq {
             output.push('\n');
         }
         if let Some(stream) = &stream {
-            if !stream.write(output.as_bytes()).await {
+            if !output.is_empty() && !stream.write(output.as_bytes()).await? {
                 return Ok(ExecResult::with_code("", 141));
             }
             output.clear();

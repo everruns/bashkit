@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "archive_selective",
+  "target": "openrouter/moonshotai/kimi-k3",
+  "input": [
+    "Create files: /tmp/notes.txt with 'remember this', /tmp/data.csv with 'a,b,c', /tmp/script.sh with '#!/bin/bash'. Create a tar.gz archive /tmp/bundle.tar.gz containing all three files. Then list the archive contents. Finally extract only notes.txt to /output/ directory."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "3/3 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "All tasks completed successfully:\n\n1. **Files created:**\n   - `/tmp/notes.txt` → `remember this` (13 bytes)\n   - `/tmp/data.csv` → `a,b,c` (5 bytes)\n   - `/tmp/script.sh` → `#!/bin/bash` (11 bytes)\n\n2. **Archive created:** `/tmp/bundle.tar.gz` (166 bytes) containing all three files\n\n3. **Archive contents listed:**\n   ```\n   notes.txt\n   data.csv\n   script.sh\n   ```\n\n4. **Selective extraction:** Only `notes.txt` was extracted to `/output/`, verified to contain `remember this` — the other two files remain solely in the archive.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "printf 'remember this' > /tmp/notes.txt && printf 'a,b,c' > /tmp/data.csv && printf '#!/bin/bash' > /tmp/script.sh && tar -czf /tmp/bundle.tar.gz -C /tmp notes.txt data.csv script.sh && echo \"--- Files created ---\" && ls -l /tmp/notes.txt /tmp/data.csv /tmp/script.sh /tmp/bundle.tar.gz && echo \"--- Archive contents ---\" && tar -tzf /tmp/bundle.tar.gz",
+      "mkdir -p /output && tar -xzf /tmp/bundle.tar.gz -C /output notes.txt && echo \"--- /output contents ---\" && ls -l /output/ && echo \"--- Extracted file contents ---\" && cat /output/notes.txt"
+    ],
+    "usage": {
+      "input_tokens": 2547,
+      "output_tokens": 773,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 10199
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "printf 'remember this' > /tmp/notes.txt && printf 'a,b,c' > /tmp/data.csv && printf '#!/bin/bash' > /tmp/script.sh && tar -czf /tmp/bundle.tar.gz -C /tmp notes.txt data.csv script.sh && echo \"--- Files created ---\" && ls -l /tmp/notes.txt /tmp/data.csv /tmp/script.sh /tmp/bundle.tar.gz && echo \"--- Archive contents ---\" && tar -tzf /tmp/bundle.tar.gz",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "--- Files created ---\n-rw-r--r--       13 2026-10-09 17:41 /tmp/notes.txt\n-rw-r--r--        5 2026-10-09 17:41 /tmp/data.csv\n-rw-r--r--       11 2026-10-09 17:41 /tmp/script.sh\n-rw-r--r--      166 2026-10-09 17:41 /tmp/bundle.tar.gz\n--- Archive contents ---\nnotes.txt\ndata.csv\nscript.sh\n"
+          },
+          {
+            "commands": "mkdir -p /output && tar -xzf /tmp/bundle.tar.gz -C /output notes.txt && echo \"--- /output contents ---\" && ls -l /output/ && echo \"--- Extracted file contents ---\" && cat /output/notes.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "--- /output contents ---\n-rw-r--r--       13 2026-10-09 17:41 notes.txt\n--- Extracted file contents ---\nremember this"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

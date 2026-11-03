@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "error_graceful_parse",
+  "target": "openai/gpt-6.1-sol",
+  "input": [
+    "Read /data/broken.json. It contains invalid JSON (a trailing comma before the closing brace). Fix the JSON by removing the trailing comma, save the fixed version back to the same file, and then parse it to print the 'name' field."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Removed the trailing comma and saved the fixed JSON to `/data/broken.json`. Parsed the `name` field:\n\n```text\ntest-app\n```",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cat /data/broken.json; command -v jq; command -v node; command -v ruby; command -v perl; command -v python3",
+      "sed -i 's/,[[:space:]]*}/}/' /data/broken.json && jq -r '.name' /data/broken.json"
+    ],
+    "usage": {
+      "input_tokens": 913,
+      "output_tokens": 144,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 7393
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 1.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat /data/broken.json; command -v jq; command -v node; command -v ruby; command -v perl; command -v python3",
+            "exit_code": 1,
+            "stderr": "",
+            "stdout": "{\"name\": \"test-app\", \"version\": \"1.0\", \"debug\": true, }/usr/bin/jq\n"
+          },
+          {
+            "commands": "sed -i 's/,[[:space:]]*}/}/' /data/broken.json && jq -r '.name' /data/broken.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "test-app\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

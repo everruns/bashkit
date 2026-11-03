@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "complex_debug_script",
+  "target": "openrouter/meta/muse-spark-1.3-contributor",
+  "input": [
+    "The script /scripts/broken.sh has bugs. Run it first to see the errors. Then examine the script, identify the bugs, fix them, and run the fixed version. The script should compute the factorial of 5 and print 'factorial(5) = 120'. The script should exit 0. Write the fixed version back to /scripts/broken.sh."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "3/3 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Fixed `/scripts/broken.sh` — missing `)` in command substitution.\n\n**Bug:** Line `result=$(factorial 5` missing closing `)` → `syntax error: unterminated command substitution` (exit 2).\n\n**Fix:** Changed to `result=$(factorial 5)`\n\n**Verified:**\n```\nfactorial(5) = 120\nexit:0\n```\nFixed script written back to `/scripts/broken.sh`.\n",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cat /scripts/broken.sh; echo \"---EXIT CAT---\"; ls -l /scripts/broken.sh; echo \"---RUN---\"; bash /scripts/broken.sh; echo \"exit:$?\"",
+      "cat > /scripts/broken.sh <<'EOS'\n#!/bin/bash\n\nfactorial() {\n  local n=$1\n  if [ $n -le 1 ]; then\n    echo 1\n  else\n    local sub=$(factorial $((n-1)))\n    echo $((n * sub))\n  fi\n}\n\nresult=$(factorial 5)\necho \"factorial(5) = $result\"\nexit 0\nEOS\ncat /scripts/broken.sh\necho \"---RUN FIXED---\"\nbash /scripts/broken.sh; echo \"exit:$?\""
+    ],
+    "usage": {
+      "input_tokens": 3704,
+      "output_tokens": 678,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 5831
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat /scripts/broken.sh; echo \"---EXIT CAT---\"; ls -l /scripts/broken.sh; echo \"---RUN---\"; bash /scripts/broken.sh; echo \"exit:$?\"",
+            "exit_code": 0,
+            "stderr": "/scripts/broken.sh: line 13: syntax error: unterminated command substitution\n",
+            "stdout": "#!/bin/bash\n\nfactorial() {\n  local n=$1\n  if [ $n -le 1 ]; then\n    echo 1\n  else\n    local sub=$(factorial $((n-1)))\n    echo $((n * sub))\n  fi\n}\n\nresult=$(factorial 5\necho \"factorial(5) = $result\"\nexit 0\n---EXIT CAT---\n-rw-r--r--      206 2026-10-09 17:46 /scripts/broken.sh\n---RUN---\nexit:2\n"
+          },
+          {
+            "commands": "cat > /scripts/broken.sh <<'EOS'\n#!/bin/bash\n\nfactorial() {\n  local n=$1\n  if [ $n -le 1 ]; then\n    echo 1\n  else\n    local sub=$(factorial $((n-1)))\n    echo $((n * sub))\n  fi\n}\n\nresult=$(factorial 5)\necho \"factorial(5) = $result\"\nexit 0\nEOS\ncat /scripts/broken.sh\necho \"---RUN FIXED---\"\nbash /scripts/broken.sh; echo \"exit:$?\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "#!/bin/bash\n\nfactorial() {\n  local n=$1\n  if [ $n -le 1 ]; then\n    echo 1\n  else\n    local sub=$(factorial $((n-1)))\n    echo $((n * sub))\n  fi\n}\n\nresult=$(factorial 5)\necho \"factorial(5) = $result\"\nexit 0\n---RUN FIXED---\nfactorial(5) = 120\nexit:0\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

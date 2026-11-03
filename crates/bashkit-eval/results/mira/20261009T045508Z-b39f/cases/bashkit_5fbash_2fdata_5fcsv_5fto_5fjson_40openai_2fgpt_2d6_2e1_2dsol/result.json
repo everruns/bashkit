@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "data_csv_to_json",
+  "target": "openai/gpt-6.1-sol",
+  "input": [
+    "Convert /data/users.csv to a JSON array where each row becomes an object with the column headers as keys. Print the resulting JSON to stdout."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "[\n  {\n    \"name\": \"alice\",\n    \"age\": \"30\",\n    \"city\": \"seattle\"\n  },\n  {\n    \"name\": \"bob\",\n    \"age\": \"25\",\n    \"city\": \"portland\"\n  },\n  {\n    \"name\": \"charlie\",\n    \"age\": \"35\",\n    \"city\": \"denver\"\n  }\n]",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "command -v node; command -v ruby; command -v jq; cat /data/users.csv",
+      "jq -Rn '[inputs | sub(\"\\r$\"; \"\") | split(\",\")] | .[0] as $headers | .[1:] | map(. as $row | reduce range(0; $headers | length) as $i ({}; .[$headers[$i]] = $row[$i]))' < /data/users.csv"
+    ],
+    "usage": {
+      "input_tokens": 944,
+      "output_tokens": 226,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 9093
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "command -v node; command -v ruby; command -v jq; cat /data/users.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/usr/bin/jq\nname,age,city\nalice,30,seattle\nbob,25,portland\ncharlie,35,denver\n"
+          },
+          {
+            "commands": "jq -Rn '[inputs | sub(\"\\r$\"; \"\") | split(\",\")] | .[0] as $headers | .[1:] | map(. as $row | reduce range(0; $headers | length) as $i ({}; .[$headers[$i]] = $row[$i]))' < /data/users.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "[\n  {\n    \"name\": \"alice\",\n    \"age\": \"30\",\n    \"city\": \"seattle\"\n  },\n  {\n    \"name\": \"bob\",\n    \"age\": \"25\",\n    \"city\": \"portland\"\n  },\n  {\n    \"name\": \"charlie\",\n    \"age\": \"35\",\n    \"city\": \"denver\"\n  }\n]\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

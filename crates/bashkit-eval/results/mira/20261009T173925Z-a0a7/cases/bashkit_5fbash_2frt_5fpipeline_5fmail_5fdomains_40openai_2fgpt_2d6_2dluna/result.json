@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "rt_pipeline_mail_domains",
+  "target": "openai/gpt-6-luna",
+  "input": [
+    "Write a bash script /home/eval/report.sh used as `bash /home/eval/report.sh INBOX_DIR OUT_FILE` (it will be run again later on other directories). INBOX_DIR holds message files `*.json` (names may contain spaces; ignore other files). Each is a JSON object whose optional \"to\" and \"cc\" fields are email address-list header strings like `\"Doe, John\" <john@example.com>, ann@x.org` (display names may be quoted and contain commas). Count every recipient address in to and cc by its domain (the part after '@', lowercased).\nFiles that are not valid JSON are skipped and reported on stderr as `skip: <file name>` (base name), in file name order. OUT_FILE gets one line `COUNT DOMAIN` per domain, sorted by count descending then domain. Exit 0.\nRun it on /data/inbox writing /out/domains.txt."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Created `/home/eval/report.sh` and ran it on `/data/inbox`. It wrote the domain counts to `/out/domains.txt` and reported `skip: broken.json` on stderr.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "ls -la /home/eval; ls -la /data/inbox 2>/dev/null || true; find /data/inbox -maxdepth 1 -type f -printf '%f\\n' 2>/dev/null | sort",
+      "cat > /home/eval/report.sh <<'BASH'\n#!/usr/bin/env bash\nset -e\n\nif (( $# != 2 )); then\n  echo \"usage: bash $0 INBOX_DIR OUT_FILE\" >&2\n  exit 2\nfi\n\npython3 - \"$1\" \"$2\" <<'PY'\nimport json\nimport os\nimport sys\nfrom collections import Counter\nfrom email.utils import getaddresses\n\ninbox, out_file = sys.argv[1:]\ncounts = Counter()\n\n# Sorting names explicitly also makes the order independent of the caller's locale.\nfor name in sorted(os.listdir(inbox)):\n    if not name.endswith('.json'):\n        continue\n    path = os.path.join(inbox, name)\n    if not os.path.isfile(path):\n        continue\n    try:\n        with open(path, 'r', encoding='utf-8') as stream:\n            message = json.load(stream)\n    except (OSError, UnicodeError, json.JSONDecodeError):\n        print(f'skip: {name}', file=sys.stderr)\n        continue\n\n    if not isinstance(message, dict):\n        continue\n    headers = [message.get(field) for field in ('to', 'cc')]\n    addresses = getaddresses([value for value in headers if isinstance(value, str)])\n    for _display_name, address in addresses:\n        if '@' in address:\n            domain = address.rsplit('@', 1)[1].lower()\n            if domain:\n                counts[domain] += 1\n\nparent = os.path.dirname(os.path.abspath(out_file))\nos.makedirs(parent, exist_ok=True)\nwith open(out_file, 'w', encoding='utf-8') as stream:\n    for domain, count in sorted(counts.items(), key=lambda item: (-item[1], item[0])):\n        stream.write(f'{count} {domain}\\n')\nPY\nBASH\nchmod +x /home/eval/report.sh\nbash /home/eval/report.sh /data/inbox /out/domains.txt\nprintf '%s\\n' '--- report ---'\ncat /out/domains.txt\nprintf '%s\\n' '--- stderr check complete ---'"
+    ],
+    "usage": {
+      "input_tokens": 2747,
+      "output_tokens": 1095,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 13586
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /home/eval; ls -la /data/inbox 2>/dev/null || true; find /data/inbox -maxdepth 1 -type f -printf '%f\\n' 2>/dev/null | sort",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       87 2026-10-12 18:58 001.json\n-rw-r--r--       95 2026-10-12 18:58 002 reply.json\n-rw-r--r--       37 2026-10-12 18:58 003.json\n-rw-r--r--       99 2026-10-12 18:58 004 fwd fwd.json\n-rw-r--r--       25 2026-10-12 18:58 broken.json\n-rw-r--r--        9 2026-10-12 18:58 notes.txt\n001.json\n002 reply.json\n003.json\n004 fwd fwd.json\nbroken.json\nnotes.txt\n"
+          },
+          {
+            "commands": "cat > /home/eval/report.sh <<'BASH'\n#!/usr/bin/env bash\nset -e\n\nif (( $# != 2 )); then\n  echo \"usage: bash $0 INBOX_DIR OUT_FILE\" >&2\n  exit 2\nfi\n\npython3 - \"$1\" \"$2\" <<'PY'\nimport json\nimport os\nimport sys\nfrom collections import Counter\nfrom email.utils import getaddresses\n\ninbox, out_file = sys.argv[1:]\ncounts = Counter()\n\n# Sorting names explicitly also makes the order independent of the caller's locale.\nfor name in sorted(os.listdir(inbox)):\n    if not name.endswith('.json'):\n        continue\n    path = os.path.join(inbox, name)\n    if not os.path.isfile(path):\n        continue\n    try:\n        with open(path, 'r', encoding='utf-8') as stream:\n            message = json.load(stream)\n    except (OSError, UnicodeError, json.JSONDecodeError):\n        print(f'skip: {name}', file=sys.stderr)\n        continue\n\n    if not isinstance(message, dict):\n        continue\n    headers = [message.get(field) for field in ('to', 'cc')]\n    addresses = getaddresses([value for value in headers if isinstance(value, str)])\n    for _display_name, address in addresses:\n        if '@' in address:\n            domain = address.rsplit('@', 1)[1].lower()\n            if domain:\n                counts[domain] += 1\n\nparent = os.path.dirname(os.path.abspath(out_file))\nos.makedirs(parent, exist_ok=True)\nwith open(out_file, 'w', encoding='utf-8') as stream:\n    for domain, count in sorted(counts.items(), key=lambda item: (-item[1], item[0])):\n        stream.write(f'{count} {domain}\\n')\nPY\nBASH\nchmod +x /home/eval/report.sh\nbash /home/eval/report.sh /data/inbox /out/domains.txt\nprintf '%s\\n' '--- report ---'\ncat /out/domains.txt\nprintf '%s\\n' '--- stderr check complete ---'",
+            "exit_code": 0,
+            "stderr": "skip: broken.json\n",
+            "stdout": "--- report ---\n4 x.org\n2 corp.io\n2 example.com\n1 sub.x.org\n--- stderr check complete ---\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

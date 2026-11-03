@@ -259,7 +259,7 @@ filesystem there is no built-in VFS underneath to supply it.
 
 Plain bash plus the built-in text tooling (`grep`, `sed`, `awk`, `jq`, `find`,
 …) and `jq`. Not included in the browser build: outbound HTTP (`curl`/`wget`),
-`ssh`, `sqlite`, and embedded `python`, these need sockets, threads, or a host
+`ssh` and `sqlite`, these need sockets, threads, or a host
 filesystem the browser sandbox doesn't provide. Bridge to the network through a
 custom builtin (see above) so requests go through your app's own `fetch`.
 
@@ -294,3 +294,42 @@ just build-wasm
 ## License
 
 MIT, part of the [Bashkit](https://github.com/everruns/bashkit) project.
+
+## Deployment and cold start
+
+Serve `bashkit_wasm_bg.wasm` as `application/wasm` with Brotli or gzip HTTP
+compression. Raw npm file size is not transfer size. Use content-hashed asset
+URLs with long-lived immutable caching; keep the JS glue and WASM from the same
+build together. `initBashkit()` uses wasm-bindgen's streaming loader when the
+server sends the correct MIME type. A slow mobile connection can take more than
+15 seconds to download a multi-megabyte bundle, so choose startup deadlines from
+your application's measured network conditions.
+
+The package includes `build-info.json`: source commit, dirty-checkout status,
+compiler/tools, Cargo profile/features, and the SHA-256 of the shipped WASM.
+Source archives without Git metadata record a null source identity. A source
+checkout between releases can have the same package version as an older npm
+release; compare the source commit as well as the version.
+
+Maintainers can run the bounded compatibility and compressed-size gates:
+
+```sh
+node crates/bashkit-wasm/bench/compat.mjs
+node crates/bashkit-wasm/bench/artifact.mjs crates/bashkit-wasm/pkg --check
+```
+
+The [browser benchmark methodology](https://github.com/everruns/bashkit/blob/main/crates/bashkit-wasm/bench/README.md) describes reproducible
+cold-start and execution experiments and the measured profile tradeoff.
+
+## Optional Python/TypeScript and host functions
+
+Import `@everruns/bashkit-wasm/runtimes` for the runtime-enabled single-threaded
+bundle; the default import stays slim. Enable `python`/`typescript` explicitly
+and pass `externalFunctions`/`externalHandler` (Python) or
+`typescriptExternalFunctions`/`typescriptExternalHandler` (TypeScript).
+Callbacks support JSON values and an execution-local AbortSignal. Use async
+`Bash.execute`, with one active execution per instance. See the
+[host function guide](../../docs/start-browser.md#python-and-typescript-host-functions).
+
+Build both variants with `scripts/build.sh release`, followed by
+`BASHKIT_WASM_VARIANT=runtimes BASHKIT_WASM_FEATURES=terminal,python,typescript scripts/build.sh release`.

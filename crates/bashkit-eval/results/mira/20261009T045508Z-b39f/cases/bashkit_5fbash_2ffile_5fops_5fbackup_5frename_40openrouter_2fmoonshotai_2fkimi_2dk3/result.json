@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "file_ops_backup_rename",
+  "target": "openrouter/moonshotai/kimi-k3",
+  "input": [
+    "Make a backup of /data/config.yaml at /data/config.yaml.bak, then append the line 'updated: true' to the original /data/config.yaml file."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Both steps completed successfully:\n\n1. **Backup created** at `/data/config.yaml.bak` — an exact copy of the original (version, mode, retries).\n2. **Line appended** to `/data/config.yaml`, which now ends with `updated: true` while the backup remains untouched.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "ls -la /data/config.yaml && echo \"---\" && cat /data/config.yaml",
+      "cp /data/config.yaml /data/config.yaml.bak && echo 'updated: true' >> /data/config.yaml && echo \"=== .bak ===\" && cat /data/config.yaml.bak && echo \"=== original ===\" && cat /data/config.yaml"
+    ],
+    "usage": {
+      "input_tokens": 1470,
+      "output_tokens": 354,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 7831
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /data/config.yaml && echo \"---\" && cat /data/config.yaml",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       39 2026-10-09 04:55 /data/config.yaml\n---\nversion: 1\nmode: production\nretries: 3\n"
+          },
+          {
+            "commands": "cp /data/config.yaml /data/config.yaml.bak && echo 'updated: true' >> /data/config.yaml && echo \"=== .bak ===\" && cat /data/config.yaml.bak && echo \"=== original ===\" && cat /data/config.yaml",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "=== .bak ===\nversion: 1\nmode: production\nretries: 3\n=== original ===\nversion: 1\nmode: production\nretries: 3\nupdated: true\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

@@ -1,0 +1,71 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "rt_state_csvq_tool",
+  "target": "openai/gpt-6.1-sol",
+  "input": [
+    "Build a reusable command-line tool `csvq` in Python at /home/eval/bin/csvq. It must be executable and runnable as plain `csvq ...` once /home/eval/bin is on PATH (it will be used again later on other files).\n\nUsage: csvq [--where COL=VALUE]... [--select COL,COL,...] [--sort COL [--numeric] [--desc]] FILE\n- FILE is CSV with a header row; fields may be quoted (including embedded commas, quotes and newlines).\n- --where may repeat; keep rows where every COL equals VALUE exactly (split at the first '=').\n- --select picks and orders the output columns (default: all columns in file order).\n- --sort orders rows by COL as text; with --numeric, by numeric value, and rows whose value is not a number (including empty) go last in their original order. --desc sorts descending (non-numeric rows still go last). The sort is stable: equal keys keep their input order, also with --desc.\n- Output: CSV on stdout with the header row, '\\n' line endings, fields quoted only when they contain a comma, quote or newline.\n- If any option names a column not in the header, print `csvq: unknown column: NAME` to stderr, print nothing on stdout and exit 2.\n\nThen use csvq on /data/staff.csv to write /out/eng_top.csv (dept eng; columns name,salary; sorted by salary numerically, highest first) and /out/by_city.csv (columns city,name sorted by city)."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "3/3 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Created executable `/home/eval/bin/csvq` and generated:\n\n- `/out/eng_top.csv` — engineering staff, columns `name,salary`, salary descending numerically.\n- `/out/by_city.csv` — columns `city,name`, sorted by city.\n\nVerified CSV quoting, stable sorting, non-numeric values going last, and unknown-column errors.\n\nTo use it:\n```bash\nexport PATH=\"/home/eval/bin:$PATH\"\ncsvq --select name,salary /data/staff.csv\n```",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "ls -l /data/staff.csv; cat /data/staff.csv; mkdir -p /home/eval/bin /out",
+      "cat > /home/eval/bin/csvq <<'PY'\n#!/usr/bin/env python3\n\"\"\"Filter, project, and stably sort a CSV file with a header.\"\"\"\nimport argparse\nimport csv\nfrom decimal import Decimal, InvalidOperation\nimport sys\n\n\ndef main():\n    parser = argparse.ArgumentParser(prog='csvq')\n    parser.add_argument('--where', action='append', default=[], metavar='COL=VALUE')\n    parser.add_argument('--select', metavar='COL,COL,...')\n    parser.add_argument('--sort', metavar='COL')\n    parser.add_argument('--numeric', action='store_true')\n    parser.add_argument('--desc', action='store_true')\n    parser.add_argument('file', metavar='FILE')\n    args = parser.parse_args()\n    conditions = []\n    for condition in args.where:\n        if '=' not in condition:\n            parser.error('--where requires COL=VALUE')\n        conditions.append(condition.split('=', 1))\n    if (args.numeric or args.desc) and args.sort is None:\n        parser.error('--numeric and --desc require --sort')\n\n    try:\n        with open(args.file, 'r', encoding='utf-8', newline='') as source:\n            reader = csv.reader(source)\n            header = next(reader, [])\n            selected = header if args.select is None else args.select.split(',')\n            named = [col for col, value in conditions] + selected\n            if args.sort is not None:\n                named.append(args.sort)\n            for col in named:\n                if col not in header:\n                    print(f'csvq: unknown column: {col}', file=sys.stderr)\n                    return 2\n            filters = [(header.index(col), value) for col, value in conditions]\n            indices = [header.index(col) for col in selected]\n            rows = []\n            for row in reader:\n                if not row:  # Ignore empty physical records, as distinct from empty fields.\n                    continue\n                if len(row) != len(header):\n                    raise ValueError(f'wrong number of fields at line {reader.line_num}')\n                if all(row[index] == value for index, value in filters):\n                    rows.append(row)\n\n        if args.sort is not None:\n            index = header.index(args.sort)\n            if args.numeric:\n                numeric, other = [], []\n                for row in rows:\n                    try:\n                        key = Decimal(row[index])\n                    except InvalidOperation:\n                        other.append(row)\n                        continue\n                    if not key.is_finite():\n                        other.append(row)\n                    else:\n                        numeric.append((key, row))\n                numeric.sort(key=lambda pair: pair[0], reverse=args.desc)\n                rows = [row for key, row in numeric] + other\n            else:\n                rows.sort(key=lambda row: row[index], reverse=args.desc)\n\n        # newline='' prevents platform newline translation in CSV output.\n        if hasattr(sys.stdout, 'reconfigure'):\n            sys.stdout.reconfigure(newline='')\n        writer = csv.writer(sys.stdout, lineterminator='\\n', quoting=csv.QUOTE_MINIMAL)\n        writer.writerow(selected)\n        writer.writerows([row[index] for index in indices] for row in rows)\n        return 0\n    except (OSError, csv.Error, ValueError) as error:\n        print(f'csvq: {error}', file=sys.stderr)\n        return 2\n\n\nif __name__ == '__main__':\n    sys.exit(main())\nPY\nchmod +x /home/eval/bin/csvq\nexport PATH=\"/home/eval/bin:$PATH\"\ncsvq --where dept=eng --select name,salary --sort salary --numeric --desc /data/staff.csv > /out/eng_top.csv\ncsvq --select city,name --sort city /data/staff.csv > /out/by_city.csv\ncat /out/eng_top.csv\ncat /out/by_city.csv",
+      "python3 - <<'PY'\nimport contextlib, csv, importlib.machinery, importlib.util, io, sys\nloader = importlib.machinery.SourceFileLoader('csvq', '/home/eval/bin/csvq')\nspec = importlib.util.spec_from_loader(loader.name, loader)\nmodule = importlib.util.module_from_spec(spec)\nloader.exec_module(module)\npath = '/out/.csvq-test.csv'\nwith open(path, 'w', newline='') as f:\n    csv.writer(f).writerows([['name', 'key'], ['a,\"\\nb', '2'], ['equal', '2'], ['bad', 'oops'], ['empty', ''], ['low', '1']])\ndef run(args):\n    sys.argv = ['csvq'] + args + [path]\n    out, err = io.StringIO(), io.StringIO()\n    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):\n        result = module.main()\n    return result, out.getvalue(), err.getvalue()\ncode, output, error = run(['--sort', 'key', '--numeric', '--desc'])\nassert code == 0 and not error\nassert list(csv.reader(io.StringIO(output)))[1:] == [['a,\"\\nb', '2'], ['equal', '2'], ['low', '1'], ['bad', 'oops'], ['empty', '']]\nassert run(['--select', 'missing']) == (2, '', 'csvq: unknown column: missing\\n')\nimport os\nos.remove(path)\nprint('CSV quoting, stable numeric sorting, invalid values, and unknown-column checks passed.')\nPY"
+    ],
+    "usage": {
+      "input_tokens": 5680,
+      "output_tokens": 1582,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 29122
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 3.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -l /data/staff.csv; cat /data/staff.csv; mkdir -p /home/eval/bin /out",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--      171 2026-10-12 18:58 /data/staff.csv\nname,dept,city,salary\nAva,eng,Berlin,120000\nBen,ops,Lisbon,70000\nCara,eng,Austin,135000\nDev,eng,Berlin,99000\nEve,sales,Austin,80000\nFinn,eng,Lisbon,135000\nGia,ops,Berlin,\n"
+          },
+          {
+            "commands": "cat > /home/eval/bin/csvq <<'PY'\n#!/usr/bin/env python3\n\"\"\"Filter, project, and stably sort a CSV file with a header.\"\"\"\nimport argparse\nimport csv\nfrom decimal import Decimal, InvalidOperation\nimport sys\n\n\ndef main():\n    parser = argparse.ArgumentParser(prog='csvq')\n    parser.add_argument('--where', action='append', default=[], metavar='COL=VALUE')\n    parser.add_argument('--select', metavar='COL,COL,...')\n    parser.add_argument('--sort', metavar='COL')\n    parser.add_argument('--numeric', action='store_true')\n    parser.add_argument('--desc', action='store_true')\n    parser.add_argument('file', metavar='FILE')\n    args = parser.parse_args()\n    conditions = []\n    for condition in args.where:\n        if '=' not in condition:\n            parser.error('--where requires COL=VALUE')\n        conditions.append(condition.split('=', 1))\n    if (args.numeric or args.desc) and args.sort is None:\n        parser.error('--numeric and --desc require --sort')\n\n    try:\n        with open(args.file, 'r', encoding='utf-8', newline='') as source:\n            reader = csv.reader(source)\n            header = next(reader, [])\n            selected = header if args.select is None else args.select.split(',')\n            named = [col for col, value in conditions] + selected\n            if args.sort is not None:\n                named.append(args.sort)\n            for col in named:\n                if col not in header:\n                    print(f'csvq: unknown column: {col}', file=sys.stderr)\n                    return 2\n            filters = [(header.index(col), value) for col, value in conditions]\n            indices = [header.index(col) for col in selected]\n            rows = []\n            for row in reader:\n                if not row:  # Ignore empty physical records, as distinct from empty fields.\n                    continue\n                if len(row) != len(header):\n                    raise ValueError(f'wrong number of fields at line {reader.line_num}')\n                if all(row[index] == value for index, value in filters):\n                    rows.append(row)\n\n        if args.sort is not None:\n            index = header.index(args.sort)\n            if args.numeric:\n                numeric, other = [], []\n                for row in rows:\n                    try:\n                        key = Decimal(row[index])\n                    except InvalidOperation:\n                        other.append(row)\n                        continue\n                    if not key.is_finite():\n                        other.append(row)\n                    else:\n                        numeric.append((key, row))\n                numeric.sort(key=lambda pair: pair[0], reverse=args.desc)\n                rows = [row for key, row in numeric] + other\n            else:\n                rows.sort(key=lambda row: row[index], reverse=args.desc)\n\n        # newline='' prevents platform newline translation in CSV output.\n        if hasattr(sys.stdout, 'reconfigure'):\n            sys.stdout.reconfigure(newline='')\n        writer = csv.writer(sys.stdout, lineterminator='\\n', quoting=csv.QUOTE_MINIMAL)\n        writer.writerow(selected)\n        writer.writerows([row[index] for index in indices] for row in rows)\n        return 0\n    except (OSError, csv.Error, ValueError) as error:\n        print(f'csvq: {error}', file=sys.stderr)\n        return 2\n\n\nif __name__ == '__main__':\n    sys.exit(main())\nPY\nchmod +x /home/eval/bin/csvq\nexport PATH=\"/home/eval/bin:$PATH\"\ncsvq --where dept=eng --select name,salary --sort salary --numeric --desc /data/staff.csv > /out/eng_top.csv\ncsvq --select city,name --sort city /data/staff.csv > /out/by_city.csv\ncat /out/eng_top.csv\ncat /out/by_city.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "name,salary\nCara,135000\nFinn,135000\nAva,120000\nDev,99000\ncity,name\nAustin,Cara\nAustin,Eve\nBerlin,Ava\nBerlin,Dev\nBerlin,Gia\nLisbon,Ben\nLisbon,Finn\n"
+          },
+          {
+            "commands": "python3 - <<'PY'\nimport contextlib, csv, importlib.machinery, importlib.util, io, sys\nloader = importlib.machinery.SourceFileLoader('csvq', '/home/eval/bin/csvq')\nspec = importlib.util.spec_from_loader(loader.name, loader)\nmodule = importlib.util.module_from_spec(spec)\nloader.exec_module(module)\npath = '/out/.csvq-test.csv'\nwith open(path, 'w', newline='') as f:\n    csv.writer(f).writerows([['name', 'key'], ['a,\"\\nb', '2'], ['equal', '2'], ['bad', 'oops'], ['empty', ''], ['low', '1']])\ndef run(args):\n    sys.argv = ['csvq'] + args + [path]\n    out, err = io.StringIO(), io.StringIO()\n    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):\n        result = module.main()\n    return result, out.getvalue(), err.getvalue()\ncode, output, error = run(['--sort', 'key', '--numeric', '--desc'])\nassert code == 0 and not error\nassert list(csv.reader(io.StringIO(output)))[1:] == [['a,\"\\nb', '2'], ['equal', '2'], ['low', '1'], ['bad', 'oops'], ['empty', '']]\nassert run(['--select', 'missing']) == (2, '', 'csvq: unknown column: missing\\n')\nimport os\nos.remove(path)\nprint('CSV quoting, stable numeric sorting, invalid values, and unknown-column checks passed.')\nPY",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "CSV quoting, stable numeric sorting, invalid values, and unknown-column checks passed.\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

@@ -1,0 +1,190 @@
+{
+  "eval": "bashkit_repo",
+  "sample": "repo_parallel_shards_background",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "/home/eval/etl is a git repo. `scripts/process.sh SHARD` sums the amount column of data/SHARD.csv into out/SHARD.sum. Run it for the shards listed in SHARDS concurrently as background jobs, then wait for each job and write its exit status to out/status.txt, one line per shard in SHARDS order, formatted `SHARD EXIT_CODE`. One shard will fail: find the bad input row it reports and delete that row from the data file, re-run just that shard, then run `make report`. Commit the data fix and out/ with a message starting with `data:`."
+  ],
+  "passed": false,
+  "aggregate": 0.875,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 0.875,
+      "pass": false,
+      "reason": "7/8 checks passed (weighted rate 88%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "",
+    "iterations": 20,
+    "tool_calls_count": 20,
+    "tool_calls": [
+      "cd /home/eval/etl && ls -la && git status",
+      "cd /home/eval/etl\ncat Makefile\necho \"=== SHARDS ===\"\ncat SHARDS\necho \"=== scripts/process.sh ===\"\ncat scripts/process.sh",
+      "cd /home/eval/etl && cat scripts/report.sh",
+      "cd /home/eval/etl && ls -la data/",
+      "cd /home/eval/etl\nhead -n 20 data/*.csv",
+      "cd /home/eval/etl\nmkdir -p out\ndeclare -A pids\nshards=()\nwhile read -r shard; do\n  [ -z \"$shard\" ] && continue\n  shards+=(\"$shard\")\n  scripts/process.sh \"$shard\" &\n  pids[\"$shard\"]=$!\ndone < SHARDS\n\n: > out/status.txt\nfor shard in \"${shards[@]}\"; do\n  pid=\"${pids[$shard]}\"\n  wait \"$pid\"\n  status=$?\n  echo \"$shard $status\" >> out/status.txt\ndone",
+      "cd /home/eval/etl && ls -la scripts/",
+      "git status && git log -1",
+      "chmod +x scripts/process.sh scripts/report.sh\ngit status",
+      "git diff",
+      "git ls-files -s scripts/",
+      "rm -rf out",
+      "cd /home/eval/etl\nmkdir -p out\ndeclare -A pids\nshards=()\nwhile read -r shard; do\n  [ -z \"$shard\" ] && continue\n  shards+=(\"$shard\")\n  scripts/process.sh \"$shard\" &\n  pids[\"$shard\"]=$!\ndone < SHARDS\n\n: > out/status.txt\nfor shard in \"${shards[@]}\"; do\n  pid=\"${pids[$shard]}\"\n  wait \"$pid\"\n  status=$?\n  echo \"$shard $status\" >> out/status.txt\ndone",
+      "cd /home/eval/etl\ncat out/status.txt",
+      "ls -la /home/eval/etl/out",
+      "cd /home/eval/etl\ncat data/eu.csv",
+      "cd /home/eval/etl\nsed -i '/^B2,n\\/a$/d' data/eu.csv\ncat data/eu.csv",
+      "cd /home/eval/etl\nscripts/process.sh eu\necho \"exit code: $?\"\ncat out/eu.sum",
+      "cd /home/eval/etl\ncat out/status.txt",
+      "cd /home/eval/etl\nmake report"
+    ],
+    "usage": {
+      "input_tokens": 29349,
+      "output_tokens": 831,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 39687
+    },
+    "metrics": {
+      "natural_stop": 0.0,
+      "tool_calls": 20.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 20.0,
+      "turns": 20.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cd /home/eval/etl && ls -la && git status",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "drwxr-xr-x        0 2026-10-09 05:07 .git\n-rw-r--r--       33 2026-10-09 05:07 Makefile\n-rw-r--r--       11 2026-10-09 05:07 SHARDS\ndrwxr-xr-x        0 2026-10-09 05:07 data\ndrwxr-xr-x        0 2026-10-09 05:07 scripts\nOn branch master\n\nnothing to commit, working tree clean\n"
+          },
+          {
+            "commands": "cd /home/eval/etl\ncat Makefile\necho \"=== SHARDS ===\"\ncat SHARDS\necho \"=== scripts/process.sh ===\"\ncat scripts/process.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "report:\n\t@bash scripts/report.sh\n=== SHARDS ===\nus\neu\napac\n=== scripts/process.sh ===\n#!/bin/bash\n# usage: process.sh SHARD -> out/SHARD.sum (exit 2 on a malformed row)\nshard=$1\nmkdir -p out\nawk -F, -v shard=\"$shard\" '\n  NR == 1 { next }\n  $2 !~ /^[0-9]+$/ { printf \"%s: line %d: bad amount %s\\n\", shard, NR, $2 > \"/dev/stderr\"; bad = 1; exit 2 }\n  { sum += $2 }\n  END { if (!bad) print sum }\n' \"data/$shard.csv\" > \"out/$shard.sum.tmp\" || { rm -f \"out/$shard.sum.tmp\"; exit 2; }\nmv \"out/$shard.sum.tmp\" \"out/$shard.sum\"\n"
+          },
+          {
+            "commands": "cd /home/eval/etl && cat scripts/report.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "#!/bin/bash\n# Combine out/*.sum (every shard in SHARDS must be present) into out/report.txt\ntotal=0\n: > out/report.txt\nwhile read -r shard; do\n  [ -f \"out/$shard.sum\" ] || { echo \"missing out/$shard.sum\"; exit 1; }\n  v=$(cat \"out/$shard.sum\")\n  echo \"$shard $v\" >> out/report.txt\n  total=$((total + v))\ndone < SHARDS\necho \"total $total\" >> out/report.txt\ncat out/report.txt\n"
+          },
+          {
+            "commands": "cd /home/eval/etl && ls -la data/",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       25 2026-10-09 05:07 apac.csv\n-rw-r--r--       32 2026-10-09 05:07 eu.csv\n-rw-r--r--       33 2026-10-09 05:07 us.csv\n"
+          },
+          {
+            "commands": "cd /home/eval/etl\nhead -n 20 data/*.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "==> data/apac.csv <==\norder,amount\nC1,15\nC2,25\n\n==> data/eu.csv <==\norder,amount\nB1,50\nB2,n/a\nB3,70\n\n==> data/us.csv <==\norder,amount\nA1,120\nA2,80\nA3,300\n"
+          },
+          {
+            "commands": "cd /home/eval/etl\nmkdir -p out\ndeclare -A pids\nshards=()\nwhile read -r shard; do\n  [ -z \"$shard\" ] && continue\n  shards+=(\"$shard\")\n  scripts/process.sh \"$shard\" &\n  pids[\"$shard\"]=$!\ndone < SHARDS\n\n: > out/status.txt\nfor shard in \"${shards[@]}\"; do\n  pid=\"${pids[$shard]}\"\n  wait \"$pid\"\n  status=$?\n  echo \"$shard $status\" >> out/status.txt\ndone",
+            "exit_code": 0,
+            "stderr": "bash: line 8: scripts/process.sh: Permission denied\nbash: line 8: scripts/process.sh: Permission denied\nbash: line 8: scripts/process.sh: Permission denied\n",
+            "stdout": ""
+          },
+          {
+            "commands": "cd /home/eval/etl && ls -la scripts/",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--      434 2026-10-09 05:07 process.sh\n-rw-r--r--      374 2026-10-09 05:07 report.sh\n"
+          },
+          {
+            "commands": "git status && git log -1",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "On branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tout/status.txt\ncommit b465c86d\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 05:07:14 2026 +0000\n\n    initial import\n\n"
+          },
+          {
+            "commands": "chmod +x scripts/process.sh scripts/report.sh\ngit status",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "On branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tout/status.txt\n"
+          },
+          {
+            "commands": "git diff",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# Diff output (simplified in virtual mode)\n"
+          },
+          {
+            "commands": "git ls-files -s scripts/",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Makefile\nSHARDS\ndata/apac.csv\ndata/eu.csv\ndata/us.csv\nscripts/process.sh\nscripts/report.sh\n"
+          },
+          {
+            "commands": "rm -rf out",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "cd /home/eval/etl\nmkdir -p out\ndeclare -A pids\nshards=()\nwhile read -r shard; do\n  [ -z \"$shard\" ] && continue\n  shards+=(\"$shard\")\n  scripts/process.sh \"$shard\" &\n  pids[\"$shard\"]=$!\ndone < SHARDS\n\n: > out/status.txt\nfor shard in \"${shards[@]}\"; do\n  pid=\"${pids[$shard]}\"\n  wait \"$pid\"\n  status=$?\n  echo \"$shard $status\" >> out/status.txt\ndone",
+            "exit_code": 0,
+            "stderr": "eu: line 3: bad amount n/a\n",
+            "stdout": ""
+          },
+          {
+            "commands": "cd /home/eval/etl\ncat out/status.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "us 0\neu 2\napac 0\n"
+          },
+          {
+            "commands": "ls -la /home/eval/etl/out",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--        3 2026-10-09 05:07 apac.sum\n-rw-r--r--       17 2026-10-09 05:07 status.txt\n-rw-r--r--        4 2026-10-09 05:07 us.sum\n"
+          },
+          {
+            "commands": "cd /home/eval/etl\ncat data/eu.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "order,amount\nB1,50\nB2,n/a\nB3,70\n"
+          },
+          {
+            "commands": "cd /home/eval/etl\nsed -i '/^B2,n\\/a$/d' data/eu.csv\ncat data/eu.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "order,amount\nB1,50\nB3,70\n"
+          },
+          {
+            "commands": "cd /home/eval/etl\nscripts/process.sh eu\necho \"exit code: $?\"\ncat out/eu.sum",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "exit code: 0\n120\n"
+          },
+          {
+            "commands": "cd /home/eval/etl\ncat out/status.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "us 0\neu 2\napac 0\n"
+          },
+          {
+            "commands": "cd /home/eval/etl\nmake report",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "us 500\neu 120\napac 40\ntotal 660\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

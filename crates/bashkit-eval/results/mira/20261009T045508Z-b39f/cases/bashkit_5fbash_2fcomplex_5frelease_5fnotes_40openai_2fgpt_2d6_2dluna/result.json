@@ -1,0 +1,57 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "complex_release_notes",
+  "target": "openai/gpt-6-luna",
+  "input": [
+    "Read /data/commits.log containing conventional commit messages (one per line, format: 'type(scope): message'). Parse each line, group by type, and generate /release/CHANGELOG.md with sections: '## Features' for 'feat' commits, '## Bug Fixes' for 'fix' commits, and '## Other' for all remaining types. Under each section list items as '- scope: message'. Print the generated changelog."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "8/8 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "## Features\n- auth: add OAuth2 support\n- ui: dark mode toggle\n- api: add pagination support\n- db: add connection pooling\n\n## Bug Fixes\n- api: handle null response body\n- auth: token refresh race condition\n- ui: button alignment on mobile\n- api: correct status code for 404\n\n## Other\n- deps: update lodash to 4.17.21\n- readme: update install instructions",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "cat /data/commits.log; mkdir -p /release; awk '\nmatch($0, /^([^ (]+)\\(([^)]+)\\): (.*)$/, a) {\n  type=a[1]; scope=a[2]; message=a[3]\n  if (type == \"feat\") section=\"Features\"\n  else if (type == \"fix\") section=\"Bug Fixes\"\n  else section=\"Other\"\n  if (!seen[section]++) {\n    order[++n]=section\n  }\n  items[section]=items[section] \"- \" scope \": \" message \"\\n\"\n}\nEND {\n  for (i=1; i<=n; i++) {\n    section=order[i]\n    if (section == \"Features\") header=\"## Features\"\n    else if (section == \"Bug Fixes\") header=\"## Bug Fixes\"\n    else header=\"## Other\"\n    printf \"%s\\n%s\", header, items[section]\n    if (i<n) printf \"\\n\"\n  }\n}' /data/commits.log > /release/CHANGELOG.md\ncat /release/CHANGELOG.md"
+    ],
+    "usage": {
+      "input_tokens": 986,
+      "output_tokens": 378,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 3485
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat /data/commits.log; mkdir -p /release; awk '\nmatch($0, /^([^ (]+)\\(([^)]+)\\): (.*)$/, a) {\n  type=a[1]; scope=a[2]; message=a[3]\n  if (type == \"feat\") section=\"Features\"\n  else if (type == \"fix\") section=\"Bug Fixes\"\n  else section=\"Other\"\n  if (!seen[section]++) {\n    order[++n]=section\n  }\n  items[section]=items[section] \"- \" scope \": \" message \"\\n\"\n}\nEND {\n  for (i=1; i<=n; i++) {\n    section=order[i]\n    if (section == \"Features\") header=\"## Features\"\n    else if (section == \"Bug Fixes\") header=\"## Bug Fixes\"\n    else header=\"## Other\"\n    printf \"%s\\n%s\", header, items[section]\n    if (i<n) printf \"\\n\"\n  }\n}' /data/commits.log > /release/CHANGELOG.md\ncat /release/CHANGELOG.md",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "feat(auth): add OAuth2 support\nfix(api): handle null response body\nfeat(ui): dark mode toggle\nchore(deps): update lodash to 4.17.21\nfix(auth): token refresh race condition\nfeat(api): add pagination support\nfix(ui): button alignment on mobile\ndocs(readme): update install instructions\nfeat(db): add connection pooling\nfix(api): correct status code for 404\n## Features\n- auth: add OAuth2 support\n- ui: dark mode toggle\n- api: add pagination support\n- db: add connection pooling\n\n## Bug Fixes\n- api: handle null response body\n- auth: token refresh race condition\n- ui: button alignment on mobile\n- api: correct status code for 404\n\n## Other\n- deps: update lodash to 4.17.21\n- readme: update install instructions\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

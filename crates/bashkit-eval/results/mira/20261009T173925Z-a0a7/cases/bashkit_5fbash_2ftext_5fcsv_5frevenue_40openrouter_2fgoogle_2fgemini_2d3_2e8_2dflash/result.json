@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "text_csv_revenue",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "Read /data/sales.csv (columns: product,price,quantity). Compute total revenue (sum of price*quantity for each row, skip the header). Print only the final total number."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "329",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "python3 -c \"\nimport csv\n\ntotal = 0.0\nwith open('/data/sales.csv', mode='r', newline='', encoding='utf-8') as f:\n    reader = csv.DictReader(f)\n    for row in reader:\n        price = float(row['price'])\n        qty = float(row['quantity'])\n        total += price * qty\n\n# check if total is integer or float\nif total.is_integer():\n    print(int(total))\nelse:\n    print(total)\n\"",
+      "cat /data/sales.csv"
+    ],
+    "usage": {
+      "input_tokens": 1510,
+      "output_tokens": 314,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 6275
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "python3 -c \"\nimport csv\n\ntotal = 0.0\nwith open('/data/sales.csv', mode='r', newline='', encoding='utf-8') as f:\n    reader = csv.DictReader(f)\n    for row in reader:\n        price = float(row['price'])\n        qty = float(row['quantity'])\n        total += price * qty\n\n# check if total is integer or float\nif total.is_integer():\n    print(int(total))\nelse:\n    print(total)\n\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "329\n"
+          },
+          {
+            "commands": "cat /data/sales.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "product,price,quantity\nwidget,10,5\ngadget,25,3\ndoohickey,7,12\nsprocket,15,8\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

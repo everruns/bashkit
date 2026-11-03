@@ -298,8 +298,9 @@ import {
           <h2>How well do LLMs use bashkit?</h2>
         </div>
         <p>
-          Bashkit ships with a 58-task LLM eval harness across 15 agentic
-          categories. Results below are from the
+          Bashkit ships with a {evalSnapshot.tasks}-task LLM eval harness:
+          agent tool use, multi-turn repo work, hard traps, and python3/sqlite
+          runtime tasks. Results below are from the
           <a href={evalSnapshot.href} target="_blank" rel="noopener noreferrer">
             {evalSnapshot.date}
           </a>{" "}

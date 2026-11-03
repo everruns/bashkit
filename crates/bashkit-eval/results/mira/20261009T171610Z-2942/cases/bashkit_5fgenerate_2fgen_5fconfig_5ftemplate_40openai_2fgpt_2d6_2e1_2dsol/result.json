@@ -1,0 +1,63 @@
+{
+  "eval": "bashkit_generate",
+  "sample": "gen_config_template",
+  "target": "openai/gpt-6.1-sol",
+  "input": [
+    "Write a bash script that renders a config template.\n\nStarting files:\n--- /home/eval/app/app.conf.tmpl ---\n# generated for ${APP_ENV}\n[db]\nhost = ${DB_HOST}\nport = ${DB_PORT}\nurl = postgres://${DB_USER}@${DB_HOST}:${DB_PORT}/app\n[runtime]\nhome = ${RUNTIME_HOME}\ngreeting = Hello, ${USER_NAME}!\nprice = $5 per unit\n--- end ---\n--- /home/eval/app/prod.env ---\n# production settings\nAPP_ENV=prod/eu\nDB_HOST=db.internal\nDB_PORT=5432\n\nDB_USER=app_rw\nUNUSED_KEY=x\n--- end ---\n\nRender /home/eval/app/app.conf.tmpl into /home/eval/app/app.conf:\n- `prod.env` holds `KEY=VALUE` lines; blank lines and lines starting with `#` are ignored. Values are taken literally (they may contain `/`).\n- Every `${NAME}` placeholder whose NAME is defined in prod.env is replaced by its value.\n- Placeholders whose NAME is not defined in prod.env stay exactly as written, even if a variable of that name exists in the shell environment.\n- Everything else (including `$5`) is copied unchanged.\n\nThen print one line to stdout: `unresolved: ` followed by the names of the placeholders left unresolved, sorted, unique, space-separated (here: `unresolved: RUNTIME_HOME USER_NAME`). Exit 0."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "3/3 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "```bash\n#!/bin/bash\nset -euo pipefail\n\nunresolved_file=$(mktemp)\ntrap 'rm -f \"$unresolved_file\"' EXIT\n\nawk -v output=\"/home/eval/app/app.conf\" -v unresolved=\"$unresolved_file\" '\nFILENAME == ARGV[1] {\n    if ($0 == \"\" || substr($0, 1, 1) == \"#\")\n        next\n    pos = index($0, \"=\")\n    if (pos > 0)\n        values[substr($0, 1, pos - 1)] = substr($0, pos + 1)\n    next\n}\n{\n    rest = $0\n    rendered = \"\"\n    while (match(rest, /\\$\\{[A-Za-z_][A-Za-z0-9_]*\\}/)) {\n        placeholder = substr(rest, RSTART, RLENGTH)\n        name = substr(placeholder, 3, length(placeholder) - 3)\n        rendered = rendered substr(rest, 1, RSTART - 1)\n        if (name in values)\n            rendered = rendered values[name]\n        else {\n            rendered = rendered placeholder\n            missing[name] = 1\n        }\n        rest = substr(rest, RSTART + RLENGTH)\n    }\n    print rendered rest > output\n}\nEND {\n    for (name in missing)\n        print name > unresolved\n}\n' /home/eval/app/prod.env /home/eval/app/app.conf.tmpl\n\nnames=$(LC_ALL=C sort -u \"$unresolved_file\" | paste -sd ' ' -)\nprintf 'unresolved: %s\\n' \"$names\"\nexit 0\n```",
+    "iterations": 1,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "#!/bin/bash\nset -euo pipefail\n\nunresolved_file=$(mktemp)\ntrap 'rm -f \"$unresolved_file\"' EXIT\n\nawk -v output=\"/home/eval/app/app.conf\" -v unresolved=\"$unresolved_file\" '\nFILENAME == ARGV[1] {\n    if ($0 == \"\" || substr($0, 1, 1) == \"#\")\n        next\n    pos = index($0, \"=\")\n    if (pos > 0)\n        values[substr($0, 1, pos - 1)] = substr($0, pos + 1)\n    next\n}\n{\n    rest = $0\n    rendered = \"\"\n    while (match(rest, /\\$\\{[A-Za-z_][A-Za-z0-9_]*\\}/)) {\n        placeholder = substr(rest, RSTART, RLENGTH)\n        name = substr(placeholder, 3, length(placeholder) - 3)\n        rendered = rendered substr(rest, 1, RSTART - 1)\n        if (name in values)\n            rendered = rendered values[name]\n        else {\n            rendered = rendered placeholder\n            missing[name] = 1\n        }\n        rest = substr(rest, RSTART + RLENGTH)\n    }\n    print rendered rest > output\n}\nEND {\n    for (name in missing)\n        print name > unresolved\n}\n' /home/eval/app/prod.env /home/eval/app/app.conf.tmpl\n\nnames=$(LC_ALL=C sort -u \"$unresolved_file\" | paste -sd ' ' -)\nprintf 'unresolved: %s\\n' \"$names\"\nexit 0\n"
+    ],
+    "usage": {
+      "input_tokens": 592,
+      "output_tokens": 539,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 10956
+    },
+    "metrics": {
+      "exec_ms": 8.0,
+      "exit_code": 0.0,
+      "extracted": 1.0,
+      "generate_ms": 10948.0,
+      "script_bytes": 1113.0,
+      "script_found": 1.0,
+      "timed_out": 0.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "#!/bin/bash\nset -euo pipefail\n\nunresolved_file=$(mktemp)\ntrap 'rm -f \"$unresolved_file\"' EXIT\n\nawk -v output=\"/home/eval/app/app.conf\" -v unresolved=\"$unresolved_file\" '\nFILENAME == ARGV[1] {\n    if ($0 == \"\" || substr($0, 1, 1) == \"#\")\n        next\n    pos = index($0, \"=\")\n    if (pos > 0)\n        values[substr($0, 1, pos - 1)] = substr($0, pos + 1)\n    next\n}\n{\n    rest = $0\n    rendered = \"\"\n    while (match(rest, /\\$\\{[A-Za-z_][A-Za-z0-9_]*\\}/)) {\n        placeholder = substr(rest, RSTART, RLENGTH)\n        name = substr(placeholder, 3, length(placeholder) - 3)\n        rendered = rendered substr(rest, 1, RSTART - 1)\n        if (name in values)\n            rendered = rendered values[name]\n        else {\n            rendered = rendered placeholder\n            missing[name] = 1\n        }\n        rest = substr(rest, RSTART + RLENGTH)\n    }\n    print rendered rest > output\n}\nEND {\n    for (name in missing)\n        print name > unresolved\n}\n' /home/eval/app/prod.env /home/eval/app/app.conf.tmpl\n\nnames=$(LC_ALL=C sort -u \"$unresolved_file\" | paste -sd ' ' -)\nprintf 'unresolved: %s\\n' \"$names\"\nexit 0\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "unresolved: RUNTIME_HOME USER_NAME\n"
+          }
+        ]
+      },
+      "generate": {
+        "extraction": "fenced",
+        "timed_out": false
+      }
+    }
+  },
+  "skipped": false
+}

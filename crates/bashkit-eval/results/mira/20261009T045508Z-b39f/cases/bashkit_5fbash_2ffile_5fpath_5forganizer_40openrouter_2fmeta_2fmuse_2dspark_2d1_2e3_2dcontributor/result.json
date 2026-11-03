@@ -1,0 +1,71 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "file_path_organizer",
+  "target": "openrouter/meta/muse-spark-1.3-contributor",
+  "input": [
+    "Under /uploads there are files with various extensions. Write a script that: 1) For each file, determines its extension and moves it into a subdirectory named after that extension (e.g., .txt files go to /uploads/txt/, .csv files go to /uploads/csv/). Create the subdirectories as needed. 2) Print each move as 'moved: FILENAME -> EXTENSION_DIR/'. 3) After all moves, print a summary of how many files per extension as 'EXT: N files'. Handle the case where a file has no extension by putting it in /uploads/other/."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "8/8 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "All files organized by extension:\n\n**Script created at `/home/eval/organize.sh`** and executed:\n\n```\nmoved: README -> other/\nmoved: config.json -> json/\nmoved: data.csv -> csv/\nmoved: image.png -> png/\nmoved: notes.txt -> txt/\nmoved: report.txt -> txt/\nmoved: results.csv -> csv/\ncsv: 2 files\njson: 1 files\nother: 1 files\npng: 1 files\ntxt: 2 files\n```\n\n**Verification (`ls -R /uploads`):**\n- `/uploads/csv/data.csv, results.csv`\n- `/uploads/json/config.json`\n- `/uploads/other/README` (no extension)\n- `/uploads/png/image.png`\n- `/uploads/txt/notes.txt, report.txt`\n\nThe script:\n1. Loops over `/uploads/*` (files only), extracts extension via `${filename##*.}` (using `other` if no extension).\n2. Creates `/uploads/<ext>/` as needed with `mkdir -p`.\n3. Moves file and prints `moved: FILENAME -> EXT/`.\n4. Counts per extension with associative array and prints `EXT: N files` summary sorted.",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "ls -R /uploads 2>&1; echo \"---\"; ls -la /uploads/ 2>&1",
+      "cat > /home/eval/organize.sh <<'EOS'\n#!/bin/bash\nUPLOAD_DIR=\"/uploads\"\ndeclare -A counts\n\nfor filepath in \"$UPLOAD_DIR\"/*; do\n  [ -e \"$filepath\" ] || continue\n  [ -f \"$filepath\" ] || continue\n  filename=$(basename \"$filepath\")\n  # Determine extension\n  if [[ \"$filename\" == *.* ]]; then\n    ext=\"${filename##*.}\"\n    # Handle files like \"name.\" (empty ext) or hidden files like \".bashrc\" with no real extension\n    if [[ -z \"$ext\" ]]; then\n      ext=\"other\"\n    elif [[ \"$filename\" == .* && \"${filename#.}\" != *.* ]]; then\n      ext=\"other\"\n    fi\n  else\n    ext=\"other\"\n  fi\n  mkdir -p \"$UPLOAD_DIR/$ext\"\n  mv -- \"$filepath\" \"$UPLOAD_DIR/$ext/\"\n  echo \"moved: $filename -> $ext/\"\n  # increment count safely (handle unset under set -u)\n  if [[ -v counts[\"$ext\"] ]]; then\n    counts[\"$ext\"]=$((counts[\"$ext\"] + 1))\n  else\n    counts[\"$ext\"]=1\n  fi\ndone\n\n# Print summary sorted by extension\nfor ext in $(printf '%s\\n' \"${!counts[@]}\" | sort); do\n  echo \"$ext: ${counts[$ext]} files\"\ndone\nEOS\nchmod +x /home/eval/organize.sh\ncat /home/eval/organize.sh",
+      "bash /home/eval/organize.sh\necho \"=== EXIT: $? ===\"\necho \"--- verify ---\"\nls -R /uploads"
+    ],
+    "usage": {
+      "input_tokens": 5712,
+      "output_tokens": 2761,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 29772
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 3.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -R /uploads 2>&1; echo \"---\"; ls -la /uploads/ 2>&1",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/uploads:\nREADME\nconfig.json\ndata.csv\nimage.png\nnotes.txt\nreport.txt\nresults.csv\n---\n-rw-r--r--       17 2026-10-09 05:01 README\n-rw-r--r--       13 2026-10-09 05:01 config.json\n-rw-r--r--        5 2026-10-09 05:01 data.csv\n-rw-r--r--        8 2026-10-09 05:01 image.png\n-rw-r--r--       13 2026-10-09 05:01 notes.txt\n-rw-r--r--       14 2026-10-09 05:01 report.txt\n-rw-r--r--        5 2026-10-09 05:01 results.csv\n"
+          },
+          {
+            "commands": "cat > /home/eval/organize.sh <<'EOS'\n#!/bin/bash\nUPLOAD_DIR=\"/uploads\"\ndeclare -A counts\n\nfor filepath in \"$UPLOAD_DIR\"/*; do\n  [ -e \"$filepath\" ] || continue\n  [ -f \"$filepath\" ] || continue\n  filename=$(basename \"$filepath\")\n  # Determine extension\n  if [[ \"$filename\" == *.* ]]; then\n    ext=\"${filename##*.}\"\n    # Handle files like \"name.\" (empty ext) or hidden files like \".bashrc\" with no real extension\n    if [[ -z \"$ext\" ]]; then\n      ext=\"other\"\n    elif [[ \"$filename\" == .* && \"${filename#.}\" != *.* ]]; then\n      ext=\"other\"\n    fi\n  else\n    ext=\"other\"\n  fi\n  mkdir -p \"$UPLOAD_DIR/$ext\"\n  mv -- \"$filepath\" \"$UPLOAD_DIR/$ext/\"\n  echo \"moved: $filename -> $ext/\"\n  # increment count safely (handle unset under set -u)\n  if [[ -v counts[\"$ext\"] ]]; then\n    counts[\"$ext\"]=$((counts[\"$ext\"] + 1))\n  else\n    counts[\"$ext\"]=1\n  fi\ndone\n\n# Print summary sorted by extension\nfor ext in $(printf '%s\\n' \"${!counts[@]}\" | sort); do\n  echo \"$ext: ${counts[$ext]} files\"\ndone\nEOS\nchmod +x /home/eval/organize.sh\ncat /home/eval/organize.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "#!/bin/bash\nUPLOAD_DIR=\"/uploads\"\ndeclare -A counts\n\nfor filepath in \"$UPLOAD_DIR\"/*; do\n  [ -e \"$filepath\" ] || continue\n  [ -f \"$filepath\" ] || continue\n  filename=$(basename \"$filepath\")\n  # Determine extension\n  if [[ \"$filename\" == *.* ]]; then\n    ext=\"${filename##*.}\"\n    # Handle files like \"name.\" (empty ext) or hidden files like \".bashrc\" with no real extension\n    if [[ -z \"$ext\" ]]; then\n      ext=\"other\"\n    elif [[ \"$filename\" == .* && \"${filename#.}\" != *.* ]]; then\n      ext=\"other\"\n    fi\n  else\n    ext=\"other\"\n  fi\n  mkdir -p \"$UPLOAD_DIR/$ext\"\n  mv -- \"$filepath\" \"$UPLOAD_DIR/$ext/\"\n  echo \"moved: $filename -> $ext/\"\n  # increment count safely (handle unset under set -u)\n  if [[ -v counts[\"$ext\"] ]]; then\n    counts[\"$ext\"]=$((counts[\"$ext\"] + 1))\n  else\n    counts[\"$ext\"]=1\n  fi\ndone\n\n# Print summary sorted by extension\nfor ext in $(printf '%s\\n' \"${!counts[@]}\" | sort); do\n  echo \"$ext: ${counts[$ext]} files\"\ndone\n"
+          },
+          {
+            "commands": "bash /home/eval/organize.sh\necho \"=== EXIT: $? ===\"\necho \"--- verify ---\"\nls -R /uploads",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "moved: README -> other/\nmoved: config.json -> json/\nmoved: data.csv -> csv/\nmoved: image.png -> png/\nmoved: notes.txt -> txt/\nmoved: report.txt -> txt/\nmoved: results.csv -> csv/\ncsv: 2 files\njson: 1 files\nother: 1 files\npng: 1 files\ntxt: 2 files\n=== EXIT: 0 ===\n--- verify ---\n/uploads:\ncsv\njson\nother\npng\ntxt\n\n/uploads/csv:\ndata.csv\nresults.csv\n\n/uploads/json:\nconfig.json\n\n/uploads/other:\nREADME\n\n/uploads/png:\nimage.png\n\n/uploads/txt:\nnotes.txt\nreport.txt\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

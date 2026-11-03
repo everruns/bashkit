@@ -9,6 +9,15 @@ tags:
 
 # Builtin Commands
 
+## Live host commands
+
+Use the public `Command` / `CommandContext` boundary for host handlers needing
+incremental input or awaited output. Completion is `CommandStatus`, independent
+of bytes. `BashBuilder::command` and `BuiltinRegistry::insert_command` install an
+internal adapter; `Builtin` remains the buffered utility contract. See the
+[streaming design](streaming-roadmap.md) for routing, budget lifetime, whole-output
+hook restrictions, bindings, tests and explicitly buffered roadmap boundaries.
+
 ## Status
 Implemented
 
@@ -39,6 +48,16 @@ option spelling matches GNU; builtins on a ported clap surface (see
 Obsolete forms GNU still accepts (`head -5`, `fold -5`) are rewritten to the
 modern option before getopt runs, never when they are an option's value.
 
+### Directory copy operands
+
+`cp` preserves an explicit final `.` component before path normalization:
+`cp -r source/. destination` merges the complete contents, while `source/`
+retains its basename inside an existing destination. This uses the existing
+budgeted recursive walker, including hidden entries, symlink preservation,
+no-clobber and self/descendant-copy rejection. Behavioral and GNU differential
+regressions live in `cp_directory_dot_tests`; the public
+[filesystem guide](../../docs/filesystem.md) shows the layout.
+
 ### Navigation resource accounting
 
 `cd` borrows its target and `CDPATH` rather than cloning them. It searches
@@ -56,13 +75,38 @@ the same reservation. `execution_budget_tests::cdpath_*` cover script and
 environment inputs, memory/work exhaustion, lease release, early success, and
 cancellation; `cd-builtin.test.sh` covers Bash semantics.
 
+### Array side effects and retained memory
+
+`RemoveArray` releases indexed-array entry and byte charges when dropping the
+binding. `mapfile` rejects the interpreter-owned debug-stack arrays
+(`FUNCNAME`, `BASH_SOURCE`, `BASH_LINENO`) with status 1, as Bash does; their
+uncharged metadata must never be refunded as user-array capacity. `FUNCNAME`
+remains reserved after unset; this narrower lifecycle is L-MAPFILE-002 in
+[Known Limitations](../operations/limitations.md).
+`SetIndexedArray` applies checked element writes against the live array;
+`mapfile -O` overwrites therefore refund replaced values and preserve entries
+whose writes are refused. Ordinary `mapfile` clears first, including for empty
+input. Updates are sequential; a limit failure can retain earlier admitted
+records. Entry and byte refusals record the first memory-limit error and fail
+the host execution, with recovery available on a later execution after freeing
+state. They never silently report a rejected array write as success.
+
+`array_budget_security_tests` covers repeated replacements, empty input, `-O`,
+byte/entry exhaustion, session recovery, and the independent brush-web
+three-read 50,000-line reproduction (TM-DOS-060, TM-DOS-114).
+
 ### Command Dispatch Order
 
 functions → special commands → builtins → path execution → $PATH search →
 `CommandResolver` → "command not found"
 
 Scripts containing `/` are resolved against VFS. Commands without `/` are
-searched in `$PATH` directories. Shebang lines are stripped; content executed
+searched in `$PATH` directories. A shebang naming a registered non-shell
+builtin (`#!/usr/bin/env python3`, `#!/usr/bin/python3`, `#!/usr/bin/awk -f`)
+runs that builtin with the script path as its argument, as the kernel execs an
+interpreter (only the basename matters; `#!/path/NAME ARG` passes ARG as one
+argument, `env -S` splits). Otherwise (`bash`/`sh`, unknown interpreters,
+shell-only builtins, no shebang) the shebang is stripped and the content runs
 as bash. Exit 127: not found; Exit 126: not executable or is a directory.
 
 ### Command Hash Resource Ownership
@@ -525,6 +569,19 @@ interleave with recipe output in order. Expansion is synchronous: a `$(shell)`,
 and parsing restarts with the answer cached. Messages and exit codes follow GNU
 (`*** No rule to make target`, `Error N`, `-k`, `-q` exit 1, `-n`).
 
+`$(subst)` counts non-overlapping UTF-8 matches and computes the exact result
+length with checked arithmetic before construction, admitting it against the
+remaining 4 MiB expansion allowance. `BudgetedString` reserves each capacity
+growth before allocation; arguments, result and parent expansion copies share
+the request's live-memory budget. Expanded variable values are immutable,
+reference-counted owners of that storage and its lease, so parser scratch views
+share them and replacement releases the old value after its last owner drops.
+Prepared recipes and expanded exports retain their generated storage too.
+Both substitution passes charge work and check cancellation/deadlines. Empty
+patterns still return the input unchanged. Other Make function algorithms and
+raw makefile storage retain their existing behavior; this contract concerns
+substitution and the generated expansion buffers that carry its results.
+
 Deliberate gaps are L-MAKE-001..003 in
 [Known Limitations](../operations/limitations.md); amplification caps are
 TM-DOS-126 in the [Threat Model](../security/threat-model.md).
@@ -608,18 +665,57 @@ probe of the 879 BRE/ERE regex cases except two whose pattern holds a raw
 Gaps are L-GREP-001..003 in [Known Limitations](../operations/limitations.md);
 regex caps are TM-DOS-023/025 in the [Threat Model](../security/threat-model.md).
 
+### dd
+
+`dd` keeps its whole-buffer copy model. The selected input slice is capped before
+copying. `conv=sync` computes the rounded block length with checked arithmetic
+and rejects lengths above `DD_MAX_BYTES` before allocation. The entire copied
+payload capacity is admitted through `BudgetedBytes` against the shared live
+memory budget; its lease remains through conversion and output handling,
+including discarded output. Stdout conversion also admits cached text while
+retaining both storage guards. Budget failures propagate as resource-limit errors.
+Ordinary count/skip, padding, conversion, record reports, seek, and file-error
+behavior is preserved. Unit tests use tiny admission budgets and allocation-free
+overflow arithmetic; `dd_tests` compares small copies with GNU dd and checks VFS
+seek/error behavior (TM-DOS-003, TM-DOS-103).
+
 ### fmt
 
 `fmt` vendors the uutils/coreutils `fmt` engine (MIT): `builtins/fmt/
 linebreak.rs` (Knuth-Plass optimal fit) and `parasplit.rs` (paragraphs,
 prefixes, crown/tagged indents), pinned to the same uutils revision as the
-generated argument files. Bashkit owns only `fmt/mod.rs`: option parsing and
-I/O. Options are GNU's (`-w`, `-g`, `-c`, `-t`, `-s`, `-u`, `-p`, obsolete
+generated argument files. Bashkit owns option parsing, I/O and budget
+enforcement. Options are GNU's (`-w`, `-g`, `-c`, `-t`, `-s`, `-u`, `-p`, obsolete
 `-WIDTH`) plus the uutils extras (`-m`, `-P`, `-x`, `-X`, `-q`, `-T`). Width
 rules and error messages follow GNU: goal is 93% of the width, `-g` alone sets
 the width to goal + 10, width is capped at 2500, goal at the width. Vendored
 `panic!`/`unwrap` paths were turned into early returns. GNU `fmt.c` is GPL and
 must not be ported; line-break differences are L-FMT-001.
+
+All formatter output, including unformatted lines, retains a `BudgetedBytes`
+capacity lease against the shared live-intermediate budget before fallible
+allocation. Repeated indentation/prefix bytes consume work before copying;
+optimal-fit word/active-path searches also poll the shared work, cancellation
+and deadline budget. Sink/search errors propagate to the Bash API as resource
+failures, never successful partial output. The stdout capture ceiling does not
+limit a formatter sink used by a pipeline or VFS redirect. Regression coverage:
+`fmt_resource_tests` and the formatter's capacity/cancellation/deadline unit tests.
+
+### join
+
+`join` preserves GNU matching-row Cartesian products, field selection,
+unpaired rows, headers and contextual Unicode case folding. Parsed row/field
+vectors, keys, input decoding and output use shared-budget storage; generated
+fields append directly without a temporary per-row vector. Input metadata
+admits VFS reads, actual capacity growth is charged, and repeated file reads
+share aggregate-input accounting. Parsing, grouping (including `-v` suppressed
+groups), comparisons and emissions charge work and check cancellation/deadlines.
+Output text and its byte-stream copy both require admission before allocation.
+Failures propagate through the Bash API as resource-limit errors. Capture caps
+remain downstream so pipelines and redirects preserve complete admitted output.
+Regression fixtures use at most two rows per input and small configured budgets:
+`join_resource_tests`, `builtins::join::tests::ordinary_join_*`, and
+`stream::tests::budgeted_string_stream_admits_both_representations` (TM-DOS-138).
 
 ### Network Builtins
 
@@ -635,10 +731,22 @@ corpus: page layout (5-line header with date, centered title and page number,
 body, 5-line trailer, 66 lines), `-COLUMN` down/across with last-page
 balancing, `-m`, `-n`, `-d`, `-o`, `-s`/`-S`/`-J`, `-l`/`-w`/`-W`, `+FIRST:LAST`
 and the error messages. Multi-column padding uses GNU's tab rule: padding and
-blank runs of two or more become tabs where they reach a tab stop. Header
-dates come from the sandbox clock and `TZ` (the `date` builtin's), file dates
+blank runs of two or more become tabs where they reach a tab stop. Line
+number separators expand at local field tab stops before column rendering,
+including unpadded `-J -n` columns; the finite GNU oracle covers this combination.
+Header dates come from the sandbox clock and `TZ` (the `date` builtin's), file dates
 from VFS mtimes. Output is capped at 16 MiB because padding can multiply
-input size. Gaps: L-PR-001.
+input size. Every row/output append checks that cap before growth, including
+headers, offsets, newlines and form feeds. Header text is appended directly;
+page slices and cells borrow existing storage instead of copying headers/text.
+Inputs retain date timestamps; formatted `-D` headers live only while emitting
+one nonempty stream, avoiding repeated date storage for empty files.
+Input lines, cell/row vectors and rendered/output buffers lease capacity from
+the shared live-memory budget. VFS bytes charge aggregate input; input splitting,
+row construction and each page (including skipped pages) charge work and poll
+cancellation/deadlines. Limit failures abort the execution; a subsequent host
+`exec()` starts with a fresh budget. Regressions: `pr_resource_tests`,
+`pr_allocation_tests`, and `builtins::pr::tests`. Gaps: L-PR-001.
 
 ### Archive Compression
 
@@ -646,6 +754,19 @@ input size. Gaps: L-PR-001.
 bundles (`-cjf`, `cjf`) and `--bzip2`, and detects gzip/bzip2 magic while listing
 or extracting so `.tar.bz2`/`.tbz2` inputs work without an explicit codec flag.
 `bzip2`, `bunzip2`, and `bzcat` share the same byte-native codec path.
+
+`tar -T` / `--files-from` admits each VFS read using its metadata size,
+retains the read lease through parsing, and charges any extra returned capacity.
+The filesystem backend owns allocation admission if a host-backed file grows
+between stat and read. Stdin is borrowed. Names are decoded directly into
+`BudgetedString` owners held by a `BudgetedVec`; neither per-line copies nor
+lossy UTF-8 replacement can allocate before live-budget admission. Shared work
+charges cover source bytes, every line (including blanks), and decoding steps,
+checking the request deadline/cancellation during dense-list scans. Repeated
+sources share input/live/work budgets, preserving order, duplicates, CRLF,
+blank lines, stdin, and missing-member behavior. Tests:
+`tar_files_from_budget_tests` and the isolated counting-allocator
+`tar_files_from_allocation_tests` (TM-DOS-103).
 
 The implementation uses `bzip2` 0.6 with its default pure-Rust
 `libbz2-rs-sys` backend. The crate is maintained by the Trifecta Tech

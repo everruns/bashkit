@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "complex_debug_script",
+  "target": "openai/gpt-6-luna",
+  "input": [
+    "The script /scripts/broken.sh has bugs. Run it first to see the errors. Then examine the script, identify the bugs, fix them, and run the fixed version. The script should compute the factorial of 5 and print 'factorial(5) = 120'. The script should exit 0. Write the fixed version back to /scripts/broken.sh."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "3/3 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Fixed `/scripts/broken.sh` by closing the command substitution. The script now prints `factorial(5) = 120` and exits with status 0.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cat /scripts/broken.sh; echo '--- run ---'; bash /scripts/broken.sh",
+      "python3 - <<'PY'\np='/scripts/broken.sh'\ns=open(p).read()\ns=s.replace('result=$(factorial 5\\n', 'result=$(factorial 5)\\n')\nopen(p,'w').write(s)\nPY\ncat /scripts/broken.sh\nbash /scripts/broken.sh; status=$?; echo \"exit=$status\"; test \"$status\" -eq 0"
+    ],
+    "usage": {
+      "input_tokens": 1883,
+      "output_tokens": 226,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 6530
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 1.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat /scripts/broken.sh; echo '--- run ---'; bash /scripts/broken.sh",
+            "exit_code": 2,
+            "stderr": "/scripts/broken.sh: line 13: syntax error: unterminated command substitution\n",
+            "stdout": "#!/bin/bash\n\nfactorial() {\n  local n=$1\n  if [ $n -le 1 ]; then\n    echo 1\n  else\n    local sub=$(factorial $((n-1)))\n    echo $((n * sub))\n  fi\n}\n\nresult=$(factorial 5\necho \"factorial(5) = $result\"\nexit 0\n--- run ---\n"
+          },
+          {
+            "commands": "python3 - <<'PY'\np='/scripts/broken.sh'\ns=open(p).read()\ns=s.replace('result=$(factorial 5\\n', 'result=$(factorial 5)\\n')\nopen(p,'w').write(s)\nPY\ncat /scripts/broken.sh\nbash /scripts/broken.sh; status=$?; echo \"exit=$status\"; test \"$status\" -eq 0",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "#!/bin/bash\n\nfactorial() {\n  local n=$1\n  if [ $n -le 1 ]; then\n    echo 1\n  else\n    local sub=$(factorial $((n-1)))\n    echo $((n * sub))\n  fi\n}\n\nresult=$(factorial 5)\necho \"factorial(5) = $result\"\nexit 0\nfactorial(5) = 120\nexit=0\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

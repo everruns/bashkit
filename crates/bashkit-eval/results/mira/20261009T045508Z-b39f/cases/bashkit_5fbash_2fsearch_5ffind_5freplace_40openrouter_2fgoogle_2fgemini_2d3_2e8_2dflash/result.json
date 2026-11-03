@@ -1,0 +1,120 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "search_find_replace",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "Search all .js files under /src for the string 'console.log'. Replace every occurrence with 'logger.info' in-place. Print each modified filename and how many replacements were made per file. At the end, print 'Files modified: N' with the total count of files changed."
+  ],
+  "passed": false,
+  "aggregate": 0.3333333333333333,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 0.3333333333333333,
+      "pass": false,
+      "reason": "2/6 checks passed (weighted rate 33%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "",
+    "iterations": 10,
+    "tool_calls_count": 10,
+    "tool_calls": [
+      "ls -la /src",
+      "find /src -type f -name \"*.js\"",
+      "for f in /src/*.js; do\n  echo \"=== $f ===\"\n  cat \"$f\"\ndone",
+      "find /src -name \"*.js\"",
+      "node -v || true",
+      "awk --version | head -n 1\nsed --version | head -n 1",
+      "# Test counting matches\nfor f in $(find /src -type f -name \"*.js\" | sort); do\n  count=$(grep -o 'console\\.log' \"$f\" | wc -l)\n  echo \"$f: $count\"\ndone",
+      "sed -i 's/console\\.log/logger\\.info/g' /src/app.js\ncat /src/app.js",
+      "# Revert /src/app.js to test our full script cleanly\nsed -i 's/logger\\.info/console\\.log/g' /src/app.js",
+      "cat /src/app.js"
+    ],
+    "usage": {
+      "input_tokens": 6826,
+      "output_tokens": 589,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 17348
+    },
+    "metrics": {
+      "natural_stop": 0.0,
+      "tool_calls": 10.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 10.0,
+      "turns": 10.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /src",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--      172 2026-10-09 05:00 app.js\n-rw-r--r--      119 2026-10-09 05:00 index.js\n-rw-r--r--      214 2026-10-09 05:00 middleware.js\n-rw-r--r--       65 2026-10-09 05:00 utils.js\n"
+          },
+          {
+            "commands": "find /src -type f -name \"*.js\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/src/app.js\n/src/index.js\n/src/middleware.js\n/src/utils.js\n"
+          },
+          {
+            "commands": "for f in /src/*.js; do\n  echo \"=== $f ===\"\n  cat \"$f\"\ndone",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "=== /src/app.js ===\nconst express = require('express');\nconst app = express();\n\napp.get('/', (req, res) => {\n  console.log('Request received');\n  res.send('Hello');\n});\n\nmodule.exports = app;\n=== /src/index.js ===\nconst app = require('./app');\nconsole.log('Server starting');\napp.listen(3000);\nconsole.log('Listening on port 3000');\n=== /src/middleware.js ===\nfunction auth(req, res, next) {\n  console.log('Auth check');\n  if (req.headers.auth) {\n    next();\n  } else {\n    console.log('Auth failed');\n    res.status(401).send('Unauthorized');\n  }\n}\n\nmodule.exports = auth;\n=== /src/utils.js ===\nfunction helper() {\n  return 42;\n}\n\nmodule.exports = { helper };\n"
+          },
+          {
+            "commands": "find /src -name \"*.js\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/src/app.js\n/src/index.js\n/src/middleware.js\n/src/utils.js\n"
+          },
+          {
+            "commands": "node -v || true",
+            "exit_code": 0,
+            "stderr": "bash: line 1: node: command not found. Compilers and build tools are not available in the sandbox.\n",
+            "stdout": ""
+          },
+          {
+            "commands": "awk --version | head -n 1\nsed --version | head -n 1",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "GNU Awk 5.2.1 (bashkit)\nsed (bashkit) 0.1\n"
+          },
+          {
+            "commands": "# Test counting matches\nfor f in $(find /src -type f -name \"*.js\" | sort); do\n  count=$(grep -o 'console\\.log' \"$f\" | wc -l)\n  echo \"$f: $count\"\ndone",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/src/app.js: 1\n/src/index.js: 2\n/src/middleware.js: 2\n/src/utils.js: 0\n"
+          },
+          {
+            "commands": "sed -i 's/console\\.log/logger\\.info/g' /src/app.js\ncat /src/app.js",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "const express = require('express');\nconst app = express();\n\napp.get('/', (req, res) => {\n  logger.info('Request received');\n  res.send('Hello');\n});\n\nmodule.exports = app;\n"
+          },
+          {
+            "commands": "# Revert /src/app.js to test our full script cleanly\nsed -i 's/logger\\.info/console\\.log/g' /src/app.js",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "cat /src/app.js",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "const express = require('express');\nconst app = express();\n\napp.get('/', (req, res) => {\n  console.log('Request received');\n  res.send('Hello');\n});\n\nmodule.exports = app;\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

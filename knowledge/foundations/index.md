@@ -6,5 +6,6 @@
 * [Builtin Commands](builtins.md) - Builtin command trait, execution planning, registration, and implementation conventions.
 * [jq Input Compatibility](jq.md) - jq JSON input normalization, strict-boundary scope, and resource-accounting rules.
 * [Parallel Execution](parallel-execution.md) - Threading model, shared ownership, and concurrency safety requirements.
+* [Streaming Handler Roadmap](streaming-roadmap.md) - Proposed handler I/O contract, whole-buffer boundary audit, and acceptance gates for general streaming.
 * [Snapshot History and Deltas](snapshot-history.md) - Content-addressed snapshot objects, commit DAG with forks, chunked binary content, and the version and capability compatibility rules for restore.
 * [Execution Profiles](execution-profiles.md) - Typed policy bundles across execution, memory, filesystem, network, and embedded runtimes.

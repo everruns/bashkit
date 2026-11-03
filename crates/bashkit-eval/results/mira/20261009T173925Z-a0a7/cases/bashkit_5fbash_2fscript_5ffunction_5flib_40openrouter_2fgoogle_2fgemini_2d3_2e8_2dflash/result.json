@@ -1,0 +1,92 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "script_function_lib",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "Create a file /lib/utils.sh with these bash functions: 'to_upper' that reads stdin and converts to uppercase, 'count_lines' that takes a filename argument and prints the line count, 'file_size' that takes a filename and prints byte count. Then source /lib/utils.sh and demonstrate each function: use to_upper on the string 'hello world', count_lines on /data/sample.txt, and file_size on /data/sample.txt."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "4/4 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "The file `/lib/utils.sh` has been created with the required bash functions.\n\n### `/lib/utils.sh`\n```bash\nto_upper() {\n    tr '[:lower:]' '[:upper:]'\n}\n\ncount_lines() {\n    wc -l < \"$1\"\n}\n\nfile_size() {\n    wc -c < \"$1\"\n}\n```\n\n### Demonstration\n\n```bash\n$ source /lib/utils.sh\n\n$ echo \"hello world\" | to_upper\nHELLO WORLD\n\n$ count_lines /data/sample.txt\n5\n\n$ file_size /data/sample.txt\n49\n```",
+    "iterations": 7,
+    "tool_calls_count": 6,
+    "tool_calls": [
+      "ls -la /\nls -la /data 2>/dev/null || true\nls -la /lib 2>/dev/null || true",
+      "ls -la /data\ncat /data/sample.txt\nmkdir -p /lib",
+      "wc -l < /data/sample.txt\nwc -c < /data/sample.txt\nstat -c %s /data/sample.txt 2>/dev/null || true\necho \"hello world\" | tr '[:lower:]' '[:upper:]'",
+      "cat << 'EOF' > /lib/utils.sh\nto_upper() {\n    tr '[:lower:]' '[:upper:]'\n}\n\ncount_lines() {\n    wc -l < \"$1\"\n}\n\nfile_size() {\n    wc -c < \"$1\"\n}\nEOF\nchmod +x /lib/utils.sh",
+      "source /lib/utils.sh\necho \"hello world\" | to_upper\ncount_lines /data/sample.txt\nfile_size /data/sample.txt",
+      "cat /lib/utils.sh"
+    ],
+    "usage": {
+      "input_tokens": 6271,
+      "output_tokens": 1211,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 20641
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 6.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 6.0,
+      "turns": 7.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /\nls -la /data 2>/dev/null || true\nls -la /lib 2>/dev/null || true",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "drwxr-xr-x        0 2026-10-09 17:39 bin\ndrwxr-xr-x        0 2026-10-09 17:40 data\ndrwxr-xr-x        0 2026-10-09 17:40 dev\ndrwxr-xr-x        0 2026-10-09 17:39 etc\ndrwxr-xr-x        0 2026-10-09 17:40 home\ndrwxr-xr-x        0 2026-10-09 17:39 proc\ndrwxr-xr-x        0 2026-10-09 17:39 root\ndrwxrwxrwx        0 2026-10-09 17:40 tmp\ndrwxr-xr-x        0 2026-10-09 17:39 usr\n-rw-r--r--       49 2026-10-09 17:40 sample.txt\n"
+          },
+          {
+            "commands": "ls -la /data\ncat /data/sample.txt\nmkdir -p /lib",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       49 2026-10-09 17:40 sample.txt\nline one\nline two\nline three\nline four\nline five\n"
+          },
+          {
+            "commands": "wc -l < /data/sample.txt\nwc -c < /data/sample.txt\nstat -c %s /data/sample.txt 2>/dev/null || true\necho \"hello world\" | tr '[:lower:]' '[:upper:]'",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "5\n49\n49\nHELLO WORLD\n"
+          },
+          {
+            "commands": "cat << 'EOF' > /lib/utils.sh\nto_upper() {\n    tr '[:lower:]' '[:upper:]'\n}\n\ncount_lines() {\n    wc -l < \"$1\"\n}\n\nfile_size() {\n    wc -c < \"$1\"\n}\nEOF\nchmod +x /lib/utils.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "source /lib/utils.sh\necho \"hello world\" | to_upper\ncount_lines /data/sample.txt\nfile_size /data/sample.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "HELLO WORLD\n5\n49\n"
+          },
+          {
+            "commands": "cat /lib/utils.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "to_upper() {\n    tr '[:lower:]' '[:upper:]'\n}\n\ncount_lines() {\n    wc -l < \"$1\"\n}\n\nfile_size() {\n    wc -c < \"$1\"\n}\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

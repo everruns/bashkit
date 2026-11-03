@@ -1,0 +1,63 @@
+{
+  "eval": "bashkit_generate",
+  "sample": "gen_csv_to_jsonl",
+  "target": "openrouter/meta/muse-spark-1.3-contributor",
+  "input": [
+    "Write a bash script that converts a CSV file to JSON Lines.\n\nStarting files:\n--- /home/eval/data/users.csv (no trailing newline on the last line) ---\nid,name,email,active\n1,Alice Smith,alice@example.com,yes\n2,Bob Jones,bob@example.com,no\n3,Carol White,carol@example.com,yes\n--- end ---\n\nFields never contain commas or quotes.\n\nWrite /home/eval/data/users.jsonl with one compact JSON object per data row (no spaces), in input order, keys in this order: `id` (JSON number), `name` (string), `email` (string), `active` (JSON boolean: `yes` -> true, anything else -> false). Example line: `{\"id\":1,\"name\":\"Alice Smith\",\"email\":\"alice@example.com\",\"active\":true}`. Every row must be converted, including the last one.\n\nThen print `active=<number of active users>` to stdout and exit 0."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "3/3 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "```bash\n#!/bin/bash\nINPUT=\"/home/eval/data/users.csv\"\nOUTPUT=\"/home/eval/data/users.jsonl\"\nmkdir -p \"$(dirname \"$OUTPUT\")\"\n: > \"$OUTPUT\"\nactive_count=0\nfirst=1\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  line=${line%$'\\r'}\n  if (( first )); then\n    first=0\n    continue\n  fi\n  [[ -z \"$line\" ]] && continue\n  IFS=, read -r id name email active <<< \"$line\"\n  active=${active%$'\\r'}\n  if [[ \"$active\" == \"yes\" ]]; then\n    bool=\"true\"\n    active_count=$((active_count + 1))\n  else\n    bool=\"false\"\n  fi\n  printf '{\"id\":%s,\"name\":\"%s\",\"email\":\"%s\",\"active\":%s}\\n' \"$id\" \"$name\" \"$email\" \"$bool\" >> \"$OUTPUT\"\ndone < \"$INPUT\"\necho \"active=$active_count\"\nexit 0\n```",
+    "iterations": 1,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "#!/bin/bash\nINPUT=\"/home/eval/data/users.csv\"\nOUTPUT=\"/home/eval/data/users.jsonl\"\nmkdir -p \"$(dirname \"$OUTPUT\")\"\n: > \"$OUTPUT\"\nactive_count=0\nfirst=1\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  line=${line%$'\\r'}\n  if (( first )); then\n    first=0\n    continue\n  fi\n  [[ -z \"$line\" ]] && continue\n  IFS=, read -r id name email active <<< \"$line\"\n  active=${active%$'\\r'}\n  if [[ \"$active\" == \"yes\" ]]; then\n    bool=\"true\"\n    active_count=$((active_count + 1))\n  else\n    bool=\"false\"\n  fi\n  printf '{\"id\":%s,\"name\":\"%s\",\"email\":\"%s\",\"active\":%s}\\n' \"$id\" \"$name\" \"$email\" \"$bool\" >> \"$OUTPUT\"\ndone < \"$INPUT\"\necho \"active=$active_count\"\nexit 0\n"
+    ],
+    "usage": {
+      "input_tokens": 513,
+      "output_tokens": 2701,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 40980
+    },
+    "metrics": {
+      "exec_ms": 8.0,
+      "exit_code": 0.0,
+      "extracted": 1.0,
+      "generate_ms": 40972.0,
+      "script_bytes": 654.0,
+      "script_found": 1.0,
+      "timed_out": 0.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "#!/bin/bash\nINPUT=\"/home/eval/data/users.csv\"\nOUTPUT=\"/home/eval/data/users.jsonl\"\nmkdir -p \"$(dirname \"$OUTPUT\")\"\n: > \"$OUTPUT\"\nactive_count=0\nfirst=1\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  line=${line%$'\\r'}\n  if (( first )); then\n    first=0\n    continue\n  fi\n  [[ -z \"$line\" ]] && continue\n  IFS=, read -r id name email active <<< \"$line\"\n  active=${active%$'\\r'}\n  if [[ \"$active\" == \"yes\" ]]; then\n    bool=\"true\"\n    active_count=$((active_count + 1))\n  else\n    bool=\"false\"\n  fi\n  printf '{\"id\":%s,\"name\":\"%s\",\"email\":\"%s\",\"active\":%s}\\n' \"$id\" \"$name\" \"$email\" \"$bool\" >> \"$OUTPUT\"\ndone < \"$INPUT\"\necho \"active=$active_count\"\nexit 0\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "active=2\n"
+          }
+        ]
+      },
+      "generate": {
+        "extraction": "fenced",
+        "timed_out": false
+      }
+    }
+  },
+  "skipped": false
+}

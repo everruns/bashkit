@@ -1,0 +1,71 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "json_order_totals",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "Read /data/orders.json containing an array of order objects with fields: customer, product, amount. Group orders by customer and compute the total amount spent per customer. Print each result as 'customer: total' with one line per customer, sorted by total descending."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "globex: 500\nacme: 325\ninitech: 75",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "which jq awk node\nls -l /data/orders.json\nhead -n 20 /data/orders.json\n",
+      "cat /data/orders.json",
+      "jq -r 'group_by(.customer) | map({customer: .[0].customer, total: (map(.amount) | add)}) | sort_by(-.total)[] | \"\\(.customer): \\(.total)\"' /data/orders.json"
+    ],
+    "usage": {
+      "input_tokens": 1342,
+      "output_tokens": 271,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 7553
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 3.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "which jq awk node\nls -l /data/orders.json\nhead -n 20 /data/orders.json\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/usr/bin/jq\n/usr/bin/awk\n-rw-r--r--      372 2026-10-09 04:59 /data/orders.json\n[{\"customer\":\"acme\",\"product\":\"widgets\",\"amount\":150},{\"customer\":\"globex\",\"product\":\"gadgets\",\"amount\":200},{\"customer\":\"acme\",\"product\":\"bolts\",\"amount\":75},{\"customer\":\"initech\",\"product\":\"paper\",\"amount\":50},{\"customer\":\"globex\",\"product\":\"widgets\",\"amount\":300},{\"customer\":\"acme\",\"product\":\"nuts\",\"amount\":100},{\"customer\":\"initech\",\"product\":\"staples\",\"amount\":25}]"
+          },
+          {
+            "commands": "cat /data/orders.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "[{\"customer\":\"acme\",\"product\":\"widgets\",\"amount\":150},{\"customer\":\"globex\",\"product\":\"gadgets\",\"amount\":200},{\"customer\":\"acme\",\"product\":\"bolts\",\"amount\":75},{\"customer\":\"initech\",\"product\":\"paper\",\"amount\":50},{\"customer\":\"globex\",\"product\":\"widgets\",\"amount\":300},{\"customer\":\"acme\",\"product\":\"nuts\",\"amount\":100},{\"customer\":\"initech\",\"product\":\"staples\",\"amount\":25}]"
+          },
+          {
+            "commands": "jq -r 'group_by(.customer) | map({customer: .[0].customer, total: (map(.amount) | add)}) | sort_by(-.total)[] | \"\\(.customer): \\(.total)\"' /data/orders.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "globex: 500\nacme: 325\ninitech: 75\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

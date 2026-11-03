@@ -13,7 +13,10 @@
 //!  - **TM-INF-013** — no host environment variables leak through
 //!    builtins; verified via the canary mechanism: `fuzz_init()` sets a
 //!    magic env var on the host process, and `assert_fuzz_invariants`
-//!    asserts that magic value never appears in builtin stdout/stderr.
+//!    asserts that magic value never appears in builtin stdout/stderr
+//!    unless the executed script itself carries it (a coverage-guided
+//!    fuzzer can forge the canary into its own input — see
+//!    `assert_fuzz_invariants`).
 
 use crate::{Bash, ControlFlow, ExecResult};
 
@@ -78,6 +81,48 @@ pub fn fuzz_init() {
     });
 }
 
+/// A throwaway `LLVM_PROFILE_FILE` path for a spawned child, outside the
+/// directory `cargo tarpaulin` merges.
+///
+/// Any test that spawns the instrumented `bashkit` binary must set this on
+/// the child. A child inherits the *parent's* profile-path template, so it
+/// writes a profraw named after the parent test binary into
+/// `target/tarpaulin/profraws/`, which tarpaulin then merges. Supervised
+/// children are killed by design, and a SIGKILLed process never flushes its
+/// profraw, so the merge step panicked inside `llvm_profparser`
+/// (`unreachable!("llvm_profparsers works on complete data")`) and failed the
+/// Coverage job at random — main runs 4588 and 4600, two days apart on
+/// unrelated commits. Redirecting the child keeps truncated writes out of the
+/// merge set, and stops the child's counters being misattributed to the
+/// parent binary.
+///
+/// One directory per process, a unique file per call, removal left to the OS.
+/// Deliberately not a cleanup-guarded temp dir: a killed child's foreign
+/// descendant can still be writing here, so a per-call remove could fail for
+/// reasons that have nothing to do with the test using it.
+///
+/// A test that needs to *assert* on the child's profraw (as a bounded-artifact
+/// receipt, say) should set `LLVM_PROFILE_FILE` to its own path instead; the
+/// point is only that the child never writes into tarpaulin's merge set.
+pub fn child_profile_path() -> std::path::PathBuf {
+    use std::sync::OnceLock;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static DIR: OnceLock<std::path::PathBuf> = OnceLock::new();
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let dir = DIR.get_or_init(|| {
+        let dir =
+            std::env::temp_dir().join(format!("bashkit-child-profraws-{}", std::process::id()));
+        // Best-effort: if the directory cannot be created the child's write
+        // simply fails, which is the outcome this redirect wants anyway.
+        let _ = std::fs::create_dir_all(&dir);
+        dir
+    });
+    dir.join(format!(
+        "child-{}.profraw",
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ))
+}
+
 /// Execute a script under a fresh `Bash` and capture the result.
 /// Both `Ok(ExecResult)` and the hard `Err(execution error)` paths are
 /// normalized into `ExecResult` so callers don't have to branch.
@@ -107,7 +152,7 @@ pub async fn fuzz_exec(bash: &mut Bash, script: &str, ctx: &str, tool_banned: &[
         control_flow: ControlFlow::None,
         ..Default::default()
     });
-    assert_fuzz_invariants(&result, ctx, tool_banned);
+    assert_fuzz_invariants(&result, script, ctx, tool_banned);
 }
 
 /// Assert that stderr is short and contains no banned Debug-shape or
@@ -188,8 +233,9 @@ fn ends_shell_error_template(line: &str) -> bool {
     SHELL_ERROR_SUFFIXES.iter().any(|suf| line.ends_with(suf))
 }
 
-/// True when the shell would echo `input` back into a diagnostic
-/// containing a [`UNIVERSAL_BANNED`] shape.
+/// True when the shell would echo `input` back into a diagnostic that
+/// trips the leak detector — either a [`UNIVERSAL_BANNED`] shape or the
+/// [`FUZZ_HOST_CANARY`].
 ///
 /// Fuzz targets that inline raw bytes into scripts use this to skip such
 /// inputs, keeping the leak detector strict for real internals. Checking
@@ -197,11 +243,59 @@ fn ends_shell_error_template(line: &str) -> bool {
 /// expansion, so `\0{ code:` reaches stderr as ` { code:` and `</r\0ustc/`
 /// as `/rustc/`. That transformation is what defeated `glob_fuzz`'s
 /// original pre-filter in runs 218 and 219.
+///
+/// The canary belongs in this list because the detector hands libFuzzer
+/// the bytes to forge it: `assert_fuzz_invariants` compares output
+/// against [`FUZZ_HOST_CANARY`], that comparison is instrumented, and in
+/// run 272 libFuzzer recovered a 32-byte `PersAutoDict` entry for it and
+/// spliced the whole canary into an `arithmetic_fuzz` expression.
 pub fn input_echo_would_trip(input: &str) -> bool {
-    let without_nul = input.replace('\0', "");
+    // Matching the raw bytes alone is not enough either: a diagnostic wraps
+    // the slot in its own punctuation, so a banned shape can be spelled
+    // across the join without appearing in the input at all. See
+    // `DIAGNOSTIC_ECHO_PAD`.
+    let (lead, trail) = DIAGNOSTIC_ECHO_PAD;
+    // Mirror `diag_echo(expr.trim())`: the slot holds the trimmed text, so
+    // trailing whitespace must not hide a join the render will still make.
+    let rendered = format!("{lead}{}{trail}", input.trim());
     UNIVERSAL_BANNED
         .iter()
-        .any(|pat| input.contains(pat) || without_nul.contains(pat))
+        .chain(std::iter::once(&FUZZ_HOST_CANARY))
+        .any(|pat| {
+            carries_through_expansion(input, pat) || carries_through_expansion(&rendered, pat)
+        })
+}
+
+/// Punctuation a real-shell diagnostic places immediately around an echoed
+/// user-input slot, used to render the slot before matching it.
+///
+/// `Interpreter::arith_diag` renders
+/// `bash: line N: {diag_echo(expr.trim())}: {msg}`, so the expression slot
+/// carries `: ` on its left from the line prefix and `: ` on its right as
+/// the message separator. A banned shape can therefore form across either
+/// join while the input itself is clean: nightly fuzz run 295 submitted
+/// `wZTok:`, whose diagnostic reads `bash: line 1: wZTok:: syntax error in
+/// expression (error token is ":")` and spells the parser-token shape
+/// `Tok::` out of the input's trailing colon plus the separator's. The
+/// tokenizer's `Tok` enum is never formatted, and `Tok::` appears nowhere
+/// in the script, so this is an echo and not a TM-INF-022 leak.
+///
+/// Padding both sides at once is the real rendering rather than a widening:
+/// both characters come from the same template around the same slot. The
+/// "error token" slot is rendered inside double quotes and no banned shape
+/// contains `"`, so it needs no padding of its own.
+const DIAGNOSTIC_ECHO_PAD: (&str, &str) = (": ", ": ");
+
+/// True when `text` carries `needle` into a diagnostic — literally, or
+/// after the shell drops NUL bytes during word expansion, which turns
+/// `</r\0ustc/` into `/rustc/` and `\0{ code:` into ` { code:`.
+///
+/// Comparing the raw bytes alone is what defeated `glob_fuzz`'s original
+/// pre-filter in runs 218 and 219. The `contains('\0')` guard keeps the
+/// allocation off the common path: almost no input has a NUL, and this
+/// runs once per pattern per fuzz iteration.
+fn carries_through_expansion(text: &str, needle: &str) -> bool {
+    text.contains(needle) || (text.contains('\0') && text.replace('\0', "").contains(needle))
 }
 
 /// Trailing halves of the real-shell diagnostic templates that quote user
@@ -311,12 +405,21 @@ fn is_clap_error_chrome_line(line: &str) -> bool {
 /// Full fuzz-invariant check. Like [`assert_no_leak`] but tolerates
 /// real-shell-style error lines (which echo user input verbatim) and
 /// adds the host-canary check (TM-INF-013): the canary must not appear
-/// in stdout or stderr.
+/// in stdout or stderr unless `script` accounts for it.
+///
+/// `script` is the script that produced `result`. The canary check is
+/// attribution-based rather than absolute because the detector arms the
+/// fuzzer against itself: the `contains(FUZZ_HOST_CANARY)` comparisons
+/// below are instrumented, so libFuzzer can learn the canary and splice
+/// it into its own input (run 272), and any builtin that echoes input
+/// verbatim then reproduces it. A canary the script already carries is
+/// that echo; a canary the script never mentions can only have come
+/// from `std::env`, which is the regression this guards.
 ///
 /// Call this from cargo-fuzz targets and proptest cases — anywhere
 /// random input runs through a builtin.
 #[track_caller]
-pub fn assert_fuzz_invariants(result: &ExecResult, ctx: &str, tool_banned: &[&str]) {
+pub fn assert_fuzz_invariants(result: &ExecResult, script: &str, ctx: &str, tool_banned: &[&str]) {
     let stderr = &result.stderr;
     assert!(
         stderr.len() <= MAX_STDERR_BYTES,
@@ -331,18 +434,21 @@ pub fn assert_fuzz_invariants(result: &ExecResult, ctx: &str, tool_banned: &[&st
              ---raw stderr---\n{stderr}\n---stripped---\n{stripped}\n---"
         );
     }
-    assert!(
-        !result.stdout.contains(FUZZ_HOST_CANARY),
-        "[{ctx}] FUZZ canary leaked into stdout (TM-INF-013 regression — \
-         a builtin is reading host env). stdout:\n---\n{}\n---",
-        truncate(&result.stdout, 512)
-    );
-    assert!(
-        !result.stderr.contains(FUZZ_HOST_CANARY),
-        "[{ctx}] FUZZ canary leaked into stderr (TM-INF-013 regression — \
-         a builtin is reading host env). stderr:\n---\n{}\n---",
-        truncate(&result.stderr, 512)
-    );
+    // Only an occurrence the script cannot explain is a host-env read.
+    if !carries_through_expansion(script, FUZZ_HOST_CANARY) {
+        assert!(
+            !result.stdout.contains(FUZZ_HOST_CANARY),
+            "[{ctx}] FUZZ canary leaked into stdout (TM-INF-013 regression — \
+             a builtin is reading host env). stdout:\n---\n{}\n---",
+            truncate(&result.stdout, 512)
+        );
+        assert!(
+            !result.stderr.contains(FUZZ_HOST_CANARY),
+            "[{ctx}] FUZZ canary leaked into stderr (TM-INF-013 regression — \
+             a builtin is reading host env). stderr:\n---\n{}\n---",
+            truncate(&result.stderr, 512)
+        );
+    }
 }
 
 fn truncate(s: &str, max: usize) -> String {
@@ -366,6 +472,74 @@ pub fn check_cpython_http_request(data: &[u8]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn child_profile_paths_are_unique_and_outside_the_merge_set() {
+        let a = child_profile_path();
+        let b = child_profile_path();
+        assert_ne!(a, b, "each child needs its own profraw path");
+        for p in [&a, &b] {
+            let text = p.to_string_lossy();
+            // The whole point: never inside the directory tarpaulin merges.
+            assert!(
+                !text.contains("tarpaulin"),
+                "child profraw must not land in tarpaulin's merge set: {text}"
+            );
+            assert!(text.ends_with(".profraw"), "{text}");
+        }
+        assert_eq!(a.parent(), b.parent(), "one directory per process");
+        assert!(
+            a.parent().expect("parent dir").is_dir(),
+            "the sink directory is created up front"
+        );
+    }
+
+    #[test]
+    fn canary_in_the_input_is_counted_as_an_echo() {
+        // Run 272: libFuzzer learned the canary from the detector's own
+        // `contains` and spliced it into the expression. The pre-filter must
+        // treat it like any other self-inflicted echo.
+        let input = format!("1+{FUZZ_HOST_CANARY}");
+        assert!(input_echo_would_trip(&input));
+        // NUL-split, as the shell will rejoin it during word expansion.
+        let (head, tail) = FUZZ_HOST_CANARY.split_at(10);
+        assert!(input_echo_would_trip(&format!("{head}\0{tail}")));
+    }
+
+    #[test]
+    fn canary_echoed_from_the_script_is_not_a_leak() {
+        let result = ExecResult {
+            stderr: format!("bash: {FUZZ_HOST_CANARY}: syntax error").into(),
+            ..Default::default()
+        };
+        // The script put the canary there, so this is an echo, not a host read.
+        assert_fuzz_invariants(
+            &result,
+            &format!("echo $(({FUZZ_HOST_CANARY}))"),
+            "canary_echo",
+            &[],
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "FUZZ canary leaked into stderr")]
+    fn canary_absent_from_the_script_is_still_a_leak() {
+        let result = ExecResult {
+            stderr: format!("env: {FUZZ_HOST_CANARY}").into(),
+            ..Default::default()
+        };
+        assert_fuzz_invariants(&result, "env", "canary_leak", &[]);
+    }
+
+    #[test]
+    #[should_panic(expected = "FUZZ canary leaked into stdout")]
+    fn canary_absent_from_the_script_is_still_a_leak_on_stdout() {
+        let result = ExecResult {
+            stdout: FUZZ_HOST_CANARY.into(),
+            ..Default::default()
+        };
+        assert_fuzz_invariants(&result, "env", "canary_leak_stdout", &[]);
+    }
 
     #[test]
     fn strip_keeps_unrelated_lines() {
@@ -470,6 +644,23 @@ mod tests {
         let stripped = strip_real_shell_error_lines(s);
         assert!(stripped.contains("Span {"), "stripped: {stripped:?}");
         assert!(stripped.contains("Tok::"), "stripped: {stripped:?}");
+    }
+
+    #[test]
+    fn input_echo_would_trip_sees_the_diagnostic_separator() {
+        // Run 295: `wZTok:` carries only `Tok:`; the arithmetic diagnostic
+        // renders `{expr}: {msg}` and the separator's colon completes the
+        // banned `Tok::`. The gate has to render the slot, not match raw.
+        assert!(!"wZTok:".contains("Tok::"));
+        assert!(input_echo_would_trip("wZTok:"));
+        // The slot holds `expr.trim()`, so padding is measured after trimming.
+        assert!(input_echo_would_trip("wZTok:  "));
+        // The leading `: ` of `bash: line N: ` completes a space-prefixed
+        // shape the same way (glob_fuzz's ` { code:` class).
+        assert!(input_echo_would_trip("{ code:x"));
+        // Still narrow: one character short of the shape keeps running.
+        assert!(!input_echo_would_trip("wZTo:"));
+        assert!(!input_echo_would_trip("1+2*3"));
     }
 
     #[test]

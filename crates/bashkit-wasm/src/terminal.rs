@@ -41,6 +41,12 @@ impl Terminal {
     #[wasm_bindgen(constructor)]
     pub fn new(options: JsValue) -> Result<Terminal, JsError> {
         let config = parse_options(&options)?;
+        if !config.external_functions.is_empty() || !config.typescript_external_functions.is_empty()
+        {
+            return Err(JsError::new(
+                "runtime host functions require Bash.execute(); Terminal does not accept runtime callbacks",
+            ));
+        }
         let dim = |key: &str, default: u16| -> u16 {
             js_sys::Reflect::get(&options, &JsValue::from_str(key))
                 .ok()

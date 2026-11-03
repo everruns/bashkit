@@ -1,0 +1,57 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "text_comm_setops",
+  "target": "anthropic/claude-sonnet-5-5",
+  "input": [
+    "Given /data/team_a.txt and /data/team_b.txt containing member names (one per line, already sorted), use the comm command to find: 1) Members only in Team A (print under 'Only Team A:'). 2) Members only in Team B (print under 'Only Team B:'). 3) Members in both teams (print under 'Both teams:'). Print the count of each group."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I ran `comm` on the two sorted files, using `-23`, `-13` and `-12` to pick out each group.\n\n**Only Team A:**\n- alice\n- dave\n- eve\n\n**Only Team B:**\n- frank\n- grace\n\n**Both teams:**\n- bob\n- carol\n\n**Counts:**\n- Only Team A: 3\n- Only Team B: 2\n- Both teams: 2",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "cd /data; echo \"Only Team A:\"; comm -23 team_a.txt team_b.txt | tee /tmp/a; echo \"Only Team B:\"; comm -13 team_a.txt team_b.txt | tee /tmp/b; echo \"Both teams:\"; comm -12 team_a.txt team_b.txt | tee /tmp/c; echo; echo \"Counts: Only A=$(wc -l </tmp/a) Only B=$(wc -l </tmp/b) Both=$(wc -l </tmp/c)\""
+    ],
+    "usage": {
+      "input_tokens": 2444,
+      "output_tokens": 354,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 3913
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cd /data; echo \"Only Team A:\"; comm -23 team_a.txt team_b.txt | tee /tmp/a; echo \"Only Team B:\"; comm -13 team_a.txt team_b.txt | tee /tmp/b; echo \"Both teams:\"; comm -12 team_a.txt team_b.txt | tee /tmp/c; echo; echo \"Counts: Only A=$(wc -l </tmp/a) Only B=$(wc -l </tmp/b) Both=$(wc -l </tmp/c)\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Only Team A:\nalice\ndave\neve\nOnly Team B:\nfrank\ngrace\nBoth teams:\nbob\ncarol\n\nCounts: Only A=3 Only B=2 Both=2\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

@@ -74,7 +74,7 @@ async fn deep_yaml_is_rejected_without_panicking_or_leaking_internals() {
         &mut bash,
         &script,
         "yq_deep_yaml",
-        &["serde_yaml_ng::", "Mapping {", "TaggedValue {"],
+        &["serde_norway::", "Mapping {", "TaggedValue {"],
     )
     .await;
 }

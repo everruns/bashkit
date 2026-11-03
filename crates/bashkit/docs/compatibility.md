@@ -61,7 +61,7 @@ for sandbox security reasons. See the compliance spec for details.
 | `local` | `VAR=value` | Local variables |
 | `source` | `file [args]` | Source script; loads functions/variables, PATH search, positional params |
 | `.` | `file [args]` | Alias for source |
-| `/path/to/script.sh` | `[args]` | Execute script by absolute/relative path (shebang stripped, call frame) |
+| `/path/to/script.sh` | `[args]` | Execute script by absolute/relative path (call frame; a `#!` naming a registered builtin such as `python3` or `awk -f` runs that builtin, other shebangs are stripped) |
 | `$PATH` search | `cmd [args]` | Search `$PATH` dirs for executable scripts (after builtins) |
 | `break` | `[N]` | Break from loop |
 | `continue` | `[N]` | Continue loop |
@@ -91,7 +91,7 @@ for sandbox security reasons. See the compliance spec for details.
 | `uniq` | `-c`, `-d`, `-u` | Filter duplicate lines |
 | `cut` | `-d DELIM`, `-f FIELDS` | Extract fields |
 | `tr` | `-d`, character ranges | Translate/delete chars |
-| `date` | `+FORMAT`, `-u`, `-R`, `-I`, `-r`, `-d`/`--date` (relative, compound, epoch) | Display/format date with sandboxed IANA timezone support |
+| `date` | `+FORMAT`, `-u`, `-R`, `-I`, `-r`, `-d`/`--date` (relative, weekday, compound, epoch, ISO date-times with optional seconds and zone) | Display/format date with sandboxed IANA timezone support |
 | `wait` | `[-n] [-p VAR] [-f] [ID...]` (PID or `%jobspec`) | Wait for background jobs |
 | `jobs` | `-l`, `-p` | List running background jobs |
 | `ps` | `-f`, `aux`, `-o`, `-p` | Virtual process list (shell + jobs) |
@@ -300,7 +300,7 @@ Chrono's validated strftime implementation, plus GNU `%N`, `%3N`, `%6N`, and
 | Syntax | Status | Example |
 |--------|--------|---------|
 | `$(cmd)` | ✅ | `x=$(pwd)` |
-| `` `cmd` `` | ✅ | Backticks (deprecated but supported) |
+| `` `cmd` `` | ✅ | Backticks, including after quoted word segments; unquoted output splits and globs |
 
 ### Arithmetic
 

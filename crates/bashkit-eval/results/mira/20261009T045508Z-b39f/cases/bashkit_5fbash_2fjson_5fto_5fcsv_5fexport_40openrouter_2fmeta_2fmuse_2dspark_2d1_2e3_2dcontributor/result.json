@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "json_to_csv_export",
+  "target": "openrouter/meta/muse-spark-1.3-contributor",
+  "input": [
+    "Convert /data/employees.json (an array of objects with keys name, department, salary) to CSV format with a header row. Save the result to /data/employees.csv and print it. The output should have the header 'name,department,salary' followed by one data row per object."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "8/8 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Converted `/data/employees.json` to CSV and saved to `/data/employees.csv`:\n\n```\nname,department,salary\nAlice Chen,Engineering,120000\nBob Park,Marketing,95000\nCarol Wu,Engineering,115000\nDave Kim,Sales,88000\n```\n",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cat /data/employees.json; echo \"---\"; ls -l /data/; echo \"---\"; which jq; jq --version 2>&1; which csvkit 2>&1; which miller 2>&1; which python3 2>&1; which perl 2>&1",
+      "jq -r '\"name,department,salary\", (.[] | \"\\(.name),\\(.department),\\(.salary)\")' /data/employees.json > /data/employees.csv\ncat /data/employees.csv"
+    ],
+    "usage": {
+      "input_tokens": 2887,
+      "output_tokens": 1752,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 13766
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 1.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat /data/employees.json; echo \"---\"; ls -l /data/; echo \"---\"; which jq; jq --version 2>&1; which csvkit 2>&1; which miller 2>&1; which python3 2>&1; which perl 2>&1",
+            "exit_code": 1,
+            "stderr": "",
+            "stdout": "[{\"name\":\"Alice Chen\",\"department\":\"Engineering\",\"salary\":120000},{\"name\":\"Bob Park\",\"department\":\"Marketing\",\"salary\":95000},{\"name\":\"Carol Wu\",\"department\":\"Engineering\",\"salary\":115000},{\"name\":\"Dave Kim\",\"department\":\"Sales\",\"salary\":88000}]---\n-rw-r--r--      245 2026-10-09 04:58 employees.json\n---\n/usr/bin/jq\njq-1.8\n"
+          },
+          {
+            "commands": "jq -r '\"name,department,salary\", (.[] | \"\\(.name),\\(.department),\\(.salary)\")' /data/employees.json > /data/employees.csv\ncat /data/employees.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "name,department,salary\nAlice Chen,Engineering,120000\nBob Park,Marketing,95000\nCarol Wu,Engineering,115000\nDave Kim,Sales,88000\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

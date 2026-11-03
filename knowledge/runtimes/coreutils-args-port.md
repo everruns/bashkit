@@ -319,6 +319,124 @@ level, so it cannot see vendored subdirectories).
 |---|---|---|---|
 | `format` | `src/uucore/src/lib/features/format` | `crates/bashkit/src/builtins/generated/format/` plus `extendedbigdecimal.rs` and `num_parser.rs` siblings | `crate::format` self-refs rewrite to `crate::builtins::generated::format`; `extendedbigdecimal` and `parser::num_parser` are inlined; `NonUtf8OsStrError`, `os_str_as_bytes`, `UError`, `set_exit_code`, `strip_errno`, `quoting_style`, `show_error`, and `show_warning` rewrite to bashkit-local `format_support` shims; `translate` / `translate_text` resolve at port time from `src/uucore/locales/{,errors/}en-US.ftl`; `host_env = ["POSIXLY_CORRECT"]` folds upstream's host-env probe to unset. |
 
+#### Shim must straddle an upstream rename
+
+The `format_support` shim is handwritten, so a renamed uucore symbol
+breaks the drift run and nothing else: the pinned `generated/format/`
+still compiles while the regeneration against upstream HEAD does not.
+The run fails at *Verify build still passes*, after regeneration, so the
+patch is never uploaded and no PR opens — the weekly job simply stays
+red until someone reads the log.
+
+Rule: when upstream renames a symbol the shim provides, add the new
+spelling **without removing the old one**, in its own PR, before the
+drift PR lands. The shim then builds against both the current pin and
+upstream HEAD, which is the only state in which the drift run can get
+past the build step. Drop the old spelling once the pin has moved.
+
+Worked example (2026-10): upstream renamed
+`QuotingStyle::C_NO_QUOTES` to an `Escape` variant and extracted
+`locale_aware_shell_escape` as a `%q` shorthand. Both are pure renames —
+`Escape` and `C_NO_QUOTES` both select `CQuoter` with
+`CQuotesEnforce::None`, and both are what `--quoting-style=escape`
+resolves to — so the shim maps them to one arm.
+
+#### The drift PR cannot fix its own consumers
+
+The `open-pr` job enforces a generated-only diff, so an upstream change
+that invalidates handwritten code **outside** `generated/` can never be
+repaired by the drift PR itself. The live instance is `printf`:
+`numeric_argument_diagnostics` recovers a rejected argument by
+re-quoting each candidate with the same `QuotingStyle` the vendored
+module used and prefix-matching the diagnostic. A mismatch drops
+`printf: <arg>: invalid number` silently, and only for arguments the two
+styles escape differently — plain `abc` escapes to itself under every
+style, so `printf_invalid_number_stderr` cannot catch it.
+
+Two guards: the style is named once as
+`format_support::DIAGNOSTIC_QUOTING_STYLE`, and
+`format_support::tests::generated_module_quotes_diagnostics_with_the_style_printf_expects`
+scans `generated/format/argument.rs` for the styles it actually names
+and fails if any escapes differently from that constant. A printf unit
+test covers a control-character argument, the case the spec suite misses.
+
+#### Consumers must not name a generated arg's value type
+
+Args mode has the same straddle requirement as module mode, through
+clap's value types. Whether a generated arg carries clap's default
+`String` parser or an explicit `OsStringValueParser` is upstream's
+choice and flips across revisions, and `ArgMatches::get_many::<T>` /
+`get_one::<T>` **panic** on a type mismatch. A consumer that names one
+type therefore turns an upstream parser change into a panic that only
+the weekly drift run sees, and that the drift PR cannot repair.
+
+Rule: read generated args through `builtins::helpers::string_values` /
+`string_value`, which try `OsString` then `String` via `try_get_many` /
+`try_get_one` (these return `Err` instead of panicking) and so stay
+valid against the current pin and upstream HEAD at once. Reading one
+type directly is only safe where bashkit owns the surface.
+
+Trying two types and giving up would turn clap's loud panic into a
+silent "no value", quietly dropping a flag the user did pass. Only
+`String` and `OsString` are expected, so both helpers
+`debug_assert!` that an arg which is present is readable as one of them:
+loud under `cargo test` — and so in the drift run's own test steps —
+while an embedder's release build degrades instead of aborting. Covered
+by `helpers::tests::string_value_rejects_an_unhandled_value_type`.
+
+Known exposure: `cat`, `ls`, `truncate`, `shuf`, `tac` (`textrev`),
+`realpath` (`path`), `tee` (`pipeline`), `stat` (`inspect`) and `mktemp`
+(`fileops`) still name `OsString` directly. All of them only want text
+(`to_string_lossy().into_owned()`), so they are mechanically
+convertible, and each would panic the same way if upstream moved that
+arg back to a `String` parser. Convert on touch.
+
+Worked example (2026-10, #2751): upstream gave `od`'s `FILENAME`
+positional an `OsStringValueParser`. `od_options_from_matches` read
+`get_many::<String>("FILENAME")`, so the regenerated surface panicked
+with "Mismatch between definition and access of `FILENAME`". bashkit
+catches builtin panics, so `od` merely produced no output and the only
+symptom was the `dd_zero_device_and_seek` spec case losing its `od -An
+-c` line — drift run 39202465007 stayed red at *Run cat/tac spec
+tests*, after regeneration, so no patch uploaded and no PR opened.
+Guard: `hextools::tests::od_options_read_either_value_parser` parses the
+real generated surface twice, once with `OsStringValueParser` forced
+onto every flippable arg via `Command::mut_arg`, and asserts both yield
+the same options.
+
+The rule is not limited to the `String`/`OsString` pair. Upstream may
+also **add or drop a value parser that yields a non-string type**, which
+moves an arg between "clap pre-parsed it" and "clap handed back the raw
+text". `string_value` covers only the second state, so an arg in the
+first needs its own tolerant read.
+
+Worked example (2026-10, drift run 39753862402): upstream dropped
+`.value_parser(parse_range)` from `shuf`'s `input-range` and moved range
+parsing into its own `uumain`, so the regenerated surface stores a plain
+`String` where the pin stores a `RangeInclusive<u64>`. `shuf.rs` read
+only the pre-parsed type, so `shuf -i 1-5` produced no output and
+`shuf_input_range` failed — that run stayed red at *Run cat/tac spec
+tests*, again after regeneration, so no patch uploaded and no PR
+opened. Fix: `shuf::read_input_range` tries
+`try_get_one::<RangeInclusive<u64>>` first and falls back to
+`helpers::string_value` plus a local `parse_input_range`; an `Err` from
+the typed read means the other surface, not a bad value. Guards:
+`shuf::tests::reads_input_range_under_both_value_types` and
+`absent_input_range_reads_none_under_both_value_types` build both arg
+shapes by hand, so they hold without a live upstream checkout.
+
+Behaviour note: a malformed `-i` exits 2 with clap's rendering under the
+pinned surface, because clap rejects the value before `shuf` sees it.
+On the regenerated surface `parse_input_range` reports it instead, so it
+exits 1 with GNU's `shuf: invalid input range: '<range>'` — the GNU
+behaviour. The pin bump therefore moves this diagnostic closer to GNU
+rather than away from it; no spec case pins the old shape.
+
+Note the asymmetry with the rename rule above: a value-type flip passes
+*Verify build still passes* and fails later, in the spec-test or
+differential step, because it is a runtime type check rather than a
+compile error.
+
 ### Output banner
 
 Module-mode files carry the same banner shape as args mode: `GENERATED by
@@ -356,6 +474,40 @@ and on `workflow_dispatch`:
 2. A separate write-scoped PR job checks out bashkit without persisted
    credentials, applies only generated-file changes from that patch, and
    opens or updates the drift PR with `gh`.
+
+The PR job uses **two tokens**, because the Actions job token can push a
+branch but cannot open a pull request: with "Allow GitHub Actions to create
+and approve pull requests" off — the safer setting, since the same switch also
+governs approvals — `gh pr create` is rejected with "GitHub Actions is not
+permitted to create or approve pull requests". Run 39234801977 regenerated the
+drift, force-pushed it, then died on that call, so the run went red with no PR
+and the drift stayed invisible. The branch is therefore pushed with
+`github.token` (only `contents: write` is needed), and the PR is opened with a
+PAT read from Doppler's `GITHUB_TOKEN` — the same pattern `ci.yml` uses for
+privileged CI credentials, gated on `DOPPLER_TOKEN` being configured and masked
+before it crosses a step boundary. The PAT needs `pull-requests: write` on this
+repository.
+
+With no PAT the job **fails loudly** naming the branch, rather than skipping
+the PR: the drift is already pushed at that point, so a green run with no PR is
+exactly the silent-absorption failure mode this design exists to prevent.
+Regression test: `scripts/tests/test_coreutils_drift_pr.py`.
+
+The PAT must stay confined to the PR job. `regenerate` is the job that builds
+and executes third-party uutils code, and it has no Doppler step and no secret
+access; `open-pr` holds the PAT but never checks out, builds or runs uutils.
+That split is what keeps a compromised upstream from reaching a credential, so
+a Doppler step must never be added to `regenerate`. The workflow is
+`schedule` + `workflow_dispatch` only for the same reason — no pull-request
+trigger can reach the secret.
+
+The PR lookup matches **open** PRs only (`gh pr list --head <branch> --state
+open`). `gh pr view <branch>` resolves a PR for the branch in any state, so
+once a drift PR is closed unmerged it keeps matching and every later run edits
+that closed PR instead of opening a new one — the branch is force-pushed, the
+run goes green, and the drift never surfaces. #2161 was closed in July 2026
+and silently absorbed every run after it. Regression test:
+`scripts/tests/test_coreutils_drift_pr.py`.
 
 The read-only job is the only job that builds or executes uutils code. The
 write-scoped job must not checkout, build, or execute uutils code, and must

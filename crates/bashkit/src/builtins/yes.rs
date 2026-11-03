@@ -75,7 +75,7 @@ impl Builtin for Yes {
             let lines = output.lines().count();
             for chunk in output.as_bytes().chunks(STREAM_CHUNK_BYTES) {
                 ctx.consume_budget_work(1)?;
-                if !stream.write(chunk).await {
+                if !stream.write(chunk).await? {
                     return Ok(ExecResult::with_code("", 141));
                 }
             }

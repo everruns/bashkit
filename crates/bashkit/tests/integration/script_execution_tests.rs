@@ -508,3 +508,52 @@ echo "${RESULT}"
     );
     assert_eq!(result.stdout.trim(), "inner_output");
 }
+
+/// A shebang naming a registered builtin runs that builtin on the script path
+/// (kernel exec semantics); `#!/path/NAME ARG` passes ARG as one argument.
+#[tokio::test]
+async fn exec_script_shebang_dispatches_to_builtin() {
+    let mut bash = Bash::new();
+    let fs = bash.fs();
+    for (path, body) in [
+        (
+            "/sum.awk",
+            "#!/usr/bin/awk -f\n{ s += $1 } END { print \"sum=\" s }\n",
+        ),
+        ("/show", "#!/bin/cat\nline two\n"),
+        ("/envs.awk", "#!/usr/bin/env -S awk -f\nEND { print NR }\n"),
+    ] {
+        fs.write_file(Path::new(path), body.as_bytes())
+            .await
+            .unwrap();
+        fs.chmod(Path::new(path), 0o755).await.unwrap();
+    }
+
+    let r = bash
+        .exec("printf '1\\n2\\n3\\n' | /sum.awk; /show; printf 'a\\nb\\n' | /envs.awk")
+        .await
+        .unwrap();
+    assert_eq!(r.stdout, "sum=6\n#!/bin/cat\nline two\n2\n");
+    assert_eq!(r.exit_code, 0);
+}
+
+/// Shells, unknown interpreters and shell-only builtins keep running the
+/// content as bash.
+#[tokio::test]
+async fn exec_script_shebang_fallback_runs_bash() {
+    let mut bash = Bash::new();
+    let fs = bash.fs();
+    for (path, body) in [
+        ("/a.sh", "#!/usr/bin/env bash\necho a"),
+        ("/b.sh", "#!/bin/zsh\necho b"),
+        ("/c.sh", "#!/usr/bin/env cd\necho c"),
+        ("/d.sh", "#!/bin/sh -e\necho d"),
+    ] {
+        fs.write_file(Path::new(path), body.as_bytes())
+            .await
+            .unwrap();
+        fs.chmod(Path::new(path), 0o755).await.unwrap();
+    }
+    let r = bash.exec("/a.sh; /b.sh; /c.sh; /d.sh").await.unwrap();
+    assert_eq!(r.stdout, "a\nb\nc\nd\n");
+}

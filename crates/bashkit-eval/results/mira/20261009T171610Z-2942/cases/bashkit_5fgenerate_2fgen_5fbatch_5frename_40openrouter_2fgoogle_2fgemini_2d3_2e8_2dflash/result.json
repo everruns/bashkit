@@ -1,0 +1,63 @@
+{
+  "eval": "bashkit_generate",
+  "sample": "gen_batch_rename",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "Write a bash script that normalises photo file names.\n\nStarting files (contents shown; names contain spaces where shown):\n--- /home/eval/photos/IMG_0001.JPG ---\na\n--- end ---\n--- /home/eval/photos/IMG_0002.JPG ---\nb\n--- end ---\n--- /home/eval/photos/IMG 0003.JPG ---\nc\n--- end ---\n--- /home/eval/photos/notes.txt ---\nn\n--- end ---\n--- /home/eval/photos/Raw/IMG_0004.JPG ---\nd\n--- end ---\n--- /home/eval/photos/Raw/Old Shots/DSC 9.JPG ---\ne\n--- end ---\n\nFor every file whose name ends in `.JPG`, anywhere under /home/eval/photos (recursively), rename it in place (same directory) so that its file name is lowercase and every space in the file name becomes `_`. Directory names must NOT change (`Raw` and `Old Shots` keep their names). Other files are left alone. Exit 0."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "```bash\n#!/bin/bash\nset -e\n\nfiles=()\nwhile IFS= read -r line; do\n  [[ -n \"$line\" ]] && files+=(\"$line\")\ndone < <(find /home/eval/photos -type f -name '*.JPG')\n\nfor file in \"${files[@]}\"; do\n  dir=$(dirname \"$file\")\n  base=$(basename \"$file\")\n  new_base=\"${base,,}\"\n  new_base=\"${new_base// /_}\"\n  if [[ \"$base\" != \"$new_base\" ]]; then\n    mv \"$file\" \"$dir/$new_base\"\n  fi\ndone\n\nexit 0\n```",
+    "iterations": 1,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "#!/bin/bash\nset -e\n\nfiles=()\nwhile IFS= read -r line; do\n  [[ -n \"$line\" ]] && files+=(\"$line\")\ndone < <(find /home/eval/photos -type f -name '*.JPG')\n\nfor file in \"${files[@]}\"; do\n  dir=$(dirname \"$file\")\n  base=$(basename \"$file\")\n  new_base=\"${base,,}\"\n  new_base=\"${new_base// /_}\"\n  if [[ \"$base\" != \"$new_base\" ]]; then\n    mv \"$file\" \"$dir/$new_base\"\n  fi\ndone\n\nexit 0\n"
+    ],
+    "usage": {
+      "input_tokens": 535,
+      "output_tokens": 2795,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 20014
+    },
+    "metrics": {
+      "exec_ms": 13.0,
+      "exit_code": 0.0,
+      "extracted": 1.0,
+      "generate_ms": 20001.0,
+      "script_bytes": 377.0,
+      "script_found": 1.0,
+      "timed_out": 0.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "#!/bin/bash\nset -e\n\nfiles=()\nwhile IFS= read -r line; do\n  [[ -n \"$line\" ]] && files+=(\"$line\")\ndone < <(find /home/eval/photos -type f -name '*.JPG')\n\nfor file in \"${files[@]}\"; do\n  dir=$(dirname \"$file\")\n  base=$(basename \"$file\")\n  new_base=\"${base,,}\"\n  new_base=\"${new_base// /_}\"\n  if [[ \"$base\" != \"$new_base\" ]]; then\n    mv \"$file\" \"$dir/$new_base\"\n  fi\ndone\n\nexit 0\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          }
+        ]
+      },
+      "generate": {
+        "extraction": "fenced",
+        "timed_out": false
+      }
+    }
+  },
+  "skipped": false
+}

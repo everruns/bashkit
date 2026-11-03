@@ -523,3 +523,232 @@ async fn cdpath_search_yields_to_cancellation() {
     );
     assert!(result.unwrap_err().to_string().contains("cancelled"));
 }
+
+#[tokio::test]
+async fn indexed_array_pending_values_share_live_byte_limit() {
+    for assignment in [
+        "a=([0]=$v [0]=$v [0]=$v [0]=$v)",
+        "declare -a a=([0]=$v [0]=$v [0]=$v [0]=$v)",
+        "a+=([0]=$v [0]=$v [0]=$v [0]=$v)",
+        "a=(\"$v\" \"$v\" \"$v\" \"$v\")",
+        "a=(\"$v\"{1..4})",
+        "a=([0]=$v$v$v)",
+    ] {
+        let mut bash = Bash::builder()
+            .limits(ExecutionLimits::new().max_live_intermediate_bytes(8_192))
+            .build();
+        bash.exec(&format!("v='{}'; a=(original)", "x".repeat(4_096)))
+            .await
+            .unwrap();
+        assert_budget_exhausted(bash.exec(assignment).await);
+        assert_eq!(
+            bash.exec("echo ${a[0]}").await.unwrap().stdout,
+            "original\n"
+        );
+        assert_eq!(bash.exec("echo reused").await.unwrap().stdout, "reused\n");
+    }
+}
+
+#[tokio::test]
+async fn tilde_expansion_repeated_directories_respect_live_budget() {
+    // Safe reproducer: at most 24 KiB of expansion, admitted by retained limits.
+    for (name, tilde) in [("HOME", "~"), ("PWD", "~+"), ("OLDPWD", "~-")] {
+        for (command, suffix) in [
+            ("x=a", ""),
+            ("export x=a", ""),
+            ("echo x=a", ""),
+            ("x[0]=a", ""),
+            ("declare -a x=([0]=a", ")"),
+            ("echo x=a", "\"\""),
+        ] {
+            let limits = ExecutionLimits::new().max_live_intermediate_bytes(8_192);
+            let mut bash = Bash::builder().limits(limits).build();
+            let script = format!(
+                "export {name}='{}'; {command}{}{suffix}",
+                "d".repeat(1_024),
+                format!(":{tilde}").repeat(24)
+            );
+            assert_budget_exhausted(bash.exec(&script).await);
+            let recovered = bash.exec("echo recovered").await.unwrap();
+            assert_eq!(recovered.stdout, "recovered\n");
+        }
+    }
+}
+
+#[tokio::test]
+async fn indexed_array_pending_keys_share_live_byte_limit() {
+    let mut bash = Bash::builder()
+        .limits(ExecutionLimits::new().max_live_intermediate_bytes(8_192))
+        .build();
+    // Leading zeroes keep every subscript valid and small.
+    bash.exec(&format!("k='{}'", "0".repeat(4_096)))
+        .await
+        .unwrap();
+    assert_budget_exhausted(bash.exec("a=([$k]=x [$k]=y [$k]=z)").await);
+}
+
+#[tokio::test]
+async fn indexed_array_pending_storage_is_released_between_assignments() {
+    let mut bash = Bash::builder()
+        .limits(ExecutionLimits::new().max_live_intermediate_bytes(8_192))
+        .build();
+    let result = bash
+        .exec(&format!(
+            "v='{}'; a=([0]=$v); a=([0]=$v); a=([0]=$v); echo ${{#a[0]}}",
+            "x".repeat(4_096)
+        ))
+        .await
+        .unwrap();
+    assert_eq!(result.stdout, "4096\n");
+}
+
+#[tokio::test]
+async fn indexed_array_budget_preserves_expansion_order() {
+    let script = "a=(old); a=([0]=1+2 [a[0]]=$a [0]+=x); printf '%s\\n' \"${a[0]}\" \"${a[3]}\"; a+=([0]=new [1]=$a); printf '%s\\n' \"${a[1]}\"";
+    let expected = std::process::Command::new("bash")
+        .args(["--noprofile", "--norc", "-c", script])
+        .output()
+        .unwrap();
+    assert!(expected.status.success());
+    let mut bash = Bash::builder()
+        .limits(ExecutionLimits::new().max_live_intermediate_bytes(8_192))
+        .build();
+    let result = bash.exec(script).await.unwrap();
+    assert_eq!(result.exit_code, 0);
+    assert_eq!(result.stdout.as_bytes(), expected.stdout);
+    assert_eq!(result.stderr.as_bytes(), expected.stderr);
+}
+
+#[tokio::test]
+async fn tilde_expansion_charges_copied_bytes_as_work() {
+    let limits = ExecutionLimits::new().max_work_units(5_000);
+    let mut bash = Bash::builder().limits(limits).build();
+    bash.exec(&format!("HOME='{}'", "d".repeat(1_024)))
+        .await
+        .unwrap();
+    assert_budget_exhausted(bash.exec(&format!("x=a{}", ":~".repeat(24))).await);
+}
+
+#[tokio::test]
+async fn tilde_expansion_single_directory_and_operands_respect_live_budget() {
+    for command in ["x=~", "echo ~", "echo ${unset:-~}", "echo ${unset:=~}"] {
+        let limits = ExecutionLimits::new().max_live_intermediate_bytes(512);
+        let mut bash = Bash::builder().limits(limits).build();
+        bash.exec(&format!("HOME='{}'", "d".repeat(1_024)))
+            .await
+            .unwrap();
+        assert_budget_exhausted(bash.exec(command).await);
+    }
+}
+
+#[tokio::test]
+async fn tilde_expansion_retains_sibling_assignment_leases() {
+    let limits = ExecutionLimits::new().max_live_intermediate_bytes(3_072);
+    let mut bash = Bash::builder().limits(limits).build();
+    bash.exec(&format!("HOME='{}'", "d".repeat(1_024)))
+        .await
+        .unwrap();
+    assert_budget_exhausted(bash.exec("x=~/\"\":~/\"\":~/").await);
+}
+
+#[tokio::test]
+async fn tilde_expansion_preserves_bash_semantics() {
+    let script = r#"HOME='/home/test dir'; PWD=/pwd; OLDPWD=/old
+x=~:~+/bin:~-/lib:~missing
+printf '%s\n' "$x" ~ ~missing
+printf '%s\n' x=~:~+:'~'
+x='~:~'; printf '%s\n' "$x" '~' \~ '~'$HOME
+unset value; printf '%s\n' "${value:-~}" "${value:-'~'}"
+x=~/"":~; printf '%s\n' "$x"
+"#;
+    let expected = std::process::Command::new("bash")
+        .env("HOME", "/home/test dir")
+        .arg("--noprofile")
+        .arg("--norc")
+        .arg("-c")
+        .arg(script)
+        .output()
+        .unwrap();
+    assert!(expected.status.success());
+    let mut bash = Bash::builder()
+        .limits(ExecutionLimits::new().max_live_intermediate_bytes(8_192))
+        .build();
+    let result = bash.exec(script).await.unwrap();
+    assert_eq!(result.exit_code, 0);
+    assert_eq!(result.stdout.as_bytes(), expected.stdout);
+    assert_eq!(result.stderr.as_bytes(), expected.stderr);
+}
+
+#[tokio::test]
+async fn indexed_array_empty_pending_items_still_charge_container_storage() {
+    let mut bash = Bash::builder()
+        .limits(ExecutionLimits::new().max_live_intermediate_bytes(256))
+        .build();
+    let script = format!("a=({})", "[0]='' ".repeat(64));
+    assert_budget_exhausted(bash.exec(&script).await);
+}
+
+#[tokio::test]
+async fn indexed_array_duplicate_subscripts_remain_valid_at_entry_limit() {
+    let mut bash = Bash::builder()
+        .memory_limits(bashkit::MemoryLimits::new().max_array_entries(1))
+        .limits(ExecutionLimits::new().max_live_intermediate_bytes(8_192))
+        .build();
+    let result = bash
+        .exec(&format!(
+            "v='{}'; a=([0]=$v [0]=$v [0]=$v); echo ${{#a[@]}} ${{#a[0]}}",
+            "x".repeat(1_024)
+        ))
+        .await
+        .unwrap();
+    assert_eq!(result.stdout, "1 1024\n");
+}
+
+#[tokio::test]
+async fn indexed_array_substitutions_release_consumed_output() {
+    let mut bash = Bash::builder()
+        .limits(ExecutionLimits::new().max_live_intermediate_bytes(7_168))
+        .build();
+    bash.exec(&format!("v='{}'", "x".repeat(1_024)))
+        .await
+        .unwrap();
+    let result = bash
+        .exec("a=([0]=$(printf %s \"$v\")$(printf %s \"$v\")$(printf %s \"$v\")); echo ${#a[0]}")
+        .await
+        .unwrap();
+    assert_eq!(result.stdout, "3072\n");
+}
+
+#[tokio::test]
+async fn tilde_expansion_quotes_do_not_resolve_large_directories() {
+    let limits = ExecutionLimits::new().max_live_intermediate_bytes(512);
+    let mut bash = Bash::builder().limits(limits).build();
+    bash.exec(&format!("HOME='{}'", "d".repeat(1_024)))
+        .await
+        .unwrap();
+    let literal = format!("a{}", ":~".repeat(24));
+    let actual = bash
+        .exec(&format!("x='{literal}'; printf '%s' \"$x\""))
+        .await
+        .unwrap();
+    assert_eq!(actual.stdout, literal);
+}
+
+#[tokio::test]
+async fn tilde_expansion_assignment_copy_boundary_and_release() {
+    for (bytes, succeeds) in [(15, false), (16, true)] {
+        let limits = ExecutionLimits::new().max_live_intermediate_bytes(bytes);
+        let mut bash = Bash::builder().limits(limits).build();
+        bash.exec("HOME=12345678").await.unwrap();
+        let result = bash.exec("x=~; y=~").await;
+        if succeeds {
+            assert_eq!(result.unwrap().exit_code, 0);
+            // Declaration leases release: a trivial follow-up still fits the
+            // same budget (value assertions live in the semantics test,
+            // which runs with a generous budget).
+            assert_eq!(bash.exec("echo done").await.unwrap().stdout, "done\n");
+        } else {
+            assert_budget_exhausted(result);
+        }
+    }
+}

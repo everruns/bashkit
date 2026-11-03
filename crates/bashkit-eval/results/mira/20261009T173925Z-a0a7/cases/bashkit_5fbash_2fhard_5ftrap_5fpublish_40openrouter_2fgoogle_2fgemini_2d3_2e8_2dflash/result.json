@@ -1,0 +1,225 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "hard_trap_publish",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "In the git repository /home/eval/publisher, bin/publish violates the contract in its header comment (wrong exit codes, leftover temporary files, sloppy validation). Fix bin/publish so `make test` passes; do not edit tests/. Then use it to publish /home/eval/publisher/etc/prod.conf to /home/eval/publisher/site/config.txt (run `bash bin/publish etc/prod.conf site/config.txt` from /home/eval/publisher), and commit your fix with a message starting with `fix:`."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "",
+    "iterations": 25,
+    "tool_calls_count": 25,
+    "tool_calls": [
+      "cd /home/eval/publisher && git status && ls -la && cat bin/publish",
+      "cd /home/eval/publisher && cat tests/test_publish.sh",
+      "cd /home/eval/publisher && ls -la tests/fixtures && head -n 50 tests/fixtures/*",
+      "cat /home/eval/publisher/Makefile",
+      "make test",
+      "cat /home/eval/publisher/etc/prod.conf",
+      "cat << 'EOF' > bin/publish\n#!/bin/bash\n# publish SRC DEST: render the key=value file SRC into DEST as \"key: value\"\n# lines sorted by key (LC_ALL=C byte order). Blank lines and lines starting\n# with # are ignored. Every line of SRC counts, even a last line without a\n# trailing newline. Values may contain \"=\".\n#\n# Contract (tests/test_publish.sh checks all of it):\n#   exit 0  success: DEST replaced, nothing printed on stdout\n#   exit 2  usage error (not exactly two arguments)\n#   exit 3  SRC has a line that is not blank, not a comment and not\n#           key=value with key matching [a-z_]+ ; prints\n#           \"publish: bad line N\" (N = 1-based line number) on stderr\n#   exit 4  the directory DEST would be written to does not exist\n#   On every non-zero exit DEST is left untouched, and on every exit no\n#   temporary file or directory remains in ${TMPDIR:-/tmp}.\nset -eu\n\nif [ $# -ne 2 ]; then\n  echo \"usage: publish SRC DEST\" >&2\n  exit 2\nfi\n\nsrc=$1\ndest=$2\n\ndest_dir=$(dirname \"$dest\")\nif [ ! -d \"$dest_dir\" ]; then\n  exit 4\nfi\n\nwork=$(mktemp -d)\ntrap 'rm -rf \"$work\"' EXIT\n\nn=0\n# Read line by line, handling last line even if missing trailing newline\nwhile IFS= read -r line || [ -n \"$line\" ]; do\n  n=$((n + 1))\n  case \"$line\" in\n    ''|'#'*)\n      continue\n      ;;\n    *)\n      # Must be key=value with key matching [a-z_]+\n      # Check if it contains '='\n      case \"$line\" in\n        *=*)\n          key=\"${line%%=*}\"\n          val=\"${line#*=}\"\n          # key must be non-empty and contain only [a-z_]\n          case \"$key\" in\n            *[!a-z_]*|\"\")\n              echo \"publish: bad line $n\" >&2\n              exit 3\n              ;;\n            *)\n              printf '%s\\t%s\\n' \"$key\" \"$val\" >> \"$work/pairs\"\n              ;;\n          esac\n          ;;\n        *)\n          echo \"publish: bad line $n\" >&2\n          exit 3\n          ;;\n      esac\n      ;;\n  esac\ndone < \"$src\"\n\nif [ -f \"$work/pairs\" ]; then\n  LC_ALL=C sort -t $'\\t' -k1,1 \"$work/pairs\" | awk -F '\\t' '{printf \"%s: %s\\n\", $1, $2}' > \"$work/rendered\"\nelse\n  : > \"$work/rendered\"\nfi\n\ncp \"$work/rendered\" \"$dest\"\nEOF\nchmod +x bin/publish",
+      "make test",
+      "cat << 'EOF' > /tmp/test_corner_cases.sh\n#!/bin/bash\nset -e\n\n# Test 1: key sorting order when values differ or keys share prefix\nmkdir -p /tmp/test_pub/pub\ncat << 'INP' > /tmp/test_pub/in.conf\nb=value=with=equals\na=1\na_b=2\na=0\nINP\nbash bin/publish /tmp/test_pub/in.conf /tmp/test_pub/pub/out.txt\ncat /tmp/test_pub/pub/out.txt\n\n# Test 2: no trailing newline\nprintf 'x=1\\ny=2' > /tmp/test_pub/no_newline.conf\nbash bin/publish /tmp/test_pub/no_newline.conf /tmp/test_pub/pub/out2.txt\ncat /tmp/test_pub/pub/out2.txt\n\n# Test 3: empty value\nprintf 'empty=\\n' > /tmp/test_pub/empty_val.conf\nbash bin/publish /tmp/test_pub/empty_val.conf /tmp/test_pub/pub/out3.txt\ncat /tmp/test_pub/pub/out3.txt\n\n# Test 4: bad key characters like uppercase, hyphen, spaces, etc.\nfor bad in \"KEY=1\" \"k-ey=1\" \"key =1\" \" key=1\" \"=1\"; do\n  printf '%s\\n' \"$bad\" > /tmp/test_pub/bad.conf\n  if bash bin/publish /tmp/test_pub/bad.conf /tmp/test_pub/pub/out4.txt 2>/dev/null; then\n    echo \"FAILED: $bad should have failed exit 3\"\n    exit 1\n  fi\ndone\necho \"All corner cases passed\"\nEOF\nbash /tmp/test_corner_cases.sh",
+      "rm -rf /tmp/test_corner_cases.sh /tmp/test_pub\nmake test",
+      "cd /home/eval/publisher && git status",
+      "cat .gitignore 2>/dev/null || echo \"No .gitignore\"\ngit status -u",
+      "git diff",
+      "git diff bin/publish",
+      "git diff -p",
+      "git log -n 2",
+      "cd /home/eval/publisher && bash bin/publish etc/prod.conf site/config.txt",
+      "cat /home/eval/publisher/site/config.txt",
+      "git status",
+      "rm -rf build",
+      "make test",
+      "git status",
+      "git add bin/publish site/config.txt && git status",
+      "git commit -m \"fix: enforce contract for publish exit codes, cleanup, and validation\"",
+      "make test"
+    ],
+    "usage": {
+      "input_tokens": 82634,
+      "output_tokens": 1823,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 65957
+    },
+    "metrics": {
+      "natural_stop": 0.0,
+      "tool_calls": 25.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 24.0,
+      "turns": 25.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cd /home/eval/publisher && git status && ls -la && cat bin/publish",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "On branch master\n\nnothing to commit, working tree clean\ndrwxr-xr-x        0 2026-10-09 18:00 .git\n-rw-r--r--       49 2026-10-09 18:00 Makefile\ndrwxr-xr-x        0 2026-10-09 18:00 bin\ndrwxr-xr-x        0 2026-10-09 18:00 etc\ndrwxr-xr-x        0 2026-10-09 18:00 site\ndrwxr-xr-x        0 2026-10-09 18:00 tests\n#!/bin/bash\n# publish SRC DEST: render the key=value file SRC into DEST as \"key: value\"\n# lines sorted by key (LC_ALL=C byte order). Blank lines and lines starting\n# with # are ignored. Every line of SRC counts, even a last line without a\n# trailing newline. Values may contain \"=\".\n#\n# Contract (tests/test_publish.sh checks all of it):\n#   exit 0  success: DEST replaced, nothing printed on stdout\n#   exit 2  usage error (not exactly two arguments)\n#   exit 3  SRC has a line that is not blank, not a comment and not\n#           key=value with key matching [a-z_]+ ; prints\n#           \"publish: bad line N\" (N = 1-based line number) on stderr\n#   exit 4  the directory DEST would be written to does not exist\n#   On every non-zero exit DEST is left untouched, and on every exit no\n#   temporary file or directory remains in ${TMPDIR:-/tmp}.\nset -eu\n\n[ $# -eq 2 ] || { echo \"usage: publish SRC DEST\" >&2; exit 1; }\nsrc=$1 dest=$2\n\nrender() {\n  local tmp=$(mktemp)\n  local work=$(mktemp -d)\n  trap 'rm -f \"$tmp\"' EXIT\n  n=0\n  while IFS= read -r line; do\n    n=$((n + 1))\n    case $line in\n      ''|'#'*) continue ;;\n      [a-z_]*=*) echo \"$line\" >> \"$work/pairs\" ;;\n      *) echo \"publish: bad line $n\" >&2; exit 3 ;;\n    esac\n  done < \"$src\"\n  sort \"$work/pairs\" | sed 's/=/: /' > \"$tmp\"\n  cp \"$tmp\" \"$dest\"\n}\n\nrender\ntrap 'echo \"publish: done\"; exit 0' EXIT\n"
+          },
+          {
+            "commands": "cd /home/eval/publisher && cat tests/test_publish.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "#!/bin/bash\ncd \"$(dirname \"$0\")/..\" || exit 2\nexport LC_ALL=C\nexport TMPDIR=\"$PWD/build/tmp\"\nrm -rf build/tmp build/pub; mkdir -p build/tmp build/pub\nfail=0\ncheck() { # NAME WANT GOT\n  if [ \"$2\" != \"$3\" ]; then echo \"FAIL $1: exit $3, want $2\"; fail=1; fi\n  if [ -n \"$(ls -A \"$TMPDIR\")\" ]; then\n    echo \"FAIL $1: left in TMPDIR: $(ls -A \"$TMPDIR\" | tr '\\n' ' ')\"; fail=1\n    rm -rf \"$TMPDIR\"; mkdir -p \"$TMPDIR\"\n  fi\n}\nprintf 'OLD\\n' > build/pub/out.txt\nbash bin/publish tests/fixtures/good.conf > build/pub/usage.out 2>&1; check usage 2 $?\nbash bin/publish tests/fixtures/bad.conf build/pub/out.txt 2> build/pub/stderr; check bad 3 $?\n[ \"$(cat build/pub/stderr)\" = \"publish: bad line 4\" ] || { echo \"FAIL bad: stderr was: $(cat build/pub/stderr)\"; fail=1; }\n[ \"$(cat build/pub/out.txt)\" = OLD ] || { echo \"FAIL bad: DEST was modified\"; fail=1; }\nbash bin/publish tests/fixtures/good.conf build/nope/out.txt 2>/dev/null; check nodir 4 $?\nbash bin/publish tests/fixtures/empty.conf build/pub/empty.txt; check empty 0 $?\n[ -f build/pub/empty.txt ] && [ ! -s build/pub/empty.txt ] || { echo \"FAIL empty: want an empty DEST\"; fail=1; }\nout=$(bash bin/publish tests/fixtures/good.conf build/pub/out.txt); check good 0 $?\n[ -z \"$out\" ] || { echo \"FAIL good: unexpected stdout: $out\"; fail=1; }\ncmp -s tests/fixtures/good.expected build/pub/out.txt || { echo \"FAIL good: DEST differs from tests/fixtures/good.expected\"; fail=1; }\nif [ \"$fail\" -eq 0 ]; then echo PASS | tee build/test-report.txt; else echo FAIL > build/test-report.txt; exit 1; fi\n"
+          },
+          {
+            "commands": "cd /home/eval/publisher && ls -la tests/fixtures && head -n 50 tests/fixtures/*",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       34 2026-10-09 18:00 bad.conf\n-rw-r--r--       16 2026-10-09 18:00 empty.conf\n-rw-r--r--       67 2026-10-09 18:00 good.conf\n-rw-r--r--       54 2026-10-09 18:00 good.expected\n==> tests/fixtures/bad.conf <==\n# bad\nname=ok\n\nmax conns=5\nport=1\n\n==> tests/fixtures/empty.conf <==\n# nothing here\n\n\n==> tests/fixtures/good.conf <==\n# service config\nname=api\nmax_conns=5\n\nurl=http://x/?a=b\na_b=1\na=2\n\n==> tests/fixtures/good.expected <==\na: 2\na_b: 1\nmax_conns: 5\nname: api\nurl: http://x/?a=b\n"
+          },
+          {
+            "commands": "cat /home/eval/publisher/Makefile",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "test:\n\t@bash tests/test_publish.sh\n\n.PHONY: test\n"
+          },
+          {
+            "commands": "make test",
+            "exit_code": 2,
+            "stderr": "sort: /home/eval/publisher/build/tmp/tmp.5rnURZsX3P/pairs: No such file or directory\nmake: *** [Makefile:2: test] Error 1\n",
+            "stdout": "FAIL usage: exit 1, want 2\npublish: done\nFAIL bad: exit 0, want 3\nFAIL bad: left in TMPDIR: tmp.0cPv3M4YcL tmp.SKhwnio7nS \nFAIL bad: stderr was: \nFAIL bad: DEST was modified\nFAIL nodir: exit 1, want 4\nFAIL nodir: left in TMPDIR: tmp.KfPIiC6UCU tmp.y3kELwIKDo \npublish: done\nFAIL empty: left in TMPDIR: tmp.5rnURZsX3P tmp.NVqFcnoQuG \nFAIL good: left in TMPDIR: tmp.6HKCBdYOU0 tmp.k8KMSM4owL \nFAIL good: unexpected stdout: publish: done\n"
+          },
+          {
+            "commands": "cat /home/eval/publisher/etc/prod.conf",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# production\nname=shop\nregion=eu-west\n\ntimeout_s=30\ndb_url=postgres://db/shop?sslmode=require\nfeature_flags=a=1,b=0"
+          },
+          {
+            "commands": "cat << 'EOF' > bin/publish\n#!/bin/bash\n# publish SRC DEST: render the key=value file SRC into DEST as \"key: value\"\n# lines sorted by key (LC_ALL=C byte order). Blank lines and lines starting\n# with # are ignored. Every line of SRC counts, even a last line without a\n# trailing newline. Values may contain \"=\".\n#\n# Contract (tests/test_publish.sh checks all of it):\n#   exit 0  success: DEST replaced, nothing printed on stdout\n#   exit 2  usage error (not exactly two arguments)\n#   exit 3  SRC has a line that is not blank, not a comment and not\n#           key=value with key matching [a-z_]+ ; prints\n#           \"publish: bad line N\" (N = 1-based line number) on stderr\n#   exit 4  the directory DEST would be written to does not exist\n#   On every non-zero exit DEST is left untouched, and on every exit no\n#   temporary file or directory remains in ${TMPDIR:-/tmp}.\nset -eu\n\nif [ $# -ne 2 ]; then\n  echo \"usage: publish SRC DEST\" >&2\n  exit 2\nfi\n\nsrc=$1\ndest=$2\n\ndest_dir=$(dirname \"$dest\")\nif [ ! -d \"$dest_dir\" ]; then\n  exit 4\nfi\n\nwork=$(mktemp -d)\ntrap 'rm -rf \"$work\"' EXIT\n\nn=0\n# Read line by line, handling last line even if missing trailing newline\nwhile IFS= read -r line || [ -n \"$line\" ]; do\n  n=$((n + 1))\n  case \"$line\" in\n    ''|'#'*)\n      continue\n      ;;\n    *)\n      # Must be key=value with key matching [a-z_]+\n      # Check if it contains '='\n      case \"$line\" in\n        *=*)\n          key=\"${line%%=*}\"\n          val=\"${line#*=}\"\n          # key must be non-empty and contain only [a-z_]\n          case \"$key\" in\n            *[!a-z_]*|\"\")\n              echo \"publish: bad line $n\" >&2\n              exit 3\n              ;;\n            *)\n              printf '%s\\t%s\\n' \"$key\" \"$val\" >> \"$work/pairs\"\n              ;;\n          esac\n          ;;\n        *)\n          echo \"publish: bad line $n\" >&2\n          exit 3\n          ;;\n      esac\n      ;;\n  esac\ndone < \"$src\"\n\nif [ -f \"$work/pairs\" ]; then\n  LC_ALL=C sort -t $'\\t' -k1,1 \"$work/pairs\" | awk -F '\\t' '{printf \"%s: %s\\n\", $1, $2}' > \"$work/rendered\"\nelse\n  : > \"$work/rendered\"\nfi\n\ncp \"$work/rendered\" \"$dest\"\nEOF\nchmod +x bin/publish",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "make test",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "PASS\n"
+          },
+          {
+            "commands": "cat << 'EOF' > /tmp/test_corner_cases.sh\n#!/bin/bash\nset -e\n\n# Test 1: key sorting order when values differ or keys share prefix\nmkdir -p /tmp/test_pub/pub\ncat << 'INP' > /tmp/test_pub/in.conf\nb=value=with=equals\na=1\na_b=2\na=0\nINP\nbash bin/publish /tmp/test_pub/in.conf /tmp/test_pub/pub/out.txt\ncat /tmp/test_pub/pub/out.txt\n\n# Test 2: no trailing newline\nprintf 'x=1\\ny=2' > /tmp/test_pub/no_newline.conf\nbash bin/publish /tmp/test_pub/no_newline.conf /tmp/test_pub/pub/out2.txt\ncat /tmp/test_pub/pub/out2.txt\n\n# Test 3: empty value\nprintf 'empty=\\n' > /tmp/test_pub/empty_val.conf\nbash bin/publish /tmp/test_pub/empty_val.conf /tmp/test_pub/pub/out3.txt\ncat /tmp/test_pub/pub/out3.txt\n\n# Test 4: bad key characters like uppercase, hyphen, spaces, etc.\nfor bad in \"KEY=1\" \"k-ey=1\" \"key =1\" \" key=1\" \"=1\"; do\n  printf '%s\\n' \"$bad\" > /tmp/test_pub/bad.conf\n  if bash bin/publish /tmp/test_pub/bad.conf /tmp/test_pub/pub/out4.txt 2>/dev/null; then\n    echo \"FAILED: $bad should have failed exit 3\"\n    exit 1\n  fi\ndone\necho \"All corner cases passed\"\nEOF\nbash /tmp/test_corner_cases.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "a: 0\na: 1\na_b: 2\nb: value=with=equals\nx: 1\ny: 2\nempty: \nAll corner cases passed\n"
+          },
+          {
+            "commands": "rm -rf /tmp/test_corner_cases.sh /tmp/test_pub\nmake test",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "PASS\n"
+          },
+          {
+            "commands": "cd /home/eval/publisher && git status",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "On branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/pub/empty.txt\n\tbuild/pub/out.txt\n\tbuild/pub/stderr\n\tbuild/pub/usage.out\n\tbuild/test-report.txt\n"
+          },
+          {
+            "commands": "cat .gitignore 2>/dev/null || echo \"No .gitignore\"\ngit status -u",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "No .gitignore\nOn branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/pub/empty.txt\n\tbuild/pub/out.txt\n\tbuild/pub/stderr\n\tbuild/pub/usage.out\n\tbuild/test-report.txt\n"
+          },
+          {
+            "commands": "git diff",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# Diff output (simplified in virtual mode)\n"
+          },
+          {
+            "commands": "git diff bin/publish",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# Diff output (simplified in virtual mode)\n"
+          },
+          {
+            "commands": "git diff -p",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# Diff output (simplified in virtual mode)\n"
+          },
+          {
+            "commands": "git log -n 2",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "commit b4649558\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 18:00:23 2026 +0000\n\n    initial import\n\n"
+          },
+          {
+            "commands": "cd /home/eval/publisher && bash bin/publish etc/prod.conf site/config.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "cat /home/eval/publisher/site/config.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "db_url: postgres://db/shop?sslmode=require\nfeature_flags: a=1,b=0\nname: shop\nregion: eu-west\ntimeout_s: 30\n"
+          },
+          {
+            "commands": "git status",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "On branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/pub/empty.txt\n\tbuild/pub/out.txt\n\tbuild/pub/stderr\n\tbuild/pub/usage.out\n\tbuild/test-report.txt\n\tsite/config.txt\n"
+          },
+          {
+            "commands": "rm -rf build",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "make test",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "PASS\n"
+          },
+          {
+            "commands": "git status",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "On branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/pub/empty.txt\n\tbuild/pub/out.txt\n\tbuild/pub/stderr\n\tbuild/pub/usage.out\n\tbuild/test-report.txt\n\tsite/config.txt\n"
+          },
+          {
+            "commands": "git add bin/publish site/config.txt && git status",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "On branch master\n\nChanges to be committed:\n  (use \"git restore --staged <file>...\" to unstage)\n\tnew file:   bin/publish\n\tnew file:   site/config.txt\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/pub/empty.txt\n\tbuild/pub/out.txt\n\tbuild/pub/stderr\n\tbuild/pub/usage.out\n\tbuild/test-report.txt\n"
+          },
+          {
+            "commands": "git commit -m \"fix: enforce contract for publish exit codes, cleanup, and validation\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "[master b464951] fix: enforce contract for publish exit codes, cleanup, and validation\n"
+          },
+          {
+            "commands": "make test",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "PASS\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

@@ -13,6 +13,8 @@
 //! work. This prevents CodeQL `rust/access-invalid-pointer` alerts caused by
 //! holding a raw-pointer-derived `&self` across `block_on` or `.await` points.
 
+mod runtime_functions;
+mod streaming;
 mod terminal;
 
 use bashkit::interop::fs::{
@@ -21,10 +23,9 @@ use bashkit::interop::fs::{
 use bashkit::tool::VERSION;
 use bashkit::{
     Bash as RustBash, BashTool as RustBashTool, Builtin, BuiltinContext, BuiltinRegistry,
-    Credential, ExecResult as RustExecResult, ExecutionLimits, ExtFunctionResult,
-    FileSystem as BashFileSystem, FileType, InMemoryFs, Metadata, MontyObject, NetworkAllowlist,
-    OutputCallback, PosixFs, PythonExternalFnHandler, ReadOnlyFs, RealFs, RealFsMode,
-    SnapshotOptions as RustSnapshotOptions, Tool, ToolRequest, async_trait,
+    Credential, ExecResult as RustExecResult, ExecutionLimits, FileSystem as BashFileSystem,
+    FileType, InMemoryFs, Metadata, NetworkAllowlist, OutputCallback, PosixFs, ReadOnlyFs, RealFs,
+    RealFsMode, SnapshotOptions as RustSnapshotOptions, Tool, ToolRequest, async_trait,
 };
 use bashkit::{
     CapabilityFingerprint as RustCapabilityFingerprint, CheckoutPolicy as RustCheckoutPolicy,
@@ -39,7 +40,6 @@ use std::collections::HashMap;
 use std::ffi::c_void;
 use std::mem::{MaybeUninit, size_of};
 use std::path::{Path, PathBuf};
-use std::pin::Pin;
 use std::ptr;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
@@ -95,6 +95,34 @@ const SYNC_BUILTIN_DEADLOCK_ERROR: &str = "custom builtins require execute() (as
 // callback so untrusted scripts cannot hang the process indefinitely.
 const SYNC_SCRIPTED_TOOL_DEADLOCK_ERROR: &str = "registered tools require execute() (async). executeSync() would deadlock because the JS event loop is blocked while the synchronous call is in flight";
 
+// A worker may disappear while the last native owner is held by an async
+// task. Tokio forbids blocking Runtime::drop in that context; shut it down
+// without waiting there, while preserving graceful drop on ordinary threads.
+struct OwnedRuntime(Option<tokio::runtime::Runtime>);
+
+impl OwnedRuntime {
+    fn new(runtime: tokio::runtime::Runtime) -> Self {
+        Self(Some(runtime))
+    }
+
+    fn block_on<F: std::future::Future>(&self, future: F) -> F::Output {
+        self.0
+            .as_ref()
+            .expect("runtime is live until drop")
+            .block_on(future)
+    }
+}
+
+impl Drop for OwnedRuntime {
+    fn drop(&mut self) {
+        if tokio::runtime::Handle::try_current().is_ok()
+            && let Some(runtime) = self.0.take()
+        {
+            runtime.shutdown_background();
+        }
+    }
+}
+
 struct OnOutputReentryScope {
     depth: Arc<AtomicUsize>,
 }
@@ -121,116 +149,23 @@ fn reject_on_output_reentry(state: &Arc<SharedState>) -> napi::Result<()> {
 
 struct SyncExecuteScope {
     depth: Arc<AtomicUsize>,
+    wake: Option<Arc<tokio::sync::Notify>>,
 }
 
 impl SyncExecuteScope {
     fn enter(depth: Arc<AtomicUsize>) -> Self {
         depth.fetch_add(1, Ordering::SeqCst);
-        Self { depth }
+        Self { depth, wake: None }
     }
 }
 
 impl Drop for SyncExecuteScope {
     fn drop(&mut self) {
         self.depth.fetch_sub(1, Ordering::SeqCst);
-    }
-}
-
-// ============================================================================
-// MontyObject <-> JSON conversion
-// ============================================================================
-
-#[allow(dead_code)]
-fn monty_to_json(obj: &MontyObject) -> serde_json::Value {
-    match obj {
-        MontyObject::None => serde_json::Value::Null,
-        MontyObject::Bool(b) => serde_json::Value::Bool(*b),
-        MontyObject::Int(i) => serde_json::json!(*i),
-        MontyObject::BigInt(b) => serde_json::Value::String(b.to_string()),
-        MontyObject::Float(f) => serde_json::json!(*f),
-        MontyObject::String(s) | MontyObject::Path(s) => serde_json::Value::String(s.clone()),
-        MontyObject::Bytes(b) => serde_json::Value::String(base64_encode(b)),
-        MontyObject::Tuple(items) | MontyObject::List(items) => {
-            serde_json::Value::Array(items.iter().map(monty_to_json).collect())
-        }
-        MontyObject::Set(items) | MontyObject::FrozenSet(items) => {
-            serde_json::Value::Array(items.iter().map(monty_to_json).collect())
-        }
-        MontyObject::Dict(pairs) => {
-            let mut map = serde_json::Map::new();
-            for (k, v) in pairs.clone() {
-                let key = match &k {
-                    MontyObject::String(s) => s.clone(),
-                    other => format!("{}", monty_to_json(other)),
-                };
-                map.insert(key, monty_to_json(&v));
-            }
-            serde_json::Value::Object(map)
-        }
-        MontyObject::NamedTuple {
-            field_names,
-            values,
-            ..
-        } => {
-            let mut map = serde_json::Map::new();
-            for (name, value) in field_names.iter().zip(values.iter()) {
-                map.insert(name.clone(), monty_to_json(value));
-            }
-            serde_json::Value::Object(map)
-        }
-        other => serde_json::Value::String(other.py_repr()),
-    }
-}
-
-#[allow(dead_code)]
-fn json_to_monty(val: &serde_json::Value) -> MontyObject {
-    match val {
-        serde_json::Value::Null => MontyObject::None,
-        serde_json::Value::Bool(b) => MontyObject::Bool(*b),
-        serde_json::Value::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                MontyObject::Int(i)
-            } else if let Some(f) = n.as_f64() {
-                MontyObject::Float(f)
-            } else {
-                MontyObject::None
-            }
-        }
-        serde_json::Value::String(s) => MontyObject::String(s.clone()),
-        serde_json::Value::Array(arr) => MontyObject::List(arr.iter().map(json_to_monty).collect()),
-        serde_json::Value::Object(map) => {
-            let pairs: Vec<(MontyObject, MontyObject)> = map
-                .iter()
-                .map(|(k, v)| (MontyObject::String(k.clone()), json_to_monty(v)))
-                .collect();
-            MontyObject::dict(pairs)
+        if let Some(wake) = &self.wake {
+            wake.notify_waiters();
         }
     }
-}
-
-#[allow(dead_code)]
-fn base64_encode(data: &[u8]) -> String {
-    const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut result = String::with_capacity(data.len().div_ceil(3) * 4);
-    for chunk in data.chunks(3) {
-        let b0 = chunk[0] as u32;
-        let b1 = chunk.get(1).copied().unwrap_or(0) as u32;
-        let b2 = chunk.get(2).copied().unwrap_or(0) as u32;
-        let n = (b0 << 16) | (b1 << 8) | b2;
-        result.push(CHARS[(n >> 18 & 63) as usize] as char);
-        result.push(CHARS[(n >> 12 & 63) as usize] as char);
-        if chunk.len() > 1 {
-            result.push(CHARS[(n >> 6 & 63) as usize] as char);
-        } else {
-            result.push('=');
-        }
-        if chunk.len() > 2 {
-            result.push(CHARS[(n & 63) as usize] as char);
-        } else {
-            result.push('=');
-        }
-    }
-    result
 }
 
 // ============================================================================
@@ -584,6 +519,42 @@ impl Default for NativeFileSystemState {
     fn default() -> Self {
         Self::new()
     }
+}
+
+// Opaque, type-checked handles use the same boundary as the filesystem API.
+// Clone Rust capabilities on the JS thread before spawning: pending I/O never
+// borrows a JS class instance whose lifetime is controlled by garbage collection.
+#[napi(js_name = "__commandReadChunk")]
+pub fn command_read_chunk<'env>(
+    env: &'env Env,
+    input: &External<bashkit::CommandInput>,
+) -> napi::Result<napi::bindgen_prelude::PromiseRaw<'env, Option<napi::bindgen_prelude::Uint8Array>>>
+{
+    let input = (**input).clone();
+    env.spawn_future(async move {
+        input
+            .read_chunk()
+            .await
+            .map(|b| b.map(napi::bindgen_prelude::Uint8Array::new))
+            .map_err(|e| napi::Error::from_reason(e.to_string()))
+    })
+}
+
+#[napi(js_name = "__commandWrite")]
+pub fn command_write<'env>(
+    env: &'env Env,
+    output: &External<bashkit::CommandOutput>,
+    bytes: napi::bindgen_prelude::Uint8Array,
+) -> napi::Result<napi::bindgen_prelude::PromiseRaw<'env, ()>> {
+    // Snapshot mutable JS bytes before returning its Promise.
+    let bytes = bytes.to_vec();
+    let output = (**output).clone();
+    env.spawn_future(async move {
+        output
+            .write_all(&bytes)
+            .await
+            .map_err(|e| napi::Error::from_reason(e.to_string()))
+    })
 }
 
 #[napi(js_name = "__createFileSystem")]
@@ -1347,6 +1318,10 @@ pub struct BashOptions {
     pub python: Option<bool>,
     /// Names of external functions callable from embedded Python code.
     pub external_functions: Option<Vec<String>>,
+    /// Enable embedded TypeScript execution.
+    pub typescript: Option<bool>,
+    /// Names of TypeScript host functions.
+    pub typescript_external_functions: Option<Vec<String>>,
     /// Enable the embedded SQLite builtin (`sqlite`/`sqlite3`).
     ///
     /// Backed by Turso. When `true`, the binding both registers the
@@ -1511,6 +1486,8 @@ fn default_opts() -> BashOptions {
         allowed_mount_paths: None,
         python: None,
         external_functions: None,
+        typescript: None,
+        typescript_external_functions: None,
         sqlite: None,
         network: None,
     }
@@ -1551,15 +1528,17 @@ fn require_snapshot_hmac_key(options: Option<&SnapshotOptions>) -> napi::Result<
 
 struct SharedState {
     inner: Mutex<RustBash>,
-    rt: Mutex<tokio::runtime::Runtime>,
+    rt: Mutex<OwnedRuntime>,
     cancelled: std::sync::Mutex<Arc<AtomicBool>>,
     on_output_reentry_depth: Arc<AtomicUsize>,
     /// Tracks whether the JS event loop is currently blocked inside an
-    /// `executeSync` call. Custom builtins dispatched through a threadsafe
+    /// blocking instance operation. Custom builtins dispatched through a threadsafe
     /// function check this and fail closed instead of deadlocking on a
     /// callback the loop can never service. See [`SYNC_BUILTIN_DEADLOCK_ERROR`].
     in_sync_execute_depth: Arc<AtomicUsize>,
     async_execute_semaphore: Arc<Semaphore>,
+    async_execute_depth: Arc<AtomicUsize>,
+    sync_idle: Arc<tokio::sync::Notify>,
     username: Option<String>,
     profile: Option<ExecutionProfileName>,
     hostname: Option<String>,
@@ -1584,11 +1563,12 @@ struct SharedState {
     mounts: Option<Vec<MountConfig>>,
     allowed_mount_paths: Option<Vec<String>>,
     python: bool,
+    typescript: bool,
+    typescript_external_functions: Vec<String>,
     sqlite: bool,
     /// Validated network configuration (see [`validate_network_options`]).
     network: Option<NetworkOptions>,
     external_functions: Vec<String>,
-    external_handler: Option<ExternalHandlerArc>,
     /// Host-owned mutable registry of custom builtins. The same handle is
     /// passed to the bashkit builder *and* retained here so JS-side
     /// `addBuiltin()` calls insert into the live interpreter without rebuilding
@@ -1688,17 +1668,6 @@ fn forget_runtime_mount(log: &RuntimeMountLog, vfs_path: &str) {
     mounts.retain(|existing| Path::new(existing.vfs_path()) != normalized);
 }
 
-/// Wrapper for the external handler that can be stored and cloned.
-type ExternalHandlerArc = Arc<
-    dyn Fn(
-            String,
-            Vec<MontyObject>,
-            Vec<(MontyObject, MontyObject)>,
-        ) -> Pin<Box<dyn std::future::Future<Output = ExtFunctionResult> + Send>>
-        + Send
-        + Sync,
->;
-
 /// Clone `Arc<SharedState>`, then use the runtime to block on a future that
 /// captures only the cloned Arc. This avoids holding raw `&self` across
 /// `block_on` boundaries.
@@ -1710,6 +1679,15 @@ where
     Fut: std::future::Future<Output = napi::Result<T>>,
 {
     reject_on_output_reentry(state)?;
+    // Publish blocking entry before checking async work. The async admission
+    // path waits if it starts after this check, leaving this event loop free.
+    let mut _sync_scope = SyncExecuteScope::enter(state.in_sync_execute_depth.clone());
+    _sync_scope.wake = Some(state.sync_idle.clone());
+    if state.async_execute_depth.load(Ordering::SeqCst) > 0 {
+        return Err(napi::Error::from_reason(
+            "synchronous access would block the event loop of an active execution; use execute() or another instance",
+        ));
+    }
     let s = state.clone();
     let rt_guard = s.rt.blocking_lock();
     let s2 = state.clone();
@@ -1734,12 +1712,40 @@ fn validate_async_execute_input(state: &SharedState, commands: &str) -> Option<E
     None
 }
 
-fn acquire_async_execute_slot(state: &Arc<SharedState>) -> napi::Result<OwnedSemaphorePermit> {
-    state
+struct AsyncExecuteScope {
+    _permit: OwnedSemaphorePermit,
+    depth: Arc<AtomicUsize>,
+}
+impl Drop for AsyncExecuteScope {
+    fn drop(&mut self) {
+        self.depth.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+async fn acquire_async_execute_slot(state: &Arc<SharedState>) -> napi::Result<AsyncExecuteScope> {
+    let permit = state
         .async_execute_semaphore
         .clone()
         .try_acquire_owned()
-        .map_err(|_| napi::Error::from_reason(ASYNC_EXECUTE_QUEUE_FULL_ERROR))
+        .map_err(|_| napi::Error::from_reason(ASYNC_EXECUTE_QUEUE_FULL_ERROR))?;
+    state.async_execute_depth.fetch_add(1, Ordering::SeqCst);
+    let scope = AsyncExecuteScope {
+        _permit: permit,
+        depth: state.async_execute_depth.clone(),
+    };
+    // Dual SeqCst counters ensure at least one contender observes the other.
+    // Async entry waits for an earlier blocking entry; blocking entry rejects
+    // an earlier async execution, whose output or host callback needs JS.
+    loop {
+        let notified = state.sync_idle.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
+        if state.in_sync_execute_depth.load(Ordering::SeqCst) == 0 {
+            break;
+        }
+        notified.await;
+    }
+    Ok(scope)
 }
 
 fn canonicalize_path(path: &str, label: &str) -> napi::Result<PathBuf> {
@@ -1800,7 +1806,7 @@ impl Bash {
     #[napi(constructor)]
     pub fn new(options: Option<BashOptions>) -> napi::Result<Self> {
         let opts = options.unwrap_or_else(default_opts);
-        let state = shared_state_from_opts(opts, None)?;
+        let state = shared_state_from_opts(opts)?;
         Ok(Self {
             state: Arc::new(state),
         })
@@ -1815,7 +1821,6 @@ impl Bash {
         commands: String,
         on_output: Option<napi::bindgen_prelude::Function<'_, (String, String), Option<String>>>,
     ) -> napi::Result<ExecResult> {
-        let _sync_scope = SyncExecuteScope::enter(self.state.in_sync_execute_depth.clone());
         let env_raw = on_output
             .as_ref()
             .map(|on_output| on_output.value().env as usize);
@@ -1851,6 +1856,24 @@ impl Bash {
         })
     }
 
+    /// Execute with an execution-local host-function dispatcher.
+    #[napi(
+        js_name = "executeWithRuntime",
+        ts_args_type = "commands: string, dispatcher: (request: string) => Promise<string>, onOutput?: (chunkPair: [string, string]) => string | undefined"
+    )]
+    pub fn execute_with_runtime<'env>(
+        &self,
+        commands: String,
+        dispatcher: napi::bindgen_prelude::Function<
+            'env,
+            String,
+            napi::bindgen_prelude::Promise<String>,
+        >,
+        on_output: Option<napi::bindgen_prelude::Function<'env, (String, String), Option<String>>>,
+    ) -> napi::Result<napi::bindgen_prelude::PromiseRaw<'env, ExecResult>> {
+        runtime_functions::execute(self.state.clone(), commands, dispatcher, on_output)
+    }
+
     /// Execute bash commands asynchronously, returning a Promise.
     #[napi]
     pub async fn execute(&self, commands: String) -> napi::Result<ExecResult> {
@@ -1859,7 +1882,7 @@ impl Bash {
             return Ok(result);
         }
         let s = self.state.clone();
-        let _slot = acquire_async_execute_slot(&s)?;
+        let _slot = acquire_async_execute_slot(&s).await?;
         let mut bash = s.inner.lock().await;
         execute_rust_bash(&mut bash, &commands, None, None, None, None).await
     }
@@ -1884,7 +1907,7 @@ impl Bash {
                 if let Some(result) = validate_async_execute_input(&state, &commands) {
                     return Ok(result);
                 }
-                let _slot = acquire_async_execute_slot(&state)?;
+                let _slot = acquire_async_execute_slot(&state).await?;
                 let mut bash = state.inner.lock().await;
                 let cancelled = bash.cancellation_token();
                 let callback_requested_cancel = Arc::new(AtomicBool::new(false));
@@ -1950,6 +1973,51 @@ impl Bash {
     pub fn clear_cancel(&self) {
         let arc = self.state.cancelled.lock().unwrap().clone();
         arc.store(false, Ordering::SeqCst);
+    }
+
+    /// Register an async byte command; output is written before status returns.
+    #[napi(
+        ts_args_type = "name: string, callback: (requestPair: [string, unknown, unknown, unknown, unknown]) => Promise<number>"
+    )]
+    pub fn add_command(&self, name: String, callback: streaming::Callback<'_>) -> napi::Result<()> {
+        streaming::register(&self.state, name, callback)
+    }
+
+    #[napi(
+        ts_args_type = "commands: string, capture?: number, stdout?: (pair: [Uint8Array]) => Promise<void>, stderr?: (pair: [Uint8Array]) => Promise<void>, dispatcher?: (request: string) => Promise<string>"
+    )]
+    pub fn execute_live<'env>(
+        &self,
+        env: &'env Env,
+        commands: String,
+        capture: Option<u32>,
+        stdout: Option<
+            napi::bindgen_prelude::Function<
+                'env,
+                (napi::bindgen_prelude::Uint8Array,),
+                napi::bindgen_prelude::Promise<()>,
+            >,
+        >,
+        stderr: Option<
+            napi::bindgen_prelude::Function<
+                'env,
+                (napi::bindgen_prelude::Uint8Array,),
+                napi::bindgen_prelude::Promise<()>,
+            >,
+        >,
+        dispatcher: Option<
+            napi::bindgen_prelude::Function<'env, String, napi::bindgen_prelude::Promise<String>>,
+        >,
+    ) -> napi::Result<napi::bindgen_prelude::PromiseRaw<'env, ExecResult>> {
+        streaming::execute(
+            env,
+            self.state.clone(),
+            commands,
+            capture,
+            stdout,
+            stderr,
+            dispatcher,
+        )
     }
 
     /// Register a JS callback as a custom bash builtin.
@@ -2217,7 +2285,7 @@ impl Bash {
         snapshot_options: Option<SnapshotOptions>,
     ) -> napi::Result<Self> {
         let opts = options.unwrap_or_else(default_opts);
-        let mut state = shared_state_from_opts(opts, None)?;
+        let mut state = shared_state_from_opts(opts)?;
 
         // restore_snapshot preserves the instance's limits while restoring shell state
         if let Some(key) = snapshot_hmac_key(snapshot_options.as_ref()) {
@@ -2242,7 +2310,7 @@ impl Bash {
         options: Option<BashOptions>,
     ) -> napi::Result<Self> {
         let opts = options.unwrap_or_else(default_opts);
-        let mut state = shared_state_from_opts(opts, None)?;
+        let mut state = shared_state_from_opts(opts)?;
 
         state
             .inner
@@ -2575,6 +2643,21 @@ pub struct BashTool {
 }
 
 impl BashTool {
+    fn with_runtime_function_help(&self, mut text: String) -> String {
+        for (language, names) in [
+            ("Python", &self.state.external_functions),
+            ("TypeScript", &self.state.typescript_external_functions),
+        ] {
+            if !names.is_empty() {
+                text.push_str(&format!(
+                    "\n\n{language} host functions: {}. Use the host-provided signatures.",
+                    names.join(", ")
+                ));
+            }
+        }
+        text
+    }
+
     fn build_rust_tool(state: &SharedState) -> RustBashTool {
         let mut builder = RustBashTool::builder();
 
@@ -2593,6 +2676,12 @@ impl BashTool {
             }
         }
 
+        if state.python {
+            builder = builder.python();
+        }
+        if state.typescript {
+            builder = builder.typescript();
+        }
         builder.limits(build_limits(state)).build()
     }
 }
@@ -2602,7 +2691,7 @@ impl BashTool {
     #[napi(constructor)]
     pub fn new(options: Option<BashOptions>) -> napi::Result<Self> {
         let opts = options.unwrap_or_else(default_opts);
-        let state = shared_state_from_opts(opts, None)?;
+        let state = shared_state_from_opts(opts)?;
         Ok(Self {
             state: Arc::new(state),
         })
@@ -2617,7 +2706,6 @@ impl BashTool {
         commands: String,
         on_output: Option<napi::bindgen_prelude::Function<'_, (String, String), Option<String>>>,
     ) -> napi::Result<ExecResult> {
-        let _sync_scope = SyncExecuteScope::enter(self.state.in_sync_execute_depth.clone());
         let env_raw = on_output
             .as_ref()
             .map(|on_output| on_output.value().env as usize);
@@ -2653,6 +2741,24 @@ impl BashTool {
         })
     }
 
+    /// Execute with an execution-local host-function dispatcher.
+    #[napi(
+        js_name = "executeWithRuntime",
+        ts_args_type = "commands: string, dispatcher: (request: string) => Promise<string>, onOutput?: (chunkPair: [string, string]) => string | undefined"
+    )]
+    pub fn execute_with_runtime<'env>(
+        &self,
+        commands: String,
+        dispatcher: napi::bindgen_prelude::Function<
+            'env,
+            String,
+            napi::bindgen_prelude::Promise<String>,
+        >,
+        on_output: Option<napi::bindgen_prelude::Function<'env, (String, String), Option<String>>>,
+    ) -> napi::Result<napi::bindgen_prelude::PromiseRaw<'env, ExecResult>> {
+        runtime_functions::execute(self.state.clone(), commands, dispatcher, on_output)
+    }
+
     /// Execute bash commands asynchronously, returning a Promise.
     #[napi]
     pub async fn execute(&self, commands: String) -> napi::Result<ExecResult> {
@@ -2661,7 +2767,7 @@ impl BashTool {
             return Ok(result);
         }
         let s = self.state.clone();
-        let _slot = acquire_async_execute_slot(&s)?;
+        let _slot = acquire_async_execute_slot(&s).await?;
         let mut bash = s.inner.lock().await;
         execute_rust_bash(&mut bash, &commands, None, None, None, None).await
     }
@@ -2686,7 +2792,7 @@ impl BashTool {
                 if let Some(result) = validate_async_execute_input(&state, &commands) {
                     return Ok(result);
                 }
-                let _slot = acquire_async_execute_slot(&state)?;
+                let _slot = acquire_async_execute_slot(&state).await?;
                 let mut bash = state.inner.lock().await;
                 let cancelled = bash.cancellation_token();
                 let callback_requested_cancel = Arc::new(AtomicBool::new(false));
@@ -2751,8 +2857,52 @@ impl BashTool {
         arc.store(false, Ordering::SeqCst);
     }
 
-    /// Register a JS callback as a custom bash builtin.
-    /// See [`Bash::add_builtin`] for semantics.
+    /// Register an async byte command. See [`Bash::add_command`].
+    #[napi(
+        ts_args_type = "name: string, callback: (requestPair: [string, unknown, unknown, unknown, unknown]) => Promise<number>"
+    )]
+    pub fn add_command(&self, name: String, callback: streaming::Callback<'_>) -> napi::Result<()> {
+        streaming::register(&self.state, name, callback)
+    }
+
+    #[napi(
+        ts_args_type = "commands: string, capture?: number, stdout?: (pair: [Uint8Array]) => Promise<void>, stderr?: (pair: [Uint8Array]) => Promise<void>, dispatcher?: (request: string) => Promise<string>"
+    )]
+    pub fn execute_live<'env>(
+        &self,
+        env: &'env Env,
+        commands: String,
+        capture: Option<u32>,
+        stdout: Option<
+            napi::bindgen_prelude::Function<
+                'env,
+                (napi::bindgen_prelude::Uint8Array,),
+                napi::bindgen_prelude::Promise<()>,
+            >,
+        >,
+        stderr: Option<
+            napi::bindgen_prelude::Function<
+                'env,
+                (napi::bindgen_prelude::Uint8Array,),
+                napi::bindgen_prelude::Promise<()>,
+            >,
+        >,
+        dispatcher: Option<
+            napi::bindgen_prelude::Function<'env, String, napi::bindgen_prelude::Promise<String>>,
+        >,
+    ) -> napi::Result<napi::bindgen_prelude::PromiseRaw<'env, ExecResult>> {
+        streaming::execute(
+            env,
+            self.state.clone(),
+            commands,
+            capture,
+            stdout,
+            stderr,
+            dispatcher,
+        )
+    }
+
+    /// Register a buffered JS builtin. See [`Bash::add_builtin`].
     #[napi(
         ts_args_type = "name: string, callback: (requestPair: [string, unknown]) => Promise<string>"
     )]
@@ -2879,7 +3029,7 @@ impl BashTool {
     ) -> napi::Result<Self> {
         let opts = options.unwrap_or_else(default_opts);
         let key = require_snapshot_hmac_key(snapshot_options.as_ref())?.to_vec();
-        let mut state = shared_state_from_opts(opts, None)?;
+        let mut state = shared_state_from_opts(opts)?;
 
         state
             .inner
@@ -2903,7 +3053,7 @@ impl BashTool {
         options: Option<BashOptions>,
     ) -> napi::Result<Self> {
         let opts = options.unwrap_or_else(default_opts);
-        let mut state = shared_state_from_opts(opts, None)?;
+        let mut state = shared_state_from_opts(opts)?;
 
         state
             .inner
@@ -2931,19 +3081,21 @@ impl BashTool {
     /// Get token-efficient tool description.
     #[napi]
     pub fn description(&self) -> String {
-        Self::build_rust_tool(&self.state).description().to_string()
+        self.with_runtime_function_help(
+            Self::build_rust_tool(&self.state).description().to_string(),
+        )
     }
 
     /// Get help as a Markdown document.
     #[napi]
     pub fn help(&self) -> String {
-        Self::build_rust_tool(&self.state).help()
+        self.with_runtime_function_help(Self::build_rust_tool(&self.state).help())
     }
 
     /// Get compact system-prompt text for orchestration.
     #[napi]
     pub fn system_prompt(&self) -> String {
-        Self::build_rust_tool(&self.state).system_prompt()
+        self.with_runtime_function_help(Self::build_rust_tool(&self.state).system_prompt())
     }
 
     /// Get JSON input schema as string.
@@ -3400,7 +3552,7 @@ pub struct ScriptedTool {
     short_desc: Option<String>,
     tools: Vec<JsToolEntry>,
     env_vars: Vec<(String, String)>,
-    rt: Mutex<tokio::runtime::Runtime>,
+    rt: Mutex<OwnedRuntime>,
     max_commands: Option<u32>,
     max_loop_iterations: Option<u32>,
     in_sync_execute_depth: Arc<AtomicUsize>,
@@ -3420,7 +3572,7 @@ impl ScriptedTool {
             short_desc: options.short_description,
             tools: Vec::new(),
             env_vars: Vec::new(),
-            rt: Mutex::new(rt),
+            rt: Mutex::new(OwnedRuntime::new(rt)),
             max_commands: options.max_commands,
             max_loop_iterations: options.max_loop_iterations,
             in_sync_execute_depth: Arc::new(AtomicUsize::new(0)),
@@ -3814,22 +3966,27 @@ fn build_bash_from_state(state: &SharedState) -> RustBash {
     // Enable Python/Monty. Passing `python: true` from JS is the explicit
     // opt-in that must also flip the in-process Python env gate.
     if state.python {
-        if let Some(ref handler) = state.external_handler {
-            let h = handler.clone();
-            let fn_names = state.external_functions.to_vec();
-            let python_handler: PythonExternalFnHandler = Arc::new(move |name, args, kwargs| {
-                let h = h.clone();
-                Box::pin(async move { h(name, args, kwargs).await })
-            });
-            builder = builder.python_with_external_handler(
-                profile.python_limits().clone(),
-                fn_names,
-                python_handler,
-            );
+        builder = if state.external_functions.is_empty() {
+            builder.python()
         } else {
-            builder = builder.python();
-        }
+            builder.python_with_external_handler(
+                profile.python_limits().clone(),
+                state.external_functions.clone(),
+                runtime_functions::python_handler(),
+            )
+        };
         builder = builder.env("BASHKIT_ALLOW_INPROCESS_PYTHON", "1");
+    }
+    if state.typescript {
+        builder = if state.typescript_external_functions.is_empty() {
+            builder.typescript()
+        } else {
+            builder.typescript_with_external_handler(
+                profile.typescript_limits().clone(),
+                state.typescript_external_functions.clone(),
+                runtime_functions::typescript_handler(),
+            )
+        };
     }
 
     // Enable embedded SQLite (Turso). Passing `sqlite: true` from JS is the
@@ -3878,11 +4035,28 @@ fn build_bash_from_state(state: &SharedState) -> RustBash {
 }
 
 /// Build a `SharedState` from `BashOptions`, wiring up all config + interpreter.
-fn shared_state_from_opts(
-    opts: BashOptions,
-    external_handler: Option<ExternalHandlerArc>,
-) -> napi::Result<SharedState> {
+fn shared_state_from_opts(opts: BashOptions) -> napi::Result<SharedState> {
     let py = opts.python.unwrap_or(false);
+    let ts = opts.typescript.unwrap_or(false);
+    let ts_fns = opts
+        .typescript_external_functions
+        .clone()
+        .unwrap_or_default();
+    if !ts && !ts_fns.is_empty() {
+        return Err(napi::Error::from_reason(
+            "typescriptExternalFunctions requires typescript: true",
+        ));
+    }
+    if !py
+        && opts
+            .external_functions
+            .as_ref()
+            .is_some_and(|names| !names.is_empty())
+    {
+        return Err(napi::Error::from_reason(
+            "externalFunctions requires python: true",
+        ));
+    }
     let sql = opts.sqlite.unwrap_or(false);
     let ext_fns = opts.external_functions.clone().unwrap_or_default();
     let mounts = opts.mounts.clone();
@@ -3902,16 +4076,18 @@ fn shared_state_from_opts(
     // Build a temporary SharedState to pass to build_bash_from_state
     let tmp = SharedState {
         inner: Mutex::new(RustBash::new()),
-        rt: Mutex::new(
+        rt: Mutex::new(OwnedRuntime::new(
             tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
                 .map_err(|e| napi::Error::from_reason(format!("Failed to create runtime: {e}")))?,
-        ),
+        )),
         cancelled: std::sync::Mutex::new(Arc::new(AtomicBool::new(false))),
         on_output_reentry_depth: Arc::new(AtomicUsize::new(0)),
         in_sync_execute_depth: Arc::new(AtomicUsize::new(0)),
         async_execute_semaphore: Arc::new(Semaphore::new(MAX_PENDING_ASYNC_EXECUTIONS)),
+        async_execute_depth: Arc::new(AtomicUsize::new(0)),
+        sync_idle: Arc::new(tokio::sync::Notify::new()),
         username: opts.username.clone(),
         profile: opts.profile,
         hostname: opts.hostname.clone(),
@@ -3934,10 +4110,11 @@ fn shared_state_from_opts(
         mounts: mounts.clone(),
         allowed_mount_paths: allowed_mount_paths.clone(),
         python: py,
+        typescript: ts,
+        typescript_external_functions: ts_fns.clone(),
         sqlite: sql,
         network: network.clone(),
         external_functions: ext_fns.clone(),
-        external_handler: external_handler.clone(),
         host_registry: host_registry.clone(),
         runtime_env: runtime_env.clone(),
         runtime_mounts: runtime_mounts.clone(),
@@ -3963,11 +4140,13 @@ fn shared_state_from_opts(
 
     Ok(SharedState {
         inner: Mutex::new(bash),
-        rt: Mutex::new(rt),
+        rt: Mutex::new(OwnedRuntime::new(rt)),
         cancelled: std::sync::Mutex::new(cancelled),
         on_output_reentry_depth: tmp.on_output_reentry_depth,
         in_sync_execute_depth: tmp.in_sync_execute_depth,
         async_execute_semaphore: Arc::new(Semaphore::new(MAX_PENDING_ASYNC_EXECUTIONS)),
+        async_execute_depth: Arc::new(AtomicUsize::new(0)),
+        sync_idle: Arc::new(tokio::sync::Notify::new()),
         username: opts.username,
         profile: opts.profile,
         hostname: opts.hostname,
@@ -3990,10 +4169,11 @@ fn shared_state_from_opts(
         mounts,
         allowed_mount_paths,
         python: py,
+        typescript: ts,
+        typescript_external_functions: ts_fns,
         sqlite: sql,
         network,
         external_functions: ext_fns,
-        external_handler,
         host_registry,
         runtime_env,
         runtime_mounts,

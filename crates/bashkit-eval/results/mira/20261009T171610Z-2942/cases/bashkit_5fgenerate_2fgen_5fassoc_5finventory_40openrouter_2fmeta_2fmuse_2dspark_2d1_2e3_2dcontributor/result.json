@@ -1,0 +1,63 @@
+{
+  "eval": "bashkit_generate",
+  "sample": "gen_assoc_inventory",
+  "target": "openrouter/meta/muse-spark-1.3-contributor",
+  "input": [
+    "Write a bash script (use bash associative arrays) that aggregates an inventory.\n\nStarting files:\n--- /home/eval/data/inventory.txt ---\n# warehouse sku qty\nberlin bolt 120\nparis nut 40\nberlin nut 15\nlyon bolt 30\nparis  bolt 5\nberlin washer 300\nlyon nut 0\n--- end ---\n\nLines starting with `#` are comments; fields are separated by one or more spaces.\n\n1. Write /home/eval/data/sku_totals.txt: one line `SKU TOTAL_QTY` per SKU, sorted by SKU.\n2. Write /home/eval/data/warehouses.txt: one line `WAREHOUSE N` per warehouse, sorted by warehouse, where N is the number of distinct SKUs that warehouse holds with qty > 0.\nExit 0."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "3/3 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "```bash\n#!/bin/bash\nset -euo pipefail\n\nIN=\"/home/eval/data/inventory.txt\"\nSKU_OUT=\"/home/eval/data/sku_totals.txt\"\nWH_OUT=\"/home/eval/data/warehouses.txt\"\n\nmkdir -p \"$(dirname \"$SKU_OUT\")\" \"$(dirname \"$WH_OUT\")\"\n\ndeclare -A sku_totals=()\ndeclare -A wh_sku_qty=()\ndeclare -A warehouses_seen=()\n\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  if [[ \"$line\" =~ ^[[:space:]]*(#|$) ]]; then\n    continue\n  fi\n  # split on one or more spaces (IFS whitespace)\n  read -ra fields <<< \"$line\"\n  if (( ${#fields[@]} < 3 )); then\n    continue\n  fi\n  wh=\"${fields[0]}\"\n  sku=\"${fields[1]}\"\n  qty_str=\"${fields[2]}\"\n  if ! [[ \"$qty_str\" =~ ^-?[0-9]+$ ]]; then\n    continue\n  fi\n  # convert safely avoiding octal interpretation\n  if [[ \"$qty_str\" == -* ]]; then\n    mag=\"${qty_str#-}\"\n    qty_val=$(( -10#$mag ))\n  else\n    mag=\"${qty_str#+}\"\n    qty_val=$((10#$mag))\n  fi\n  sku_totals[\"$sku\"]=$(( ${sku_totals[\"$sku\"]:-0} + qty_val ))\n  wkey=\"${wh}|${sku}\"\n  wh_sku_qty[\"$wkey\"]=$(( ${wh_sku_qty[\"$wkey\"]:-0} + qty_val ))\n  warehouses_seen[\"$wh\"]=1\ndone < \"$IN\"\n\ndeclare -A wh_distinct=()\nfor w in \"${!warehouses_seen[@]}\"; do\n  wh_distinct[\"$w\"]=0\ndone\n\nfor k in \"${!wh_sku_qty[@]}\"; do\n  q=\"${wh_sku_qty[\"$k\"]}\"\n  if (( q > 0 )); then\n    w=\"${k%%|*}\"\n    wh_distinct[\"$w\"]=$(( ${wh_distinct[\"$w\"]:-0} + 1 ))\n  fi\ndone\n\n# Write sku_totals.txt sorted by SKU\n: > \"$SKU_OUT\"\nif (( ${#sku_totals[@]} > 0 )); then\n  for sku in \"${!sku_totals[@]}\"; do\n    printf '%s %s\\n' \"$sku\" \"${sku_totals[\"$sku\"]}\"\n  done | LC_ALL=C sort > \"$SKU_OUT\"\nfi\n\n# Write warehouses.txt sorted by warehouse\n: > \"$WH_OUT\"\nif (( ${#wh_distinct[@]} > 0 )); then\n  for w in \"${!wh_distinct[@]}\"; do\n    printf '%s %s\\n' \"$w\" \"${wh_distinct[\"$w\"]}\"\n  done | LC_ALL=C sort > \"$WH_OUT\"\nfi\n\nexit 0\n```",
+    "iterations": 1,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "#!/bin/bash\nset -euo pipefail\n\nIN=\"/home/eval/data/inventory.txt\"\nSKU_OUT=\"/home/eval/data/sku_totals.txt\"\nWH_OUT=\"/home/eval/data/warehouses.txt\"\n\nmkdir -p \"$(dirname \"$SKU_OUT\")\" \"$(dirname \"$WH_OUT\")\"\n\ndeclare -A sku_totals=()\ndeclare -A wh_sku_qty=()\ndeclare -A warehouses_seen=()\n\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  if [[ \"$line\" =~ ^[[:space:]]*(#|$) ]]; then\n    continue\n  fi\n  # split on one or more spaces (IFS whitespace)\n  read -ra fields <<< \"$line\"\n  if (( ${#fields[@]} < 3 )); then\n    continue\n  fi\n  wh=\"${fields[0]}\"\n  sku=\"${fields[1]}\"\n  qty_str=\"${fields[2]}\"\n  if ! [[ \"$qty_str\" =~ ^-?[0-9]+$ ]]; then\n    continue\n  fi\n  # convert safely avoiding octal interpretation\n  if [[ \"$qty_str\" == -* ]]; then\n    mag=\"${qty_str#-}\"\n    qty_val=$(( -10#$mag ))\n  else\n    mag=\"${qty_str#+}\"\n    qty_val=$((10#$mag))\n  fi\n  sku_totals[\"$sku\"]=$(( ${sku_totals[\"$sku\"]:-0} + qty_val ))\n  wkey=\"${wh}|${sku}\"\n  wh_sku_qty[\"$wkey\"]=$(( ${wh_sku_qty[\"$wkey\"]:-0} + qty_val ))\n  warehouses_seen[\"$wh\"]=1\ndone < \"$IN\"\n\ndeclare -A wh_distinct=()\nfor w in \"${!warehouses_seen[@]}\"; do\n  wh_distinct[\"$w\"]=0\ndone\n\nfor k in \"${!wh_sku_qty[@]}\"; do\n  q=\"${wh_sku_qty[\"$k\"]}\"\n  if (( q > 0 )); then\n    w=\"${k%%|*}\"\n    wh_distinct[\"$w\"]=$(( ${wh_distinct[\"$w\"]:-0} + 1 ))\n  fi\ndone\n\n# Write sku_totals.txt sorted by SKU\n: > \"$SKU_OUT\"\nif (( ${#sku_totals[@]} > 0 )); then\n  for sku in \"${!sku_totals[@]}\"; do\n    printf '%s %s\\n' \"$sku\" \"${sku_totals[\"$sku\"]}\"\n  done | LC_ALL=C sort > \"$SKU_OUT\"\nfi\n\n# Write warehouses.txt sorted by warehouse\n: > \"$WH_OUT\"\nif (( ${#wh_distinct[@]} > 0 )); then\n  for w in \"${!wh_distinct[@]}\"; do\n    printf '%s %s\\n' \"$w\" \"${wh_distinct[\"$w\"]}\"\n  done | LC_ALL=C sort > \"$WH_OUT\"\nfi\n\nexit 0\n"
+    ],
+    "usage": {
+      "input_tokens": 483,
+      "output_tokens": 3189,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 36687
+    },
+    "metrics": {
+      "exec_ms": 12.0,
+      "exit_code": 0.0,
+      "extracted": 1.0,
+      "generate_ms": 36675.0,
+      "script_bytes": 1747.0,
+      "script_found": 1.0,
+      "timed_out": 0.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "#!/bin/bash\nset -euo pipefail\n\nIN=\"/home/eval/data/inventory.txt\"\nSKU_OUT=\"/home/eval/data/sku_totals.txt\"\nWH_OUT=\"/home/eval/data/warehouses.txt\"\n\nmkdir -p \"$(dirname \"$SKU_OUT\")\" \"$(dirname \"$WH_OUT\")\"\n\ndeclare -A sku_totals=()\ndeclare -A wh_sku_qty=()\ndeclare -A warehouses_seen=()\n\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  if [[ \"$line\" =~ ^[[:space:]]*(#|$) ]]; then\n    continue\n  fi\n  # split on one or more spaces (IFS whitespace)\n  read -ra fields <<< \"$line\"\n  if (( ${#fields[@]} < 3 )); then\n    continue\n  fi\n  wh=\"${fields[0]}\"\n  sku=\"${fields[1]}\"\n  qty_str=\"${fields[2]}\"\n  if ! [[ \"$qty_str\" =~ ^-?[0-9]+$ ]]; then\n    continue\n  fi\n  # convert safely avoiding octal interpretation\n  if [[ \"$qty_str\" == -* ]]; then\n    mag=\"${qty_str#-}\"\n    qty_val=$(( -10#$mag ))\n  else\n    mag=\"${qty_str#+}\"\n    qty_val=$((10#$mag))\n  fi\n  sku_totals[\"$sku\"]=$(( ${sku_totals[\"$sku\"]:-0} + qty_val ))\n  wkey=\"${wh}|${sku}\"\n  wh_sku_qty[\"$wkey\"]=$(( ${wh_sku_qty[\"$wkey\"]:-0} + qty_val ))\n  warehouses_seen[\"$wh\"]=1\ndone < \"$IN\"\n\ndeclare -A wh_distinct=()\nfor w in \"${!warehouses_seen[@]}\"; do\n  wh_distinct[\"$w\"]=0\ndone\n\nfor k in \"${!wh_sku_qty[@]}\"; do\n  q=\"${wh_sku_qty[\"$k\"]}\"\n  if (( q > 0 )); then\n    w=\"${k%%|*}\"\n    wh_distinct[\"$w\"]=$(( ${wh_distinct[\"$w\"]:-0} + 1 ))\n  fi\ndone\n\n# Write sku_totals.txt sorted by SKU\n: > \"$SKU_OUT\"\nif (( ${#sku_totals[@]} > 0 )); then\n  for sku in \"${!sku_totals[@]}\"; do\n    printf '%s %s\\n' \"$sku\" \"${sku_totals[\"$sku\"]}\"\n  done | LC_ALL=C sort > \"$SKU_OUT\"\nfi\n\n# Write warehouses.txt sorted by warehouse\n: > \"$WH_OUT\"\nif (( ${#wh_distinct[@]} > 0 )); then\n  for w in \"${!wh_distinct[@]}\"; do\n    printf '%s %s\\n' \"$w\" \"${wh_distinct[\"$w\"]}\"\n  done | LC_ALL=C sort > \"$WH_OUT\"\nfi\n\nexit 0\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          }
+        ]
+      },
+      "generate": {
+        "extraction": "fenced",
+        "timed_out": false
+      }
+    }
+  },
+  "skipped": false
+}

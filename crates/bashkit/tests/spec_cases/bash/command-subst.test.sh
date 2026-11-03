@@ -317,3 +317,24 @@ echo "$#"
 ### expect
 3
 ### end
+
+### subst_backtick_after_quoted_prefix
+# Backquotes glued to a quoted segment, like "a"$(cmd)
+echo 'b='`echo X`
+echo "b="`echo X`
+for u in 'a' 'b='`echo 42`; do echo $u; done
+echo 'a'`echo X`'c'
+### expect
+b=X
+b=X
+a
+b=42
+aXc
+### end
+
+### subst_backtick_after_quoted_prefix_splits
+# The unquoted result still word-splits
+printf '[%s]' 'x'`echo "1 2"`; echo
+### expect
+[x1][2]
+### end

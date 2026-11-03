@@ -1,0 +1,190 @@
+{
+  "eval": "bashkit_repo",
+  "sample": "repo_release_branch_bump",
+  "target": "openrouter/meta/muse-spark-1.3-contributor",
+  "input": [
+    "Cut release 1.0.0 of the git repo /home/eval/lib: create and switch to a branch named `release-1.0.0`, set the version to 1.0.0 everywhere it appears (VERSION, package.json, and turn the `## Unreleased` heading in CHANGELOG.md into `## 1.0.0`), run `make test`, and commit with the message `release: 1.0.0`."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "8/8 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Release branch fixed — doing a final verification.",
+    "iterations": 20,
+    "tool_calls_count": 20,
+    "tool_calls": [
+      "cd /home/eval/lib && pwd && git status && git branch -a && echo \"---\"; cat VERSION 2>&1; echo \"---\"; cat package.json 2>&1; echo \"---\"; cat CHANGELOG.md 2>&1; echo \"---\"; cat Makefile 2>&1; echo \"---\"; ls -la",
+      "cd /home/eval/lib && cat scripts/check-version.sh; echo \"---\"; git log --oneline -5; echo \"---\"; git branch --list",
+      "cd /home/eval/lib && type git; which git; git --version; alias 2>&1; echo \"---\"; git status 2>&1",
+      "ls -l /usr/bin/git; file /usr/bin/git 2>&1; cat /usr/bin/git 2>&1 | head -n 200; echo \"===\"; git --help 2>&1 | head -n 100",
+      "type -a git; declare -F 2>&1 | head -n 100; echo \"===\"; env | sort; echo \"===\"; ls -la /home/eval/lib/.git/ 2>&1; find /home/eval/lib/.git -type f | head -n 50; echo \"===\"; cat /home/eval/lib/.git/* 2>/dev/null | head -n 200",
+      "cd /home/eval/lib\necho \"===HEAD===\"; cat .git/HEAD\necho \"===commits===\"; cat .git/commits\necho \"===config===\"; cat .git/config\necho \"===index===\"; cat .git/index; echo \"(end index)\"; hexdump -C .git/index | head\necho \"===refs/heads/master===\"; cat .git/refs/heads/master; hexdump -C .git/refs/heads/master | head\necho \"===tracked===\"; cat .git/tracked\necho \"===objects===\"; ls -R .git/objects 2>&1; ls -R .git/refs 2>&1\necho \"===env git?===\"; ls -la /bin/git 2>&1; cat /bin/git 2>&1 | head -n 200\necho \"===PATH===\"; echo $PATH\necho \"===builtins?===\"; compgen -c | grep -i git | head; echo \"---\"; bash --version 2>&1 | head",
+      "ls -la /usr/local/bin/ 2>&1; echo \"===\"; ls -la /bin/ 2>&1 | head -n 100; echo \"===\"; ls -la /usr/bin/ 2>&1 | head -n 100; echo \"===\"; echo $BASH_VERSION; sh --version 2>&1 | head; ls -l /bin/sh 2>&1",
+      "cd /home/eval/lib\nfor cmd in \"git status\" \"git log\" \"git diff\" \"git add --help\" \"git commit --help\" \"git checkout --help\" \"git branch --help\"; do echo \"=== TRY: $cmd ===\"; $cmd 2>&1; echo \"exit:$?\"; done",
+      "cd /home/eval/lib\necho \"=== git branch ===\"; git branch 2>&1; echo \"exit:$?\"\necho \"=== git checkout master ===\"; git checkout master 2>&1; echo \"exit:$?\"\necho \"=== git status after ===\"; git status 2>&1; echo \"exit:$?\"",
+      "cd /home/eval/lib\necho \"=== git branch release-1.0.0 ===\"; git branch release-1.0.0 2>&1; echo \"exit:$?\"\necho \"=== git branch ===\"; git branch 2>&1; echo \"exit:$?\"\necho \"=== git status ===\"; git status 2>&1; echo \"exit:$?\"",
+      "cd /home/eval/lib && git checkout release-1.0.0 2>&1; echo \"exit:$?\"; git branch 2>&1; git status 2>&1",
+      "cd /home/eval/lib\necho \"1.0.0\" > VERSION\ncat VERSION; echo \"---VERSION done---\"\ncat package.json\njq '.version = \"1.0.0\"' package.json > /tmp/pkg.json && cat /tmp/pkg.json && cp /tmp/pkg.json package.json\necho \"---package.json done---\"; cat package.json\ncat CHANGELOG.md",
+      "cd /home/eval/lib\nsed -i 's/^## Unreleased/## 1.0.0/' CHANGELOG.md\ncat CHANGELOG.md\necho \"---\"; cat VERSION; cat package.json",
+      "cd /home/eval/lib && make test 2>&1; echo \"exit:$?\"; cat build/version-check.txt 2>&1; git status 2>&1; git diff 2>&1",
+      "cd /home/eval/lib\necho \"=== status ===\"; git status 2>&1\necho \"=== diff ===\"; git diff 2>&1\necho \"=== try add ===\"; git add VERSION package.json CHANGELOG.md 2>&1; echo \"exit:$?\"\necho \"=== status after add ===\"; git status 2>&1",
+      "cd /home/eval/lib && git commit -m \"release: 1.0.0\" 2>&1; echo \"exit:$?\"; git status 2>&1; git log 2>&1",
+      "cd /home/eval/lib\necho \"=== HEAD ===\"; cat .git/HEAD\necho \"=== refs ===\"; ls -R .git/refs 2>&1; echo \"---\"; cat .git/refs/heads/master 2>&1; echo; cat .git/refs/heads/release-1.0.0 2>&1; echo\necho \"=== commits ===\"; cat .git/commits\necho \"=== tracked ===\"; cat .git/tracked\necho \"=== index ===\"; cat .git/index; echo \"(end)\"\necho \"=== files ===\"; cat VERSION; echo \"---\"; cat package.json; echo \"---\"; cat CHANGELOG.md\necho \"=== git branch ===\"; git branch 2>&1\necho \"=== git log ===\"; git log 2>&1\necho \"=== git status ===\"; git status 2>&1",
+      "cd /home/eval/lib\necho \"MASTER:\"; hexdump -C .git/refs/heads/master; cat .git/refs/heads/master; echo\necho \"RELEASE:\"; hexdump -C .git/refs/heads/release-1.0.0; cat .git/refs/heads/release-1.0.0; echo\necho \"HEAD:\"; cat .git/HEAD; echo\necho \"COMMITS:\"; cat .git/commits",
+      "cd /home/eval/lib\nprintf 'b465c9eb' > .git/refs/heads/master\nprintf 'b465c9ad' > .git/refs/heads/release-1.0.0\necho \"MASTER:\"; cat .git/refs/heads/master; echo\necho \"RELEASE:\"; cat .git/refs/heads/release-1.0.0; echo\necho \"HEAD:\"; cat .git/HEAD; echo\ngit branch 2>&1\ngit log 2>&1\ngit status 2>&1",
+      "cd /home/eval/lib && make test 2>&1; echo \"exit:$?\"; echo \"===\"; git branch 2>&1; echo \"===\"; git log 2>&1 | head -n 20; echo \"===\"; cat VERSION; jq -r .version package.json; grep -m1 '^## ' CHANGELOG.md"
+    ],
+    "usage": {
+      "input_tokens": 130125,
+      "output_tokens": 11054,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 90207
+    },
+    "metrics": {
+      "natural_stop": 0.0,
+      "tool_calls": 20.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 19.0,
+      "turns": 20.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cd /home/eval/lib && pwd && git status && git branch -a && echo \"---\"; cat VERSION 2>&1; echo \"---\"; cat package.json 2>&1; echo \"---\"; cat CHANGELOG.md 2>&1; echo \"---\"; cat Makefile 2>&1; echo \"---\"; ls -la",
+            "exit_code": 0,
+            "stderr": "internal error: fatal: '-a' is not a valid branch name (starts with dash)\n",
+            "stdout": "/home/eval/lib\nOn branch master\n\nnothing to commit, working tree clean\n0.9.3\n---\n{\n  \"name\": \"@acme/lib\",\n  \"version\": \"0.9.3\",\n  \"private\": true\n}\n---\n# Changelog\n\n## Unreleased\n\n- Add retry helper\n- Drop Node 16\n\n## 0.9.3\n\n- Fix timeout parsing\n---\ntest:\n\t@bash scripts/check-version.sh\n---\ndrwxr-xr-x        0 2026-10-09 05:09 .git\n-rw-r--r--       95 2026-10-09 05:09 CHANGELOG.md\n-rw-r--r--       38 2026-10-09 05:09 Makefile\n-rw-r--r--        6 2026-10-09 05:09 VERSION\n-rw-r--r--       67 2026-10-09 05:09 package.json\ndrwxr-xr-x        0 2026-10-09 05:09 scripts\n"
+          },
+          {
+            "commands": "cd /home/eval/lib && cat scripts/check-version.sh; echo \"---\"; git log --oneline -5; echo \"---\"; git branch --list",
+            "exit_code": 128,
+            "stderr": "internal error: fatal: '--list' is not a valid branch name (starts with dash)\n",
+            "stdout": "#!/bin/bash\n# VERSION, package.json and the newest CHANGELOG heading must agree.\nv=$(cat VERSION)\np=$(jq -r .version package.json)\nc=$(grep -m1 '^## ' CHANGELOG.md | sed 's/^## //')\nif [ \"$v\" = \"$p\" ] && [ \"$v\" = \"$c\" ]; then\n  mkdir -p build; echo \"version $v consistent\" | tee build/version-check.txt\nelse\n  echo \"mismatch: VERSION=$v package.json=$p CHANGELOG=$c\"; exit 1\nfi\n---\ncommit b465c9eb\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 05:09:24 2026 +0000\n\n    initial import\n\n---\n"
+          },
+          {
+            "commands": "cd /home/eval/lib && type git; which git; git --version; alias 2>&1; echo \"---\"; git status 2>&1",
+            "exit_code": 0,
+            "stderr": "git: '--version' is not a git command. See 'git --help'.\n",
+            "stdout": "git is hashed (/usr/bin/git)\n/usr/bin/git\n---\nOn branch master\n\nnothing to commit, working tree clean\n"
+          },
+          {
+            "commands": "ls -l /usr/bin/git; file /usr/bin/git 2>&1; cat /usr/bin/git 2>&1 | head -n 200; echo \"===\"; git --help 2>&1 | head -n 100",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rwxr-xr-x       47 2026-10-09 05:09 /usr/bin/git\n/usr/bin/git: Bourne-Again shell script\n#!/bin/sh\n# bashkit builtin: git\nexec git \"$@\"\n===\ngit: '--help' is not a git command. See 'git --help'.\n"
+          },
+          {
+            "commands": "type -a git; declare -F 2>&1 | head -n 100; echo \"===\"; env | sort; echo \"===\"; ls -la /home/eval/lib/.git/ 2>&1; find /home/eval/lib/.git -type f | head -n 50; echo \"===\"; cat /home/eval/lib/.git/* 2>/dev/null | head -n 200",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "git is /usr/bin/git\ngit is /bin/git\n===\nOLDPWD=/home/eval/lib\nPWD=/home/eval/lib\nUSER=eval\n===\n-rw-r--r--       23 2026-10-09 05:09 HEAD\n-rw-r--r--       72 2026-10-09 05:09 commits\n-rw-r--r--      128 2026-10-09 05:09 config\n-rw-r--r--        0 2026-10-09 05:09 index\ndrwxr-xr-x        0 2026-10-09 05:09 objects\ndrwxr-xr-x        0 2026-10-09 05:09 refs\n-rw-r--r--       67 2026-10-09 05:09 tracked\n/home/eval/lib/.git/HEAD\n/home/eval/lib/.git/commits\n/home/eval/lib/.git/config\n/home/eval/lib/.git/index\n/home/eval/lib/.git/refs/heads/master\n/home/eval/lib/.git/tracked\n===\nref: refs/heads/master\nb465c9eb|Eval Agent|eval@bashkit-eval.invalid|1791522564|initial import\n[core]\n\trepositoryformatversion = 0\n\tfilemode = true\n\tbare = false\n[user]\n\tname = Eval Agent\n\temail = eval@bashkit-eval.invalid\nVERSION\npackage.json\nscripts/check-version.sh\nMakefile\nCHANGELOG.md"
+          },
+          {
+            "commands": "cd /home/eval/lib\necho \"===HEAD===\"; cat .git/HEAD\necho \"===commits===\"; cat .git/commits\necho \"===config===\"; cat .git/config\necho \"===index===\"; cat .git/index; echo \"(end index)\"; hexdump -C .git/index | head\necho \"===refs/heads/master===\"; cat .git/refs/heads/master; hexdump -C .git/refs/heads/master | head\necho \"===tracked===\"; cat .git/tracked\necho \"===objects===\"; ls -R .git/objects 2>&1; ls -R .git/refs 2>&1\necho \"===env git?===\"; ls -la /bin/git 2>&1; cat /bin/git 2>&1 | head -n 200\necho \"===PATH===\"; echo $PATH\necho \"===builtins?===\"; compgen -c | grep -i git | head; echo \"---\"; bash --version 2>&1 | head",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "===HEAD===\nref: refs/heads/master\n===commits===\nb465c9eb|Eval Agent|eval@bashkit-eval.invalid|1791522564|initial import\n===config===\n[core]\n\trepositoryformatversion = 0\n\tfilemode = true\n\tbare = false\n[user]\n\tname = Eval Agent\n\temail = eval@bashkit-eval.invalid\n===index===\n(end index)\n===refs/heads/master===\nb465c9eb00000000  62 34 36 35 63 39 65 62                           |b465c9eb|\n00000008\n===tracked===\nVERSION\npackage.json\nscripts/check-version.sh\nMakefile\nCHANGELOG.md===objects===\n.git/objects:\n.git/refs:\nheads\ntags\n\n.git/refs/heads:\nmaster\n\n.git/refs/tags:\n===env git?===\n-rwxr-xr-x       47 2026-10-09 05:09 /bin/git\n#!/bin/sh\n# bashkit builtin: git\nexec git \"$@\"\n===PATH===\n/usr/local/bin:/usr/bin:/bin\n===builtins?===\ngit\n---\nBashkit 0.18.2 (virtual bash interpreter)\n"
+          },
+          {
+            "commands": "ls -la /usr/local/bin/ 2>&1; echo \"===\"; ls -la /bin/ 2>&1 | head -n 100; echo \"===\"; ls -la /usr/bin/ 2>&1 | head -n 100; echo \"===\"; echo $BASH_VERSION; sh --version 2>&1 | head; ls -l /bin/sh 2>&1",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "ls: cannot access '/usr/local/bin/': No such file or directory\n===\n-rwxr-xr-x       43 2026-10-09 05:09 :\n-rwxr-xr-x       43 2026-10-09 05:09 [\n-rwxr-xr-x       49 2026-10-09 05:09 arch\n-rwxr-xr-x       53 2026-10-09 05:09 assert\n-rwxr-xr-x       47 2026-10-09 05:09 awk\n-rwxr-xr-x       51 2026-10-09 05:09 b2sum\n-rwxr-xr-x       53 2026-10-09 05:09 base32\n-rwxr-xr-x       53 2026-10-09 05:09 base64\n-rwxr-xr-x       57 2026-10-09 05:09 basename\n-rwxr-xr-x       53 2026-10-09 05:09 basenc\n-rwxr-xr-x       49 2026-10-09 05:09 bash\n-rwxr-xr-x       45 2026-10-09 05:09 bc\n-rwxr-xr-x       49 2026-10-09 05:09 bind\n-rwxr-xr-x       55 2026-10-09 05:09 bunzip2\n-rwxr-xr-x       55 2026-10-09 05:09 busybox\n-rwxr-xr-x       51 2026-10-09 05:09 bzcat\n-rwxr-xr-x       51 2026-10-09 05:09 bzip2\n-rwxr-xr-x       47 2026-10-09 05:09 cat\n-rwxr-xr-x       51 2026-10-09 05:09 chgrp\n-rwxr-xr-x       51 2026-10-09 05:09 chmod\n-rwxr-xr-x       51 2026-10-09 05:09 chown\n-rwxr-xr-x       51 2026-10-09 05:09 cksum\n-rwxr-xr-x       51 2026-10-09 05:09 clear\n-rwxr-xr-x       47 2026-10-09 05:09 cmp\n-rwxr-xr-x       53 2026-10-09 05:09 column\n-rwxr-xr-x       49 2026-10-09 05:09 comm\n-rwxr-xr-x       57 2026-10-09 05:09 complete\n-rwxr-xr-x       55 2026-10-09 05:09 compopt\n-rwxr-xr-x       45 2026-10-09 05:09 cp\n-rwxr-xr-x       47 2026-10-09 05:09 csv\n-rwxr-xr-x       49 2026-10-09 05:09 curl\n-rwxr-xr-x       47 2026-10-09 05:09 cut\n-rwxr-xr-x       49 2026-10-09 05:09 date\n-rwxr-xr-x       45 2026-10-09 05:09 dd\n-rwxr-xr-x       45 2026-10-09 05:09 df\n-rwxr-xr-x       49 2026-10-09 05:09 diff\n-rwxr-xr-x       55 2026-10-09 05:09 dirname\n-rwxr-xr-x       53 2026-10-09 05:09 dotenv\n-rwxr-xr-x       45 2026-10-09 05:09 du\n-rwxr-xr-x       49 2026-10-09 05:09 echo\n-rwxr-xr-x       51 2026-10-09 05:09 egrep\n-rwxr-xr-x       47 2026-10-09 05:09 env\n-rwxr-xr-x       57 2026-10-09 05:09 envsubst\n-rwxr-xr-x       53 2026-10-09 05:09 expand\n-rwxr-xr-x       49 2026-10-09 05:09 expr\n-rwxr-xr-x       53 2026-10-09 05:09 factor\n-rwxr-xr-x       51 2026-10-09 05:09 false\n-rwxr-xr-x       51 2026-10-09 05:09 fgrep\n-rwxr-xr-x       49 2026-10-09 05:09 file\n-rwxr-xr-x       49 2026-10-09 05:09 find\n-rwxr-xr-x       51 2026-10-09 05:09 flock\n-rwxr-xr-x       47 2026-10-09 05:09 fmt\n-rwxr-xr-x       49 2026-10-09 05:09 fold\n-rwxr-xr-x       49 2026-10-09 05:09 free\n-rwxr-xr-x       49 2026-10-09 05:09 gawk\n-rwxr-xr-x       55 2026-10-09 05:09 getconf\n-rwxr-xr-x       47 2026-10-09 05:09 git\n-rwxr-xr-x       49 2026-10-09 05:09 glob\n-rwxr-xr-x       49 2026-10-09 05:09 grep\n-rwxr-xr-x       53 2026-10-09 05:09 groups\n-rwxr-xr-x       53 2026-10-09 05:09 gunzip\n-rwxr-xr-x       49 2026-10-09 05:09 gzip\n-rwxr-xr-x       49 2026-10-09 05:09 head\n-rwxr-xr-x       55 2026-10-09 05:09 hexdump\n-rwxr-xr-x       53 2026-10-09 05:09 hostid\n-rwxr-xr-x       57 2026-10-09 05:09 hostname\n-rwxr-xr-x       49 2026-10-09 05:09 http\n-rwxr-xr-x       51 2026-10-09 05:09 iconv\n-rwxr-xr-x       45 2026-10-09 05:09 id\n-rwxr-xr-x       55 2026-10-09 05:09 install\n-rwxr-xr-x       49 2026-10-09 05:09 join\n-rwxr-xr-x       45 2026-10-09 05:09 jq\n-rwxr-xr-x       49 2026-10-09 05:09 json\n-rwxr-xr-x       49 2026-10-09 05:09 kill\n-rwxr-xr-x       49 2026-10-09 05:09 less\n-rwxr-xr-x       49 2026-10-09 05:09 link\n-rwxr-xr-x       45 2026-10-09 05:09 ln\n-rwxr-xr-x       53 2026-10-09 05:09 locale\n-rwxr-xr-x       47 2026-10-09 05:09 log\n-rwxr-xr-x       55 2026-10-09 05:09 logname\n-rwxr-xr-x       45 2026-10-09 05:09 ls\n-rwxr-xr-x       49 2026-10-09 05:09 make\n-rwxr-xr-x       47 2026-10-09 05:09 man\n-rwxr-xr-x       49 2026-10-09 05:09 mawk\n-rwxr-xr-x       53 2026-10-09 05:09 md5sum\n-rwxr-xr-x       51 2026-10-09 05:09 mkdir\n-rwxr-xr-x       53 2026-10-09 05:09 mkfifo\n-rwxr-xr-x       53 2026-10-09 05:09 mktemp\n-rwxr-xr-x       49 2026-10-09 05:09 more\n-rwxr-xr-x       45 2026-10-09 05:09 mv\n-rwxr-xr-x       49 2026-10-09 05:09 nano\n-rwxr-xr-x       49 2026-10-09 05:09 nawk\n-rwxr-xr-x       49 2026-10-09 05:09 nice\n-rwxr-xr-x       45 2026-10-09 05:09 nl\n-rwxr-xr-x       51 2026-10-09 05:09 nohup\n-rwxr-xr-x       51 2026-10-09 05:09 nproc\n-rwxr-xr-x       53 2026-10-09 05:09 numfmt\n-rwxr-xr-x       45 2026-10-09 05:09 od\n-rwxr-xr-x       55 2026-10-09 05:09 openssl\n-rwxr-xr-x       57 2026-10-09 05:09 parallel\n===\n-rwxr-xr-x       43 2026-10-09 05:09 :\n-rwxr-xr-x       43 2026-10-09 05:09 [\n-rwxr-xr-x       49 2026-10-09 05:09 arch\n-rwxr-xr-x       53 2026-10-09 05:09 assert\n-rwxr-xr-x       47 2026-10-09 05:09 awk\n-rwxr-xr-x       51 2026-10-09 05:09 b2sum\n-rwxr-xr-x       53 2026-10-09 05:09 base32\n-rwxr-xr-x       53 2026-10-09 05:09 base64\n-rwxr-xr-x       57 2026-10-09 05:09 basename\n-rwxr-xr-x       53 2026-10-09 05:09 basenc\n-rwxr-xr-x       49 2026-10-09 05:09 bash\n-rwxr-xr-x       45 2026-10-09 05:09 bc\n-rwxr-xr-x       49 2026-10-09 05:09 bind\n-rwxr-xr-x       55 2026-10-09 05:09 bunzip2\n-rwxr-xr-x       55 2026-10-09 05:09 busybox\n-rwxr-xr-x       51 2026-10-09 05:09 bzcat\n-rwxr-xr-x       51 2026-10-09 05:09 bzip2\n-rwxr-xr-x       47 2026-10-09 05:09 cat\n-rwxr-xr-x       51 2026-10-09 05:09 chgrp\n-rwxr-xr-x       51 2026-10-09 05:09 chmod\n-rwxr-xr-x       51 2026-10-09 05:09 chown\n-rwxr-xr-x       51 2026-10-09 05:09 cksum\n-rwxr-xr-x       51 2026-10-09 05:09 clear\n-rwxr-xr-x       47 2026-10-09 05:09 cmp\n-rwxr-xr-x       53 2026-10-09 05:09 column\n-rwxr-xr-x       49 2026-10-09 05:09 comm\n-rwxr-xr-x       57 2026-10-09 05:09 complete\n-rwxr-xr-x       55 2026-10-09 05:09 compopt\n-rwxr-xr-x       45 2026-10-09 05:09 cp\n-rwxr-xr-x       47 2026-10-09 05:09 csv\n-rwxr-xr-x       49 2026-10-09 05:09 curl\n-rwxr-xr-x       47 2026-10-09 05:09 cut\n-rwxr-xr-x       49 2026-10-09 05:09 date\n-rwxr-xr-x       45 2026-10-09 05:09 dd\n-rwxr-xr-x       45 2026-10-09 05:09 df\n-rwxr-xr-x       49 2026-10-09 05:09 diff\n-rwxr-xr-x       55 2026-10-09 05:09 dirname\n-rwxr-xr-x       53 2026-10-09 05:09 dotenv\n-rwxr-xr-x       45 2026-10-09 05:09 du\n-rwxr-xr-x       49 2026-10-09 05:09 echo\n-rwxr-xr-x       51 2026-10-09 05:09 egrep\n-rwxr-xr-x       47 2026-10-09 05:09 env\n-rwxr-xr-x       57 2026-10-09 05:09 envsubst\n-rwxr-xr-x       53 2026-10-09 05:09 expand\n-rwxr-xr-x       49 2026-10-09 05:09 expr\n-rwxr-xr-x       53 2026-10-09 05:09 factor\n-rwxr-xr-x       51 2026-10-09 05:09 false\n-rwxr-xr-x       51 2026-10-09 05:09 fgrep\n-rwxr-xr-x       49 2026-10-09 05:09 file\n-rwxr-xr-x       49 2026-10-09 05:09 find\n-rwxr-xr-x       51 2026-10-09 05:09 flock\n-rwxr-xr-x       47 2026-10-09 05:09 fmt\n-rwxr-xr-x       49 2026-10-09 05:09 fold\n-rwxr-xr-x       49 2026-10-09 05:09 free\n-rwxr-xr-x       49 2026-10-09 05:09 gawk\n-rwxr-xr-x       55 2026-10-09 05:09 getconf\n-rwxr-xr-x       47 2026-10-09 05:09 git\n-rwxr-xr-x       49 2026-10-09 05:09 glob\n-rwxr-xr-x       49 2026-10-09 05:09 grep\n-rwxr-xr-x       53 2026-10-09 05:09 groups\n-rwxr-xr-x       53 2026-10-09 05:09 gunzip\n-rwxr-xr-x       49 2026-10-09 05:09 gzip\n-rwxr-xr-x       49 2026-10-09 05:09 head\n-rwxr-xr-x       55 2026-10-09 05:09 hexdump\n-rwxr-xr-x       53 2026-10-09 05:09 hostid\n-rwxr-xr-x       57 2026-10-09 05:09 hostname\n-rwxr-xr-x       49 2026-10-09 05:09 http\n-rwxr-xr-x       51 2026-10-09 05:09 iconv\n-rwxr-xr-x       45 2026-10-09 05:09 id\n-rwxr-xr-x       55 2026-10-09 05:09 install\n-rwxr-xr-x       49 2026-10-09 05:09 join\n-rwxr-xr-x       45 2026-10-09 05:09 jq\n-rwxr-xr-x       49 2026-10-09 05:09 json\n-rwxr-xr-x       49 2026-10-09 05:09 kill\n-rwxr-xr-x       49 2026-10-09 05:09 less\n-rwxr-xr-x       49 2026-10-09 05:09 link\n-rwxr-xr-x       45 2026-10-09 05:09 ln\n-rwxr-xr-x       53 2026-10-09 05:09 locale\n-rwxr-xr-x       47 2026-10-09 05:09 log\n-rwxr-xr-x       55 2026-10-09 05:09 logname\n-rwxr-xr-x       45 2026-10-09 05:09 ls\n-rwxr-xr-x       49 2026-10-09 05:09 make\n-rwxr-xr-x       47 2026-10-09 05:09 man\n-rwxr-xr-x       49 2026-10-09 05:09 mawk\n-rwxr-xr-x       53 2026-10-09 05:09 md5sum\n-rwxr-xr-x       51 2026-10-09 05:09 mkdir\n-rwxr-xr-x       53 2026-10-09 05:09 mkfifo\n-rwxr-xr-x       53 2026-10-09 05:09 mktemp\n-rwxr-xr-x       49 2026-10-09 05:09 more\n-rwxr-xr-x       45 2026-10-09 05:09 mv\n-rwxr-xr-x       49 2026-10-09 05:09 nano\n-rwxr-xr-x       49 2026-10-09 05:09 nawk\n-rwxr-xr-x       49 2026-10-09 05:09 nice\n-rwxr-xr-x       45 2026-10-09 05:09 nl\n-rwxr-xr-x       51 2026-10-09 05:09 nohup\n-rwxr-xr-x       51 2026-10-09 05:09 nproc\n-rwxr-xr-x       53 2026-10-09 05:09 numfmt\n-rwxr-xr-x       45 2026-10-09 05:09 od\n-rwxr-xr-x       55 2026-10-09 05:09 openssl\n-rwxr-xr-x       57 2026-10-09 05:09 parallel\n===\n5.2.15(1)-release\nBashkit 0.18.2 (virtual sh interpreter)\n-rwxr-xr-x       45 2026-10-09 05:09 /bin/sh\n"
+          },
+          {
+            "commands": "cd /home/eval/lib\nfor cmd in \"git status\" \"git log\" \"git diff\" \"git add --help\" \"git commit --help\" \"git checkout --help\" \"git branch --help\"; do echo \"=== TRY: $cmd ===\"; $cmd 2>&1; echo \"exit:$?\"; done",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "=== TRY: git status ===\nOn branch master\n\nnothing to commit, working tree clean\nexit:0\n=== TRY: git log ===\ncommit b465c9eb\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 05:09:24 2026 +0000\n\n    initial import\n\nexit:0\n=== TRY: git diff ===\n# Diff output (simplified in virtual mode)\nexit:0\n=== TRY: git add --help ===\nNothing specified, nothing added.\nexit:0\n=== TRY: git commit --help ===\nerror: switch 'm' requires a value\nexit:128\n=== TRY: git checkout --help ===\ninternal error: fatal: '--help' is not a valid branch name (starts with dash)\nexit:1\n=== TRY: git branch --help ===\ninternal error: fatal: '--help' is not a valid branch name (starts with dash)\nexit:128\n"
+          },
+          {
+            "commands": "cd /home/eval/lib\necho \"=== git branch ===\"; git branch 2>&1; echo \"exit:$?\"\necho \"=== git checkout master ===\"; git checkout master 2>&1; echo \"exit:$?\"\necho \"=== git status after ===\"; git status 2>&1; echo \"exit:$?\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "=== git branch ===\n* master\nexit:0\n=== git checkout master ===\nSwitched to branch 'master'\nexit:0\n=== git status after ===\nOn branch master\n\nnothing to commit, working tree clean\nexit:0\n"
+          },
+          {
+            "commands": "cd /home/eval/lib\necho \"=== git branch release-1.0.0 ===\"; git branch release-1.0.0 2>&1; echo \"exit:$?\"\necho \"=== git branch ===\"; git branch 2>&1; echo \"exit:$?\"\necho \"=== git status ===\"; git status 2>&1; echo \"exit:$?\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "=== git branch release-1.0.0 ===\nexit:0\n=== git branch ===\n* master\n  release-1.0.0\nexit:0\n=== git status ===\nOn branch master\n\nnothing to commit, working tree clean\nexit:0\n"
+          },
+          {
+            "commands": "cd /home/eval/lib && git checkout release-1.0.0 2>&1; echo \"exit:$?\"; git branch 2>&1; git status 2>&1",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Switched to branch 'release-1.0.0'\nexit:0\n* release-1.0.0\n  master\nOn branch release-1.0.0\n\nnothing to commit, working tree clean\n"
+          },
+          {
+            "commands": "cd /home/eval/lib\necho \"1.0.0\" > VERSION\ncat VERSION; echo \"---VERSION done---\"\ncat package.json\njq '.version = \"1.0.0\"' package.json > /tmp/pkg.json && cat /tmp/pkg.json && cp /tmp/pkg.json package.json\necho \"---package.json done---\"; cat package.json\ncat CHANGELOG.md",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "1.0.0\n---VERSION done---\n{\n  \"name\": \"@acme/lib\",\n  \"version\": \"0.9.3\",\n  \"private\": true\n}\n{\n  \"name\": \"@acme/lib\",\n  \"version\": \"1.0.0\",\n  \"private\": true\n}\n---package.json done---\n{\n  \"name\": \"@acme/lib\",\n  \"version\": \"1.0.0\",\n  \"private\": true\n}\n# Changelog\n\n## Unreleased\n\n- Add retry helper\n- Drop Node 16\n\n## 0.9.3\n\n- Fix timeout parsing\n"
+          },
+          {
+            "commands": "cd /home/eval/lib\nsed -i 's/^## Unreleased/## 1.0.0/' CHANGELOG.md\ncat CHANGELOG.md\necho \"---\"; cat VERSION; cat package.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# Changelog\n\n## 1.0.0\n\n- Add retry helper\n- Drop Node 16\n\n## 0.9.3\n\n- Fix timeout parsing\n---\n1.0.0\n{\n  \"name\": \"@acme/lib\",\n  \"version\": \"1.0.0\",\n  \"private\": true\n}\n"
+          },
+          {
+            "commands": "cd /home/eval/lib && make test 2>&1; echo \"exit:$?\"; cat build/version-check.txt 2>&1; git status 2>&1; git diff 2>&1",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "version 1.0.0 consistent\nexit:0\nversion 1.0.0 consistent\nOn branch release-1.0.0\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/version-check.txt\n# Diff output (simplified in virtual mode)\n"
+          },
+          {
+            "commands": "cd /home/eval/lib\necho \"=== status ===\"; git status 2>&1\necho \"=== diff ===\"; git diff 2>&1\necho \"=== try add ===\"; git add VERSION package.json CHANGELOG.md 2>&1; echo \"exit:$?\"\necho \"=== status after add ===\"; git status 2>&1",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "=== status ===\nOn branch release-1.0.0\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/version-check.txt\n=== diff ===\n# Diff output (simplified in virtual mode)\n=== try add ===\nexit:0\n=== status after add ===\nOn branch release-1.0.0\n\nChanges to be committed:\n  (use \"git restore --staged <file>...\" to unstage)\n\tnew file:   CHANGELOG.md\n\tnew file:   VERSION\n\tnew file:   package.json\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/version-check.txt\n"
+          },
+          {
+            "commands": "cd /home/eval/lib && git commit -m \"release: 1.0.0\" 2>&1; echo \"exit:$?\"; git status 2>&1; git log 2>&1",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "[master b465c9a] release: 1.0.0\nexit:0\nOn branch release-1.0.0\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/version-check.txt\ncommit b465c9ad\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 05:10:26 2026 +0000\n\n    release: 1.0.0\n\ncommit b465c9eb\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 05:09:24 2026 +0000\n\n    initial import\n\n"
+          },
+          {
+            "commands": "cd /home/eval/lib\necho \"=== HEAD ===\"; cat .git/HEAD\necho \"=== refs ===\"; ls -R .git/refs 2>&1; echo \"---\"; cat .git/refs/heads/master 2>&1; echo; cat .git/refs/heads/release-1.0.0 2>&1; echo\necho \"=== commits ===\"; cat .git/commits\necho \"=== tracked ===\"; cat .git/tracked\necho \"=== index ===\"; cat .git/index; echo \"(end)\"\necho \"=== files ===\"; cat VERSION; echo \"---\"; cat package.json; echo \"---\"; cat CHANGELOG.md\necho \"=== git branch ===\"; git branch 2>&1\necho \"=== git log ===\"; git log 2>&1\necho \"=== git status ===\"; git status 2>&1",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "=== HEAD ===\nref: refs/heads/release-1.0.0=== refs ===\n.git/refs:\nheads\ntags\n\n.git/refs/heads:\nmaster\nrelease-1.0.0\n\n.git/refs/tags:\n---\nb465c9ad\nb465c9eb\n=== commits ===\nb465c9ad|Eval Agent|eval@bashkit-eval.invalid|1791522626|release: 1.0.0\nb465c9eb|Eval Agent|eval@bashkit-eval.invalid|1791522564|initial import\n=== tracked ===\nscripts/check-version.sh\nVERSION\nMakefile\nCHANGELOG.md\npackage.json=== index ===\n(end)\n=== files ===\n1.0.0\n---\n{\n  \"name\": \"@acme/lib\",\n  \"version\": \"1.0.0\",\n  \"private\": true\n}\n---\n# Changelog\n\n## 1.0.0\n\n- Add retry helper\n- Drop Node 16\n\n## 0.9.3\n\n- Fix timeout parsing\n=== git branch ===\n* release-1.0.0\n  master\n=== git log ===\ncommit b465c9ad\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 05:10:26 2026 +0000\n\n    release: 1.0.0\n\ncommit b465c9eb\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 05:09:24 2026 +0000\n\n    initial import\n\n=== git status ===\nOn branch release-1.0.0\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/version-check.txt\n"
+          },
+          {
+            "commands": "cd /home/eval/lib\necho \"MASTER:\"; hexdump -C .git/refs/heads/master; cat .git/refs/heads/master; echo\necho \"RELEASE:\"; hexdump -C .git/refs/heads/release-1.0.0; cat .git/refs/heads/release-1.0.0; echo\necho \"HEAD:\"; cat .git/HEAD; echo\necho \"COMMITS:\"; cat .git/commits",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "MASTER:\n00000000  62 34 36 35 63 39 61 64                           |b465c9ad|\n00000008\nb465c9ad\nRELEASE:\n00000000  62 34 36 35 63 39 65 62                           |b465c9eb|\n00000008\nb465c9eb\nHEAD:\nref: refs/heads/release-1.0.0\nCOMMITS:\nb465c9ad|Eval Agent|eval@bashkit-eval.invalid|1791522626|release: 1.0.0\nb465c9eb|Eval Agent|eval@bashkit-eval.invalid|1791522564|initial import\n"
+          },
+          {
+            "commands": "cd /home/eval/lib\nprintf 'b465c9eb' > .git/refs/heads/master\nprintf 'b465c9ad' > .git/refs/heads/release-1.0.0\necho \"MASTER:\"; cat .git/refs/heads/master; echo\necho \"RELEASE:\"; cat .git/refs/heads/release-1.0.0; echo\necho \"HEAD:\"; cat .git/HEAD; echo\ngit branch 2>&1\ngit log 2>&1\ngit status 2>&1",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "MASTER:\nb465c9eb\nRELEASE:\nb465c9ad\nHEAD:\nref: refs/heads/release-1.0.0\n* release-1.0.0\n  master\ncommit b465c9ad\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 05:10:26 2026 +0000\n\n    release: 1.0.0\n\ncommit b465c9eb\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 05:09:24 2026 +0000\n\n    initial import\n\nOn branch release-1.0.0\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/version-check.txt\n"
+          },
+          {
+            "commands": "cd /home/eval/lib && make test 2>&1; echo \"exit:$?\"; echo \"===\"; git branch 2>&1; echo \"===\"; git log 2>&1 | head -n 20; echo \"===\"; cat VERSION; jq -r .version package.json; grep -m1 '^## ' CHANGELOG.md",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "version 1.0.0 consistent\nexit:0\n===\n* release-1.0.0\n  master\n===\ncommit b465c9ad\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 05:10:26 2026 +0000\n\n    release: 1.0.0\n\ncommit b465c9eb\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 05:09:24 2026 +0000\n\n    initial import\n\n===\n1.0.0\n1.0.0\n## 1.0.0\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

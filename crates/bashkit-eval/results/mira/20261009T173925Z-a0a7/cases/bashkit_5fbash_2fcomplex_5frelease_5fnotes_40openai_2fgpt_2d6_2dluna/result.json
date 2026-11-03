@@ -1,0 +1,57 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "complex_release_notes",
+  "target": "openai/gpt-6-luna",
+  "input": [
+    "Read /data/commits.log containing conventional commit messages (one per line, format: 'type(scope): message'). Parse each line, group by type, and generate /release/CHANGELOG.md with sections: '## Features' for 'feat' commits, '## Bug Fixes' for 'fix' commits, and '## Other' for all remaining types. Under each section list items as '- scope: message'. Print the generated changelog."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "8/8 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Generated `/release/CHANGELOG.md`:\n\n```markdown\n## Features\n- auth: add OAuth2 support\n- ui: dark mode toggle\n- api: add pagination support\n- db: add connection pooling\n\n## Bug Fixes\n- api: handle null response body\n- auth: token refresh race condition\n- ui: button alignment on mobile\n- api: correct status code for 404\n\n## Other\n- deps: update lodash to 4.17.21\n- readme: update install instructions\n```",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "cat /data/commits.log && mkdir -p /release && python3 - <<'PY'\nfrom pathlib import Path\nsrc = Path('/data/commits.log')\nsections = {'feat': ('Features', []), 'fix': ('Bug Fixes', []), 'other': ('Other', [])}\nfor raw in src.read_text().splitlines():\n    line = raw.strip()\n    if not line:\n        continue\n    # Conventional format: type(scope): message\n    if ':' not in line:\n        continue\n    header, message = line.split(':', 1)\n    message = message.strip()\n    if '(' in header and header.endswith(')'):\n        typ, scope = header.split('(', 1)\n        scope = scope[:-1]\n    else:\n        typ, scope = header, ''\n    bucket = typ if typ in ('feat', 'fix') else 'other'\n    item = f'- {scope}: {message}' if scope else f'- {message}'\n    sections[bucket][1].append(item)\ncontent = '\\n\\n'.join('## ' + title + ('\\n' + '\\n'.join(items) if items else '') for title, items in sections.values()) + '\\n'\nout = Path('/release/CHANGELOG.md')\nout.write_text(content)\nprint(content, end='')\nPY"
+    ],
+    "usage": {
+      "input_tokens": 1441,
+      "output_tokens": 437,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 6305
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat /data/commits.log && mkdir -p /release && python3 - <<'PY'\nfrom pathlib import Path\nsrc = Path('/data/commits.log')\nsections = {'feat': ('Features', []), 'fix': ('Bug Fixes', []), 'other': ('Other', [])}\nfor raw in src.read_text().splitlines():\n    line = raw.strip()\n    if not line:\n        continue\n    # Conventional format: type(scope): message\n    if ':' not in line:\n        continue\n    header, message = line.split(':', 1)\n    message = message.strip()\n    if '(' in header and header.endswith(')'):\n        typ, scope = header.split('(', 1)\n        scope = scope[:-1]\n    else:\n        typ, scope = header, ''\n    bucket = typ if typ in ('feat', 'fix') else 'other'\n    item = f'- {scope}: {message}' if scope else f'- {message}'\n    sections[bucket][1].append(item)\ncontent = '\\n\\n'.join('## ' + title + ('\\n' + '\\n'.join(items) if items else '') for title, items in sections.values()) + '\\n'\nout = Path('/release/CHANGELOG.md')\nout.write_text(content)\nprint(content, end='')\nPY",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "feat(auth): add OAuth2 support\nfix(api): handle null response body\nfeat(ui): dark mode toggle\nchore(deps): update lodash to 4.17.21\nfix(auth): token refresh race condition\nfeat(api): add pagination support\nfix(ui): button alignment on mobile\ndocs(readme): update install instructions\nfeat(db): add connection pooling\nfix(api): correct status code for 404\n## Features\n- auth: add OAuth2 support\n- ui: dark mode toggle\n- api: add pagination support\n- db: add connection pooling\n\n## Bug Fixes\n- api: handle null response body\n- auth: token refresh race condition\n- ui: button alignment on mobile\n- api: correct status code for 404\n\n## Other\n- deps: update lodash to 4.17.21\n- readme: update install instructions\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

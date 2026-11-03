@@ -1,0 +1,155 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "rt_sqlite_hr_report",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "Load /data/employees.csv and /data/departments.csv (CSV with header rows; fields may be double-quoted) into a new SQLite database /data/hr.db using the sqlite3 command, with tables:\n  departments(id INTEGER PRIMARY KEY, name TEXT NOT NULL)\n  employees(id INTEGER PRIMARY KEY, name TEXT NOT NULL, dept_id INTEGER, salary INTEGER NOT NULL, hired TEXT NOT NULL)\nEvery CSV row must be loaded with its values unchanged.\n\nThen produce /out/dept_report.csv from a query on hr.db: header department,headcount,avg_salary,top_earner; one row per department including departments with no employees (headcount 0, avg_salary and top_earner empty), plus a row named (none) for employees whose dept_id matches no department. avg_salary has exactly 2 decimals; top_earner is the highest-paid employee, ties broken by name alphabetically. Sort by headcount descending, then department name. Use standard CSV quoting (quote only fields containing a comma, quote or newline) and \\n line endings."
+  ],
+  "passed": false,
+  "aggregate": 0.5,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 0.5,
+      "pass": false,
+      "reason": "1/2 checks passed (weighted rate 50%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "",
+    "iterations": 15,
+    "tool_calls_count": 15,
+    "tool_calls": [
+      "ls -la /data",
+      "cat /data/departments.csv\necho \"---\"\ncat /data/employees.csv\necho \"---\"\nls -la /out",
+      "which sqlite3\nsqlite3 --version",
+      "sqlite3 --help",
+      "sqlite3 /tmp/test.db \".import\"",
+      "python3 -c \"\nimport csv, sqlite3\n\nwith sqlite3.connect('/tmp/test.db') as conn:\n    print('sqlite3 module available in python')\n\"",
+      "sqlite3 /tmp/test.db \"CREATE TABLE t (id INT, name TEXT);\" \"INSERT INTO t VALUES (1, 'hello');\"\nsqlite3 /tmp/test.db \"SELECT * FROM t;\"\nls -la /tmp/test.db",
+      "python3 -c \"\nimport csv, sys\n\ndef make_sql(csv_path, table_name):\n    with open(csv_path, 'r', encoding='utf-8') as f:\n        reader = csv.reader(f)\n        headers = next(reader)\n        print(f'-- Loading {csv_path} into {table_name}')\n        for row in reader:\n            vals = []\n            for v in row:\n                escaped = v.replace(\\\"'\\\", \\\"''\\\")\n                vals.append(f\\\"'{escaped}'\\\")\n            print(f\\\"INSERT INTO {table_name} VALUES ({', '.join(vals)} pop);\\\");\n\n\"",
+      "cat << 'EOF' > /tmp/load.sql\nCREATE TABLE departments(id INTEGER PRIMARY KEY, name TEXT NOT NULL);\nCREATE TABLE employees(id INTEGER PRIMARY KEY, name TEXT NOT NULL, dept_id INTEGER, salary INTEGER NOT NULL, hired TEXT NOT NULL);\nEOF",
+      "cat /data/departments.csv",
+      "cat /data/employees.csv",
+      "python3 -c \"\nimport csv\n\ndef generate_inserts(csv_path, table_name):\n    with open(csv_path, newline='', encoding='utf-8') as f:\n        reader = csv.reader(f)\n        header = next(reader)\n        lines = []\n        for row in reader:\n            vals = []\n            for val in row:\n                if val == '':\n                    vals.append('NULL')\n                else:\n                    escaped = val.replace(\\\"'\\\", \\\"''\\\")\n                    vals.append(f\\\"'{escaped}'\\\")\n            lines.append(f\\\"INSERT INTO {table_name} VALUES ({', '.join(vals)});\\\");\n        return lines\n\nprint('\\n'.join(generate_inserts('/data/departments.csv', 'departments')))\nprint('\\n'.join(generate_inserts('/data/employees.csv', 'employees')))\n\"",
+      "python3 -c \"\nimport csv\n\ndef generate_inserts(csv_path, table_name, int_cols):\n    with open(csv_path, newline='', encoding='utf-8') as f:\n        reader = csv.reader(f)\n        header = next(reader)\n        lines = []\n        for row in reader:\n            vals = []\n            for col_name, val in zip(header, row):\n                if val == '':\n                    vals.append('NULL')\n                elif col_name in int_cols:\n                    vals.append(str(int(val)))\n                else:\n                    escaped = val.replace(\\\"'\\\", \\\"''\\\")\n                    vals.append(f\\\"'{escaped}'\\\")\n            lines.append(f\\\"INSERT INTO {table_name} VALUES ({', '.join(vals)});\\\");\n        return lines\n\ndept_sql = generate_inserts('/data/departments.csv', 'departments', {'id'})\nemp_sql = generate_inserts('/data/employees.csv', 'employees', {'id', 'dept_id', 'salary'})\n\nwith open('/tmp/init.sql', 'w') as f:\n    f.write('BEGIN TRANSACTION;\\n')\n    f.write('DROP TABLE IF EXISTS departments;\\n')\n    f.write('DROP TABLE IF EXISTS employees;\\n')\n    f.write('CREATE TABLE departments(id INTEGER PRIMARY KEY, name TEXT NOT NULL);\\n')\n    f.write('CREATE TABLE employees(id INTEGER PRIMARY KEY, name TEXT NOT NULL, dept_id INTEGER, salary INTEGER NOT NULL, hired TEXT NOT NULL);\\n')\n    for line in dept_sql:\n        f.write(line + '\\n')\n    for line in emp_sql:\n        f.write(line + '\\n')\n    f.write('COMMIT;\\n')\n\"\ncat /tmp/init.sql",
+      "rm -f /data/hr.db\nsqlite3 /data/hr.db < /tmp/init.sql\nsqlite3 /data/hr.db \".tables\"\nsqlite3 /data/hr.db \".schema\"\nsqlite3 /data/hr.db \"SELECT * FROM departments;\"\nsqlite3 /data/hr.db \"SELECT * FROM employees;\"",
+      "python3 -c \"\neng_salaries = [72000, 91000, 91000, 66000]\nprint('Engineering avg:', sum(eng_salaries)/len(eng_salaries))\nsales_salaries = [64000, 64000, 70500]\nprint('Sales avg:', sum(sales_salaries)/len(sales_salaries))\nsupport_salaries = [58000]\nprint('Support avg:', sum(support_salaries)/len(support_salaries))\nnone_salaries = [50000]\nprint('None avg:', sum(none_salaries)/len(none_salaries))\n\""
+    ],
+    "usage": {
+      "input_tokens": 26638,
+      "output_tokens": 1865,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 48491
+    },
+    "metrics": {
+      "natural_stop": 0.0,
+      "tool_calls": 15.0,
+      "tool_calls_err": 2.0,
+      "tool_calls_ok": 13.0,
+      "turns": 15.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /data",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       52 2026-10-09 18:10 departments.csv\n-rw-r--r--      324 2026-10-09 18:10 employees.csv\n"
+          },
+          {
+            "commands": "cat /data/departments.csv\necho \"---\"\ncat /data/employees.csv\necho \"---\"\nls -la /out",
+            "exit_code": 2,
+            "stderr": "ls: cannot access '/out': No such file or directory\n",
+            "stdout": "id,name\n10,Engineering\n20,Sales\n30,Support\n40,Legal\n---\nid,name,dept_id,salary,hired\n1,Ana Lima,10,72000,2021-04-01\n2,\"O'Brien, Pat\",10,91000,2019-11-15\n3,Chen Wei,20,64000,2022-01-10\n4,Dara Okoye,20,64000,2020-06-30\n5,Eli Stone,10,91000,2023-02-01\n6,Farah Aziz,30,58000,2024-07-15\n7,Gus O'Neil,99,50000,2018-03-03\n8,Hana Sato,20,70500,2021-09-09\n9,Ivo Petrov,10,66000,2020-01-20\n---\n"
+          },
+          {
+            "commands": "which sqlite3\nsqlite3 --version",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/usr/bin/sqlite3\nsqlite (turso 0.5)\n"
+          },
+          {
+            "commands": "sqlite3 --help",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "usage: sqlite [OPTIONS] DB [SQL ...]\n       sqlite [OPTIONS] :memory: [SQL ...]\nOptions:\n  -header, --header        Include column headers\n  -noheader, --noheader    Suppress column headers (default)\n  -csv, --csv              Output mode: CSV\n  -tabs, --tabs            Output mode: tabs\n  -line, --line            Output mode: name=value lines\n  -list, --list            Output mode: separator-joined (default)\n  -box, --box              Output mode: ASCII box table\n  -column, --column        Output mode: column-aligned\n  -json, --json            Output mode: JSON array of objects\n  -markdown, --markdown    Output mode: Markdown table\n  -separator SEP           Field separator (e.g. '|', ',', '\\t')\n  -nullvalue STR           Placeholder for NULL\n  -cmd SQL                 Run extra SQL before positional script\n  -backend memory|vfs      Pick the IO backend (default: memory)\n  --help                   Show this message\n  --version                Print engine version\nDot-commands: .help .quit .exit .tables .schema .indexes\n              .headers .mode .separator .nullvalue\n              .dump .read PATH\n"
+          },
+          {
+            "commands": "sqlite3 /tmp/test.db \".import\"",
+            "exit_code": 1,
+            "stderr": "sqlite: unknown dot-command: .import\n",
+            "stdout": ""
+          },
+          {
+            "commands": "python3 -c \"\nimport csv, sqlite3\n\nwith sqlite3.connect('/tmp/test.db') as conn:\n    print('sqlite3 module available in python')\n\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "sqlite3 module available in python\n"
+          },
+          {
+            "commands": "sqlite3 /tmp/test.db \"CREATE TABLE t (id INT, name TEXT);\" \"INSERT INTO t VALUES (1, 'hello');\"\nsqlite3 /tmp/test.db \"SELECT * FROM t;\"\nls -la /tmp/test.db",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "1|hello\n-rw-r--r--     8192 2026-10-09 18:10 /tmp/test.db\n"
+          },
+          {
+            "commands": "python3 -c \"\nimport csv, sys\n\ndef make_sql(csv_path, table_name):\n    with open(csv_path, 'r', encoding='utf-8') as f:\n        reader = csv.reader(f)\n        headers = next(reader)\n        print(f'-- Loading {csv_path} into {table_name}')\n        for row in reader:\n            vals = []\n            for v in row:\n                escaped = v.replace(\\\"'\\\", \\\"''\\\")\n                vals.append(f\\\"'{escaped}'\\\")\n            print(f\\\"INSERT INTO {table_name} VALUES ({', '.join(vals)} pop);\\\");\n\n\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "cat << 'EOF' > /tmp/load.sql\nCREATE TABLE departments(id INTEGER PRIMARY KEY, name TEXT NOT NULL);\nCREATE TABLE employees(id INTEGER PRIMARY KEY, name TEXT NOT NULL, dept_id INTEGER, salary INTEGER NOT NULL, hired TEXT NOT NULL);\nEOF",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "cat /data/departments.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "id,name\n10,Engineering\n20,Sales\n30,Support\n40,Legal\n"
+          },
+          {
+            "commands": "cat /data/employees.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "id,name,dept_id,salary,hired\n1,Ana Lima,10,72000,2021-04-01\n2,\"O'Brien, Pat\",10,91000,2019-11-15\n3,Chen Wei,20,64000,2022-01-10\n4,Dara Okoye,20,64000,2020-06-30\n5,Eli Stone,10,91000,2023-02-01\n6,Farah Aziz,30,58000,2024-07-15\n7,Gus O'Neil,99,50000,2018-03-03\n8,Hana Sato,20,70500,2021-09-09\n9,Ivo Petrov,10,66000,2020-01-20\n"
+          },
+          {
+            "commands": "python3 -c \"\nimport csv\n\ndef generate_inserts(csv_path, table_name):\n    with open(csv_path, newline='', encoding='utf-8') as f:\n        reader = csv.reader(f)\n        header = next(reader)\n        lines = []\n        for row in reader:\n            vals = []\n            for val in row:\n                if val == '':\n                    vals.append('NULL')\n                else:\n                    escaped = val.replace(\\\"'\\\", \\\"''\\\")\n                    vals.append(f\\\"'{escaped}'\\\")\n            lines.append(f\\\"INSERT INTO {table_name} VALUES ({', '.join(vals)});\\\");\n        return lines\n\nprint('\\n'.join(generate_inserts('/data/departments.csv', 'departments')))\nprint('\\n'.join(generate_inserts('/data/employees.csv', 'employees')))\n\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "INSERT INTO departments VALUES ('10', 'Engineering');\nINSERT INTO departments VALUES ('20', 'Sales');\nINSERT INTO departments VALUES ('30', 'Support');\nINSERT INTO departments VALUES ('40', 'Legal');\nINSERT INTO employees VALUES ('1', 'Ana Lima', '10', '72000', '2021-04-01');\nINSERT INTO employees VALUES ('2', 'O''Brien, Pat', '10', '91000', '2019-11-15');\nINSERT INTO employees VALUES ('3', 'Chen Wei', '20', '64000', '2022-01-10');\nINSERT INTO employees VALUES ('4', 'Dara Okoye', '20', '64000', '2020-06-30');\nINSERT INTO employees VALUES ('5', 'Eli Stone', '10', '91000', '2023-02-01');\nINSERT INTO employees VALUES ('6', 'Farah Aziz', '30', '58000', '2024-07-15');\nINSERT INTO employees VALUES ('7', 'Gus O''Neil', '99', '50000', '2018-03-03');\nINSERT INTO employees VALUES ('8', 'Hana Sato', '20', '70500', '2021-09-09');\nINSERT INTO employees VALUES ('9', 'Ivo Petrov', '10', '66000', '2020-01-20');\n"
+          },
+          {
+            "commands": "python3 -c \"\nimport csv\n\ndef generate_inserts(csv_path, table_name, int_cols):\n    with open(csv_path, newline='', encoding='utf-8') as f:\n        reader = csv.reader(f)\n        header = next(reader)\n        lines = []\n        for row in reader:\n            vals = []\n            for col_name, val in zip(header, row):\n                if val == '':\n                    vals.append('NULL')\n                elif col_name in int_cols:\n                    vals.append(str(int(val)))\n                else:\n                    escaped = val.replace(\\\"'\\\", \\\"''\\\")\n                    vals.append(f\\\"'{escaped}'\\\")\n            lines.append(f\\\"INSERT INTO {table_name} VALUES ({', '.join(vals)});\\\");\n        return lines\n\ndept_sql = generate_inserts('/data/departments.csv', 'departments', {'id'})\nemp_sql = generate_inserts('/data/employees.csv', 'employees', {'id', 'dept_id', 'salary'})\n\nwith open('/tmp/init.sql', 'w') as f:\n    f.write('BEGIN TRANSACTION;\\n')\n    f.write('DROP TABLE IF EXISTS departments;\\n')\n    f.write('DROP TABLE IF EXISTS employees;\\n')\n    f.write('CREATE TABLE departments(id INTEGER PRIMARY KEY, name TEXT NOT NULL);\\n')\n    f.write('CREATE TABLE employees(id INTEGER PRIMARY KEY, name TEXT NOT NULL, dept_id INTEGER, salary INTEGER NOT NULL, hired TEXT NOT NULL);\\n')\n    for line in dept_sql:\n        f.write(line + '\\n')\n    for line in emp_sql:\n        f.write(line + '\\n')\n    f.write('COMMIT;\\n')\n\"\ncat /tmp/init.sql",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "BEGIN TRANSACTION;\nDROP TABLE IF EXISTS departments;\nDROP TABLE IF EXISTS employees;\nCREATE TABLE departments(id INTEGER PRIMARY KEY, name TEXT NOT NULL);\nCREATE TABLE employees(id INTEGER PRIMARY KEY, name TEXT NOT NULL, dept_id INTEGER, salary INTEGER NOT NULL, hired TEXT NOT NULL);\nINSERT INTO departments VALUES (10, 'Engineering');\nINSERT INTO departments VALUES (20, 'Sales');\nINSERT INTO departments VALUES (30, 'Support');\nINSERT INTO departments VALUES (40, 'Legal');\nINSERT INTO employees VALUES (1, 'Ana Lima', 10, 72000, '2021-04-01');\nINSERT INTO employees VALUES (2, 'O''Brien, Pat', 10, 91000, '2019-11-15');\nINSERT INTO employees VALUES (3, 'Chen Wei', 20, 64000, '2022-01-10');\nINSERT INTO employees VALUES (4, 'Dara Okoye', 20, 64000, '2020-06-30');\nINSERT INTO employees VALUES (5, 'Eli Stone', 10, 91000, '2023-02-01');\nINSERT INTO employees VALUES (6, 'Farah Aziz', 30, 58000, '2024-07-15');\nINSERT INTO employees VALUES (7, 'Gus O''Neil', 99, 50000, '2018-03-03');\nINSERT INTO employees VALUES (8, 'Hana Sato', 20, 70500, '2021-09-09');\nINSERT INTO employees VALUES (9, 'Ivo Petrov', 10, 66000, '2020-01-20');\nCOMMIT;\n"
+          },
+          {
+            "commands": "rm -f /data/hr.db\nsqlite3 /data/hr.db < /tmp/init.sql\nsqlite3 /data/hr.db \".tables\"\nsqlite3 /data/hr.db \".schema\"\nsqlite3 /data/hr.db \"SELECT * FROM departments;\"\nsqlite3 /data/hr.db \"SELECT * FROM employees;\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "departments\nemployees\nCREATE TABLE departments (id INTEGER PRIMARY KEY, name TEXT NOT NULL);\nCREATE TABLE employees (id INTEGER PRIMARY KEY, name TEXT NOT NULL, dept_id INTEGER, salary INTEGER NOT NULL, hired TEXT NOT NULL);\n10|Engineering\n20|Sales\n30|Support\n40|Legal\n1|Ana Lima|10|72000|2021-04-01\n2|O'Brien, Pat|10|91000|2019-11-15\n3|Chen Wei|20|64000|2022-01-10\n4|Dara Okoye|20|64000|2020-06-30\n5|Eli Stone|10|91000|2023-02-01\n6|Farah Aziz|30|58000|2024-07-15\n7|Gus O'Neil|99|50000|2018-03-03\n8|Hana Sato|20|70500|2021-09-09\n9|Ivo Petrov|10|66000|2020-01-20\n"
+          },
+          {
+            "commands": "python3 -c \"\neng_salaries = [72000, 91000, 91000, 66000]\nprint('Engineering avg:', sum(eng_salaries)/len(eng_salaries))\nsales_salaries = [64000, 64000, 70500]\nprint('Sales avg:', sum(sales_salaries)/len(sales_salaries))\nsupport_salaries = [58000]\nprint('Support avg:', sum(support_salaries)/len(support_salaries))\nnone_salaries = [50000]\nprint('None avg:', sum(none_salaries)/len(none_salaries))\n\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Engineering avg: 80000.0\nSales avg: 66166.66666666667\nSupport avg: 58000.0\nNone avg: 50000.0\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

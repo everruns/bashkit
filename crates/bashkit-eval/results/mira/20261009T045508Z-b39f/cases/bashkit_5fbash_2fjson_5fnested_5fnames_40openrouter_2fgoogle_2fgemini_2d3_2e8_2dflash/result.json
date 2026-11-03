@@ -1,0 +1,92 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "json_nested_names",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "Read /data/org.json which has a nested structure of teams with members. Extract all unique member names across all teams, sort them alphabetically, and print one per line."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "alice\nbob\ncharlie\ndave",
+    "iterations": 7,
+    "tool_calls_count": 6,
+    "tool_calls": [
+      "head -n 50 /data/org.json",
+      "which jq",
+      "cat /data/org.json",
+      "jq -r '.. | .name? // empty' /data/org.json",
+      "jq -r '.. | .members? // empty | .[] | .name' /data/org.json | sort -u",
+      "jq -r '[.. | .members? // empty | .[] | .name] | unique | .[]' /data/org.json"
+    ],
+    "usage": {
+      "input_tokens": 2114,
+      "output_tokens": 259,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 9994
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 6.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 6.0,
+      "turns": 7.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "head -n 50 /data/org.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "{\"teams\":[{\"name\":\"backend\",\"members\":[{\"name\":\"alice\"},{\"name\":\"bob\"}]},{\"name\":\"frontend\",\"members\":[{\"name\":\"charlie\"},{\"name\":\"alice\"}]},{\"name\":\"devops\",\"members\":[{\"name\":\"dave\"},{\"name\":\"bob\"}]}]}"
+          },
+          {
+            "commands": "which jq",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/usr/bin/jq\n"
+          },
+          {
+            "commands": "cat /data/org.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "{\"teams\":[{\"name\":\"backend\",\"members\":[{\"name\":\"alice\"},{\"name\":\"bob\"}]},{\"name\":\"frontend\",\"members\":[{\"name\":\"charlie\"},{\"name\":\"alice\"}]},{\"name\":\"devops\",\"members\":[{\"name\":\"dave\"},{\"name\":\"bob\"}]}]}"
+          },
+          {
+            "commands": "jq -r '.. | .name? // empty' /data/org.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "backend\nalice\nbob\nfrontend\ncharlie\nalice\ndevops\ndave\nbob\n"
+          },
+          {
+            "commands": "jq -r '.. | .members? // empty | .[] | .name' /data/org.json | sort -u",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "alice\nbob\ncharlie\ndave\n"
+          },
+          {
+            "commands": "jq -r '[.. | .members? // empty | .[] | .name] | unique | .[]' /data/org.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "alice\nbob\ncharlie\ndave\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

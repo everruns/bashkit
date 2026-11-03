@@ -1,0 +1,57 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "data_csv_to_json",
+  "target": "anthropic/claude-sonnet-5-5",
+  "input": [
+    "Convert /data/users.csv to a JSON array where each row becomes an object with the column headers as keys. Print the resulting JSON to stdout."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Here is `/data/users.csv` as a JSON array:\n\n```json\n[\n  {\n    \"name\": \"alice\",\n    \"age\": \"30\",\n    \"city\": \"seattle\"\n  },\n  {\n    \"name\": \"bob\",\n    \"age\": \"25\",\n    \"city\": \"portland\"\n  },\n  {\n    \"name\": \"charlie\",\n    \"age\": \"35\",\n    \"city\": \"denver\"\n  }\n]\n```\n\nEvery value is a string, including `age`, because CSV has no types. I can convert numeric columns to numbers if you want that.",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "head -5 /data/users.csv; python3 -c \"\nimport csv,json\nprint(json.dumps(list(csv.DictReader(open('/data/users.csv',newline=''))),indent=2))\""
+    ],
+    "usage": {
+      "input_tokens": 2260,
+      "output_tokens": 278,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 3368
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "head -5 /data/users.csv; python3 -c \"\nimport csv,json\nprint(json.dumps(list(csv.DictReader(open('/data/users.csv',newline=''))),indent=2))\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "name,age,city\nalice,30,seattle\nbob,25,portland\ncharlie,35,denver\n[\n  {\n    \"name\": \"alice\",\n    \"age\": \"30\",\n    \"city\": \"seattle\"\n  },\n  {\n    \"name\": \"bob\",\n    \"age\": \"25\",\n    \"city\": \"portland\"\n  },\n  {\n    \"name\": \"charlie\",\n    \"age\": \"35\",\n    \"city\": \"denver\"\n  }\n]\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}
