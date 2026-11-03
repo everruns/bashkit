@@ -547,3 +547,10 @@ async fn exit_status_is_eight_bits() {
     let r = run("coreutils expr 1 + ; echo $?").await;
     assert_eq!(r.stdout, "2\n");
 }
+
+// A symlink with an empty target is refused, as on Linux.
+#[tokio::test]
+async fn empty_symlink_target_is_refused() {
+    let r = run("coreutils ln -s '' /tmp/l; echo $?; test -L /tmp/l && echo made").await;
+    assert_eq!(r.stdout, "1\n", "{}", r.stderr);
+}

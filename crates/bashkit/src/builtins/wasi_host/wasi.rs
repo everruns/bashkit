@@ -1348,6 +1348,14 @@ pub(crate) fn add_to_linker(linker: &mut Linker<GuestState>) -> wasmtime::Result
                 let r = async {
                     let target = read_path(&mut c, old, old_len)?;
                     let target = String::from_utf8(target).map_err(|_| EILSEQ)?;
+                    // Like Linux: an empty target is ENOENT; a NUL byte could
+                    // never come from a C path and would truncate on readback.
+                    if target.is_empty() {
+                        return Err(ENOENT);
+                    }
+                    if target.contains('\0') {
+                        return Err(EINVAL);
+                    }
                     let new_raw = read_path(&mut c, new, new_len)?;
                     let link = c.data().resolve(dirfd as u32, &new_raw)?;
                     if c.data().is_overlay(&link) {
