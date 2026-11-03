@@ -1,4 +1,9 @@
 //! ls builtin - list directory contents.
+//!
+//! Decisions:
+//! - `-R` lists directories through bounded `walk` batches (`WalkCache`),
+//!   one query per batch on bulk backends; without `-a` dot directories are
+//!   not descended, so the default walk reads exactly what `ls -R` prints.
 
 // Uses unwrap() for validated single-char strings.
 #![allow(clippy::unwrap_used)]
@@ -10,6 +15,7 @@ use std::path::Path;
 
 use crate::builtins::clap_env::apply_env_defaults;
 use crate::builtins::generated::ls_args::LS_ENV_DEFAULTS;
+use crate::builtins::walk_cache::WalkCache;
 use crate::builtins::{Builtin, Context, resolve_path};
 use crate::error::Result;
 use crate::fs::FileType;
@@ -273,9 +279,11 @@ impl Builtin for Ls {
         }
 
         // Then output directory listings
+        let mut listings = WalkCache::new(opts.recursive).skip_hidden(!opts.all);
         for (i, path_str, path) in &dir_args {
             if let Err(e) = list_directory(
                 &ctx,
+                &mut listings,
                 path,
                 path_str,
                 &mut output,
@@ -293,8 +301,10 @@ impl Builtin for Ls {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn list_directory(
     ctx: &Context<'_>,
+    listings: &mut WalkCache,
     path: &Path,
     display_path: &str,
     output: &mut String,
@@ -316,9 +326,8 @@ async fn list_directory(
         output.push_str(&format!("{}:\n", header));
     }
 
-    let entries = ctx
-        .fs
-        .read_dir(path)
+    let entries = listings
+        .list(&*ctx.fs, path, None)
         .await
         .map_err(|e| format!("cannot open directory '{}': {}", display_path, e))?;
 
@@ -402,7 +411,7 @@ async fn list_directory(
         for (subpath, display) in subdirs {
             // Box the future to avoid infinite recursion type size
             Box::pin(list_directory(
-                ctx, &subpath, &display, output, opts, true, true,
+                ctx, listings, &subpath, &display, output, opts, true, true,
             ))
             .await?;
         }
