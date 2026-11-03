@@ -677,6 +677,7 @@ tool = create_bash_tool()
 ### Deep Agents
 
 Requires Python 3.11+ and `pip install 'bashkit[deepagents]'`.
+Full guide: [bashkit.sh/docs/deepagents](https://bashkit.sh/docs/deepagents/).
 
 ```python
 from bashkit.deepagents import BashkitBackend

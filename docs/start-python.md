@@ -75,7 +75,7 @@ Runnable Python examples in the repo:
 - [`bash_basics.py`](https://github.com/everruns/bashkit/blob/main/crates/bashkit-python/examples/bash_basics.py), first scripts and persistent state
 - [`data_pipeline.py`](https://github.com/everruns/bashkit/blob/main/crates/bashkit-python/examples/data_pipeline.py), pipes and data processing
 - [`llm_tool.py`](https://github.com/everruns/bashkit/blob/main/crates/bashkit-python/examples/llm_tool.py), exposing Bashkit as an LLM tool
-- Agent integrations: [deepagents](https://github.com/everruns/bashkit/blob/main/examples/deepagent_coding_agent.py), [Pydantic AI](https://github.com/everruns/bashkit/blob/main/examples/pydantic_ai_bash_agent.py)
+- Agent integrations: [deepagents](https://github.com/everruns/bashkit/blob/main/examples/deepagent_coding_agent.py) (guide: [Deep Agents](deepagents.md)), [Pydantic AI](https://github.com/everruns/bashkit/blob/main/examples/pydantic_ai_bash_agent.py)
 
 ## Windows 11 Smart App Control
 

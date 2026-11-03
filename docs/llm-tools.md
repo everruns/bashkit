@@ -67,6 +67,8 @@ pip install 'bashkit[pydantic-ai]'
 pip install 'bashkit[deepagents]'
 ```
 
+See [Deep Agents](deepagents.md) for the `BashkitBackend` sandbox backend.
+
 ## TypeScript / JavaScript
 
 ```typescript
