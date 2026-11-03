@@ -2,6 +2,7 @@
 
 ## 2026-11-03
 
+* **Large-tree stress tests**: `tests/large_tree_stress_tests.rs` measures heap peaks of tree walkers over a 200k-file procedural tree (2M with `BASHKIT_STRESS_FILES`). It found `rg` collecting every candidate path before reading (~70 MB for 200k files); its walk now streams in path order. See [Testing](operations/testing.md).
 * **ls -R / tree bulk walk**: `ls -R` and `tree` list through bounded `walk` batches (`WalkCache`) like `find`/`du`. New `WalkOptions::skip_hidden` keeps the default walk out of dot directories they do not print; `tree` caps batches at its remaining entry budget and keeps `read_dir` under `-I`. See [Virtual Filesystem](foundations/vfs.md#remote-backends-round-trips).
 
 ## 2026-11-02

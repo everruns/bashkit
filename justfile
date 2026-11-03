@@ -277,6 +277,10 @@ bench-parallel:
     ./scripts/bench-parallel.sh
     pnpm --dir site run data:performance
 
+# Large-tree stress tests at millions of files (release; TM-DOS-140)
+stress files="2000000":
+    BASHKIT_STRESS_FILES={{files}} cargo test --release -p bashkit --test large_tree_stress_tests -- --nocapture
+
 # Run Criterion sqlite builtin benchmark and save results
 bench-sqlite:
     ./scripts/bench-sqlite.sh

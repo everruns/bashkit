@@ -455,7 +455,15 @@ and measured by `benches/remote_fs.rs` over the bashkit checkout:
 - `rg` keeps every searched file's text until output is built; it charges
   each file to the aggregate-input budget as it reads (default 100 MB) and
   stops at the first refusal, so a huge tree fails at the budget instead of
-  after loading every file (TM-DOS-140). Streaming search is a follow-up.
+  after loading every file (TM-DOS-140). With one root in path order, the
+  walk visits entries in sorted order and reads each file as it finds it,
+  so no candidate list is held and the walk stops at the budget. Several
+  roots, a non-path `--sort` and `--files` still collect every candidate
+  (paths + metadata) before reading. Follow-ups: stream each root in turn,
+  and search each file as it is read (dropping non-matching text).
+- `ls` (with `-R` or on one wide directory) stops appending lines once its
+  output passes `max_stdout_bytes`
+  (the rest would be cut), so its memory is bounded by the stdout limit.
 - An index that answers with no match is an answer: `grep -r` no longer
   re-walks the tree on zero matches.
 - `FollowFs` `copy`/`chmod`/`touch -d` take a fast path (one inner `stat` per
