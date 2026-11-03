@@ -791,7 +791,7 @@ impl ExecOptions {
     /// extend it: the effective budget is the smaller of the two, so an
     /// untrusted caller (for example an LLM picking a per-command timeout)
     /// cannot raise the sandbox's limit. Expiry fails the call with the same
-    /// [`LimitExceeded::Timeout`](crate::LimitExceeded::Timeout) error as the
+    /// [`LimitExceeded::Timeout`] error as the
     /// configured limit and leaves the session usable.
     ///
     /// ```no_run
