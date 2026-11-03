@@ -5,14 +5,19 @@
 //! `-c` total, GNU ceiling rounding for `-h`/`--si`/`-B`). The VFS has no
 //! block allocation, so "disk usage" is the apparent size; without `-b` it
 //! is reported in ceil(bytes / 1024) blocks.
+//!
+//! Decision: `du` reads each directory once (via `FileSystem::walk`) and takes
+//! nested entries' sizes from the listings. Remote backends pay one round
+//! trip per call, so a `stat` per file would dominate.
 
 use async_trait::async_trait;
 use std::path::Path;
 
 use super::arg_parser::{OptArg, gnu_getopt};
+use super::walk_cache::WalkCache;
 use super::{Builtin, Context};
 use crate::error::Result;
-use crate::fs::vfs_join;
+use crate::fs::{Metadata, vfs_join};
 use crate::interpreter::ExecResult;
 
 /// The du builtin - estimate file space usage.
@@ -226,13 +231,20 @@ impl Builtin for Du {
             } else {
                 vfs_join(ctx.cwd, operand)
             };
-            if ctx.fs.stat(&path).await.is_err() {
+            // Operands follow symlinks (GNU stats command-line args).
+            let Ok(metadata) = ctx.fs.stat(&path).await else {
                 stderr.push_str(&format!(
                     "du: cannot access '{operand}': No such file or directory\n"
                 ));
                 continue;
-            }
-            grand_total += walk(&ctx, &path, operand, 0, &opts, &mut output).await?;
+            };
+            let mut walker = DuWalk {
+                ctx: &ctx,
+                opts: &opts,
+                listings: WalkCache::new(true),
+                output: &mut output,
+            };
+            grand_total += walker.walk(&path, operand, 0, metadata).await?;
         }
         if opts.total {
             output.push_str(&format!(
@@ -250,53 +262,64 @@ impl Builtin for Du {
     }
 }
 
-/// Sum `path` (displayed as `display`), printing entries GNU-style.
-fn walk<'a>(
-    ctx: &'a Context<'_>,
-    path: &'a Path,
-    display: &'a str,
-    depth: usize,
+struct DuWalk<'a, 'c> {
+    ctx: &'a Context<'c>,
     opts: &'a DuOptions,
+    /// du lists every directory below the operand, so listings come in
+    /// bounded `walk` batches (one query each on bulk backends); nested
+    /// entries take their metadata from them, never a per-file stat.
+    listings: WalkCache,
     output: &'a mut String,
-) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<u64>> + Send + 'a>> {
-    Box::pin(async move {
-        ctx.consume_budget_work(1)?;
-        // Operands follow symlinks (GNU stats command-line args); nested
-        // entries count the link itself.
-        let metadata = if depth == 0 {
-            ctx.fs.stat(path).await?
-        } else {
-            ctx.fs.lstat(path).await?
-        };
-        let shown = opts.max_depth.is_none_or(|d| depth <= d);
+}
 
-        if !metadata.file_type.is_dir() {
-            if shown && (opts.all || depth == 0) {
-                output.push_str(&format!(
+impl DuWalk<'_, '_> {
+    /// Sum `path` (displayed as `display`, with `metadata` already known),
+    /// printing entries GNU-style. Nested entries count a symlink itself.
+    fn walk<'s>(
+        &'s mut self,
+        path: &'s Path,
+        display: &'s str,
+        depth: usize,
+        metadata: Metadata,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<u64>> + Send + 's>> {
+        Box::pin(async move {
+            self.ctx.consume_budget_work(1)?;
+            let shown = self.opts.max_depth.is_none_or(|d| depth <= d);
+
+            if !metadata.file_type.is_dir() {
+                if shown && (self.opts.all || depth == 0) {
+                    self.output.push_str(&format!(
+                        "{}\t{display}\n",
+                        format_size(metadata.size, self.opts.scale)
+                    ));
+                }
+                return Ok(metadata.size);
+            }
+
+            let mut total = 0u64;
+            let entries = self.listings.list(&*self.ctx.fs, path, None).await?;
+            self.ctx
+                .consume_budget_work(u64::try_from(entries.len()).unwrap_or(u64::MAX))?;
+            for entry in entries {
+                let child_path = vfs_join(path, &entry.name);
+                let child_display = if display.ends_with('/') {
+                    format!("{display}{}", entry.name)
+                } else {
+                    format!("{display}/{}", entry.name)
+                };
+                total += self
+                    .walk(&child_path, &child_display, depth + 1, entry.metadata)
+                    .await?;
+            }
+            if shown {
+                self.output.push_str(&format!(
                     "{}\t{display}\n",
-                    format_size(metadata.size, opts.scale)
+                    format_size(total, self.opts.scale)
                 ));
             }
-            return Ok(metadata.size);
-        }
-
-        let mut total = 0u64;
-        let entries = ctx.fs.read_dir(path).await?;
-        ctx.consume_budget_work(u64::try_from(entries.len()).unwrap_or(u64::MAX))?;
-        for entry in entries {
-            let child_path = vfs_join(path, &entry.name);
-            let child_display = if display.ends_with('/') {
-                format!("{display}{}", entry.name)
-            } else {
-                format!("{display}/{}", entry.name)
-            };
-            total += walk(ctx, &child_path, &child_display, depth + 1, opts, output).await?;
-        }
-        if shown {
-            output.push_str(&format!("{}\t{display}\n", format_size(total, opts.scale)));
-        }
-        Ok(total)
-    })
+            Ok(total)
+        })
+    }
 }
 
 /// The df builtin - report file system disk space usage.

@@ -400,6 +400,67 @@ their `stat` is an `lstat`, and they refuse to read or write through a link.
   containment errors stay as they are) or when `stat` reports a link.
   Writes cost one extra `lstat` on the final component.
 
+### Remote Backends: Round Trips
+
+Decision (2026-11-02): a custom `FileSystem` may be remote (a database, an
+object store); each call is then a network round trip (~10 ms in Everruns).
+Builtins are judged by call count, not CPU. Rules, pinned by
+`tests/integration/remote_fs_round_trip_tests.rs` (`bashkit::testing::CountingFs`)
+and measured by `benches/remote_fs.rs` over the bashkit checkout:
+
+- **Listing metadata is authoritative.** `read_dir` entries carry `lstat`
+  metadata; walkers (`find`, `du`, `grep -r`, `tar`, `cp -r`, `rg`) never
+  `stat` an entry they just listed. Only roots, symlinks (`read_link` + target
+  `stat`) and explicit operands get a lookup. `MountableFs` lists a mount point
+  with the mounted root's `stat`, so the rule also holds at mounts.
+- **`FileSystem::walk(root, WalkOptions { max_depth, max_entries })`** returns
+  the listings of `root` and the directories below it in one call, as a
+  bounded batch: it stops once the answer holds `max_entries` entries
+  (default 10k; at most one listing over, never a split listing). The
+  default is one `read_dir` per directory, depth first, reading a directory
+  only when popped (`walk_with_read_dir`); bulk backends override it with a
+  prefix query and a row limit. Wrappers forward it when they map the subtree one-to-one
+  (`FollowFs` rebases a linked root, `MountableFs` when no mount lies below the
+  root, `RootFs` outside system trees, `ReadOnlyFs`, per-execution wrappers);
+  otherwise they fall back to the default. Callers use it only when they would
+  list every directory anyway: `find` without `-exec*`/`-delete`/`-prune`/
+  `-quit`, and `du`, through `builtins/walk_cache.rs`: a directory missing
+  from the cache triggers another bounded `walk` rooted there, listings are
+  dropped as they are consumed, and an answer without the requested
+  directory switches the run to plain `read_dir`. Memory stays at about one
+  batch for trees of millions of files (TM-DOS-140). Not `rg` (ignore rules prune), `ls -R` (skips dot
+  directories), `tree` (entry budget stops early), where an eager default
+  walk would read more than today.
+- **`SearchCapable` reaches builtins.** `MountableFs` forwards the provider of
+  the backend that serves the whole requested subtree (none if another mount
+  sits below it) and maps result paths back under the mount point. A mount
+  or unmount after the provider was handed out makes its `search` fail, so
+  callers walk instead of trusting an index that no longer covers the
+  subtree. Index answers must be complete for the queried root (an empty
+  answer is "no match"); a backend with a possibly stale index returns no
+  provider.
+  `ExecutionFileSystem` hands out a lease-checked provider (TM-ISO-027): each
+  `search` fails, and `capabilities` reports none, once the execution's
+  capability is revoked. Before this both
+  layers returned `None`, so indexed search never ran in a default session.
+- **`rg` keeps the index with ignore rules on.** Index matches are filtered
+  through the walk's rules, loaded only along the directories leading to a
+  match (one `read_dir` each, ignored or hidden directories are not entered).
+  The walk itself reads the listing first and opens only the ignore files the
+  listing shows, and tracks "inside a git repo" down the walk instead of a
+  `stat` per ancestor. `--max-depth` is applied to index matches. `-L`,
+  `--type`, `--max-filesize`, `--sort` other than path still walk.
+- `rg` keeps every searched file's text until output is built; it charges
+  each file to the aggregate-input budget as it reads (default 100 MB) and
+  stops at the first refusal, so a huge tree fails at the budget instead of
+  after loading every file (TM-DOS-140). Streaming search is a follow-up.
+- An index that answers with no match is an answer: `grep -r` no longer
+  re-walks the tree on zero matches.
+- `FollowFs` `copy`/`chmod`/`touch -d` take a fast path (one inner `stat` per
+  path) instead of resolving every path component.
+- Known remaining cost: `**` globs list each directory twice (walk, then the
+  next component); `ls -R`/`tree` are one `read_dir` per directory.
+
 ## Host Mount Table (`HostMounts`)
 
 `realfs` mounts are recorded as a `HostMounts` table on the `Bash` instance:

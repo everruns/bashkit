@@ -18,6 +18,10 @@
 //!    fuzzer can forge the canary into its own input — see
 //!    `assert_fuzz_invariants`).
 
+mod counting_fs;
+
+pub use counting_fs::{CallCounts, CountingFs};
+
 use crate::{Bash, ControlFlow, ExecResult};
 
 /// Cross-tool banned substrings. Any of these in stderr means a leak —

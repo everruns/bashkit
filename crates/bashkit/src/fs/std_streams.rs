@@ -240,6 +240,10 @@ impl FileSystem for StdStreamsFs {
     async fn read_dir(&self, path: &Path) -> Result<Vec<DirEntry>> {
         self.inner.read_dir(path).await
     }
+
+    async fn walk(&self, root: &Path, opts: super::WalkOptions) -> Result<Vec<super::DirListing>> {
+        self.inner.walk(root, opts).await
+    }
     async fn exists(&self, path: &Path) -> Result<bool> {
         match std_stream_fd(path) {
             Some(_) => Ok(true),

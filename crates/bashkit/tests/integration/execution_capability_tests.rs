@@ -289,3 +289,61 @@ async fn command_resolver_builtins_receive_execution_scoped_access() {
     let error = fs.read_file(Path::new("/request.txt")).await.unwrap_err();
     assert_eq!(error.to_string(), "io error: execution capability revoked");
 }
+
+/// Search providers handed out during an execution are leased too: a
+/// builtin that keeps one cannot query the index after its command returns.
+struct RetainSearch {
+    retained: Arc<Mutex<Vec<Box<dyn bashkit::SearchProvider>>>>,
+}
+
+#[bashkit::async_trait]
+impl Builtin for RetainSearch {
+    async fn execute(&self, ctx: BuiltinContext<'_>) -> bashkit::Result<ExecResult> {
+        let provider = ctx
+            .fs
+            .as_search_capable()
+            .and_then(|sc| sc.search_provider(Path::new("/")))
+            .expect("index reachable during execution");
+        let hits = provider.search(&search_query())?.matches.len();
+        self.retained.lock().unwrap().push(provider);
+        Ok(ExecResult::ok(format!("{hits}\n")))
+    }
+}
+
+fn search_query() -> bashkit::SearchQuery {
+    bashkit::SearchQuery {
+        pattern: "secret".to_string(),
+        is_regex: false,
+        case_insensitive: false,
+        root: "/".into(),
+        glob_filter: None,
+        max_results: None,
+    }
+}
+
+#[tokio::test]
+async fn retained_search_provider_fails_after_completion() {
+    let retained = Arc::new(Mutex::new(Vec::new()));
+    let fs = Arc::new(bashkit::testing::CountingFs::new().with_index());
+    fs.write_file(Path::new("/data.txt"), b"secret\n")
+        .await
+        .unwrap();
+    let mut bash = Bash::builder()
+        .fs(fs)
+        .builtin(
+            "retain-search",
+            Box::new(RetainSearch {
+                retained: retained.clone(),
+            }),
+        )
+        .build();
+
+    let result = bash.exec("retain-search").await.unwrap();
+    assert_eq!(result.stdout, "1\n", "{}", result.stderr);
+
+    let provider = retained.lock().unwrap().pop().unwrap();
+    let error = provider.search(&search_query()).unwrap_err();
+    assert_eq!(error.to_string(), "io error: execution capability revoked");
+    // Capabilities carry no answer either once the lease is gone.
+    assert!(!provider.capabilities().content_search);
+}

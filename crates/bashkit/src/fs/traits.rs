@@ -417,6 +417,126 @@ pub trait FileSystem: FileSystemExt {
     fn as_search_capable(&self) -> Option<&dyn super::SearchCapable> {
         None
     }
+
+    /// List `root` and the directories below it in one call.
+    ///
+    /// Returns one [`DirListing`] per directory: `root` itself (depth 0) and
+    /// descendant directories at depth `d` with `d + 1 <= opts.max_depth`, so
+    /// `max_depth = Some(1)` returns only `root`'s listing and `None` walks
+    /// the whole subtree. Entries carry the same metadata `read_dir` returns.
+    /// Symlinks are listed, never followed. A descendant directory that
+    /// cannot be listed is left out; callers that need its error call
+    /// `read_dir` on it. Listing order is unspecified.
+    ///
+    /// The answer is a bounded batch, not the whole tree: implementations
+    /// stop once the returned listings hold `opts.max_entries` entries or more
+    /// (going over by at most one listing; a listing is never split). A
+    /// directory missing from the answer was either cut by that bound or
+    /// unreadable; callers list it themselves, with `read_dir` or another
+    /// `walk` rooted there. This keeps a walk over millions of files at one
+    /// batch of listings in memory.
+    ///
+    /// The default issues one `read_dir` per directory. Backends where each
+    /// call is a network round trip (a database or object store) should
+    /// override it with one bulk query, e.g. a path-prefix scan with a row
+    /// limit. `find` and `du` use it when they would list every directory
+    /// anyway.
+    ///
+    /// # Errors
+    ///
+    /// Returns the `read_dir` error for `root`.
+    async fn walk(&self, root: &Path, opts: WalkOptions) -> Result<Vec<DirListing>> {
+        walk_with_read_dir(self, root, opts).await
+    }
+}
+
+/// Bounds for one [`FileSystem::walk`] answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WalkOptions {
+    /// Directory depth below the root to list (`None` = unlimited); see
+    /// [`FileSystem::walk`].
+    pub max_depth: Option<usize>,
+    /// Stop once the answer holds this many entries (at most one listing
+    /// more). Callers list the rest on demand.
+    pub max_entries: usize,
+}
+
+impl WalkOptions {
+    /// Default [`WalkOptions::max_entries`]: about a megabyte of listings,
+    /// a few hundred round trips saved per batch on remote backends.
+    pub const DEFAULT_MAX_ENTRIES: usize = 10_000;
+
+    /// Walk to `max_depth` with the default entry bound.
+    pub fn new(max_depth: Option<usize>) -> Self {
+        Self {
+            max_depth,
+            max_entries: Self::DEFAULT_MAX_ENTRIES,
+        }
+    }
+
+    /// Replace the entry bound.
+    pub fn max_entries(mut self, entries: usize) -> Self {
+        self.max_entries = entries;
+        self
+    }
+}
+
+impl Default for WalkOptions {
+    fn default() -> Self {
+        Self::new(None)
+    }
+}
+
+/// One directory listing returned by [`FileSystem::walk`].
+#[derive(Debug, Clone)]
+pub struct DirListing {
+    /// Absolute path of the listed directory.
+    pub path: std::path::PathBuf,
+    /// Its entries, as [`FileSystem::read_dir`] returns them.
+    pub entries: Vec<DirEntry>,
+}
+
+/// The default [`FileSystem::walk`]: one `read_dir` per directory, depth
+/// first, stopping at `opts.max_entries`.
+///
+/// Public so overriding implementations can fall back to it for paths they
+/// cannot answer in bulk. Directories are read only when popped, so pending
+/// work is a path list no longer than the entries already returned.
+pub async fn walk_with_read_dir<F: FileSystem + ?Sized>(
+    fs: &F,
+    root: &Path,
+    opts: WalkOptions,
+) -> Result<Vec<DirListing>> {
+    let mut out = Vec::new();
+    if opts.max_depth == Some(0) {
+        return Ok(out);
+    }
+    let entries = fs.read_dir(root).await?;
+    let mut held = 0usize;
+    let mut pending = vec![(root.to_path_buf(), 0usize, Some(entries))];
+    while let Some((path, depth, listed)) = pending.pop() {
+        if held >= opts.max_entries {
+            break;
+        }
+        let entries = match listed {
+            Some(entries) => entries,
+            None => match fs.read_dir(&path).await {
+                Ok(entries) => entries,
+                Err(_) => continue,
+            },
+        };
+        let child_depth = depth + 1;
+        if opts.max_depth.is_none_or(|m| child_depth < m) {
+            for entry in &entries {
+                if entry.metadata.file_type.is_dir() {
+                    pending.push((super::vfs_join(&path, &entry.name), child_depth, None));
+                }
+            }
+        }
+        held = held.saturating_add(entries.len());
+        out.push(DirListing { path, entries });
+    }
+    Ok(out)
 }
 
 /// File or directory metadata.

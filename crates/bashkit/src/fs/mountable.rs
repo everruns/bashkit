@@ -12,6 +12,7 @@ use async_trait::async_trait;
 use std::collections::BTreeMap;
 use std::io::Error as IoError;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 
 use super::limits::{FsLimits, FsUsage};
@@ -156,6 +157,10 @@ pub struct MountableFs {
     /// Mount points: path -> filesystem
     /// BTreeMap ensures iteration in path order
     mounts: RwLock<BTreeMap<PathBuf, Arc<dyn FileSystem>>>,
+    /// Bumped on every mount and unmount; search providers handed out before
+    /// a change refuse to answer, so callers walk instead of trusting an index
+    /// that no longer covers the whole subtree.
+    generation: Arc<AtomicU64>,
 }
 
 enum CrossMountEntry {
@@ -293,6 +298,7 @@ impl MountableFs {
         Self {
             root,
             mounts: RwLock::new(BTreeMap::new()),
+            generation: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -353,6 +359,7 @@ impl MountableFs {
         let path = Self::normalize_path(path.as_ref());
         let mut mounts = self.mounts.write().unwrap();
         mounts.insert(path, fs);
+        self.generation.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
 
@@ -399,6 +406,7 @@ impl MountableFs {
         mounts
             .remove(&path)
             .ok_or_else(|| IoError::other("mount not found"))?;
+        self.generation.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
 
@@ -464,6 +472,107 @@ impl MountableFs {
             }
         }
     }
+
+    /// Mount point that serves `path` (`None`: the root filesystem).
+    fn mount_point_of(&self, path: &Path) -> Option<PathBuf> {
+        let mounts = self.mounts.read().unwrap();
+        mounts
+            .keys()
+            .filter(|m| path.starts_with(m))
+            .max_by_key(|m| m.components().count())
+            .cloned()
+    }
+
+    /// Whether a mount sits strictly below `path`, so one backend cannot
+    /// answer a subtree query for it alone.
+    fn has_mount_below(&self, path: &Path) -> bool {
+        let mounts = self.mounts.read().unwrap();
+        mounts.keys().any(|m| m != path && m.starts_with(path))
+    }
+}
+
+/// Map a backend-relative path back under its mount point.
+fn under_mount(mount: Option<&Path>, inner: &Path) -> PathBuf {
+    match mount {
+        None => inner.to_path_buf(),
+        Some(m) => {
+            let rel = inner.strip_prefix("/").unwrap_or(inner);
+            if rel.as_os_str().is_empty() {
+                m.to_path_buf()
+            } else {
+                vfs_join(m, rel)
+            }
+        }
+    }
+}
+
+/// Search provider of a mounted backend, translating paths at the mount.
+struct MountedSearchProvider {
+    inner: Box<dyn super::SearchProvider>,
+    mount: Option<PathBuf>,
+    /// Mount table generation when the provider was handed out.
+    generation: u64,
+    current: Arc<AtomicU64>,
+}
+
+impl super::SearchProvider for MountedSearchProvider {
+    fn search(&self, query: &super::SearchQuery) -> Result<super::SearchResults> {
+        // A mount added or removed since `search_provider` may sit below the
+        // root: the index would no longer cover the subtree. Erroring makes
+        // callers fall back to the walk instead of trusting a partial answer.
+        if self.current.load(Ordering::SeqCst) != self.generation {
+            return Err(IoError::other("mount table changed during search").into());
+        }
+        let Some(mount) = &self.mount else {
+            return self.inner.search(query);
+        };
+        let root = MountableFs::normalize_path(&query.root);
+        // This backend only holds paths under its mount point.
+        let Ok(rel) = root.strip_prefix(mount) else {
+            return Ok(super::SearchResults::default());
+        };
+        let mut translated = query.clone();
+        translated.root = vfs_join(Path::new("/"), rel);
+        let mut results = self.inner.search(&translated)?;
+        for m in &mut results.matches {
+            let inner = if is_posix_absolute(&m.path) {
+                m.path.clone()
+            } else {
+                vfs_join(&translated.root, &m.path)
+            };
+            m.path = under_mount(Some(mount), &inner);
+        }
+        Ok(results)
+    }
+
+    fn capabilities(&self) -> super::SearchCapabilities {
+        self.inner.capabilities()
+    }
+}
+
+/// Indexed search passes through to the backend that serves the whole
+/// requested subtree. A subtree with another mount below it has no single
+/// index, so callers fall back to walking.
+impl super::SearchCapable for MountableFs {
+    fn search_provider(&self, path: &Path) -> Option<Box<dyn super::SearchProvider>> {
+        self.validate_path(path).ok()?;
+        let path = Self::normalize_path(path);
+        // Read before checking the table: a change after this read fails the
+        // provider's `search`.
+        let generation = self.generation.load(Ordering::SeqCst);
+        if self.has_mount_below(&path) {
+            return None;
+        }
+        let mount = self.mount_point_of(&path);
+        let (fs, resolved) = self.resolve(&path);
+        let inner = fs.as_search_capable()?.search_provider(&resolved)?;
+        Some(Box::new(MountedSearchProvider {
+            inner,
+            mount,
+            generation,
+            current: Arc::clone(&self.generation),
+        }))
+    }
 }
 
 #[async_trait]
@@ -515,30 +624,50 @@ impl FileSystem for MountableFs {
 
         let mut entries = fs.read_dir(&resolved).await?;
 
-        // Add mount points that are direct children of this directory
-        let mounts = self.mounts.read().unwrap();
-        for mount_path in mounts.keys() {
-            if mount_path.parent() == Some(&path)
-                && let Some(name) = mount_path.file_name()
-            {
-                // Check if this entry already exists
-                let name_str = name.to_string_lossy().to_string();
-                if !entries.iter().any(|e| e.name == name_str) {
-                    entries.push(DirEntry {
-                        name: name_str,
-                        metadata: Metadata {
-                            file_type: FileType::Directory,
-                            size: 0,
-                            mode: 0o755,
-                            modified: crate::time_compat::SystemTime::now(),
-                            created: crate::time_compat::SystemTime::now(),
-                        },
-                    });
-                }
+        // Add mount points that are direct children of this directory. Their
+        // entry carries the mounted root's metadata, the same `stat` returns,
+        // so callers can trust listing metadata without a per-entry `stat`.
+        let children: Vec<(String, Arc<dyn FileSystem>)> = {
+            let mounts = self.mounts.read().unwrap();
+            mounts
+                .iter()
+                .filter(|(mount_path, _)| mount_path.parent() == Some(&path))
+                .filter_map(|(mount_path, mfs)| {
+                    let name = mount_path.file_name()?.to_string_lossy().into_owned();
+                    Some((name, Arc::clone(mfs)))
+                })
+                .collect()
+        };
+        for (name, mfs) in children {
+            let metadata = mfs.stat(Path::new("/")).await.unwrap_or_else(|_| Metadata {
+                file_type: FileType::Directory,
+                size: 0,
+                mode: 0o755,
+                modified: crate::time_compat::SystemTime::now(),
+                created: crate::time_compat::SystemTime::now(),
+            });
+            match entries.iter_mut().find(|e| e.name == name) {
+                Some(entry) => entry.metadata = metadata,
+                None => entries.push(DirEntry { name, metadata }),
             }
         }
 
         Ok(entries)
+    }
+
+    async fn walk(&self, root: &Path, opts: super::WalkOptions) -> Result<Vec<super::DirListing>> {
+        self.validate_path(root)?;
+        let root = Self::normalize_path(root);
+        if self.has_mount_below(&root) {
+            return super::walk_with_read_dir(self, &root, opts).await;
+        }
+        let mount = self.mount_point_of(&root);
+        let (fs, resolved) = self.resolve(&root);
+        let mut listings = fs.walk(&resolved, opts).await?;
+        for listing in &mut listings {
+            listing.path = under_mount(mount.as_deref(), &listing.path);
+        }
+        Ok(listings)
     }
 
     async fn exists(&self, path: &Path) -> Result<bool> {
@@ -614,6 +743,10 @@ impl FileSystem for MountableFs {
         let (fs, resolved) = self.resolve(path);
         fs.set_modified_time(&resolved, time).await
     }
+
+    fn as_search_capable(&self) -> Option<&dyn super::SearchCapable> {
+        Some(self)
+    }
 }
 
 #[async_trait]
@@ -663,6 +796,35 @@ impl FileSystemExt for MountableFs {
 
 #[cfg(test)]
 mod tests {
+
+    /// A mount added after a provider was handed out fails its search, so
+    /// callers walk instead of trusting an index that no longer covers the
+    /// subtree.
+    #[tokio::test]
+    async fn search_provider_refuses_after_mount_table_changes() {
+        use crate::fs::SearchCapable;
+        let indexed = Arc::new(crate::testing::CountingFs::new().with_index());
+        indexed.mkdir(Path::new("/a"), true).await.unwrap();
+        indexed
+            .write_file(Path::new("/a/f.txt"), b"needle")
+            .await
+            .unwrap();
+        let fs = MountableFs::new(indexed);
+        let provider = fs.search_provider(Path::new("/")).expect("indexed root");
+        let query = super::super::SearchQuery {
+            pattern: "needle".into(),
+            is_regex: false,
+            case_insensitive: false,
+            root: "/".into(),
+            glob_filter: None,
+            max_results: None,
+        };
+        assert_eq!(provider.search(&query).unwrap().matches.len(), 1);
+        fs.mount("/a/m", Arc::new(InMemoryFs::new())).unwrap();
+        assert!(provider.search(&query).is_err());
+        // A fresh provider sees the mount below the root and is withheld.
+        assert!(fs.search_provider(Path::new("/")).is_none());
+    }
     use super::*;
     use crate::fs::InMemoryFs;
 
