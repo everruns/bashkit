@@ -254,6 +254,9 @@ impl Builtin for Ls {
         // Output file arguments first (preserving path as given by user)
         if opts.long {
             for (path_str, path, metadata) in &file_args {
+                if output.len() > opts.output_limit {
+                    break;
+                }
                 let mut entry =
                     format_long_entry(&quote_name(path_str, opts.quoting), metadata, opts.human);
                 push_link_target(&ctx, path, metadata, &mut entry).await;
@@ -281,6 +284,9 @@ impl Builtin for Ls {
                 output.push_str(&format_columns(&names, 80));
             } else {
                 for name in &names {
+                    if output.len() > opts.output_limit {
+                        break;
+                    }
                     output.push_str(name);
                     output.push('\n');
                 }
@@ -371,6 +377,11 @@ async fn list_directory(
 
     if opts.long {
         for entry in &filtered {
+            // Past the stdout limit nothing more is shown; stop before
+            // formatting (and link lookups) for the rest of a wide dir.
+            if output.len() > opts.output_limit {
+                break;
+            }
             let mut line = format_long_entry(
                 &quote_name(&entry.name, opts.quoting),
                 &entry.metadata,
@@ -419,6 +430,9 @@ async fn list_directory(
             output.push_str(&format_columns(&names, 80));
         } else {
             for name in &names {
+                if output.len() > opts.output_limit {
+                    break;
+                }
                 output.push_str(name);
                 output.push('\n');
             }

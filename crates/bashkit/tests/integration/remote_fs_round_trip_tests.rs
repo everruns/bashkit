@@ -504,6 +504,32 @@ async fn ls_recursive_stops_at_the_stdout_limit() {
     assert!(out.len() > limit / 2, "{} bytes", out.len());
 }
 
+/// One wide directory: `ls -l` and `ls -1` stop appending lines once the
+/// stdout limit is passed, and the capped output is still a prefix.
+#[tokio::test]
+async fn ls_wide_directory_stops_at_the_stdout_limit() {
+    let (fs, mut bash) = setup(CountingFs::new()).await;
+    bash.exec("mkdir wide && for i in $(seq 1 500); do : > wide/f$i; done")
+        .await
+        .unwrap();
+    for cmd in ["ls -l wide", "ls -1 wide", "ls -l wide/f1 wide/f2 wide/f3"] {
+        let (_, full) = run(&fs, &mut bash, cmd).await;
+        let limit = 200;
+        let mut capped = Bash::builder()
+            .fs(fs.clone())
+            .cwd("/workspace")
+            .limits(bashkit::ExecutionLimits::new().max_stdout_bytes(limit))
+            .build();
+        let out = capped.exec(cmd).await.unwrap().stdout.to_string();
+        assert!(out.len() <= limit, "{cmd}: {} bytes", out.len());
+        assert!(
+            full.starts_with(&out),
+            "{cmd}: capped output is not a prefix"
+        );
+        assert!(out.len() > limit / 2, "{cmd}: {} bytes", out.len());
+    }
+}
+
 /// tree stops at its entry budget; prefetch must not read far past it.
 #[tokio::test]
 async fn tree_prefetch_stays_within_entry_budget() {
