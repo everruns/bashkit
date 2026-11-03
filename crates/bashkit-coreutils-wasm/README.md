@@ -11,7 +11,7 @@ provides the WASI host over bashkit's virtual filesystem and the builtins:
 
 ```toml
 [dependencies]
-bashkit = { version = "0.18.2", features = ["wasm-coreutils"] }
+bashkit = { version = "0.20.2", features = ["wasm-coreutils"] }
 ```
 
 ## Contents
