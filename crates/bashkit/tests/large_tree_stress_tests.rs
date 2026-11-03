@@ -411,9 +411,15 @@ async fn rg_stops_at_the_input_budget_on_a_huge_tree() {
     assert!(r.is_err(), "expected the input budget to stop rg");
     // ~25 B per file: the 1 MiB budget covers ~40k files of the tree.
     assert!((reads as usize) < fs.files() / 2, "read {reads} files");
-    // Held inputs cost ~300 B per file read (text, display path, entry);
-    // before the walk streamed, the candidate list alone took ~70 MB here.
-    assert!(peak < 2 * BOUNDED_PEAK, "peak {peak} B");
+    // rg keeps every file it read until the budget trips, so the bound
+    // scales with reads: ~290 B per read locally, ~360 B under tarpaulin's
+    // instrumented build. Before the walk streamed, the whole-tree candidate
+    // list pushed this past 1.5 KB per read (~70 MB at 200k files).
+    let per_read = peak.saturating_sub(BOUNDED_PEAK) / (reads as usize).max(1);
+    assert!(
+        peak < BOUNDED_PEAK + 512 * reads as usize,
+        "peak {peak} B for {reads} reads ({per_read} B/read over the fixed bound)"
+    );
 }
 
 /// rg within budget over the whole tree: memory scales with the text it
