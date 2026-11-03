@@ -370,6 +370,22 @@ New here, and the reason to look twice: napi_run_script compiles FOLLOW_LIKE_AWA
 
 The rest is hardening. New class_identity.rs records the wrapped Rust class in the REFERENCE_MAP entry and checks it before casting a napi_unwrap result to *mut T on builds without Node-API type tags, which is every build bashkit-js makes since it selects napi6, turning a type-confusion cast into InvalidArg. TypedArray views now scale their byte slice by element size instead of treating the element count as a byte count, so a multi-byte view is no longer truncated. native_borrow gains deferred scopes with lease counting and hands roots to the owning env's custom-GC threadsafe function instead of calling napi_delete_reference off-thread; its two new unsafe impl Send/Sync carry raw handles that are only dereferenced on the owner JavaScript thread or through that tsfn. New unsafe is N-API handle calls plus three extern "C" promise-settle trampolines, and the three added raw-pointer sites are slice/Vec reconstruction over N-API buffer data."""
 
+[[audits.napi]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "3.15.0 -> 3.16.1"
+notes = """
+Reviewed the complete published delta (1241 changed lines across 10 files under src/). build.rs is byte-identical, the Cargo.toml change is the version number alone, so no new dependency, and the std::fs/std::net/std::process/std::env reference set is unchanged. Unsafe occurrences rise 1812 -> 1844, but the increase is centralization rather than new raw-pointer work: the new `unsafe fn call_threadsafe_function_with_data` concentrates the threadsafe-function call sites that already contained those blocks.
+
+That helper is the substantive memory fix (#3656). Node-API takes ownership of the boxed call data only when napi_call_threadsafe_function returns napi_ok; on napi_queue_full, napi_closing or any other status nothing was queued and the caller still owned the box, which previously leaked. It is now reclaimed with Box::from_raw on the non-ok path, and the reclaimed value is dropped only after the `aborted` read guard is released, because its destructors are user code that may lock the same handle again -- for example by dropping a clone of the threadsafe function, which calls abort. No double free: the reclaim happens exactly on the statuses where Node-API did not take the pointer.
+
+Class identity metadata is compacted (#3667): ClassId changes from Option<TypeId> to Option<NonZeroU32>, interned through an append-only CLASS_REGISTRY behind a Mutex. Append-only is the soundness argument the module states and the code keeps -- an ID stays valid for every REFERENCE_MAP entry that recorded it, including entries retained after their wrapped value dropped, so IDs are never reused and cannot be confused across classes. The registry is bounded at MAX_CLASS_IDS = 65_536 and returns an explicit "registry is full" error past that, with a deliberately allocation-free error path for allocation failure. This module is gated to cfg(not(all(feature = "napi8", not(target_family = "wasm")))) and this tree selects napi6 on a native target, so the new path is the one compiled here.
+
+Registered-class teardown is tightened (#3666) by a REGISTERED_CLASSES_OWNER cookie recording which successful load built a thread's map, so a later failed load no longer clears classes whose constructor references are still alive. The symbol-key features (#3665, #3661) are additive property-descriptor surface. Verified `cargo build -p bashkit-js` against this version.
+
+Source safety review of the delta, not a review of the whole crate.
+"""
+
 [[audits.napi-build]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
@@ -418,6 +434,14 @@ criteria = "safe-to-deploy"
 delta = "3.6.12 -> 3.6.13"
 notes = "No source changes; the release only bumps the napi-derive-backend dependency to 6.1.6 in Cargo.toml."
 
+[[audits.napi-derive]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "3.6.13 -> 3.7.0"
+notes = """
+No source change. The only difference is the napi-derive-backend requirement in Cargo.toml, 6.1.6 -> 7.0.0; unsafe is unchanged at 10 occurrences, the ambient reference set is identical, and there is no build.rs.
+"""
+
 [[audits.napi-derive-backend]]
 who = "Mykhailo Chalyi <mykhailo.chalyi-contractor@procore.com>"
 criteria = "safe-to-deploy"
@@ -441,6 +465,16 @@ who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
 delta = "6.1.5 -> 6.1.6"
 notes = "Codegen only. Borrow scopes become deferred: a synchronous callback records its borrowed values and hands the scope to whichever async sink claims it during return-value conversion, with a guard that releases it on Err, throw or panic; the zero-argument fast path emits no defer because it builds no CallbackInfo. Class instance wraps replace a 0x1 wrapped pointer with a real one-byte allocation so zero-sized classes cannot share the dangling key napi's new class-identity check keys on. No new unsafe (74 occurrences unchanged), no ambient access."
+
+[[audits.napi-derive-backend]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "6.1.6 -> 7.0.0"
+notes = """
+Codegen and AST only, 156 changed lines across 5 files. No new unsafe (73 occurrences unchanged), no std::fs/std::net/std::process/std::env reference at all in either version, and no build.rs. The major version bump is a source-compatibility break in the public AST, not a behavior or capability change: NapiFn and NapiStructField gain `symbol_for` and `well_known_symbol` fields, so any external code constructing those structs must be updated. napi-derive 3.7.0 is the only consumer in this tree and requires exactly 7.0.0, so the pair moves in lockstep.
+
+The behavioral change worth recording is the static-flag fix: the generated property map was keyed on js_name alone, which collapsed a static and an instance member of the same name into one property descriptor. The key becomes the tuple (symbol_for.is_some(), well_known_symbol.is_some(), resolved name, is_static), and PROPERTY_ATTRIBUTE_STATIC is now set for members with no receiver, so string, registry-symbol, well-known-symbol, static and instance members stay distinct. Verified `cargo build -p bashkit-js` with the generated bindings.
+"""
 
 [[audits.napi-sys]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
@@ -572,6 +606,22 @@ who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
 delta = "0.63.3 -> 0.64.1"
 notes = "Reviewed complete published package diff: no new dependencies, no build scripts, no new host filesystem, network or process access, and no new unsafe blocks anywhere in src. The substantive change is a server-side authentication fix: a publickey request's signature must now use the algorithm the request announced (RFC 4252 section 7, RFC 8332 section 3). Before, a client could announce rsa-sha2-512 and sign with ssh-rsa (SHA-1) and the server accepted it; the delta adds the comparison and a regression test asserting both the rejection and that a matching signature is still accepted. One dependency is removed, not added: the legacy-ed25519-pkcs8-parser feature and its yasna ASN.1 dependency are gone, so the PKCS8 path no longer falls back to a second parser on error. This tree uses russh as a client with default features, so it never enabled that feature and is not exposed to the server-side bug; both changes are a reduction in attack surface for it. Partial-success auth now carries proceed_with_methods as an Option, removing password from the offered set when none is given, and resets partial_success per request. The remainder is mechanical: let-chain rewrites in keys/known_hosts.rs and kex/dh/mod.rs with identical semantics, saturating arithmetic for the cipher byte counter, and new integration tests. Source safety review, not a cryptographic audit."
+
+[[audits.russh]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.64.1 -> 0.65.0"
+notes = """
+Reviewed the complete published package diff (716 changed lines under src/). No new unsafe: the crate still contains exactly one unsafe block, the `offset_from` in server/encrypted.rs, textually unchanged and only moved by line number. No build.rs. One dependency is removed, not added: the no-op `async-trait` dependency and its crate feature are gone. No new ambient capability in compiled code; the two added `tokio::net::Unix*` references are both inside `#[cfg(test)]` modules (src/tests.rs, which lib_inner.rs gates on cfg(test), and the cfg(test) block in keys/mod.rs), and the non-test std::fs/std::net/std::process/std::env reference set is identical.
+
+Four of the six advisories in this release harden paths this tree reaches, and every one of them narrows. EXT_INFO handling now counts messages and rejects the third with Error::Inconsistent, per RFC 8308 section 2.4's at-most-twice rule, which bounds the previously unbounded `received_extensions` growth a malicious server could drive (GHSA-4p9f-7p9m-5vfg; client-reachable). A peer-declared `maximum_packet_size` of zero is now rejected in both OpenChannelMessage::parse and the new ChannelOpenConfirmation::parse, since a zero cap can never be satisfied and left channel writes stalled forever (GHSA-fw5c-8223-6h42; reachable here through the confirmation a server sends for our channel open), with unit tests asserting both rejections. Certificate nesting is bounded by check_cert_nesting, which counts occurrences of the `-cert-v01@` marker in the blob and rejects more than MAX_CERT_NESTING = 8; it guards parse_public_key and PublicKeyOrCertificate::decode, and this tree uses PublicKeyOrCertificate, so the guard is on a live path (GHSA-3hm4-p7h4-rvwp). The remaining agent-server advisories -- pageant frame bounds, SSH_AGENT_CONSTRAIN_CONFIRM deduplication and the defunct Agent::confirm -- are not reachable from this tree, which runs no SSH agent server.
+
+Channel window accounting is corrected rather than merely changed: WindowSize::update(value), which overwrote the window with the adjustment and so could shrink it, becomes grow(amount) with saturating_add, matching the additive CHANNEL_WINDOW_ADJUST semantics of RFC 4254 section 5.2 and saturating instead of overflowing. Client authentication gains a Msg::SignFailed arm that abandons an unanswered PK_OK and returns to the main loop, as OpenSSH does when it cannot sign, leaving the session usable for the next userauth request instead of failing it.
+
+The breaking change in this release is server-side only: Handler::auth_publickey_offered and Handler::auth_publickey move to server::PublicKeyOffer and server::VerifiedPublicKey. This tree implements only russh::client::Handler and calls russh::client::connect, so it is unaffected; confirmed by building `-p bashkit --features ssh` with no source changes and running the ssh builtin suite, 24 passed and 0 failed, including the sandbox-boundary cases ssh_blocked_host, ssh_wildcard_host, ssh_not_configured, scp_blocked_host, scp_not_configured and sftp_not_configured.
+
+Source safety review of the delta, not a cryptographic audit.
+"""
 
 [[audits.rustls]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
