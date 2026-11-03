@@ -3035,8 +3035,7 @@ async fn collect_rg_inputs(
             actual: ctx.cwd.to_path_buf(),
             display_hint: RgDisplayHint::None,
         };
-        let files = collect_rg_files_recursive(&*ctx.fs, &[root], opts, ctx.cwd).await;
-        return Ok(read_rg_files(&*ctx.fs, files, ctx.cwd, opts, budget).await);
+        return Ok(stream_rg_root(&*ctx.fs, root, opts, ctx.cwd, budget).await);
     }
 
     if let Some(inputs) = try_indexed_search(&*ctx.fs, opts, ctx.cwd, budget).await {
@@ -3088,10 +3087,27 @@ async fn collect_rg_inputs(
             }
         }
     }
+    let path_order = opts.sort == RgSort::Path && !opts.sort_reverse;
+    if path_order
+        && roots.len() == 1
+        && let Some(root) = roots.pop()
+    {
+        // Explicit files come first, then the one root's walk in path order:
+        // read them as found instead of holding every candidate.
+        let read = read_rg_files(&*ctx.fs, candidates, ctx.cwd, opts, budget).await;
+        collected.had_errors |= read.had_errors;
+        collected.stderr.push_str(&read.stderr);
+        collected.inputs.extend(read.inputs);
+        let read = stream_rg_root(&*ctx.fs, root, opts, ctx.cwd, budget).await;
+        collected.had_errors |= read.had_errors;
+        collected.stderr.push_str(&read.stderr);
+        collected.inputs.extend(read.inputs);
+        return Ok(collected);
+    }
     if !roots.is_empty() {
         candidates.extend(collect_rg_files_recursive(&*ctx.fs, &roots, opts, ctx.cwd).await);
     }
-    if opts.sort != RgSort::Path || opts.sort_reverse {
+    if !path_order {
         sort_rg_candidates(&mut candidates, opts);
     }
     let read = read_rg_files(&*ctx.fs, candidates, ctx.cwd, opts, budget).await;
@@ -3760,30 +3776,74 @@ async fn collect_rg_files_recursive(
     opts: &RgOptions,
     cwd: &Path,
 ) -> Vec<RgFileCandidate> {
-    let mut result = Vec::new();
-    let mut stack = Vec::new();
-    for root in roots {
-        let mut rules = Vec::new();
-        append_global_ignore_rules_for_root(fs, &root.actual, opts, &mut rules).await;
-        rules.extend(opts.explicit_ignore_rules.clone());
-        let _ = load_parent_ignore_rules(fs, &root.actual, opts, &mut rules).await;
-        stack.push(RgWalkItem {
-            logical: root.logical.clone(),
-            actual: root.actual.clone(),
-            actual_root: root.actual.clone(),
-            depth: 0,
-            rules: Arc::new(RgIgnoreRuleSet::root(rules)),
-            ancestors: vec![root.actual.clone()],
-            display_hint: root.display_hint,
-            in_git: false,
-        });
+    let mut sink = RgSink::Collect(Vec::new());
+    walk_rg_files(fs, roots, opts, cwd, &mut sink).await;
+    let mut result = match sink {
+        RgSink::Collect(files) => files,
+        RgSink::Read { .. } => Vec::new(),
+    };
+    sort_rg_candidates(&mut result, opts);
+    result
+}
+
+/// Where the walk hands each file it accepts.
+enum RgSink<'a> {
+    /// Keep candidates for the caller to sort or list.
+    Collect(Vec<RgFileCandidate>),
+    /// Read each file as it is found. THREAT[TM-DOS-140]: on a huge tree the
+    /// candidate list alone (two paths and metadata per file) costs hundreds
+    /// of bytes per file before any budget check; reading as found holds only
+    /// what the budget admits and stops the walk once it is spent.
+    Read {
+        cwd: &'a Path,
+        budget: &'a mut RgReadBudget,
+        out: RgCollectedInputs,
+    },
+}
+
+impl RgSink<'_> {
+    async fn push(
+        &mut self,
+        fs: &dyn crate::fs::FileSystem,
+        opts: &RgOptions,
+        file: RgFileCandidate,
+    ) {
+        match self {
+            Self::Collect(files) => files.push(file),
+            Self::Read { cwd, budget, out } => {
+                read_rg_candidate(fs, file, cwd, opts, budget, out).await;
+            }
+        }
     }
 
-    while let Some(item) = stack.pop() {
-        // List first: the listing says which ignore files exist, so missing
-        // ones cost no lookup (one `read_dir` per directory on remote VFSes).
-        let listing = fs.read_dir(&item.actual).await;
-        if let Ok(entries) = listing {
+    fn stopped(&self) -> bool {
+        matches!(self, Self::Read { budget, .. } if budget.exhausted())
+    }
+}
+
+/// One listed directory of the walk, its entries still to visit.
+struct RgWalkFrame {
+    item: RgWalkItem,
+    /// The directory's effective rules (its own ignore files applied).
+    rules: Arc<RgIgnoreRuleSet>,
+    in_git: bool,
+    /// Sorted by name, descending: `pop` yields them in ascending order.
+    entries: Vec<crate::fs::DirEntry>,
+}
+
+/// List `item` and push its frame, or hand it to the sink if it is a file.
+async fn enter_rg_walk_item(
+    fs: &dyn crate::fs::FileSystem,
+    item: RgWalkItem,
+    opts: &RgOptions,
+    cwd: &Path,
+    stack: &mut Vec<RgWalkFrame>,
+    sink: &mut RgSink<'_>,
+) {
+    // List first: the listing says which ignore files exist, so missing
+    // ones cost no lookup (one `read_dir` per directory on remote VFSes).
+    match fs.read_dir(&item.actual).await {
+        Ok(mut entries) => {
             let in_git = item.in_git || listing_has_git_dir(&entries);
             let mut local_rules = Vec::new();
             let _ = load_local_ignore_rules(
@@ -3802,84 +3862,144 @@ async fn collect_rg_files_recursive(
             } else {
                 Arc::new(RgIgnoreRuleSet::child(item.rules.clone(), local_rules))
             };
-            for entry in entries {
-                let path = vfs_join(&item.logical, &entry.name);
-                let actual_path = vfs_join(&item.actual, &entry.name);
-                let hidden_entry = !opts.hidden && is_hidden_name(&entry.name);
-                let entry_depth = item.depth + 1;
-                let (entry_actual_path, entry_metadata) =
-                    if entry.metadata.file_type.is_symlink() && opts.follow_symlinks {
-                        let Some((target, target_meta)) =
-                            resolve_rg_symlink_target(fs, &actual_path, &item.actual_root).await
-                        else {
-                            continue;
-                        };
-                        (target, target_meta)
-                    } else {
-                        (actual_path, entry.metadata)
-                    };
-
-                if entry_metadata.file_type.is_dir() {
-                    if hidden_entry || opts.is_ignored_by_rules(&path, true, &rules) {
-                        continue;
-                    }
-                    if opts
-                        .max_depth
-                        .is_none_or(|max_depth| entry_depth < max_depth)
-                        && !item.ancestors.contains(&entry_actual_path)
-                    {
-                        let mut child_ancestors = item.ancestors.clone();
-                        child_ancestors.push(entry_actual_path.clone());
-                        stack.push(RgWalkItem {
-                            logical: path,
-                            actual: entry_actual_path,
-                            actual_root: item.actual_root.clone(),
-                            depth: entry_depth,
-                            rules: rules.clone(),
-                            ancestors: child_ancestors,
-                            display_hint: item.display_hint,
-                            in_git,
-                        });
-                    }
-                } else if entry_metadata.file_type.is_file()
-                    && opts
-                        .max_depth
-                        .is_none_or(|max_depth| entry_depth <= max_depth)
-                    && opts.matches_max_filesize(entry_metadata.size)
-                    && !opts.is_ignored_by_rules(&path, false, &rules)
-                    && opts.matches_globs(&path, cwd)
-                    && opts.matches_type_filters(&path)
-                    && (!hidden_entry || opts.explicitly_includes_hidden_file(&path, cwd))
-                {
-                    result.push(RgFileCandidate {
-                        logical: path,
-                        actual: entry_actual_path,
-                        metadata: entry_metadata,
+            entries.sort_by(|a, b| b.name.cmp(&a.name));
+            stack.push(RgWalkFrame {
+                item,
+                rules,
+                in_git,
+                entries,
+            });
+        }
+        Err(_) => {
+            if let Ok(meta) = fs.stat(&item.actual).await
+                && meta.file_type.is_file()
+                && opts.matches_max_filesize(meta.size)
+                && opts.matches_globs(&item.logical, cwd)
+                && opts.matches_type_filters(&item.logical)
+            {
+                sink.push(
+                    fs,
+                    opts,
+                    RgFileCandidate {
+                        logical: item.logical,
+                        actual: item.actual,
+                        metadata: meta,
                         display_hint: item.display_hint,
                         display_override: None,
                         explicit: false,
-                    });
-                }
+                    },
+                )
+                .await;
             }
-        } else if let Ok(meta) = fs.stat(&item.actual).await
-            && meta.file_type.is_file()
-            && opts.matches_max_filesize(meta.size)
-            && opts.matches_globs(&item.logical, cwd)
-            && opts.matches_type_filters(&item.logical)
-        {
-            result.push(RgFileCandidate {
-                logical: item.logical,
-                actual: item.actual,
-                metadata: meta,
-                display_hint: item.display_hint,
-                display_override: None,
-                explicit: false,
-            });
         }
     }
+}
 
-    sort_rg_candidates(&mut result, opts);
-    result
+/// Depth-first walk in path order: each directory's entries by name, a
+/// subdirectory's files before the next sibling. That is the order
+/// `sort_rg_candidates` gives by path, so a single root can stream.
+async fn walk_rg_files(
+    fs: &dyn crate::fs::FileSystem,
+    roots: &[RgSearchRoot],
+    opts: &RgOptions,
+    cwd: &Path,
+    sink: &mut RgSink<'_>,
+) {
+    let mut stack: Vec<RgWalkFrame> = Vec::new();
+    for root in roots {
+        let mut rules = Vec::new();
+        append_global_ignore_rules_for_root(fs, &root.actual, opts, &mut rules).await;
+        rules.extend(opts.explicit_ignore_rules.clone());
+        let _ = load_parent_ignore_rules(fs, &root.actual, opts, &mut rules).await;
+        let item = RgWalkItem {
+            logical: root.logical.clone(),
+            actual: root.actual.clone(),
+            actual_root: root.actual.clone(),
+            depth: 0,
+            rules: Arc::new(RgIgnoreRuleSet::root(rules)),
+            ancestors: vec![root.actual.clone()],
+            display_hint: root.display_hint,
+            in_git: false,
+        };
+        enter_rg_walk_item(fs, item, opts, cwd, &mut stack, sink).await;
+
+        while let Some(frame) = stack.last_mut() {
+            if sink.stopped() {
+                return;
+            }
+            let Some(entry) = frame.entries.pop() else {
+                stack.pop();
+                continue;
+            };
+            let item = &frame.item;
+            let rules = frame.rules.clone();
+            let in_git = frame.in_git;
+            let path = vfs_join(&item.logical, &entry.name);
+            let actual_path = vfs_join(&item.actual, &entry.name);
+            let hidden_entry = !opts.hidden && is_hidden_name(&entry.name);
+            let entry_depth = item.depth + 1;
+            let (entry_actual_path, entry_metadata) =
+                if entry.metadata.file_type.is_symlink() && opts.follow_symlinks {
+                    let Some((target, target_meta)) =
+                        resolve_rg_symlink_target(fs, &actual_path, &item.actual_root).await
+                    else {
+                        continue;
+                    };
+                    (target, target_meta)
+                } else {
+                    (actual_path, entry.metadata)
+                };
+
+            if entry_metadata.file_type.is_dir() {
+                if hidden_entry || opts.is_ignored_by_rules(&path, true, &rules) {
+                    continue;
+                }
+                if opts
+                    .max_depth
+                    .is_none_or(|max_depth| entry_depth < max_depth)
+                    && !item.ancestors.contains(&entry_actual_path)
+                {
+                    let mut child_ancestors = item.ancestors.clone();
+                    child_ancestors.push(entry_actual_path.clone());
+                    let child = RgWalkItem {
+                        logical: path,
+                        actual: entry_actual_path,
+                        actual_root: item.actual_root.clone(),
+                        depth: entry_depth,
+                        rules,
+                        ancestors: child_ancestors,
+                        display_hint: item.display_hint,
+                        in_git,
+                    };
+                    enter_rg_walk_item(fs, child, opts, cwd, &mut stack, sink).await;
+                }
+            } else if entry_metadata.file_type.is_file()
+                && opts
+                    .max_depth
+                    .is_none_or(|max_depth| entry_depth <= max_depth)
+                && opts.matches_max_filesize(entry_metadata.size)
+                && !opts.is_ignored_by_rules(&path, false, &rules)
+                && opts.matches_globs(&path, cwd)
+                && opts.matches_type_filters(&path)
+                && (!hidden_entry || opts.explicitly_includes_hidden_file(&path, cwd))
+            {
+                let display_hint = item.display_hint;
+                sink.push(
+                    fs,
+                    opts,
+                    RgFileCandidate {
+                        logical: path,
+                        actual: entry_actual_path,
+                        metadata: entry_metadata,
+                        display_hint,
+                        display_override: None,
+                        explicit: false,
+                    },
+                )
+                .await;
+            }
+        }
+    }
 }
 
 fn sort_rg_candidates(files: &mut [RgFileCandidate], opts: &RgOptions) {
@@ -3993,20 +4113,59 @@ async fn read_rg_files(
         if budget.exhausted() {
             break;
         }
-        let display = candidate_display_path(&file, cwd, opts);
-        match read_rg_text_file(fs, &file.actual, cwd, &display, opts).await {
-            Ok(text) if !budget.charge(text.len()) => break,
-            Ok(text) if file.explicit => collected.inputs.push(RgInput::explicit(display, text)),
-            Ok(text) => collected.inputs.push(RgInput::discovered(display, text)),
-            Err(e) => {
-                collected.had_errors = true;
-                if opts.messages {
-                    collected.stderr.push_str(&e.stderr);
-                }
+        read_rg_candidate(fs, file, cwd, opts, budget, &mut collected).await;
+    }
+    collected
+}
+
+/// Walk one root in path order, reading each file as it is found.
+async fn stream_rg_root(
+    fs: &dyn crate::fs::FileSystem,
+    root: RgSearchRoot,
+    opts: &RgOptions,
+    cwd: &Path,
+    budget: &mut RgReadBudget,
+) -> RgCollectedInputs {
+    if opts.sort != RgSort::Path || opts.sort_reverse {
+        let files = collect_rg_files_recursive(fs, &[root], opts, cwd).await;
+        return read_rg_files(fs, files, cwd, opts, budget).await;
+    }
+    let mut sink = RgSink::Read {
+        cwd,
+        budget,
+        out: RgCollectedInputs::default(),
+    };
+    walk_rg_files(fs, &[root], opts, cwd, &mut sink).await;
+    match sink {
+        RgSink::Read { out, .. } => out,
+        RgSink::Collect(_) => RgCollectedInputs::default(),
+    }
+}
+
+/// Read one candidate into `out`, charging `budget` (nothing once spent).
+async fn read_rg_candidate(
+    fs: &dyn crate::fs::FileSystem,
+    file: RgFileCandidate,
+    cwd: &Path,
+    opts: &RgOptions,
+    budget: &mut RgReadBudget,
+    out: &mut RgCollectedInputs,
+) {
+    if budget.exhausted() {
+        return;
+    }
+    let display = candidate_display_path(&file, cwd, opts);
+    match read_rg_text_file(fs, &file.actual, cwd, &display, opts).await {
+        Ok(text) if !budget.charge(text.len()) => {}
+        Ok(text) if file.explicit => out.inputs.push(RgInput::explicit(display, text)),
+        Ok(text) => out.inputs.push(RgInput::discovered(display, text)),
+        Err(e) => {
+            out.had_errors = true;
+            if opts.messages {
+                out.stderr.push_str(&e.stderr);
             }
         }
     }
-    collected
 }
 
 fn candidate_display_path(file: &RgFileCandidate, cwd: &Path, opts: &RgOptions) -> String {

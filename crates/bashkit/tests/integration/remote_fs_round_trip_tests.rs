@@ -484,6 +484,26 @@ async fn ls_recursive_and_tree_output_is_the_same_with_bulk_walk() {
     }
 }
 
+/// `ls -R` stops listing once its output passes the stdout limit, and the
+/// visible output is the same prefix (memory: `large_tree_stress_tests`).
+#[tokio::test]
+async fn ls_recursive_stops_at_the_stdout_limit() {
+    let (fs, mut bash) = setup(CountingFs::new()).await;
+    let (_, full) = run(&fs, &mut bash, "ls -R tree").await;
+    let limit = 2_000;
+    let mut capped = Bash::builder()
+        .fs(fs.clone())
+        .cwd("/workspace")
+        .limits(bashkit::ExecutionLimits::new().max_stdout_bytes(limit))
+        .build();
+    fs.reset();
+    let r = capped.exec("ls -R tree").await.unwrap();
+    let out = r.stdout.to_string();
+    assert!(out.len() <= limit, "{} bytes", out.len());
+    assert!(full.starts_with(&out), "capped output is not a prefix");
+    assert!(out.len() > limit / 2, "{} bytes", out.len());
+}
+
 /// tree stops at its entry budget; prefetch must not read far past it.
 #[tokio::test]
 async fn tree_prefetch_stays_within_entry_budget() {

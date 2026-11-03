@@ -61,6 +61,10 @@ pub(super) struct LsOptions {
     pub(super) columns: bool,
     pub(super) directory: bool,
     pub(super) quoting: QuotingStyle,
+    /// Stop generating once output passes this (`max_stdout_bytes` + 1):
+    /// the rest would be cut anyway, so `ls -R` over millions of files holds
+    /// at most this much (TM-DOS-140).
+    pub(super) output_limit: usize,
 }
 
 /// The ls builtin - list directory contents.
@@ -175,6 +179,11 @@ impl Builtin for Ls {
             columns: matches.get_flag("C"),
             directory: matches.get_flag("directory"),
             quoting,
+            output_limit: ctx
+                .execution_extension::<crate::limits::ExecutionLimits>()
+                .and_then(|limits| limits.try_with(|limits| limits.max_stdout_bytes).ok())
+                .unwrap_or_else(|| crate::limits::ExecutionLimits::default().max_stdout_bytes)
+                .saturating_add(1),
         };
 
         // PATHS holds OsString values; convert to owned strings for the
@@ -297,6 +306,13 @@ impl Builtin for Ls {
             }
         }
 
+        if output.len() > opts.output_limit {
+            let mut end = opts.output_limit;
+            while !output.is_char_boundary(end) {
+                end -= 1;
+            }
+            output.truncate(end);
+        }
         Ok(ExecResult::ok(output))
     }
 }
@@ -312,6 +328,9 @@ async fn list_directory(
     show_header: bool,
     add_newline: bool,
 ) -> std::result::Result<(), String> {
+    if output.len() > opts.output_limit {
+        return Ok(());
+    }
     if add_newline {
         output.push('\n');
     }
@@ -409,6 +428,9 @@ async fn list_directory(
     // Recursive listing
     if opts.recursive {
         for (subpath, display) in subdirs {
+            if output.len() > opts.output_limit {
+                break;
+            }
             // Box the future to avoid infinite recursion type size
             Box::pin(list_directory(
                 ctx, listings, &subpath, &display, output, opts, true, true,
