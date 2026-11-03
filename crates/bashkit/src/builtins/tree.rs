@@ -1,8 +1,15 @@
 //! tree builtin command - display directory tree
+//!
+//! Decisions:
+//! - Directories are listed through bounded `walk` batches (`WalkCache`):
+//!   hidden directories are not descended without `-a`, batches never exceed
+//!   the remaining entry budget, and `-I` falls back to one `read_dir` per
+//!   directory (the walk cannot prune by pattern).
 
 use async_trait::async_trait;
 use std::path::Path;
 
+use super::walk_cache::WalkCache;
 use super::{Builtin, Context, resolve_path};
 use crate::error::Result;
 use crate::fs::vfs_join;
@@ -64,6 +71,8 @@ struct TreeState {
     counts: TreeCounts,
     budget: TreeBudget,
     output: String,
+    /// Listings in bounded `walk` batches (one query each on bulk backends).
+    listings: WalkCache,
 }
 
 #[async_trait]
@@ -159,6 +168,8 @@ impl Builtin for Tree {
             counts: TreeCounts { dirs: 0, files: 0 },
             budget,
             output: String::new(),
+            // `-I` prunes directories by name, which a walk cannot know.
+            listings: WalkCache::new(opts.exclude_pattern.is_none()).skip_hidden(!opts.show_hidden),
         };
 
         for path_str in &paths {
@@ -225,12 +236,15 @@ async fn build_tree(
         return Ok(());
     }
 
-    let entries = match ctx.fs.read_dir(dir).await {
+    let remaining = state.budget.remaining_entries();
+    // Never prefetch past the entry budget: tree stops there.
+    state.listings.set_max_entries(remaining.saturating_add(1));
+    let levels = opts.max_depth.map(|m| m.saturating_sub(depth));
+    let entries = match state.listings.list(&*ctx.fs, dir, levels).await {
         Ok(e) => e,
         Err(_) => return Ok(()),
     };
 
-    let remaining = state.budget.remaining_entries();
     let mut filtered: Vec<_> = entries
         .into_iter()
         .filter(|e| {

@@ -459,6 +459,11 @@ pub struct WalkOptions {
     /// Stop once the answer holds this many entries (at most one listing
     /// more). Callers list the rest on demand.
     pub max_entries: usize,
+    /// Do not descend into directories below the root whose name starts
+    /// with `.` (they are still listed as entries). A hint for callers that
+    /// skip hidden directories (`ls -R`, `tree` without `-a`): an
+    /// implementation may ignore it and return their listings anyway.
+    pub skip_hidden: bool,
 }
 
 impl WalkOptions {
@@ -471,12 +476,19 @@ impl WalkOptions {
         Self {
             max_depth,
             max_entries: Self::DEFAULT_MAX_ENTRIES,
+            skip_hidden: false,
         }
     }
 
     /// Replace the entry bound.
     pub fn max_entries(mut self, entries: usize) -> Self {
         self.max_entries = entries;
+        self
+    }
+
+    /// Set [`WalkOptions::skip_hidden`].
+    pub fn skip_hidden(mut self, skip: bool) -> Self {
+        self.skip_hidden = skip;
         self
     }
 }
@@ -528,7 +540,9 @@ pub async fn walk_with_read_dir<F: FileSystem + ?Sized>(
         let child_depth = depth + 1;
         if opts.max_depth.is_none_or(|m| child_depth < m) {
             for entry in &entries {
-                if entry.metadata.file_type.is_dir() {
+                if entry.metadata.file_type.is_dir()
+                    && !(opts.skip_hidden && entry.name.starts_with('.'))
+                {
                     pending.push((super::vfs_join(&path, &entry.name), child_depth, None));
                 }
             }

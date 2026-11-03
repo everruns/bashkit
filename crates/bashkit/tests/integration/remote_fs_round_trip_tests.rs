@@ -407,6 +407,100 @@ async fn ls_recursive_and_tree_list_each_directory_once() {
 }
 
 #[tokio::test]
+async fn ls_recursive_and_tree_use_one_bulk_walk() {
+    let (fs, mut bash) = setup(CountingFs::new().with_native_walk()).await;
+    for script in ["ls -R tree", "ls -lR tree", "tree tree", "tree -L 2 tree"] {
+        let (c, _) = run(&fs, &mut bash, script).await;
+        assert_eq!(c.walk, 1, "{script}: {c}");
+        assert_eq!(c.read_dir, 0, "{script}: {c}");
+        assert!(c.total() <= 3, "{script}: {c}");
+    }
+}
+
+/// Hidden directories (a `.git` with many subdirectories) are not read by
+/// `ls -R`/`tree` without `-a`, bulk walk or not.
+#[tokio::test]
+async fn ls_recursive_and_tree_skip_hidden_directories() {
+    async fn add_hidden(fs: &dyn FileSystem) {
+        for i in 0..20 {
+            fs.mkdir(Path::new(&format!("/workspace/tree/.git/objects/{i}")), true)
+                .await
+                .unwrap();
+        }
+    }
+    let (fs, mut bash) = setup(CountingFs::new()).await;
+    add_hidden(fs.as_ref()).await;
+    for script in ["ls -R tree", "tree tree"] {
+        let (c, _) = run(&fs, &mut bash, script).await;
+        assert_eq!(c.read_dir, DIRS, "{script}: {c}");
+    }
+    let (c, _) = run(&fs, &mut bash, "ls -aR tree").await;
+    assert_eq!(c.read_dir, DIRS + 2 + 20, "{c}");
+}
+
+/// The bulk walk must not change what `ls -R` and `tree` print.
+#[tokio::test]
+async fn ls_recursive_and_tree_output_is_the_same_with_bulk_walk() {
+    async fn layout(fs: &dyn FileSystem) {
+        seed(fs).await;
+        fs.mkdir(Path::new("/workspace/tree/.hidden/inner"), true)
+            .await
+            .unwrap();
+        fs.write_file(Path::new("/workspace/tree/.hidden/inner/x"), b"x")
+            .await
+            .unwrap();
+        fs.symlink(Path::new("d1"), Path::new("/workspace/tree/link-d1"))
+            .await
+            .unwrap();
+    }
+    let plain = Arc::new(CountingFs::new());
+    layout(plain.as_ref()).await;
+    let bulk = Arc::new(CountingFs::new().with_native_walk().with_walk_page(PAGE));
+    layout(bulk.as_ref()).await;
+    let mut plain_bash = Bash::builder().fs(plain.clone()).cwd("/workspace").build();
+    let mut bulk_bash = Bash::builder().fs(bulk.clone()).cwd("/workspace").build();
+    for script in [
+        "ls -R tree",
+        "ls -aR tree",
+        "ls -lR tree/d3",
+        "tree tree",
+        "tree -a tree",
+        "tree -L 2 tree",
+        "tree -d tree",
+        "tree -I s3 tree",
+        "cd tree && ls -R",
+    ] {
+        let (_, expected) = run(&plain, &mut plain_bash, script).await;
+        let (c, got) = run(&bulk, &mut bulk_bash, script).await;
+        assert_eq!(got, expected, "{script}");
+        assert!(!expected.is_empty(), "{script}: vacuous");
+        assert!(
+            c.walk_peak_entries <= (PAGE + SUB.max(FILES) + 3) as u64,
+            "{script}: {c}"
+        );
+    }
+}
+
+/// tree stops at its entry budget; prefetch must not read far past it.
+#[tokio::test]
+async fn tree_prefetch_stays_within_entry_budget() {
+    let fs = Arc::new(CountingFs::new());
+    seed(fs.as_ref()).await;
+    let limits = bashkit::ExecutionLimits::new().max_commands(50);
+    let mut bash = Bash::builder()
+        .fs(fs.clone())
+        .cwd("/workspace")
+        .limits(limits)
+        .build();
+    fs.reset();
+    let r = bash.exec("tree tree").await.unwrap();
+    assert_ne!(r.exit_code, 0, "expected the entry budget to stop tree");
+    let c = fs.counts();
+    // 50 entries is a handful of directories; never the whole tree.
+    assert!(c.read_dir < 15, "{c}");
+}
+
+#[tokio::test]
 async fn tar_reads_member_metadata_from_listings() {
     let (fs, mut bash) = setup(CountingFs::new()).await;
     let (c, _) = run(&fs, &mut bash, "tar -cf /tmp/t.tar tree").await;

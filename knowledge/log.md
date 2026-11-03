@@ -1,5 +1,9 @@
 # Bashkit Knowledge Update Log
 
+## 2026-11-03
+
+* **ls -R / tree bulk walk**: `ls -R` and `tree` list through bounded `walk` batches (`WalkCache`) like `find`/`du`. New `WalkOptions::skip_hidden` keeps the default walk out of dot directories they do not print; `tree` caps batches at its remaining entry budget and keeps `read_dir` under `-I`. See [Virtual Filesystem](foundations/vfs.md#remote-backends-round-trips).
+
 ## 2026-11-02
 
 * **Per-call execution timeout**: `ExecOptions::timeout` caps one `exec_with_options` call at the smaller of it and `ExecutionLimits::timeout`; Python `execute*` methods expose it as `timeout_seconds`. See [Architecture](foundations/architecture.md#per-invocation-exec-state).

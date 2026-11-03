@@ -424,13 +424,15 @@ and measured by `benches/remote_fs.rs` over the bashkit checkout:
   root, `RootFs` outside system trees, `ReadOnlyFs`, per-execution wrappers);
   otherwise they fall back to the default. Callers use it only when they would
   list every directory anyway: `find` without `-exec*`/`-delete`/`-prune`/
-  `-quit`, and `du`, through `builtins/walk_cache.rs`: a directory missing
+  `-quit`, `du`, `ls -R` and `tree` (not with `-I`), through
+  `builtins/walk_cache.rs`: a directory missing
   from the cache triggers another bounded `walk` rooted there, listings are
   dropped as they are consumed, and an answer without the requested
   directory switches the run to plain `read_dir`. Memory stays at about one
-  batch for trees of millions of files (TM-DOS-140). Not `rg` (ignore rules prune), `ls -R` (skips dot
-  directories), `tree` (entry budget stops early), where an eager default
-  walk would read more than today.
+  batch for trees of millions of files (TM-DOS-140). `ls -R`/`tree` without
+  `-a` pass `WalkOptions::skip_hidden` so the default walk never enters dot
+  directories (a `.git`), and `tree` caps each batch at its remaining entry
+  budget. Not `rg`: ignore rules prune by file contents a walk cannot see.
 - **`SearchCapable` reaches builtins.** `MountableFs` forwards the provider of
   the backend that serves the whole requested subtree (none if another mount
   sits below it) and maps result paths back under the mount point. A mount
@@ -459,7 +461,7 @@ and measured by `benches/remote_fs.rs` over the bashkit checkout:
 - `FollowFs` `copy`/`chmod`/`touch -d` take a fast path (one inner `stat` per
   path) instead of resolving every path component.
 - Known remaining cost: `**` globs list each directory twice (walk, then the
-  next component); `ls -R`/`tree` are one `read_dir` per directory.
+  next component).
 
 ## Host Mount Table (`HostMounts`)
 

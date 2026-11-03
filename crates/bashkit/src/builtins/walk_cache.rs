@@ -1,4 +1,5 @@
-//! Bounded `FileSystem::walk` prefetch for tree walkers (`find`, `du`).
+//! Bounded `FileSystem::walk` prefetch for tree walkers (`find`, `du`,
+//! `ls -R`, `tree`).
 //! THREAT[TM-DOS-140]: walks over millions of files hold one batch.
 //!
 //! Decisions:
@@ -10,6 +11,9 @@
 //!   requested directory (path spelling mismatch), bulk walking is turned off
 //!   for the run and plain `read_dir` takes over, so a mismatch can never turn
 //!   into one batch-sized walk per directory.
+//! - Callers that skip hidden directories pass `skip_hidden`, and callers
+//!   with an entry budget cap `max_entries` at what is left of it, so the
+//!   default `read_dir` walk never reads a directory the caller would not.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -22,6 +26,7 @@ pub(crate) struct WalkCache {
     listings: HashMap<PathBuf, Vec<DirEntry>>,
     enabled: bool,
     max_entries: usize,
+    skip_hidden: bool,
 }
 
 impl WalkCache {
@@ -31,7 +36,19 @@ impl WalkCache {
             listings: HashMap::new(),
             enabled,
             max_entries: WalkOptions::DEFAULT_MAX_ENTRIES,
+            skip_hidden: false,
         }
+    }
+
+    /// Never descend into dot directories below the listed one.
+    pub(crate) fn skip_hidden(mut self, skip: bool) -> Self {
+        self.skip_hidden = skip;
+        self
+    }
+
+    /// Cap each batch below the default (e.g. at an entry budget's remainder).
+    pub(crate) fn set_max_entries(&mut self, entries: usize) {
+        self.max_entries = entries.clamp(1, WalkOptions::DEFAULT_MAX_ENTRIES);
     }
 
     /// Stop prefetching (an action may change or cut the traversal).
@@ -52,7 +69,9 @@ impl WalkCache {
             return Ok(list);
         }
         if self.enabled && max_depth != Some(0) {
-            let opts = WalkOptions::new(max_depth).max_entries(self.max_entries);
+            let opts = WalkOptions::new(max_depth)
+                .max_entries(self.max_entries)
+                .skip_hidden(self.skip_hidden);
             if let Ok(batch) = fs.walk(dir, opts).await {
                 let mut own = None;
                 for listing in batch {
