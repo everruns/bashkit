@@ -615,6 +615,8 @@ class Bash:
         stdout: ByteSink | None = None,
         stderr: ByteSink | None = None,
         timeout_seconds: float | None = None,
+        output_file: str | None = None,
+        max_output_file_bytes: int | None = None,
     ) -> ExecResult:
         """Execute bash commands asynchronously.
 
@@ -624,6 +626,10 @@ class Bash:
                 pairs during execution. Must be synchronous.
             timeout_seconds: Optional wall-clock cap for this call only. It can
                 only tighten the constructor ``timeout_seconds``, never extend it.
+            output_file: Optional absolute VFS path that receives combined
+                stdout+stderr, created or truncated first. Bounded by
+                ``max_output_file_bytes`` (default 10 MiB) and filesystem limits,
+                not the in-memory output caps. Not combinable with ``on_output``.
 
         Async ``custom_builtins`` callbacks run on the caller's active asyncio
         loop.
@@ -642,7 +648,13 @@ class Bash:
         ...
 
     def execute_sync(
-        self, commands: str, on_output: OutputHandler | None = None, *, timeout_seconds: float | None = None
+        self,
+        commands: str,
+        on_output: OutputHandler | None = None,
+        *,
+        timeout_seconds: float | None = None,
+        output_file: str | None = None,
+        max_output_file_bytes: int | None = None,
     ) -> ExecResult:
         """Execute bash commands synchronously (blocking).
 
@@ -1261,6 +1273,8 @@ class BashTool:
         stdout: ByteSink | None = None,
         stderr: ByteSink | None = None,
         timeout_seconds: float | None = None,
+        output_file: str | None = None,
+        max_output_file_bytes: int | None = None,
     ) -> ExecResult:
         """Execute bash commands asynchronously.
 
@@ -1279,7 +1293,13 @@ class BashTool:
         ...
 
     def execute_sync(
-        self, commands: str, on_output: OutputHandler | None = None, *, timeout_seconds: float | None = None
+        self,
+        commands: str,
+        on_output: OutputHandler | None = None,
+        *,
+        timeout_seconds: float | None = None,
+        output_file: str | None = None,
+        max_output_file_bytes: int | None = None,
     ) -> ExecResult:
         """Execute bash commands synchronously (blocking).
 

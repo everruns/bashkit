@@ -453,6 +453,21 @@ whole-file base64 `FileData` capped at 500 KB, matching upstream sandboxes, so
 multimodal reads work. Upload/download failures map to the protocol's
 `FileOperationError` codes, with the native message kept for anything else.
 
+`BashkitBackend` subclasses Deep Agents' `BaseSandbox` only because the
+framework gates capture-at-source offload on that type; every inherited
+shell/`python3` helper (including the async `als`/`awrite`/`aedit`) is
+overridden with direct VFS code. `enable_capture_offload = True`, and
+`execute_with_offload` uses the native `output_file` tee (10 MiB default cap,
+the framework's) instead of the upstream bash wrapper, whose `( eval … )`
+subshell would drop `cd`/`export` between calls. Output at or under the inline
+budget is returned whole and the file removed; larger output stays at the
+framework's `/large_tool_results/<id>` path, beyond the 1 MB in-memory stdout
+cap, with the same head/tail preview and clip notices as upstream.
+
+`Bash`/`BashTool` `execute` and `execute_sync` accept
+`output_file=`/`max_output_file_bytes=` (absolute VFS path; 10 MiB default);
+not combinable with `on_output`.
+
 File operations use the live native VFS directly, avoiding shell output caps,
 newline insertion, option injection, and colon-delimited path parsing. They
 never access the host filesystem. Transfers preserve arbitrary bytes; writes

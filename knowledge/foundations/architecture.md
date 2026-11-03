@@ -75,6 +75,15 @@ explicit UTF-8 boundary with `text()` or `text_lossy()`.
 Line-oriented consumers locate delimiters and split the authoritative byte buffer
 before lossy decoding; offsets into the cached lossy view are never byte offsets.
 
+`Execution::output_file(path, max_bytes)` tees combined stdout+stderr, in
+arrival order, into a VFS file created/truncated before the script runs. The
+file is bounded by its own `max_bytes` and `FsLimits`, not by
+`max_stdout_bytes`/`max_stderr_bytes`: the bytes stay in the sandbox like a
+`{ script; } > file 2>&1` redirect, while `capture` and sinks keep the
+in-memory caps. A filesystem error stops the tee without failing the call. It
+runs in the current shell, so hosts get full output for later `grep` with no
+wrapper script, `eval`, or subshell, and shell state carries over.
+
 Shell words and variables remain text. Command substitution therefore removes
 NUL bytes, as Bash does because variables cannot contain NUL, then decodes the
 remaining bytes for expansion and strips trailing newlines. JSON tool results
