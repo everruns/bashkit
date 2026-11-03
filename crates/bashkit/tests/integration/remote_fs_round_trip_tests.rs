@@ -545,8 +545,10 @@ async fn tree_prefetch_stays_within_entry_budget() {
     let r = bash.exec("tree tree").await.unwrap();
     assert_ne!(r.exit_code, 0, "expected the entry budget to stop tree");
     let c = fs.counts();
-    // 50 entries is a handful of directories; never the whole tree.
-    assert!(c.read_dir < 15, "{c}");
+    // 50 entries is a handful of directories. The walk prefetches in path
+    // order, the order tree prints, so it reads exactly the listings tree
+    // shows (before, arbitrary order read 8-15 depending on hashing).
+    assert!(c.read_dir <= 6, "{c}");
 }
 
 #[tokio::test]

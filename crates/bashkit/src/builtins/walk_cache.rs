@@ -138,6 +138,30 @@ mod tests {
         assert_eq!(cache.held(), 0);
     }
 
+    /// The default walk visits directories in path order, the order tree,
+    /// ls -R and find consume them, so a batch cut short by `max_entries`
+    /// holds the next listings the caller needs instead of arbitrary ones.
+    #[tokio::test]
+    async fn default_walk_visits_directories_in_path_order() {
+        let fs = InMemoryFs::new();
+        for d in ["b", "a", "c", "a/y", "a/x", "c/z"] {
+            fs.mkdir(&PathBuf::from(format!("/t/{d}")), true)
+                .await
+                .unwrap();
+        }
+        let got: Vec<String> = fs
+            .walk(Path::new("/t"), WalkOptions::new(None))
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|l| l.path.display().to_string())
+            .collect();
+        assert_eq!(
+            got,
+            ["/t", "/t/a", "/t/a/x", "/t/a/y", "/t/b", "/t/c", "/t/c/z"]
+        );
+    }
+
     #[tokio::test]
     async fn missing_directory_reports_read_dir_error() {
         let fs = tree(1, 1).await;
