@@ -20,7 +20,7 @@ one process.
 
 ```toml
 [dependencies]
-bashkit = { version = "0.18.2", features = ["wasm-coreutils"] }
+bashkit = { version = "0.20.2", features = ["wasm-coreutils"] }
 ```
 
 ```rust
