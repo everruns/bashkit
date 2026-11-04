@@ -674,6 +674,18 @@ Bashkit is an independent implementation that draws design inspiration from seve
 
 No code was copied from any of these projects. See [NOTICE](NOTICE) for full details.
 
+## How can I support this project?
+
+Bashkit is a free, open-source hobby project. There are many ways to help:
+
+- Use Bashkit and tell us about your experience on [Discord](https://everruns.com/discord/bashkit) or by email ([mykhailo@everruns.com](mailto:mykhailo@everruns.com))
+- Report bugs in [GitHub Issues](https://github.com/everruns/bashkit/issues); a minimal script that behaves differently from real bash is the best bug report
+- Star the repository, it helps other people find it
+- Write a blog post or share what you built with it
+- Help with the docs by asking questions or sending PRs
+- Contribute code, such as a builtin or a compatibility test (see below, and say hi on [Discord](https://everruns.com/discord/bashkit))
+- Talk about Bashkit around you
+
 ## Contributing
 
 The best way to contribute is to [open an issue](https://github.com/everruns/bashkit/issues), bug reports, feature requests, and questions all help improve bashkit. If you'd like to contribute code, see [CONTRIBUTING.md](CONTRIBUTING.md) for setup and workflow details.
