@@ -82,6 +82,16 @@ criteria = "safe-to-deploy"
 version = "1.1.5"
 criteria = "safe-to-deploy"
 
+[[exemptions.alloc-no-stdlib]]
+version = "2.0.4"
+criteria = "safe-to-deploy"
+notes = "Allocator helper for brotli-decompressor; reached only through the off-by-default fetchkit feature."
+
+[[exemptions.alloc-stdlib]]
+version = "0.2.4"
+criteria = "safe-to-deploy"
+notes = "Allocator helper for brotli-decompressor; reached only through the off-by-default fetchkit feature."
+
 [[exemptions.alloca]]
 version = "0.4.0"
 criteria = "safe-to-run"
@@ -227,10 +237,6 @@ version = "0.12.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.block-padding]]
-version = "0.3.3"
-criteria = "safe-to-deploy"
-
-[[exemptions.block-padding]]
 version = "0.4.2"
 criteria = "safe-to-deploy"
 
@@ -249,6 +255,11 @@ criteria = "safe-to-run"
 [[exemptions.branches]]
 version = "0.4.5"
 criteria = "safe-to-deploy"
+
+[[exemptions.brotli-decompressor]]
+version = "5.0.3"
+criteria = "safe-to-deploy"
+notes = "New transitive dep of lopdf 0.45 via fetchkit 0.7.1 (fetchkit feature only, off by default). Widely used decompressor from the brotli crate family."
 
 [[exemptions.bstr]]
 version = "1.13.1"
@@ -280,7 +291,7 @@ criteria = "safe-to-deploy"
 notes = "Reviewed the slice-to-FFI stream wrapper, buffer accounting, drop paths, and pure-Rust backend selection; no ambient capabilities."
 
 [[exemptions.calamine]]
-version = "0.37.0"
+version = "0.38.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.cast]]
@@ -292,10 +303,6 @@ version = "0.2.4"
 criteria = "safe-to-deploy"
 
 [[exemptions.cbc]]
-version = "0.1.2"
-criteria = "safe-to-deploy"
-
-[[exemptions.cbc]]
 version = "0.2.1"
 criteria = "safe-to-deploy"
 
@@ -304,7 +311,7 @@ version = "1.4.3"
 criteria = "safe-to-deploy"
 
 [[exemptions.cfb]]
-version = "0.15.0"
+version = "0.16.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.cfg-if]]
@@ -564,10 +571,6 @@ criteria = "safe-to-deploy"
 version = "0.8.1"
 criteria = "safe-to-deploy"
 
-[[exemptions.deranged]]
-version = "0.5.9"
-criteria = "safe-to-deploy"
-
 [[exemptions.derive-where]]
 version = "1.6.1"
 criteria = "safe-to-deploy"
@@ -621,7 +624,7 @@ version = "1.0.20"
 criteria = "safe-to-deploy"
 
 [[exemptions.ecb]]
-version = "0.1.2"
+version = "0.2.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.ecdsa]]
@@ -709,11 +712,11 @@ version = "2.5.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.fetchkit]]
-version = "0.7.0"
+version = "0.7.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.fetchkit-cli]]
-version = "0.7.0"
+version = "0.7.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.ff]]
@@ -1178,7 +1181,7 @@ version = "0.7.2"
 criteria = "safe-to-deploy"
 
 [[exemptions.lopdf]]
-version = "0.42.0"
+version = "0.45.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.lzma-rs]]
@@ -1202,19 +1205,15 @@ version = "0.11.4"
 criteria = "safe-to-deploy"
 
 [[exemptions.markkit]]
-version = "0.3.0"
+version = "0.3.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.markkit-cli]]
-version = "0.3.0"
+version = "0.3.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.markup5ever]]
 version = "0.40.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.md-5]]
-version = "0.10.6"
 criteria = "safe-to-deploy"
 
 [[exemptions.md-5]]
@@ -1331,10 +1330,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.num-bigint]]
 version = "0.4.8"
-criteria = "safe-to-deploy"
-
-[[exemptions.num-conv]]
-version = "0.2.2"
 criteria = "safe-to-deploy"
 
 [[exemptions.num-integer]]
@@ -1482,8 +1477,9 @@ version = "0.13.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.pdf-inspector]]
-version = "0.1.8"
+version = "1.25.2"
 criteria = "safe-to-deploy"
+notes = "Major jump from 0.1.8, pulled in by fetchkit 0.7.1 (the version fetchkit ships and tests with). Parses untrusted PDFs only behind the off-by-default `fetchkit` feature; bashkit's fetchkit builtin tests and markkit_fetchkit example pass on it."
 
 [[exemptions.pem-rfc7468]]
 version = "1.0.0"
@@ -1611,10 +1607,6 @@ criteria = "safe-to-deploy"
 version = "0.1.6"
 criteria = "safe-to-deploy"
 
-[[exemptions.powerfmt]]
-version = "0.2.1"
-criteria = "safe-to-deploy"
-
 [[exemptions.ppv-lite86]]
 version = "0.2.21"
 criteria = "safe-to-deploy"
@@ -1686,10 +1678,6 @@ criteria = "safe-to-deploy"
 [[exemptions.quick-error]]
 version = "1.2.3"
 criteria = "safe-to-run"
-
-[[exemptions.quick-xml]]
-version = "0.41.0"
-criteria = "safe-to-deploy"
 
 [[exemptions.quick-xml]]
 version = "0.42.0"
@@ -2232,18 +2220,6 @@ criteria = "safe-to-deploy"
 version = "1.1.10"
 criteria = "safe-to-deploy"
 
-[[exemptions.time]]
-version = "0.3.55"
-criteria = "safe-to-deploy"
-
-[[exemptions.time-core]]
-version = "0.1.9"
-criteria = "safe-to-deploy"
-
-[[exemptions.time-macros]]
-version = "0.2.32"
-criteria = "safe-to-deploy"
-
 [[exemptions.tinystr]]
 version = "0.8.4"
 criteria = "safe-to-deploy"
@@ -2500,7 +2476,7 @@ version = "1.0.9"
 criteria = "safe-to-deploy"
 
 [[exemptions.weezl]]
-version = "0.1.12"
+version = "0.2.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.winapi]]

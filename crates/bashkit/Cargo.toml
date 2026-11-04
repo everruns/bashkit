@@ -447,12 +447,12 @@ required-features = ["markkit", "fetchkit"]
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "fs"] }
 # markkit builtin (native only: markkit-cli needs tokio's multi-thread rt).
-markkit-cli = { version = "0.3", default-features = false, features = ["all_formats"], optional = true }
-markkit = { version = "0.3", default-features = false, features = ["all_formats"], optional = true }
+markkit-cli = { version = "0.3.1", default-features = false, features = ["all_formats"], optional = true }
+markkit = { version = "0.3.1", default-features = false, features = ["all_formats"], optional = true }
 # fetchkit builtin (native only). No `reqwest-tls`: all traffic goes through
 # bashkit's HttpClient, so fetchkit adds no TLS stack.
-fetchkit-cli = { version = "0.7", default-features = false, features = ["docs-pdf", "docs-markkit"], optional = true }
-fetchkit = { version = "0.7", default-features = false, features = ["docs-pdf", "docs-markkit"], optional = true }
+fetchkit-cli = { version = "0.7.1", default-features = false, features = ["docs-pdf", "docs-markkit"], optional = true }
+fetchkit = { version = "0.7.1", default-features = false, features = ["docs-pdf", "docs-markkit"], optional = true }
 
 # std::time::{Instant,SystemTime} panic on wasm32-unknown-unknown; see
 # time_compat/mod.rs. Only pulled in for wasm32 — everywhere else time_compat
