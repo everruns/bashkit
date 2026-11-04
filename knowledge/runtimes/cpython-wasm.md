@@ -33,7 +33,7 @@ Public guide: `crates/bashkit/docs/cpython.md` (rustdoc `cpython_guide`).
 | `bashkit-cpython-wasm` crate | `crates/bashkit-cpython-wasm/` | Ships bytes only: precompiled module, stdlib zip, `engine_config()` |
 | Guest build | `crates/bashkit-cpython-wasm/guest/build.sh` | Reproducible: CPython 3.14.8 + WASI SDK 24 + static zlib/sqlite3, Wizer snapshot |
 | Guest entry | `guest/bashkit_main.c`, `guest/_bashkit_boot.py` | Reactor exports `wizer-initialize`, `bashkit_run`; Python CLI emulation |
-| WASI host | `crates/bashkit/src/builtins/cpython/wasi.rs` | All 42 `wasi_snapshot_preview1` imports over the bashkit `FileSystem` |
+| WASI host | `crates/bashkit/src/builtins/wasi_host/` | All 42 `wasi_snapshot_preview1` imports over the bashkit `FileSystem`, plus engine/pool/run loop; shared with [Wasm Coreutils](wasm-coreutils.md) |
 | Builtin | `crates/bashkit/src/builtins/cpython/mod.rs` | Engine, pooled instances, limits, deadline/budget polling, exit mapping |
 
 ### Workload priority

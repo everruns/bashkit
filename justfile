@@ -291,6 +291,10 @@ bench-python:
     ./scripts/bench-python.sh
     pnpm --dir site run data:performance
 
+# Wasm coreutils (uutils as WASI guests) vs native builtins: raw start, per call, throughput
+bench-wasm-coreutils:
+    ./scripts/bench-wasm-coreutils.sh
+
 # === Eval (mira study) ===
 # Evals run on the mira framework (github.com/everruns/mira). The crate is a
 # study binary the `mira` host CLI spawns over stdio; mira owns the model
@@ -436,7 +440,7 @@ release-check:
     echo ""
     echo "Dry-run publish all release crates..."
     cargo publish --dry-run --allow-dirty \
-        -p bashkit-cpython-wasm -p bashkit -p bashkit-cli -p bashkit-scripted-tool
+        -p bashkit-cpython-wasm -p bashkit-coreutils-wasm -p bashkit -p bashkit-cli -p bashkit-scripted-tool
 
     echo ""
     echo "All release checks passed!"

@@ -431,6 +431,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "base64 0.23.1",
+ "bashkit-coreutils-wasm",
  "bashkit-cpython-wasm",
  "bigdecimal",
  "bitflags 2.13.2",
@@ -560,6 +561,14 @@ dependencies = [
  "syn 3.0.9",
  "tempfile",
  "toml",
+]
+
+[[package]]
+name = "bashkit-coreutils-wasm"
+version = "0.20.2"
+dependencies = [
+ "lzma-rs",
+ "wasmtime",
 ]
 
 [[package]]

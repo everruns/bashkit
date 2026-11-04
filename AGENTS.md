@@ -41,6 +41,7 @@ Fix root cause. Unsure: read more code; if stuck, ask w/ short options. Unrecogn
 | integrations/git-support | Sandboxed git operations on VFS |
 | runtimes/python-builtin | Embedded Python via Monty, security, resource limits |
 | runtimes/cpython-wasm | Real CPython 3.14 on WASI (Wizer snapshot, Pulley AOT), WASI-on-VFS host, limits |
+| runtimes/wasm-coreutils | Real uutils coreutils as WASI guests (Pulley AOT) on the shared WASI host, gap-filling builtins |
 | operations/eval | LLM eval study on the mira framework, dataset format, scoring |
 | operations/oils-spec | Upstream Oils spec suite pass rate vs real bash (`just oils-spec`) |
 | operations/maintenance | Pre-release maintenance requirements |

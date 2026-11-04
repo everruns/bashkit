@@ -90,8 +90,8 @@ silently failed.
      `target/package/` before the size check; measuring the old publish output
      path stopped 0.19.0 before any Rust crate upload. Regression coverage
      exercises both sides of the 10 MiB boundary without registry credentials.
-   - Verify all four exact release packages together with the pinned Cargo:
-     `cargo publish --dry-run -p bashkit-cpython-wasm -p bashkit -p bashkit-cli -p bashkit-scripted-tool`
+   - Verify all five exact release packages together with the pinned Cargo:
+     `cargo publish --dry-run -p bashkit-cpython-wasm -p bashkit-coreutils-wasm -p bashkit -p bashkit-cli -p bashkit-scripted-tool`
      (`--allow-dirty` during preparation). Cargo stages selected workspace
      packages in a temporary registry and builds the packaged dependency graph,
      including new internal crates that do not exist on crates.io yet. A lone
@@ -253,6 +253,7 @@ Use the latest entries in `CHANGELOG.md` as the template. Rules:
 ## Package Names and Registries
 
 - `bashkit-cpython-wasm` on crates.io (embedded CPython for the `cpython` feature; published first)
+- `bashkit-coreutils-wasm` on crates.io (uutils coreutils guest for the `wasm-coreutils` feature; published first)
 - `bashkit` on crates.io (core library)
 - `bashkit-scripted-tool` on crates.io (`ScriptedTool` / `ToolDef` / `ToolRegistry`)
 - `bashkit-cli` on crates.io (CLI tool)

@@ -2,6 +2,7 @@
 
 * [Python Builtin](python-builtin.md) - Embedded Python execution through Monty with security and resource controls.
 * [CPython WebAssembly Runtime](cpython-wasm.md) - Real CPython 3.14 as python3, compiled to WASI, snapshotted with Wizer and run on Wasmtime's Pulley interpreter over the bashkit VFS.
+* [Wasm Coreutils](wasm-coreutils.md) - Real uutils/coreutils compiled to wasm32-wasip1, precompiled to Pulley and run as sandboxed builtins on the shared WASI host.
 * [ZapCode Runtime](zapcode-runtime.md) - Embedded TypeScript runtime, external functions, VFS bridging, and resource limits.
 * [Markkit and Fetchkit Builtins](markkit-fetchkit-builtins.md) - The markkit and fetchkit CLIs as builtins with the identical interface, on the VFS and network allowlist.
 * [SQLite Builtin](sqlite-builtin.md) - Embedded SQLite through Turso with memory and virtual filesystem backends.

@@ -161,6 +161,10 @@ mod runtime_limits;
 mod cpython;
 #[cfg(feature = "python")]
 mod python;
+#[cfg(any(feature = "cpython", feature = "wasm-coreutils"))]
+mod wasi_host;
+#[cfg(feature = "wasm-coreutils")]
+mod wasm_coreutils;
 
 #[cfg(feature = "typescript")]
 mod typescript;
@@ -306,6 +310,18 @@ pub use runtime_limits::RuntimeLimits;
 pub(crate) use cpython::check_http_request_invariants;
 #[cfg(feature = "cpython")]
 pub use cpython::{CPython, CPythonLimits};
+#[cfg(feature = "wasm-coreutils")]
+pub(crate) use wasm_coreutils::WasmCoreutilsHost;
+#[cfg(feature = "wasm-coreutils")]
+pub(crate) use wasm_coreutils::{
+    MISSING_NATIVE as WASM_COREUTILS_MISSING, MULTICALL as WASM_COREUTILS_MULTICALL,
+};
+#[cfg(feature = "wasm-coreutils")]
+pub use wasm_coreutils::{WasmCoreutil, WasmCoreutilsLimits};
+#[cfg(feature = "wasm-coreutils")]
+pub(crate) fn wasm_coreutils_missing_native() -> &'static [&'static str] {
+    WASM_COREUTILS_MISSING
+}
 #[cfg(feature = "python")]
 pub(crate) use python::PythonInprocessOptIn;
 #[cfg(feature = "python")]
