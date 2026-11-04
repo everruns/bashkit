@@ -119,6 +119,16 @@ export const DOC_META: DocMeta[] = [
     editPath: "docs/llm-tools.md",
   },
   {
+    slug: "deepagents",
+    title: "Deep Agents",
+    summary: "Run LangChain Deep Agents' file and shell tools in an in-process Bashkit sandbox.",
+    seoTitle: "Use Bashkit as a Deep Agents sandbox backend",
+    seoDescription:
+      "Plug BashkitBackend into LangChain Deep Agents: install, quickstart, seeding files, limits and timeouts, large-output offload, binary reads, and isolation.",
+    section: "LLM tools",
+    editPath: "docs/deepagents.md",
+  },
+  {
     slug: "script-analysis",
     title: "Script analysis",
     summary: "Inspect a script before running it to drive permission prompts and audit logs.",

@@ -19,6 +19,7 @@ const DOC_LINKS = new Map([
   ["credential-injection.md", "/docs/credential-injection/"],
   ["custom_builtins.md", "/docs/custom-builtins/"],
   ["custom_builtins_js.md", "/docs/custom-builtins-js/"],
+  ["deepagents.md", "/docs/deepagents/"],
   // embedding.md + targets.md were split into per-target quickstarts; keep the
   // old filenames mapped so any lingering markdown links still resolve.
   ["embedding.md", "/docs/start-rust/"],
