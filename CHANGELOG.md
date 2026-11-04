@@ -1,5 +1,41 @@
 # Changelog
 
+## [0.20.3] - 2026-11-04
+
+### Highlights
+
+- **`markkit` and `fetchkit` builtins.** Opt-in `markkit` and `fetchkit` features register both tools with the same CLI as the standalone binaries. Files come from the VFS and every HTTP hop goes through the sandbox HTTP client; host-only flags fail closed ([#2803](https://github.com/everruns/bashkit/pull/2803)). Bumped to markkit 0.3.1 and fetchkit 0.7.1 for RUSTSEC-2026-0436 ([#2823](https://github.com/everruns/bashkit/pull/2823)).
+- **Fewer round trips on remote filesystems.** Tree walkers (`rg`, `find`, `du`, `grep -r`, `tar`, `cp -r`, `ls -R`, `tree`) use a bounded bulk walk hook, trust `read_dir` metadata and stay within memory and entry budgets on remote backends ([#2816](https://github.com/everruns/bashkit/pull/2816), [#2819](https://github.com/everruns/bashkit/pull/2819), [#2820](https://github.com/everruns/bashkit/pull/2820), [#2821](https://github.com/everruns/bashkit/pull/2821)).
+- **Execution output to a VFS file.** `Execution::output_file` writes combined output into a capped VFS file; Python `execute`/`execute_sync` accept `output_file`, and the Deep Agents backend offloads large output natively ([#2818](https://github.com/everruns/bashkit/pull/2818)).
+- **Deep Agents backend improvements.** Per-call timeouts (`ExecOptions::timeout`, Python `timeout_seconds`) that can only tighten the configured limit, base64 binary reads, and structured file-operation error codes, plus a new integration guide ([#2817](https://github.com/everruns/bashkit/pull/2817), [#2824](https://github.com/everruns/bashkit/pull/2824)).
+- **Python exit crash fixed.** A timed-out async callback no longer races interpreter finalization and aborts the process on CPython < 3.13 ([#2802](https://github.com/everruns/bashkit/pull/2802)).
+- **crates.io trusted publishing.** Rust crates publish through GitHub OIDC instead of a stored token ([#2801](https://github.com/everruns/bashkit/pull/2801)).
+
+### What's Changed
+
+* chore(deps): bump russh to 0.65.0 and the napi group, with vet audits ([#2826](https://github.com/everruns/bashkit/pull/2826)) by @chaliy
+* docs(python): add Deep Agents integration guide ([#2824](https://github.com/everruns/bashkit/pull/2824)) by @chaliy
+* fix(deps): bump markkit to 0.3.1 and fetchkit to 0.7.1 for RUSTSEC-2026-0436 ([#2823](https://github.com/everruns/bashkit/pull/2823)) by @chaliy
+* fix(fs): walk directories in path order so prefetch matches consumers ([#2821](https://github.com/everruns/bashkit/pull/2821)) by @chaliy
+* test(fs): large-tree stress tests; stream rg's walk, cap ls at the stdout limit ([#2820](https://github.com/everruns/bashkit/pull/2820)) by @chaliy
+* fix(builtins): list ls -R and tree through bounded bulk walk batches ([#2819](https://github.com/everruns/bashkit/pull/2819)) by @chaliy
+* fix(fs): cut round trips and bound memory for tree walkers on remote backends ([#2816](https://github.com/everruns/bashkit/pull/2816)) by @chaliy
+* feat: tee execution output to a VFS file; native capture offload for Deep Agents ([#2818](https://github.com/everruns/bashkit/pull/2818)) by @chaliy
+* feat(python): per-call timeout and multimodal reads for the Deep Agents backend ([#2817](https://github.com/everruns/bashkit/pull/2817)) by @chaliy
+* feat(builtins): add markkit and fetchkit builtins with the upstream CLI ([#2803](https://github.com/everruns/bashkit/pull/2803)) by @chaliy
+* chore(deps): bump the examples-npm group across 1 directory with 6 updates ([#2812](https://github.com/everruns/bashkit/pull/2812)) by @app/dependabot
+* chore(ci): bump the github-actions group with 2 updates ([#2811](https://github.com/everruns/bashkit/pull/2811)) by @app/dependabot
+* chore(deps): bump fancy-regex to 0.20.0 across all three lockfiles ([#2813](https://github.com/everruns/bashkit/pull/2813)) by @chaliy
+* chore(deps): bump the js-npm group in /crates/bashkit-js with 5 updates ([#2809](https://github.com/everruns/bashkit/pull/2809)) by @app/dependabot
+* chore(deps): bump the site-npm group in /site with 4 updates ([#2808](https://github.com/everruns/bashkit/pull/2808)) by @app/dependabot
+* chore(deps): bump the docs-grep-agent-uv group in /examples/docs-grep-agent with 3 updates ([#2807](https://github.com/everruns/bashkit/pull/2807)) by @app/dependabot
+* chore(builtins): sync uutils/coreutils argument surfaces and vendored modules ([#2805](https://github.com/everruns/bashkit/pull/2805)) by @chaliy
+* ci: pin nightly jobs to nightly-2026-10-30 ([#2804](https://github.com/everruns/bashkit/pull/2804)) by @chaliy
+* fix(python): drain abandoned callback dispatch before interpreter exit ([#2802](https://github.com/everruns/bashkit/pull/2802)) by @chaliy
+* ci(release): use crates.io trusted publishing ([#2801](https://github.com/everruns/bashkit/pull/2801)) by @chaliy
+
+**Full Changelog**: https://github.com/everruns/bashkit/compare/v0.20.2...v0.20.3
+
 ## [0.20.2] - 2026-10-30
 
 ### Highlights

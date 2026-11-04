@@ -12,7 +12,7 @@ as their standalone binaries**:
 Both are **off by default**. Enable the Cargo features:
 
 ```toml
-bashkit = { version = "0.20.2", features = ["markkit", "fetchkit"] }
+bashkit = { version = "0.20.3", features = ["markkit", "fetchkit"] }
 ```
 
 ```bash
