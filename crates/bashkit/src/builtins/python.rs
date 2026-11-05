@@ -47,6 +47,8 @@ const DEFAULT_MAX_RECURSION: usize = 200;
 // Security hard-stop: catastrophic regex backtracking can bypass cooperative
 // interpreter budget checks, so disable regex stdlib module in untrusted code.
 const DISABLED_STDLIB_MODULES: &[&str] = &["re"];
+/// Monty heap bytes per shared work unit (see `BudgetTracker::charge_memory_peak`).
+const PYTHON_MEMORY_BYTES_PER_WORK_UNIT: usize = 64;
 // Security decision: virtual Python datetime uses a fixed UTC instant so
 // sandboxed code cannot fingerprint host clock/timezone state.
 const VIRTUAL_NOW_UNIX_SECS: i64 = 1_704_067_200; // 2024-01-01T00:00:00Z
@@ -58,6 +60,8 @@ struct BudgetTracker {
     runtime: LimitedTracker,
     execution: Option<crate::limits::ExecutionBudget>,
     vm_checkpoints: Cell<u64>,
+    /// Highest Monty heap size already charged to `execution`, in bytes.
+    charged_memory: Cell<usize>,
 }
 
 impl BudgetTracker {
@@ -74,6 +78,31 @@ impl BudgetTracker {
             budget.consume_work(1).map_err(Self::budget_error)?;
         }
         Ok(())
+    }
+
+    /// Charge heap growth past the previous high-water mark, one work unit per
+    /// [`PYTHON_MEMORY_BYTES_PER_WORK_UNIT`] bytes.
+    ///
+    /// Important security decision: a run pays for the peak memory it really
+    /// uses, so repeated invocations still share one budget (they cannot each
+    /// take a fresh `max_memory`), while small runs stay cheap. Reserving
+    /// `max_memory / 64` per call up front capped a default script at ~95
+    /// `python3` calls even for `pass`.
+    fn charge_memory_peak(&self) -> std::result::Result<(), ResourceError> {
+        let Some(budget) = &self.execution else {
+            return Ok(());
+        };
+        let current = self.runtime.current_memory();
+        let charged = self.charged_memory.get();
+        if current <= charged {
+            return Ok(());
+        }
+        let units = current.div_ceil(PYTHON_MEMORY_BYTES_PER_WORK_UNIT)
+            - charged.div_ceil(PYTHON_MEMORY_BYTES_PER_WORK_UNIT);
+        self.charged_memory.set(current);
+        budget
+            .consume_work(u64::try_from(units).unwrap_or(u64::MAX))
+            .map_err(Self::budget_error)
     }
 
     fn check_vm(&self) -> std::result::Result<(), ResourceError> {
@@ -115,7 +144,8 @@ impl ResourceTracker for BudgetTracker {
         additional_bytes: impl FnOnce() -> usize,
     ) -> std::result::Result<(), ResourceError> {
         self.consume_work()?;
-        self.runtime.on_grow(additional_bytes)
+        self.runtime.on_grow(additional_bytes)?;
+        self.charge_memory_peak()
     }
 
     fn gc_interval(&self) -> Option<usize> {
@@ -276,7 +306,7 @@ impl std::fmt::Debug for PythonExternalFns {
 /// python3 -c "print('hello')"
 /// python3 script.py
 /// echo "print('hello')" | python3
-/// python3 -c "2 + 2"              # expression result printed
+/// python3 -c "print(2 + 2)"       # prints 4 (last expression is not echoed)
 /// python3 --version
 /// python3 -c "print(open('/tmp/f.txt').read())"
 /// ```
@@ -540,12 +570,8 @@ impl Builtin for Python {
         {
             limits.common.max_duration = limits.common.max_duration.min(remaining);
         }
-        // Monty exposes an independent VM ceiling. Reserve a conservative
-        // share so repeated runtime invocations cannot each claim a fresh full
-        // memory/allocation allowance from one host request.
-        ctx.consume_budget_work(
-            u64::try_from(limits.common.max_memory.div_ceil(64)).unwrap_or(u64::MAX),
-        )?;
+        // Monty's own memory ceiling is per run; heap growth is charged to the
+        // shared work budget as it happens (`BudgetTracker::charge_memory_peak`).
 
         let code = if let Some(prelude) = self
             .external_fns
@@ -609,7 +635,19 @@ async fn run_python(
         code
     };
 
-    let runner = match MontyRun::new(code.to_owned(), filename, vec![], CompileOptions::default()) {
+    // Important security decision: end every program with a `None` statement so
+    // Monty's result is always `None`. Monty converts the module's final value
+    // to a host `MontyObject` outside its memory/time limits; a shared list
+    // graph (`x = [x, x]` thirty times) expands to 2^30 leaves there. CPython
+    // never echoes the final expression for `-c`, files or stdin, so nothing
+    // user-visible is lost. A trailing backslash would join `None` onto the last
+    // line, so leave that (already invalid) code alone.
+    let code = if code.trim_end().ends_with('\\') {
+        code.to_owned()
+    } else {
+        format!("{code}\nNone\n")
+    };
+    let runner = match MontyRun::new(code, filename, vec![], CompileOptions::default()) {
         Ok(r) => r,
         Err(e) => return Ok(format_exception(e)),
     };
@@ -623,6 +661,7 @@ async fn run_python(
         runtime: LimitedTracker::new(limits),
         execution: execution_budget.clone(),
         vm_checkpoints: Cell::new(0),
+        charged_memory: Cell::new(0),
     };
     // Important security decision: cap collected print output at the same
     // memory budget as the VM heap. Monty 0.0.19 added a byte cap on
@@ -736,13 +775,7 @@ async fn run_python(
                 );
                 return Ok(format_exception_with_output(err, &buf));
             }
-            RunProgress::Complete(result) => {
-                // If the result is not None and there was no print output,
-                // display the result (like Python REPL behavior for expressions)
-                if !matches!(result, MontyObject::None) && buf.is_empty() {
-                    buf = format!("{}\n", result.py_repr());
-                }
-
+            RunProgress::Complete(_) => {
                 return Ok(ExecResult::ok(buf));
             }
         }
@@ -1315,10 +1348,32 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_inline_expression() {
+    async fn test_inline_expression_is_not_echoed() {
+        // Matches CPython: `python3 -c "2 + 3"` prints nothing. Echoing made
+        // Monty export the final value to the host, unbounded by its limits.
         let r = run(&["-c", "2 + 3"], None).await;
         assert_eq!(r.exit_code, 0);
-        assert_eq!(r.stdout, "5\n");
+        assert_eq!(r.stdout, "");
+    }
+
+    #[tokio::test]
+    async fn test_large_shared_final_value_finishes() {
+        // Regression: a 2^30-leaf shared list as the last expression expanded
+        // to ~500 MiB on the host and ignored the timeout.
+        let r = run(
+            &["-c", "x = [1]\nfor _ in range(30):\n    x = [x, x]\nx"],
+            None,
+        )
+        .await;
+        assert_eq!(r.exit_code, 0, "{}", r.stderr);
+        assert_eq!(r.stdout, "");
+    }
+
+    #[tokio::test]
+    async fn test_trailing_backslash_stays_a_syntax_error() {
+        let r = run(&["-c", "x = 1 + \\"], None).await;
+        assert_ne!(r.exit_code, 0);
+        assert!(r.stderr.contains("Error"), "{}", r.stderr);
     }
 
     #[tokio::test]
@@ -1407,7 +1462,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_comprehension() {
-        let r = run(&["-c", "[x*2 for x in range(3)]"], None).await;
+        let r = run(&["-c", "print([x*2 for x in range(3)])"], None).await;
         assert_eq!(r.exit_code, 0);
         assert_eq!(r.stdout, "[0, 2, 4]\n");
     }

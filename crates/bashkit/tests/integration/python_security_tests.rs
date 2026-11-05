@@ -288,6 +288,36 @@ mod blackbox_class_escape {
 mod whitebox_resource_limits {
     use super::*;
 
+    /// Regression: every invocation used to reserve `max_memory / 64` work
+    /// units up front (1M at the 64 MiB default) out of the 100M budget, so
+    /// the 96th `python3` call in one script failed even for `pass`.
+    #[tokio::test]
+    async fn many_small_invocations_fit_in_one_script() {
+        let mut bash = bash_python_limits(PythonLimits::default());
+        let r = bash
+            .exec("n=0; for i in $(seq 1 300); do python3 -c 'pass' && n=$((n+1)); done; echo $n")
+            .await
+            .unwrap();
+        assert_eq!(r.stdout.trim(), "300", "stderr: {}", r.stderr);
+    }
+
+    /// Memory a Python run actually uses is still charged to the shared work
+    /// budget, so repeated large runs cannot each take a fresh allowance.
+    #[tokio::test]
+    async fn memory_used_is_charged_to_the_work_budget() {
+        let mut bash = Bash::builder()
+            .python_with_limits(PythonLimits::default())
+            .env("BASHKIT_ALLOW_INPROCESS_PYTHON", "1")
+            // ~64 MiB of Python heap at 64 bytes per unit.
+            .limits(ExecutionLimits::new().max_work_units(1_000_000))
+            .build();
+        let r = bash
+            .exec("for i in 1 2 3 4 5 6 7 8; do python3 -c 'x = \"a\" * (16 * 1024 * 1024)' || break; done")
+            .await;
+        let err = r.expect_err("8 x 16 MiB must exhaust a 1M-unit work budget");
+        assert!(err.to_string().contains("work units"), "{err}");
+    }
+
     #[tokio::test]
     async fn tight_memory_blocks_list_bomb() {
         let mut bash = bash_python_tight();

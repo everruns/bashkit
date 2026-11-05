@@ -53,9 +53,16 @@ For security, execution is runtime-gated on `BASHKIT_ALLOW_INPROCESS_PYTHON=1`
 
 ### Supported Usage
 
-`python3 -c "code"` (REPL-like: last expression printed), `python3 script.py`
+`python3 -c "code"`, `python3 script.py`
 (from VFS), stdin (`echo "code" | python3`, `python3 - <<< ...`),
 `--version`/`-V`. Shebang lines are stripped automatically.
+
+The value of the last expression is not echoed, matching CPython. Bashkit
+appends a `None` statement to every program so Monty's final value is always
+`None`: Monty converts the final value to a host object outside its memory and
+time limits, and a shared list graph (`x = [x, x]` thirty times) expanded to
+2^30 leaves there (~500 MiB, past the timeout). Until 2026-11-05 bashkit echoed
+the value REPL-style.
 
 ### Resource Limits
 
@@ -74,12 +81,14 @@ budget even though it allocates nothing on the VM heap. There is no
 allocation-count knob, Monty removed `max_allocations` in 0.0.19.
 
 Each Python entry also consumes the request-scoped `ExecutionBudget`: source
-bytes are charged as aggregate input, configured memory contributes a
-conservative non-refundable admission reservation, and Monty's time/allocation
-checkpoints consume shared work units. VFS pauses and external host calls keep
-the same budget clone. Re-entering Python from a later command, substitution,
-or pipeline stage therefore cannot obtain fresh aggregate fuel; Monty's limits
-remain independently enforced.
+bytes are charged as aggregate input, Monty heap growth past the run's
+high-water mark is charged as work (one unit per 64 bytes), and Monty's
+time/allocation checkpoints consume shared work units. VFS pauses and external
+host calls keep the same budget clone. Re-entering Python from a later command,
+substitution, or pipeline stage therefore cannot obtain fresh aggregate fuel;
+Monty's limits remain independently enforced. Until 2026-11-05 each entry
+reserved `max_memory / 64` units up front (1M at the 64 MiB default), which
+capped a default script at ~95 `python3` calls even for `pass`.
 
 Since Monty 0.0.4 the parser also enforces a nesting-depth limit (200
 release / 35 debug) against stack overflow from deeply nested expressions.
