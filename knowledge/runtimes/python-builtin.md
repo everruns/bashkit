@@ -106,7 +106,9 @@ crates.io as `bashkit-monty` and `bashkit-monty-types` with each bashkit
 release (like `bashkit-cpython-wasm`). Their library names stay `monty` and
 `monty_types`. Source is upstream 1.4.0 with every local edit marked
 `bashkit fork:`; rustfmt and lints are off for them, and upstream tests are not
-vendored. Drop the forks once upstream ships equivalent hooks.
+vendored. Two panic/assert messages in `heap/` also drop the formatted id
+or uuid, so CodeQL's cleartext-logging rule (a false positive there) stays
+quiet. Drop the forks once upstream ships equivalent hooks.
 
 Why forks (security): upstream 1.x enforces `max_memory` by reading
 process-wide `LIVE_MEMORY`/`BASELINE_MEMORY` statics that only `monty-alloc`

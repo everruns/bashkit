@@ -1323,7 +1323,8 @@ impl Heap {
         let previous = self.host_type_index.insert(uuid, id);
         debug_assert!(
             previous.is_none(),
-            "Heap::allocate_host_type: class {uuid} already has a type object"
+            // bashkit fork: no uuid in the message (CodeQL cleartext-logging false positive).
+            "Heap::allocate_host_type: class already has a type object"
         );
         id
     }

@@ -100,7 +100,8 @@ impl<T> StableHeap<T> {
         // by calls to `.allocate()`.
         let slot = unsafe { self.slot_at(id) };
         let Some(entry) = slot else {
-            panic!("StableHeap::get - {id:?} out of bounds");
+            // bashkit fork: no id in the message (CodeQL cleartext-logging false positive).
+            panic!("StableHeap::get - id out of bounds");
         };
         entry.as_ref().expect("HeapEntries::get - data already freed")
     }
