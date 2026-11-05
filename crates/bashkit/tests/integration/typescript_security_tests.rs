@@ -147,6 +147,60 @@ mod blackbox_blocked_features {
 mod blackbox_resource_exhaustion {
     use super::*;
 
+    /// Regression: each `ts` call reserved `max_allocations` work units (1M
+    /// by default) of the 100M budget up front, so the 96th call in a script
+    /// failed even for `1`.
+    #[tokio::test]
+    async fn many_small_invocations_fit_in_one_script() {
+        let mut bash = bash_ts();
+        let r = bash
+            .exec("n=0; for i in $(seq 1 300); do ts -c 'let x = 1' && n=$((n+1)); done; echo $n")
+            .await
+            .unwrap();
+        assert_eq!(r.stdout.trim(), "300", "stderr: {}", r.stderr);
+    }
+
+    #[tokio::test]
+    async fn deeply_nested_source_fails_cleanly() {
+        // Regression: ZapCode's parser/compiler recursion has no depth guard;
+        // ~6 KB of nesting overflowed the native stack and aborted the host.
+        let mut bash = bash_ts();
+        let script = format!(
+            "ts -c 'let x = {}1{}'; echo rc=$?; ts -c 'let y = {}1'; echo rc=$?; echo alive",
+            "[".repeat(3000),
+            "]".repeat(3000),
+            "1+".repeat(3000)
+        );
+        let r = bash.exec(&script).await.unwrap();
+        assert_eq!(r.stdout, "rc=1\nrc=1\nalive\n");
+        assert!(r.stderr.contains("ts: source is too deeply nested"));
+    }
+
+    /// A ZapCode time-limit hit reports like the Python runtimes and
+    /// coreutils `timeout`: exit 124 and `ts: execution timed out`.
+    #[tokio::test]
+    async fn time_limit_exits_124() {
+        let mut bash =
+            bash_ts_limits(TypeScriptLimits::default().max_duration(Duration::from_millis(200)));
+        let r = bash
+            .exec("ts -c 'console.log(\"before\"); while (true) {}'; echo \"rc=$?\"")
+            .await
+            .unwrap();
+        assert!(r.stdout.ends_with("rc=124\n"), "{}", r.stdout);
+        assert_eq!(r.stderr, "ts: execution timed out after 0.2s\n");
+    }
+
+    /// A script's own thrown error is not a limit hit.
+    #[tokio::test]
+    async fn thrown_error_is_not_a_limit() {
+        let mut bash = bash_ts();
+        let r = bash
+            .exec("ts -c 'throw new Error(\"execution time limit exceeded\")'; echo \"rc=$?\"")
+            .await
+            .unwrap();
+        assert!(r.stdout.ends_with("rc=1\n"), "{}", r.stdout);
+    }
+
     /// TM-TS-001: Infinite loop blocked by time limit
     #[tokio::test]
     async fn threat_ts_infinite_loop() {

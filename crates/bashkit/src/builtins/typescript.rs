@@ -15,6 +15,7 @@
 //! Supports: `ts -c "code"`, `ts script.ts`, stdin piping, and
 //! `node`/`deno`/`bun` aliases.
 
+use crate::time_compat::Instant;
 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
 use crate::zapcode_browser as zapcode_core;
 use async_trait::async_trait;
@@ -38,6 +39,19 @@ const DEFAULT_MAX_STACK_DEPTH: usize = 512;
 /// Default heap-allocation cap. TypeScript-only: ZapCode counts allocations,
 /// Monty stopped exposing that axis in 0.0.19, so it is not a shared limit.
 const DEFAULT_MAX_ALLOCATIONS: usize = 1_000_000;
+/// Fixed shared-budget work charged per `ts` entry (same as the CPython runtime).
+const TS_CALL_WORK_UNITS: u64 = 4096;
+
+/// Native stack for the thread that parses, compiles and starts a script.
+/// ZapCode recurses once or more per AST level with no depth guard, and a
+/// stack overflow aborts the host process. Source deeper than
+/// [`MAX_TS_NESTING`](super::typescript_nesting::MAX_TS_NESTING) is rejected
+/// up front; this stack is sized so the accepted depth fits with margin even
+/// in debug builds (32 MiB was the smallest that passed
+/// `deep_nesting_at_the_limit_does_not_overflow` in a debug build; 128 MiB
+/// gives 4x). The memory is reserved, not committed, until used.
+#[cfg(not(target_arch = "wasm32"))]
+const TS_VM_STACK_BYTES: usize = 128 * 1024 * 1024;
 
 /// Resource limits for the embedded TypeScript (ZapCode) interpreter.
 ///
@@ -815,7 +829,12 @@ impl Builtin for TypeScript {
         let limits = self.effective_limits(remaining);
         ctx.consume_budget_input(code.len())?;
         ctx.consume_budget_work(u64::try_from(code.len().div_ceil(64)).unwrap_or(u64::MAX))?;
-        ctx.consume_budget_work(u64::try_from(limits.max_allocations).unwrap_or(u64::MAX))?;
+        // Important security decision: each entry pays a fixed admission cost
+        // here plus the wall-clock time its VM steps actually run (see
+        // `charge_vm_time`), so repeated entries share one budget without the
+        // old flat `max_allocations` reservation (1M units), which capped a
+        // default script at ~95 `ts` calls. ZapCode exposes no allocation count.
+        ctx.consume_budget_work(TS_CALL_WORK_UNITS)?;
 
         let code = self.external_fns.as_ref().map_or(code.clone(), |external| {
             rewrite_typescript_access(&code, &external.rewrites)
@@ -878,6 +897,19 @@ async fn run_typescript(
         ext_fn_names.extend(ef.names.iter().cloned());
     }
 
+    let time_limit = ts_limits.common.max_duration;
+    let nesting = super::typescript_nesting::estimate(code);
+    if nesting > super::typescript_nesting::MAX_TS_NESTING {
+        return Ok(ExecResult::err(
+            format!(
+                "ts: source is too deeply nested (estimated depth {nesting}, limit {})\n",
+                super::typescript_nesting::MAX_TS_NESTING
+            ),
+            1,
+        ));
+    }
+
+    let started = Instant::now();
     let runner = match ZapcodeRun::new(
         code.to_string(),
         Vec::new(),
@@ -886,19 +918,69 @@ async fn run_typescript(
     ) {
         Ok(r) => r,
         Err(e) => {
-            return Ok(ExecResult::err(format!("{e}\n"), 1));
+            charge_vm_time(execution_budget.as_ref(), started)?;
+            return Ok(format_error_with_output(e, "", time_limit));
         }
     };
 
-    let result = match runner.run(Vec::new()) {
-        Ok(r) => r,
-        Err(e) => {
-            return Ok(ExecResult::err(format!("{e}\n"), 1));
-        }
+    let result = on_vm_stack(|| runner.run(Vec::new()));
+    charge_vm_time(execution_budget.as_ref(), started)?;
+    let result = match result {
+        Some(Ok(r)) => r,
+        Some(Err(e)) => return Ok(format_error_with_output(e, "", time_limit)),
+        None => return Ok(ExecResult::err(VM_THREAD_ERROR.to_string(), 1)),
     };
 
     // Process the result through the suspend/resume loop for VFS bridging
-    process_vm_result(result, &fs, cwd, external_fns, execution_budget.as_ref()).await
+    process_vm_result(
+        result,
+        &fs,
+        cwd,
+        external_fns,
+        execution_budget.as_ref(),
+        time_limit,
+    )
+    .await
+}
+
+/// Message when no VM thread could be started (resource exhaustion).
+const VM_THREAD_ERROR: &str = "ts: cannot start execution thread\n";
+
+/// Run one synchronous ZapCode step (parse/compile/run, or a resume). Off
+/// wasm this runs on a dedicated thread with a [`TS_VM_STACK_BYTES`] stack;
+/// see that constant. `None` means no thread could be started: the caller
+/// fails the command rather than running accepted-depth source on a small
+/// stack.
+#[cfg(not(target_arch = "wasm32"))]
+fn on_vm_stack<T: Send>(step: impl FnOnce() -> T + Send) -> Option<T> {
+    std::thread::scope(|scope| {
+        let handle = std::thread::Builder::new()
+            .name("bashkit-ts".into())
+            .stack_size(TS_VM_STACK_BYTES)
+            .spawn_scoped(scope, step)
+            .ok()?;
+        match handle.join() {
+            Ok(result) => Some(result),
+            Err(panic) => std::panic::resume_unwind(panic),
+        }
+    })
+}
+
+/// wasm32 has no threads: run on the current stack. The nesting cap still
+/// applies; see the zapcode-runtime knowledge page for the residual risk.
+#[cfg(target_arch = "wasm32")]
+fn on_vm_stack<T>(step: impl FnOnce() -> T) -> Option<T> {
+    Some(step())
+}
+
+/// Charge the wall-clock time a synchronous VM step ran to the shared work
+/// budget, one unit per microsecond.
+fn charge_vm_time(budget: Option<&crate::limits::ExecutionBudget>, started: Instant) -> Result<()> {
+    if let Some(budget) = budget {
+        let micros = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
+        budget.consume_work(micros)?;
+    }
+    Ok(())
 }
 
 /// Process a VmState, handling suspension for external function calls.
@@ -908,6 +990,7 @@ async fn process_vm_result(
     cwd: &Path,
     external_fns: Option<&TypeScriptExternalFns>,
     execution_budget: Option<&crate::limits::ExecutionBudget>,
+    time_limit: std::time::Duration,
 ) -> Result<ExecResult> {
     let stdout = result.stdout;
     let mut state = result.state;
@@ -947,10 +1030,18 @@ async fn process_vm_result(
                     Err(error) => return Ok(ExecResult::err(format!("{error}\n"), 1)),
                 };
 
-                state = match snapshot.resume(return_value) {
-                    Ok(s) => s,
-                    Err(e) => {
-                        return Ok(format_error_with_output(e, &stdout));
+                let started = Instant::now();
+                let resumed = on_vm_stack(move || snapshot.resume(return_value));
+                charge_vm_time(execution_budget, started)?;
+                state = match resumed {
+                    Some(Ok(s)) => s,
+                    Some(Err(e)) => {
+                        return Ok(format_error_with_output(e, &stdout, time_limit));
+                    }
+                    None => {
+                        let mut result = ExecResult::err(VM_THREAD_ERROR.to_string(), 1);
+                        result.stdout = stdout.into();
+                        return Ok(result);
                     }
                 };
             }
@@ -1117,7 +1208,24 @@ async fn handle_stat(args: &[Value], fs: &Arc<dyn FileSystem>, cwd: &Path) -> Va
 }
 
 /// Format a ZapCode error with any stdout already produced.
-fn format_error_with_output(e: zapcode_core::ZapcodeError, stdout: &str) -> ExecResult {
+///
+/// Decision: ZapCode's time limit reports like the Python runtimes and
+/// coreutils `timeout` (exit 124, `ts: execution timed out after Ns`). It is a
+/// distinct error variant, so a script's own `throw` cannot fake it.
+fn format_error_with_output(
+    e: zapcode_core::ZapcodeError,
+    stdout: &str,
+    time_limit: std::time::Duration,
+) -> ExecResult {
+    if matches!(e, zapcode_core::ZapcodeError::TimeLimitExceeded) {
+        let mut result = ExecResult::with_code(stdout.to_string(), 124);
+        result.stderr = format!(
+            "ts: execution timed out after {:.1}s\n",
+            time_limit.as_secs_f64()
+        )
+        .into();
+        return result;
+    }
     let mut result = ExecResult::err(format!("{e}\n"), 1);
     result.stdout = stdout.to_string().into();
     result
@@ -1131,6 +1239,7 @@ fn format_error_with_output(e: zapcode_core::ZapcodeError, stdout: &str) -> Exec
 mod tests {
     use super::*;
     use crate::builtins::Context;
+    use crate::builtins::typescript_nesting;
     use crate::fs::InMemoryFs;
     use std::collections::HashMap;
     use std::path::PathBuf;
@@ -1606,5 +1715,96 @@ mod tests {
         let r = ts.execute(ctx).await.unwrap();
         assert_eq!(r.exit_code, 1);
         assert!(!r.stderr.contains("hint:"), "should not contain hint text");
+    }
+
+    type MakeSource = Box<dyn Fn(usize) -> String>;
+
+    /// Named generators of `n`-deep nesting, one per AST shape.
+    fn nesting_shapes() -> Vec<(&'static str, MakeSource)> {
+        fn wrap(open: &'static str, close: &'static str) -> MakeSource {
+            Box::new(move |n| format!("let x = {}1{};", open.repeat(n), close.repeat(n)))
+        }
+        fn chain(head: &'static str, step: &'static str) -> MakeSource {
+            Box::new(move |n| format!("let x = {head}{};", step.repeat(n)))
+        }
+        fn prefix(step: &'static str) -> MakeSource {
+            Box::new(move |n| format!("let x = {}1;", step.repeat(n)))
+        }
+        vec![
+            ("array", wrap("[", "]")),
+            ("paren", wrap("(", ")")),
+            ("object", wrap("{a:", "}")),
+            ("template", wrap("`${", "}`")),
+            ("call-arg", wrap("String(", ")")),
+            ("arrow-block", wrap("(()=>{return ", "})()")),
+            ("function", wrap("(function(){return ", "})()")),
+            ("binary", chain("1", "+1")),
+            ("member", chain("Math", ".constructor")),
+            ("call", chain("(()=>()=>1)", "()")),
+            ("not", prefix("!")),
+            ("neg", prefix("- ")),
+            ("typeof", prefix("typeof ")),
+            ("arrow", prefix("a=>")),
+            ("ternary", prefix("1?1:")),
+            (
+                "block",
+                Box::new(|n| format!("{}let x = 1;{}", "{".repeat(n), "}".repeat(n))),
+            ),
+            (
+                "if",
+                Box::new(|n| format!("{}console.log(1);", "if(1)".repeat(n))),
+            ),
+            (
+                "else-if",
+                Box::new(|n| format!("if(0){{}}{}else{{}}", "else if(0){}".repeat(n))),
+            ),
+        ]
+    }
+
+    /// Largest `n` whose source the nesting estimate still accepts.
+    fn largest_accepted(make: &dyn Fn(usize) -> String) -> usize {
+        let (mut lo, mut hi) = (0, typescript_nesting::MAX_TS_NESTING + 1);
+        while lo + 1 < hi {
+            let mid = (lo + hi) / 2;
+            if typescript_nesting::estimate(&make(mid)) <= typescript_nesting::MAX_TS_NESTING {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
+        lo
+    }
+
+    /// Every shape at the deepest accepted size must run without overflowing
+    /// the VM thread's stack. Debug builds use the most stack per level, so
+    /// this is the margin check for `TS_VM_STACK_BYTES`.
+    #[tokio::test]
+    async fn deep_nesting_at_the_limit_does_not_overflow() {
+        for (name, make) in nesting_shapes() {
+            let n = largest_accepted(make.as_ref());
+            assert!(n >= 30, "{name}: only {n} levels accepted");
+            let src = make(n);
+            let r = run(&["-c", &src], None).await;
+            assert!(
+                !r.stderr.contains("too deeply nested"),
+                "{name} at {n} was rejected: {}",
+                r.stderr
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn deep_nesting_past_the_limit_is_rejected() {
+        for (name, make) in nesting_shapes() {
+            let src = make(5_000);
+            let r = run(&["-c", &src], None).await;
+            assert_eq!(r.exit_code, 1, "{name}");
+            assert!(
+                r.stderr.starts_with("ts: source is too deeply nested"),
+                "{name}: {}",
+                r.stderr
+            );
+            assert!(r.stdout.is_empty(), "{name}");
+        }
     }
 }

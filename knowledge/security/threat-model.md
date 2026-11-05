@@ -2214,6 +2214,7 @@ TypeScript execution requires two explicit opt-in steps, matching the Python bui
 | TM-TS-021 | Shell command execution from TS | Critical | No process/subprocess/exec globals | `threat_ts_no_shell_exec` |
 | TM-TS-022 | Script reads from host filesystem | Critical | Script file loaded via VFS | `threat_ts_script_from_vfs` |
 | TM-TS-023 | Shebang line injection | Low | Shebang stripped safely | `threat_ts_shebang_stripped` |
+| TM-TS-024 | Deeply nested source overflows the native stack in ZapCode's parser/compiler and aborts the host process | Critical | Conservative nesting estimate rejects depth > 1000 before ZapCode; parse/compile run on a 128 MiB-stack thread (4x debug margin) | `deeply_nested_source_fails_cleanly`, `deep_nesting_at_the_limit_does_not_overflow`, `deep_nesting_past_the_limit_is_rejected` |
 
 ### Blocked Language Features
 

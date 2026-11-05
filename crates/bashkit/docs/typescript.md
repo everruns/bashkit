@@ -174,6 +174,11 @@ let bash = Bash::builder()
 | Memory | 64 MB | Heap memory cap |
 | Stack depth | 512 | Call stack depth |
 | Allocations | 1,000,000 | Heap allocation cap |
+| Source nesting | ~1,000 (fixed) | Parser/compiler depth; deeper source fails with `ts: source is too deeply nested` |
+
+When the duration limit fires, the command exits with status 124 and prints
+`ts: execution timed out after Ns` on stderr, like coreutils `timeout` and
+`python3`. Any other error (including a script's own `throw`) exits 1.
 
 ## Configuration
 
