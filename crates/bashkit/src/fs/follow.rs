@@ -157,10 +157,17 @@ impl FollowFs {
         match self.inner.stat(path).await {
             Ok(meta) if meta.file_type.is_symlink() => self.resolve(path, true).await,
             Ok(_) => Ok(path.to_path_buf()),
-            Err(_) => Ok(self
-                .parent_followed(path)
-                .await?
-                .unwrap_or_else(|| path.to_path_buf())),
+            // The inner stat fails on a missing path or a link in a parent.
+            // Only in the second case can the final component still be a
+            // link (issue #2829); check it then, so plain new-file writes
+            // keep their stat count.
+            Err(_) => match self.parent_followed(path).await? {
+                None => Ok(path.to_path_buf()),
+                Some(target) => match self.inner.stat(&target).await {
+                    Ok(meta) if meta.file_type.is_symlink() => self.resolve(&target, true).await,
+                    _ => Ok(target),
+                },
+            },
         }
     }
 }
@@ -408,6 +415,36 @@ mod tests {
                 .is_symlink()
         );
         assert_eq!(fs.read_dir(Path::new("/d/link")).await.unwrap().len(), 1);
+    }
+
+    // Issue #2829: with a link in a parent, the inner stat fails; the final
+    // component must still be followed so the write never replaces the link.
+    #[tokio::test]
+    async fn writes_through_link_in_linked_dir_follow_final_link() {
+        let fs = fs();
+        fs.mkdir(Path::new("/sub"), true).await.unwrap();
+        fs.write_file(Path::new("/file"), b"a").await.unwrap();
+        fs.symlink(Path::new("../file"), Path::new("/sub/link"))
+            .await
+            .unwrap();
+        fs.symlink(Path::new("sub"), Path::new("/dl"))
+            .await
+            .unwrap();
+
+        fs.append_file(Path::new("/dl/link"), b"b").await.unwrap();
+        assert_eq!(fs.read_file(Path::new("/file")).await.unwrap(), b"ab");
+        fs.write_file(Path::new("/dl/link"), b"c").await.unwrap();
+        assert_eq!(fs.read_file(Path::new("/file")).await.unwrap(), b"c");
+        assert!(
+            fs.lstat(Path::new("/sub/link"))
+                .await
+                .unwrap()
+                .file_type
+                .is_symlink()
+        );
+        // A new file under a linked dir still lands in the real dir.
+        fs.write_file(Path::new("/dl/new"), b"n").await.unwrap();
+        assert_eq!(fs.read_file(Path::new("/sub/new")).await.unwrap(), b"n");
     }
 
     #[tokio::test]
