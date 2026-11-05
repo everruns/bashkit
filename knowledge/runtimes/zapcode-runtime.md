@@ -65,12 +65,33 @@ Configurable via `TypeScriptLimits`:
 | Max stack depth | 512 | `.max_stack_depth(n)` | Prevent stack overflow |
 | Max allocations | 1,000,000 | `.max_allocations(n)` | Bound VM allocation count |
 
-Every VM entry additionally charges source bytes and a non-refundable
-allocation-fuel admission reservation to the request-scoped
+Every VM entry charges source bytes, a fixed 4096 work units, and the
+microseconds each synchronous VM step ran to the request-scoped
 `ExecutionBudget`. Suspend/resume cycles and external/VFS callbacks retain the
 same shared clone. Separate `ts`/`node`/`deno`/`bun` commands inside one host
 execution therefore cannot refresh aggregate work, while ZapCode's own limits
-remain in force.
+remain in force. Until 2026-11-05 each entry reserved `max_allocations` (1M)
+units up front, which capped a script at about 95 `ts` calls against the
+default 100M budget (same bug as the Python runtime had).
+
+**Source nesting.** ZapCode 1.5.1 parses (oxc), lowers and compiles with plain
+recursion and no depth guard; about 6 KB of nested source (`[[[...`,
+`1+1+...`) overflowed the native stack and aborted the host process in release
+builds (about 100 levels on a 2 MB debug thread). Bashkit adds two layers:
+
+1. `builtins/typescript_nesting.rs` computes a conservative upper bound on AST
+   depth before ZapCode sees the source (frames plus tokens since the last
+   `,`/`;`/statement newline in each open frame; closers fold counts into the
+   parent, regex bodies are charged per token). Above 1000 the command fails
+   with `ts: source is too deeply nested` (exit 1).
+2. Parse, compile and the first VM run happen on a dedicated thread with a
+   128 MiB stack (reserved, not committed). 32 MiB was the smallest stack on
+   which every shape in `deep_nesting_at_the_limit_does_not_overflow` passed
+   in a debug build, so this is 4x margin. On wasm32 there is no such thread;
+   the cap still applies on the default stack.
+
+Upstream fix wanted: a depth guard in zapcode-core's `AstLowerer` and
+compiler (Monty and ruff already return "Source is too deeply nested").
 
 ### Language Support
 
@@ -138,6 +159,9 @@ for the full threat analysis.
 
 - Syntax errors: Exit code 1, error message on stderr
 - Runtime errors: Exit code 1, error on stderr, any stdout preserved
+- Time limit: Exit code 124, `ts: execution timed out after Ns` on stderr
+  (ZapCode's `TimeLimitExceeded` variant, so a script's `throw` cannot fake it)
+- Source nested past the cap: Exit code 1, `ts: source is too deeply nested`
 - File not found: Exit code 2, error on stderr
 - Missing `-c`/`-e` argument: Exit code 2, error on stderr
 - Unknown option: Exit code 2, error on stderr

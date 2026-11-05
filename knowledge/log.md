@@ -2,6 +2,7 @@
 
 ## 2026-11-05
 
+* **TypeScript runtime: same gaps as Python**: `ts` reserved 1M budget units per call (about 95 calls per script), reported its time limit as exit 1, and about 6 KB of nested source (`[[[...`, `1+1+...`) overflowed ZapCode's recursive parser/compiler and aborted the host process. Calls now charge 4096 units plus VM time, timeouts exit 124, and a nesting estimate plus a large-stack VM thread guard the parser (TM-TS-024). See [ZapCode Runtime](runtimes/zapcode-runtime.md).
 * **Python `re` gate parses code**: the embedded Monty `python3` blocked `import re` by matching lines that start with `import`/`from`, so `pass; import re` or `if True: import re` loaded the module anyway (found by a downstream integration review). The gate now walks the parsed statement tree. See [Python Builtin](runtimes/python-builtin.md).
 
 ## 2026-11-03

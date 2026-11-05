@@ -164,6 +164,8 @@ mod python;
 
 #[cfg(feature = "typescript")]
 mod typescript;
+#[cfg(feature = "typescript")]
+mod typescript_nesting;
 
 #[cfg(feature = "sqlite")]
 mod sqlite;
