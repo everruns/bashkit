@@ -1,5 +1,9 @@
 # Bashkit Knowledge Update Log
 
+## 2026-11-05
+
+* **Python `re` gate parses code**: the embedded Monty `python3` blocked `import re` by matching lines that start with `import`/`from`, so `pass; import re` or `if True: import re` loaded the module anyway (found by a downstream integration review). The gate now walks the parsed statement tree. See [Python Builtin](runtimes/python-builtin.md).
+
 ## 2026-11-03
 
 * **Walk order**: the default `walk` visits directories in path order. It used `read_dir` order (hash order for `InMemoryFs`), so a batch cut short by `max_entries` prefetched listings `tree` never printed and `tree_prefetch_stays_within_entry_budget` read 8-15 directories run to run. See [Virtual Filesystem](foundations/vfs.md#remote-backends-round-trips).

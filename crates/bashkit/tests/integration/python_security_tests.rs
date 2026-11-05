@@ -926,6 +926,24 @@ mod blackbox_dos {
     }
 
     #[tokio::test]
+    async fn regex_module_cannot_be_imported_behind_a_statement_prefix() {
+        let mut bash = bash_python_limits(PythonLimits::default());
+        for code in [
+            "pass; import re",
+            "if True: import re",
+            "def f():\n    import re\nf()",
+        ] {
+            let r = bash
+                .exec(&format!("python3 - <<'EOF'\n{code}\nprint('loaded')\nEOF"))
+                .await
+                .unwrap();
+            assert_eq!(r.exit_code, 1, "{code}: {}", r.stdout);
+            assert!(r.stdout.is_empty(), "{code}: {}", r.stdout);
+            assert!(r.stderr.contains("importing module 're' is disabled"));
+        }
+    }
+
+    #[tokio::test]
     async fn math_factorial_bomb() {
         let mut bash = bash_python_tight();
         let r = bash
