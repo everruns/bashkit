@@ -154,6 +154,11 @@ monty-types = { version = "=0.0.19", optional = true }
 # breaks the `GetSize` derive (#2381). Dependabot ignores it for that reason;
 # keep the ignore in .github/dependabot.yml in step with this pin.
 get-size2 = { version = "=0.10.1", optional = true }
+# Same parser Monty uses (already in the tree through monty =0.0.19). Bashkit
+# parses user code with it to find `import` statements; see
+# `is_disabled_import` in builtins/python.rs. Keep in step with Monty's pin.
+ruff_python_parser = { version = "=0.0.3", optional = true }
+ruff_python_ast = { version = "=0.0.3", optional = true }
 
 # Embedded TypeScript interpreter (optional)
 
@@ -261,7 +266,13 @@ git = []
 ssh = ["russh"]
 # Enable python/python3 builtins via embedded Monty interpreter
 # Usage: cargo build --features python
-python = ["dep:monty", "dep:monty-types", "dep:get-size2"]
+python = [
+    "dep:monty",
+    "dep:monty-types",
+    "dep:get-size2",
+    "dep:ruff_python_parser",
+    "dep:ruff_python_ast",
+]
 # Enable python/python3 builtins via real CPython 3.14 in a WebAssembly sandbox
 # Usage: cargo build --features cpython
 cpython = ["dep:bashkit-cpython-wasm", "dep:wasmtime"]

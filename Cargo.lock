@@ -481,6 +481,8 @@ dependencies = [
  "regex",
  "regex-automata",
  "reqwest",
+ "ruff_python_ast",
+ "ruff_python_parser",
  "russh",
  "rustls",
  "ryu",

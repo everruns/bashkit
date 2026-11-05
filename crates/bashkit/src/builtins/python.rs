@@ -346,66 +346,53 @@ impl Default for Python {
     }
 }
 
+// Important security decision: find imports by parsing, not by scanning lines.
+// A line-prefix scan missed `pass; import re`, `if x: import re` and any other
+// statement that puts the import after a prefix. Monty 0.0.19 has no import
+// hook, so bashkit parses with the same parser Monty runs first
+// (`ruff_python_parser::parse_module`) and walks every statement body.
+// Monty has no `__import__` or `importlib`, so only `import` / `from` statements
+// can load a module. Code that fails to parse is let through: Monty parses it
+// the same way, reports the SyntaxError and runs nothing.
 fn is_disabled_import(code: &str) -> Option<&'static str> {
-    let is_disabled_module = |module: &str| {
-        DISABLED_STDLIB_MODULES.iter().any(|disabled| {
-            module == *disabled
-                || (module.starts_with(disabled)
-                    && module
-                        .as_bytes()
-                        .get(disabled.len())
-                        .is_some_and(|next| *next == b'.'))
+    use ruff_python_ast::statement_visitor::{StatementVisitor, walk_stmt};
+    use ruff_python_ast::{Stmt, StmtImport, StmtImportFrom};
+
+    fn disabled(module: &str) -> Option<&'static str> {
+        DISABLED_STDLIB_MODULES.iter().copied().find(|disabled| {
+            module
+                .strip_prefix(disabled)
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with('.'))
         })
-    };
+    }
 
-    for raw_line in code.lines() {
-        let line = raw_line.split('#').next().unwrap_or("").trim();
-        if line.is_empty() {
-            continue;
-        }
+    struct ImportFinder(Option<&'static str>);
 
-        if let Some(imports) = line.strip_prefix("import ") {
-            for import in imports.split(',') {
-                let module = import
-                    .split_whitespace()
-                    .next()
-                    .unwrap_or("")
-                    .trim()
-                    .trim_matches(|c: char| c == '\'' || c == '"')
-                    .trim_end_matches(|c: char| {
-                        !(c.is_ascii_alphanumeric() || c == '_' || c == '.')
-                    })
-                    .to_string();
-                if is_disabled_module(&module) {
-                    return Some("re");
+    impl<'a> StatementVisitor<'a> for ImportFinder {
+        fn visit_stmt(&mut self, stmt: &'a Stmt) {
+            if self.0.is_some() {
+                return;
+            }
+            match stmt {
+                Stmt::Import(StmtImport { names, .. }) => {
+                    self.0 = names.iter().find_map(|alias| disabled(alias.name.as_str()));
                 }
+                Stmt::ImportFrom(StmtImportFrom { module, names, .. }) => {
+                    self.0 = match module {
+                        Some(module) => disabled(module.as_str()),
+                        // `from . import re`
+                        None => names.iter().find_map(|alias| disabled(alias.name.as_str())),
+                    };
+                }
+                _ => walk_stmt(self, stmt),
             }
-        }
-
-        if let Some(from_stmt) = line.strip_prefix("from ") {
-            let module = from_stmt
-                .split_whitespace()
-                .next()
-                .unwrap_or("")
-                .trim()
-                .trim_matches(|c: char| c == '\'' || c == '"')
-                .trim_end_matches(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '.'))
-                .to_string();
-            if is_disabled_module(&module) {
-                return Some("re");
-            }
-        }
-
-        if line.contains("__import__('re'") || line.contains("__import__(\"re\"") {
-            return Some("re");
-        }
-        if line.contains("importlib.import_module('re'")
-            || line.contains("importlib.import_module(\"re\"")
-        {
-            return Some("re");
         }
     }
-    None
+
+    let parsed = ruff_python_parser::parse_module(code).ok()?;
+    let mut finder = ImportFinder(None);
+    finder.visit_body(&parsed.syntax().body);
+    finder.0
 }
 
 #[async_trait]
@@ -1913,10 +1900,61 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_re_module_dynamic_import_is_blocked() {
-        let r = run(&["-c", "m = __import__('re')"], None).await;
+    async fn test_re_module_dynamic_import_is_unavailable() {
+        // Monty has no `__import__` or `importlib`, so import statements are
+        // the only way to load a module. Pin that: if Monty adds either, the
+        // AST gate in `is_disabled_import` must learn about it.
+        let r = run(&["-c", "m = __import__('re')\nprint(m)"], None).await;
+        assert_eq!(r.exit_code, 1, "{}", r.stdout);
+        assert!(r.stdout.is_empty(), "{}", r.stdout);
+        let r = run(&["-c", "import importlib"], None).await;
         assert_eq!(r.exit_code, 1);
-        assert!(r.stderr.contains("importing module 're' is disabled"));
+        assert!(
+            r.stderr.contains("No module named 'importlib'"),
+            "{}",
+            r.stderr
+        );
+    }
+
+    #[tokio::test]
+    async fn test_re_module_hidden_imports_are_blocked() {
+        // Regression: the gate used to match only lines starting with
+        // `import`/`from`, so any statement prefix bypassed it.
+        for code in [
+            "pass; import re",
+            "x = 1; from re import split",
+            "if True: import re",
+            "if True:\n    import re",
+            "def f():\n    import re\n    return re\nf()",
+            "try:\n    import re\nexcept Exception:\n    pass",
+            "for _ in [1]: import json, re",
+            "with open('/tmp/x', 'w') as f: import re.sub",
+            "import json as j, re as r",
+            "class C:\n    import re",
+        ] {
+            let r = run(&["-c", code], None).await;
+            assert_eq!(r.exit_code, 1, "{code}: {}", r.stderr);
+            assert!(
+                r.stderr.contains("importing module 're' is disabled"),
+                "{code}: {}",
+                r.stderr
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_re_named_text_is_not_an_import() {
+        // Strings, comments and other modules that merely mention `re` run.
+        let r = run(
+            &[
+                "-c",
+                "import json\nre = 'import re'\n# import re\nprint(re, json.dumps('re'))",
+            ],
+            None,
+        )
+        .await;
+        assert_eq!(r.exit_code, 0, "{}", r.stderr);
+        assert_eq!(r.stdout, "import re \"re\"\n");
     }
 
     #[tokio::test]
