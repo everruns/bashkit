@@ -373,10 +373,12 @@ async fn jq_stream_empty_consumes_shared_work_budget() {
 
 #[cfg(feature = "python")]
 #[tokio::test]
-/// TM-DOS-096: separate Python entries cannot each claim a fresh VM allowance.
+/// TM-DOS-096: separate Python entries cannot each claim a fresh VM allowance:
+/// the heap each run actually uses is charged to the shared work budget.
 async fn repeated_python_entries_share_runtime_admission_budget() {
     let limits = ExecutionLimits::new()
-        .max_work_units(1_500_000)
+        // ~19 MiB of Python heap at 64 bytes per unit.
+        .max_work_units(300_000)
         .max_aggregate_input_bytes(100_000);
     let mut bash = Bash::builder()
         .limits(limits)
@@ -385,8 +387,10 @@ async fn repeated_python_entries_share_runtime_admission_budget() {
         .build();
 
     assert_budget_exhausted(
-        bash.exec("python -c 'print(1)'; python -c 'print(2)'")
-            .await,
+        bash.exec(
+            "python -c 'x = \"a\" * (12 * 1024 * 1024)'; python -c 'x = \"a\" * (12 * 1024 * 1024)'",
+        )
+        .await,
     );
 }
 

@@ -152,7 +152,8 @@ mod basic_execution {
         let mut bash = bash_python();
         let r = bash.exec("python3 -c \"2 + 3\"").await.unwrap();
         assert_eq!(r.exit_code, 0);
-        assert_eq!(r.stdout, "5\n");
+        // Like CPython, the last expression is not echoed.
+        assert_eq!(r.stdout, "");
     }
 
     #[tokio::test]
@@ -216,7 +217,7 @@ mod basic_execution {
         let mut bash = bash_python();
         let r = bash.exec("python3 -c \"'hello'\"").await.unwrap();
         assert_eq!(r.exit_code, 0);
-        assert_eq!(r.stdout, "'hello'\n");
+        assert_eq!(r.stdout, "");
     }
 }
 

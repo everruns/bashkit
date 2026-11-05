@@ -13,17 +13,17 @@ hello
 ### end
 
 ### python3_expression_arithmetic
-# Expression result displayed (REPL behavior)
-python3 -c "2 + 3"
+# Like CPython, -c does not echo the last expression
+python3 -c "2 + 3"; echo "rc=$?"
 ### expect
-5
+rc=0
 ### end
 
 ### python3_expression_string
-# String expression result
-python3 -c "'hello'"
+# Like CPython, -c does not echo the last expression
+python3 -c "'hello'"; echo "rc=$?"
 ### expect
-'hello'
+rc=0
 ### end
 
 ### python3_multiline

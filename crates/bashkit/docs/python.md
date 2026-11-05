@@ -71,13 +71,14 @@ python3 -c "print(2 ** 10)"
 # Output: 1024
 ```
 
-### Expression Evaluation
+### Expression Values Are Not Echoed
 
-When no `print()` is called, the last expression is displayed (REPL behavior):
+Like CPython, `python3 -c`, script files and stdin do not print the value of
+the last expression. Use `print()`:
 
 ```bash
-python3 -c "2 + 2"
-# Output: 4
+python3 -c "2 + 2"          # prints nothing
+python3 -c "print(2 + 2)"   # Output: 4
 ```
 
 ### Script Files (from VFS)
