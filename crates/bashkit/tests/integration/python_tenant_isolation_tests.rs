@@ -1,8 +1,10 @@
-//! SPIKE (Monty 1.4): per-VM memory metering keeps concurrent tenants apart.
+//! Monty 1.4: per-VM memory metering keeps concurrent tenants apart.
 //!
 //! Monty 1.x's default memory counter is process-wide; with it two tenants
 //! that each fit their limit would fail together. `MeteredAllocator` (installed
 //! in `main.rs`) charges each VM only for its own allocations.
+
+#![cfg(feature = "python")]
 
 use bashkit::{Bash, PythonLimits};
 use std::time::Duration;

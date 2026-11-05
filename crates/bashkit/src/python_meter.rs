@@ -24,7 +24,7 @@
 //! CPython's or Node's allocator. Rust embedders opt in explicitly; without it,
 //! Monty `python3` fails closed (see `metering_installed`).
 //!
-//! SPIKE: see knowledge/runtimes/python-builtin.md and the Monty 1.4 analysis.
+//! See knowledge/runtimes/python-builtin.md.
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;

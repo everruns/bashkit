@@ -483,7 +483,7 @@ async fn run_python(
     } else {
         format!("{code}\nNone\n")
     };
-    // SPIKE: per-VM memory meter + shared-budget checkpoints (python_meter.rs).
+    // Per-VM memory meter + shared-budget checkpoints (python_meter.rs).
     if let Err(msg) = crate::python_meter::ensure_metering() {
         return Ok(ExecResult::err(format!("{msg}\n"), 1));
     }

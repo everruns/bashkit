@@ -191,7 +191,7 @@ pub mod urandom_tests;
 pub mod workflow_security_tests;
 pub mod yq_integration_tests;
 
-// SPIKE: Monty python3 fails closed without bashkit's metered allocator.
+// Monty python3 fails closed without bashkit's metered allocator.
 #[cfg(feature = "python")]
 #[global_allocator]
 static ALLOC: bashkit::MeteredAllocator = bashkit::MeteredAllocator;

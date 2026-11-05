@@ -579,7 +579,7 @@ pub use builtins::{Python, PythonExternalFnHandler, PythonExternalFns, PythonLim
 #[cfg(feature = "python")]
 pub use python_meter::MeteredAllocator;
 
-// SPIKE: Monty python3 fails closed without the metered allocator.
+// Monty python3 fails closed without the metered allocator.
 #[cfg(all(test, feature = "python"))]
 #[global_allocator]
 static TEST_ALLOC: python_meter::MeteredAllocator = python_meter::MeteredAllocator;

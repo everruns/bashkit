@@ -309,7 +309,7 @@ fn format_panic_message(payload: &dyn std::any::Any) -> String {
     format!("bashkit: internal error: {msg}")
 }
 
-// SPIKE: per-VM Monty memory metering.
+// Per-VM Monty memory metering (see bashkit::MeteredAllocator).
 #[cfg(feature = "python")]
 #[global_allocator]
 static ALLOC: bashkit::MeteredAllocator = bashkit::MeteredAllocator;
