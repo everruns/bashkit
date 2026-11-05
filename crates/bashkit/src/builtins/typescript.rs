@@ -923,11 +923,12 @@ async fn run_typescript(
         }
     };
 
-    let result = run_on_vm_stack(runner);
+    let result = on_vm_stack(|| runner.run(Vec::new()));
     charge_vm_time(execution_budget.as_ref(), started)?;
     let result = match result {
-        Ok(r) => r,
-        Err(e) => return Ok(format_error_with_output(e, "", time_limit)),
+        Some(Ok(r)) => r,
+        Some(Err(e)) => return Ok(format_error_with_output(e, "", time_limit)),
+        None => return Ok(ExecResult::err(VM_THREAD_ERROR.to_string(), 1)),
     };
 
     // Process the result through the suspend/resume loop for VFS bridging
@@ -942,34 +943,34 @@ async fn run_typescript(
     .await
 }
 
-/// Parse, compile and start the script. Off wasm this runs on a dedicated
-/// thread with a [`TS_VM_STACK_BYTES`] stack; see that constant.
+/// Message when no VM thread could be started (resource exhaustion).
+const VM_THREAD_ERROR: &str = "ts: cannot start execution thread\n";
+
+/// Run one synchronous ZapCode step (parse/compile/run, or a resume). Off
+/// wasm this runs on a dedicated thread with a [`TS_VM_STACK_BYTES`] stack;
+/// see that constant. `None` means no thread could be started: the caller
+/// fails the command rather than running accepted-depth source on a small
+/// stack.
 #[cfg(not(target_arch = "wasm32"))]
-fn run_on_vm_stack(
-    runner: ZapcodeRun,
-) -> std::result::Result<RunResult, zapcode_core::ZapcodeError> {
+fn on_vm_stack<T: Send>(step: impl FnOnce() -> T + Send) -> Option<T> {
     std::thread::scope(|scope| {
-        match std::thread::Builder::new()
+        let handle = std::thread::Builder::new()
             .name("bashkit-ts".into())
             .stack_size(TS_VM_STACK_BYTES)
-            .spawn_scoped(scope, || runner.run(Vec::new()))
-        {
-            Ok(handle) => match handle.join() {
-                Ok(result) => result,
-                Err(panic) => std::panic::resume_unwind(panic),
-            },
-            // Could not get a thread (resource exhaustion): run inline.
-            // The nesting cap still applies.
-            Err(_) => runner.run(Vec::new()),
+            .spawn_scoped(scope, step)
+            .ok()?;
+        match handle.join() {
+            Ok(result) => Some(result),
+            Err(panic) => std::panic::resume_unwind(panic),
         }
     })
 }
 
+/// wasm32 has no threads: run on the current stack. The nesting cap still
+/// applies; see the zapcode-runtime knowledge page for the residual risk.
 #[cfg(target_arch = "wasm32")]
-fn run_on_vm_stack(
-    runner: ZapcodeRun,
-) -> std::result::Result<RunResult, zapcode_core::ZapcodeError> {
-    runner.run(Vec::new())
+fn on_vm_stack<T>(step: impl FnOnce() -> T) -> Option<T> {
+    Some(step())
 }
 
 /// Charge the wall-clock time a synchronous VM step ran to the shared work
@@ -1030,12 +1031,17 @@ async fn process_vm_result(
                 };
 
                 let started = Instant::now();
-                let resumed = snapshot.resume(return_value);
+                let resumed = on_vm_stack(move || snapshot.resume(return_value));
                 charge_vm_time(execution_budget, started)?;
                 state = match resumed {
-                    Ok(s) => s,
-                    Err(e) => {
+                    Some(Ok(s)) => s,
+                    Some(Err(e)) => {
                         return Ok(format_error_with_output(e, &stdout, time_limit));
+                    }
+                    None => {
+                        let mut result = ExecResult::err(VM_THREAD_ERROR.to_string(), 1);
+                        result.stdout = stdout.into();
+                        return Ok(result);
                     }
                 };
             }

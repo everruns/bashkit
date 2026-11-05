@@ -84,11 +84,19 @@ builds (about 100 levels on a 2 MB debug thread). Bashkit adds two layers:
    `,`/`;`/statement newline in each open frame; closers fold counts into the
    parent, regex bodies are charged per token). Above 1000 the command fails
    with `ts: source is too deeply nested` (exit 1).
-2. Parse, compile and the first VM run happen on a dedicated thread with a
+2. Every synchronous ZapCode step (parse, compile and first run, and each
+   `resume` after a VFS/external call) runs on a dedicated thread with a
    128 MiB stack (reserved, not committed). 32 MiB was the smallest stack on
    which every shape in `deep_nesting_at_the_limit_does_not_overflow` passed
-   in a debug build, so this is 4x margin. On wasm32 there is no such thread;
-   the cap still applies on the default stack.
+   in a debug build, so this is 4x margin. If the thread cannot be started the
+   command fails with `ts: cannot start execution thread` (exit 1); it never
+   falls back to the caller's smaller stack.
+
+Residual risk on wasm32: there are no threads, so ZapCode runs on the default
+wasm stack with the same 1000 cap, which was validated only against the
+128 MiB native thread. An overflow there traps the wasm instance (no host
+process abort, but the instance is lost). A lower wasm cap waits on measuring
+the wasm stack per AST level.
 
 Upstream fix wanted: a depth guard in zapcode-core's `AstLowerer` and
 compiler (Monty and ruff already return "Source is too deeply nested").
