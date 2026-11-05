@@ -1996,7 +1996,7 @@ yield `OsCall` events that Bashkit intercepts and dispatches to the VFS.
 | ID | Threat | Severity | Mitigation | Test |
 |----|--------|----------|------------|------|
 | TM-PY-001 | Infinite loop via `while True` | High | Monty time limit (30s) | `threat_python_infinite_loop` |
-| TM-PY-002 | Memory exhaustion via large allocation | High | Monty max_memory (64MB), which also caps collected `print` output | `threat_python_memory_exhaustion` |
+| TM-PY-002 | Memory exhaustion via large allocation | High | Monty max_memory (64MB) read from bashkit's per-VM allocator meter (TM-PY-032), which also caps collected `print` output | `threat_python_memory_exhaustion` |
 | TM-PY-003 | Stack overflow via deep recursion | High | Monty max_recursion (200) + parser depth limit (200, since 0.0.4) | `threat_python_recursion_bomb` |
 | TM-PY-004 | Shell escape via os.system/subprocess | Critical | Monty has no os.system/subprocess implementation | `threat_python_no_os_operations` |
 | TM-PY-005 | Real filesystem access via open() | Critical | VFS bridge opens only Bashkit VFS files, not host files | `threat_python_no_filesystem` |
@@ -2006,7 +2006,11 @@ yield `OsCall` events that Bashkit intercepts and dispatches to the VFS.
 | TM-PY-009 | Degenerate input (`-c ''`) crashes the builtin | Low | Empty code fails gracefully with an error | `threat_python_empty_code` |
 | TM-PY-010 | Error text leaks into pipeline data | Medium | Pipeline consumers receive stdout only; tracebacks stay on stderr | `threat_python_pipeline_error_handling` |
 | TM-PY-011 | Command substitution captures stderr diagnostics | Medium | `$(python ...)` captures stdout only | `threat_python_subst_captures_stdout` |
-| TM-PY-012 | Shell escape via Python `eval`/`exec` | Critical | Monty has no `os.system`/`subprocess`; eval'd code stays inside the interpreter | `threat_python_no_shell_exec` |
+| TM-PY-012 | Shell escape via Python `eval`/`exec` | Critical | Monty has no `os.system`/`subprocess`; `exec`/`eval` (Monty 1.x) run inside the same VM, limits and OS-call bridge | `threat_python_no_shell_exec` |
+| TM-PY-032 | Cross-tenant memory accounting / process abort | Critical | Upstream Monty 1.x reads a process-wide allocator counter and `monty-alloc` aborts the process. Forked `monty_types::set_memory_probe` reads a per-VM `VmMeter` fed by `bashkit::MeteredAllocator` (thread-local, exact sync VM windows); allocator never aborts; `python3` fails closed when the allocator is not installed | `python_tenant_isolation_tests::*` |
+| TM-PY-033 | ReDoS via `re` | High | `re` enabled since 2026-11-05: plain patterns run on the linear-time `regex` engine, backreference/lookaround patterns on `fancy-regex` with a backtrack cap (`re.PatternError`), match loops stopped by the time limit | `python_security_tests::regex_redos_patterns_are_bounded`, `regex_loop_is_stopped_by_time_limit`, `regex_huge_pattern_is_rejected_or_bounded` |
+| TM-PY-034 | Uninterruptible VM loop ignores cancellation / shared budget | High | Forked `monty_types::set_checkpoint_hook` runs the request `ExecutionBudget` check at every VM time checkpoint; `Err` stops the run uncatchably | `python_security_tests::whitebox_resource_limits::*`, budget tests in `builtins::python` |
+| TM-PY-035 | Shared object graph expands exponentially in host conversion | High | Monty 1.x `MontyObject` graphs can share children; every host converter (runtime values, scripted-tool JSON, Python binding) walks with a node cap (100k / 1M) | `runtime_value` and `tool_registry` unit tests |
 | TM-PY-013 | Unknown CLI options smuggle behavior | Low | Unknown `python` options rejected with exit 2 | `threat_python_unknown_options` |
 | TM-PY-014 | Python escapes Bashkit resource limits | High | Bashkit `ExecutionLimits` apply to the `python` command like any builtin | `threat_python_respects_bash_limits` |
 | TM-PY-015 | Real filesystem read via pathlib | Critical | VFS bridge reads only from Bashkit VFS, not host | `threat_python_vfs_no_real_fs` |
@@ -2116,13 +2120,13 @@ bounded cancellation, interpreter-exit subprocess stress) plus
 `…::test_dealloc_during_inflight_callback_does_not_deadlock`; variant (3) is also
 covered by the `langgraph_async_tool.py` example run in the Python CI Examples job.
 
-| TM-PY-029 | Host clock information disclosure | `datetime.date.today()` / `datetime.datetime.now()` expose host system time and timezone | Intentional, required for correct datetime semantics | **ACCEPTED** |
+| ~~TM-PY-029~~ | ~~Host clock information disclosure~~ | ~~`datetime` exposes host time and timezone~~ | Fixed virtual clock (**FIXED**) |
 
-**TM-PY-029**: `crates/bashkit/src/builtins/python.rs`, `handle_date_today()` and
-`handle_datetime_now()` read the host system clock via `chrono::Local::now()` /
-`chrono::Utc::now()`. This exposes the host's current time and timezone offset to
-sandboxed Python code. Accepted as intentional: datetime operations require real time,
-and this information has low sensitivity. No filesystem or network access is granted.
+**TM-PY-029** (fixed): Python time reads use a fixed virtual instant
+(2024-01-01T00:00:00Z, `VIRTUAL_NOW_UNIX_SECS` in `builtins/python.rs`, the
+same one `date` uses). Since Monty 1.4 the run's `OsPolicy` also pins
+`DateTimeSource::Fixed` and `SleepMode::Zero`, so Monty's defaults (host clock,
+real sleep) never apply.
 
 ### VFS Bridge Security Properties
 

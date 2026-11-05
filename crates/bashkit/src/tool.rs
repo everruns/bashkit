@@ -1743,9 +1743,9 @@ mod tests {
         let handler: crate::PythonExternalFnHandler = Arc::new(|name, args, kwargs| {
             Box::pin(async move {
                 assert_eq!(name, "lookup");
-                assert_eq!(args, vec![crate::MontyObject::Int(21)]);
+                assert_eq!(args, vec![crate::MontyObject::int(21)]);
                 assert_eq!(kwargs.len(), 1);
-                crate::ExtFunctionResult::Return(crate::MontyObject::Int(42))
+                crate::ExtFunctionResult::Return(crate::MontyObject::int(42))
             })
         });
         let tool = BashTool::builder()

@@ -1,0 +1,62 @@
+# Fork of pydantic/monty monty-types-1.4.0 (MIT) for bashkit's in-process Python.
+#
+# Important decision (security): bashkit runs many tenants' Python in one
+# process. Upstream Monty enforces `max_memory` through a process-wide
+# allocator counter and has no in-VM host checkpoint, so bashkit carries a
+# small patch in `bashkit-monty-types` (`set_memory_probe`, pydantic/monty#740,
+# and `set_checkpoint_hook`) and republishes `monty` against it. Source is
+# upstream monty-types-1.4.0 unchanged except marked edits; the library names stay `monty` /
+# `monty_types` so code reads as upstream. Drop both crates once upstream ships
+# the hooks. See knowledge/runtimes/python-builtin.md.
+#
+# Not formatted or linted as bashkit code: kept byte-identical to upstream
+# (rustfmt.toml disables formatting; a crate-level `#![allow]` in lib.rs and
+# [lints] allow upstream warnings; upstream tests are not vendored). Every
+# local edit is marked with a `bashkit fork:` comment.
+
+[package]
+name = "bashkit-monty-types"
+version.workspace = true
+edition = "2024"
+rust-version = "1.96"
+authors = ["Samuel Colvin <samuel@pydantic.dev>", "Everruns"]
+license = "MIT"
+repository.workspace = true
+description = "Fork of pydantic/monty's monty-types 1.4.0 with an embedder memory probe and checkpoint hook, for bashkit's python3"
+keywords = ["python", "interpreter", "sandbox", "bashkit"]
+categories = ["compilers", "emulators"]
+readme = "README.md"
+include = ["src/**", "README.md", "LICENSE"]
+
+[lib]
+name = "monty_types"
+path = "src/lib.rs"
+# Upstream tests are not vendored.
+test = false
+doctest = false
+
+[dependencies]
+chrono = { version = "0.4", features = ["serde"] }
+jiff = { version = "0.2", features = ["std", "serde"], default-features = false }
+monty-macros = { version = "1.4.0" }
+num-bigint = { version = "0.4", features = ["serde"] }
+num-traits = { version = "0.2" }
+ruff_python_stdlib = { version = "0.0.14" }
+serde = { version = "1.0", features = ["derive", "rc"] }
+serde_bytes = { version = "0.11" }
+strum = { version = "0.27", features = ["derive", "phf"] }
+unicode-general-category = { version = "1" }
+
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+web-time = { version = "1.1" }
+
+[features]
+test-hooks = []
+tzdb = ["jiff/tzdb-zoneinfo", "tzdb-bundled"]
+tzdb-bundled = ["jiff/tzdb-bundle-always"]
+
+[lints.rust]
+warnings = "allow"
+
+[lints.clippy]
+all = "allow"

@@ -100,7 +100,7 @@ jobs:
           path: crates/bashkit-python/dist
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
+        uses: dtolnay/rust-toolchain@d86e0fa8f147d6539442c26a61ebba8becc19489 # 1.96.0
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
 
@@ -147,7 +147,7 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
-      - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
+      - uses: dtolnay/rust-toolchain@d86e0fa8f147d6539442c26a61ebba8becc19489 # 1.96.0
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       - name: Build and install native wheel
         run: |
@@ -183,7 +183,7 @@ jobs:
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
+        uses: dtolnay/rust-toolchain@d86e0fa8f147d6539442c26a61ebba8becc19489 # 1.96.0
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
 
@@ -281,7 +281,7 @@ jobs:
           python-version: "3.13"
 
       # Pyodide passes `-Z link-native-libraries=no` (nightly-only). The nightly
-      # must satisfy our deps' MSRV (monty needs rustc 1.95) and edition 2024,
+      # must satisfy our deps' MSRV (monty needs rustc 1.96) and edition 2024,
       # so it has to be recent; its LLVM (19+) matches Emscripten 4.0.9's
       # binaryen, which is what avoids the wasm-opt target-feature skew that
       # older Emscripten (3.1.x) hit. See knowledge/runtimes/emscripten-wheels.md.

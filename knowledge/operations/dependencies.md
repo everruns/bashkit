@@ -58,31 +58,25 @@ lives there, next to the pin, so it cannot drift away from what it explains.
   the browser wasm binary. See
   [Gate rather than reimplement](#gate-rather-than-reimplement).
 
-## Monty compatibility pins
+## Monty forks
 
-Monty and monty-types are explicitly constrained to `=0.0.19`. Published
-0.0.20, 0.0.21, and 0.0.22 all replace the custom tracker trait with a concrete
-tracker and replace per-VM memory accounting with a process-global allocator
-probe. Neither is compatible with Bashkit's embeddable security contract:
-without the global allocator, aggregate heap growth is uncounted; without
-VM checkpoints, synchronous loops cannot consume shared work or observe
-cancellation. Moving charges outside `start`/`resume` does not preserve this
-contract. This is an enforced compatibility constraint, not an unfinished
-maintenance upgrade. See [Python Builtin](../runtimes/python-builtin.md#upgrade-blocker-monty-is-held-at-0019)
-for the source evidence and resource-limit regression tests. Keep the Git
-`jiter` patch while this compatible Monty release requires the 0.15 line.
+Monty is not taken from crates.io. Upstream 1.x replaced the custom tracker
+trait with a concrete tracker and per-VM memory accounting with a process-global
+allocator probe, which breaks bashkit's in-process multi-tenant contract. Bashkit
+embeds Monty 1.4.0 as two workspace forks, `bashkit-monty` and
+`bashkit-monty-types` (lib names `monty`/`monty_types`), that add a memory probe
+and a checkpoint hook. They are published with each release before `bashkit`.
+Upgrade by re-copying upstream source and re-applying the `bashkit fork:`
+edits. See [Python Builtin](../runtimes/python-builtin.md#monty-14-embedding-forks-per-vm-metering-checkpoint-hook).
 
-The pinned `jiter` Git package requires a published-base audit plus an exact
-Git-delta audit (`audit-as-crates-io = true`). Its local, non-importable full
-audit covers the selected `default`/`num-bigint` features. `deny.toml` bans
-`jiter/python`: its optional ASCII Python string allocator dereferences
-`PyUnicode_New` without checking allocation failure. This code is absent from
-the workspace's all-features graph; re-audit before allowing it. Verified the
-ban with an isolated manifest selecting the actual pinned Git revision and
-`features = ["python"]`: `cargo deny check bans` passed before the restriction
-and failed with `feature-banned` after it, while the workspace still passed.
-Cargo-deny's [feature restrictions](https://embarkstudios.github.io/cargo-deny/checks/bans/cfg.html#the-features-field-optional)
-enforce this audit boundary in CI.
+Moving off 0.0.19 dropped the `jiter` Git patch (Monty 1.4 uses published
+jiter 0.17 with pyo3 0.29), the `get-size2 =0.10.1` hold (Monty's ruff AST
+moved to `compact_str` 0.10), and the `ruff_python_*` direct dependencies (the
+`re` import gate is gone). The new third-party crates entered cargo-vet as
+exemptions. `deny.toml` still bans `jiter/python`: its optional ASCII Python
+string allocator dereferences `PyUnicode_New` without checking allocation
+failure, and the feature stays out of the graph. The Python binding's
+`num-bigint` must still match Monty's 0.4 line.
 
 A workspace crate that is published to crates.io needs the same `policy.*`
 entry from the other direction: `audit-as-crates-io = false`. cargo-vet calls a
@@ -98,15 +92,6 @@ no entry and nothing failed until #2792 needed that refresh.
 `scripts/tests/test_ci_supply_chain.py` derives the published set from the
 `release-check` recipe and fails when one of those crates has no entry; a new
 published crate must be added in both places.
-
-`get-size2` is constrained to `=0.10.1` as a Python-only direct dependency,
-so downstream resolution is protected even without this workspace's lockfile.
-Both 0.10.2 and 0.10.3 implement `GetSize` for `compact_str` 0.10, whereas
-Monty's `ruff_python_ast` 0.0.3 uses 0.9.1; resolving either produces E0277.
-The extra edge enables no runtime or feature by itself and adds no crate to
-the existing Python graph. Remove it when Monty's AST upgrades its string
-type. The Python binding's `num-bigint` dependency must still match Monty's
-0.4 line.
 
 ## JavaScript test-tool audit boundary
 

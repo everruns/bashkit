@@ -13,7 +13,7 @@ tags:
 
 > **Experimental.** Monty is an early-stage Python interpreter that may have
 > undiscovered crash or security bugs. Resource limits are enforced by Monty's
-> runtime. Do not rely on it for untrusted-input safety without additional
+> runtime plus bashkit's per-VM allocator meter. Do not rely on it for untrusted-input safety without additional
 > hardening.
 
 ## Status
@@ -81,81 +81,95 @@ configurable via `PythonLimits`:
 | Max memory | 64 MB | `.max_memory(bytes)` |
 | Max recursion | 200 | `.max_recursion(depth)` |
 
-`max_memory` does double duty: Monty caps the host-side buffer that collects
-`print` output at the same value, so a print loop cannot outgrow the declared
-budget even though it allocates nothing on the VM heap. There is no
-allocation-count knob, Monty removed `max_allocations` in 0.0.19.
+`max_memory` counts real allocator bytes held by the run (see "Per-VM memory
+metering" below), so it is stricter than the 0.0.19 estimate: a dict of
+~500k short strings reaches the 64 MiB default. It also caps the host-side
+buffer that collects `print` output. There is no allocation-count knob.
 
 Each Python entry also consumes the request-scoped `ExecutionBudget`: source
 bytes are charged as aggregate input, Monty heap growth past the run's
-high-water mark is charged as work (one unit per 64 bytes), and Monty's
-time/allocation checkpoints consume shared work units. VFS pauses and external
-host calls keep the same budget clone. Re-entering Python from a later command,
+high-water mark is charged as work (one unit per 64 bytes), and every 64 VM
+time checkpoints consume one shared work unit. VFS pauses and external host
+calls keep the same budget clone. Re-entering Python from a later command,
 substitution, or pipeline stage therefore cannot obtain fresh aggregate fuel;
 Monty's limits remain independently enforced. Until 2026-11-05 each entry
 reserved `max_memory / 64` units up front (1M at the 64 MiB default), which
 capped a default script at ~95 `python3` calls even for `pass`.
 
-Since Monty 0.0.4 the parser also enforces a nesting-depth limit (200
-release / 35 debug) against stack overflow from deeply nested expressions.
+The parser enforces a nesting-depth limit (200 release / 35 debug) against
+stack overflow from deeply nested expressions.
 
-### Upgrade blocker: Monty is held at 0.0.19
+### Monty 1.4 embedding: forks, per-VM metering, checkpoint hook
 
-`monty` and `monty-types` are pinned to 0.0.19 and ignored in
-`.github/dependabot.yml`. This is a security hold, not API-churn convenience.
+Bashkit embeds Monty 1.4.0 through two forks in this workspace, published to
+crates.io as `bashkit-monty` and `bashkit-monty-types` with each bashkit
+release (like `bashkit-cpython-wasm`). Their library names stay `monty` and
+`monty_types`. Source is upstream 1.4.0 with every local edit marked
+`bashkit fork:`; rustfmt and lints are off for them, and upstream tests are not
+vendored. Drop the forks once upstream ships equivalent hooks.
 
-Published Monty 0.0.20, 0.0.21, and 0.0.22 all change how `max_memory` is
-enforced (verified against each release's `monty-types/src/resource.rs`):
+Why forks (security): upstream 1.x enforces `max_memory` by reading
+process-wide `LIVE_MEMORY`/`BASELINE_MEMORY` statics that only `monty-alloc`
+writes, installed as the global allocator. That counter is shared by every
+interpreter in the process and `monty-alloc` aborts the whole process at its
+hard limit, so in a multi-tenant host one tenant is charged for another's
+memory and can kill all of them. Without `monty-alloc` the probe reads 0 and
+the limit is silently unenforced. 1.x also made `ResourceTracker` a struct, so
+an embedder has no in-VM hook for cancellation or shared work budgets. The
+fork adds two process-wide hooks in `monty_types::resource`:
 
-| | 0.0.19 | 0.0.20–0.0.22 |
-|---|---|---|
-| Enforcement | `LimitedTracker::on_grow` accounts VM heap growth in-process | `probe_memory()` reads the `LIVE_MEMORY` / `BASELINE_MEMORY` statics |
-| Who populates it | the tracker itself | only `monty-alloc`, installed as the **process-wide global allocator** |
-| Embedder needs | nothing | to own the host's global allocator |
+- `set_memory_probe(fn() -> usize)` replaces the statics read (the same API as
+  open upstream PR pydantic/monty#740).
+- `set_checkpoint_hook(fn() -> Result<(), ResourceError>)` runs at every VM
+  time checkpoint before the tracker's own time check; `Err` stops the run
+  uncatchably.
 
-Neither `monty` nor `monty-types` depends on `monty-alloc`. When it is absent
-the statics keep their initial values and `probe_memory()` evaluates to
-`0.saturating_sub(usize::MAX)` == 0, so `check_allocation`, and therefore both
-`max_memory` and `check_large_result`, can never trip. The ceiling is not
-merely weakened; it is silently unenforced, with no error or warning.
+Per-VM memory metering (`src/python_meter.rs`): `bashkit::MeteredAllocator`
+wraps `System` and charges each allocation to the `VmMeter` of the Monty VM
+currently running on that thread (a const thread-local pointer, set by an RAII
+`VmWindow` around `MontyRun::new`, `start` and every `resume`). Those calls are
+synchronous, so a window is exact: no other task runs on the thread while it is
+open. The probe returns that meter's live bytes; the checkpoint hook runs the
+request's `ExecutionBudget` check (cancellation, deadline, work units). The
+allocator never refuses or aborts; Monty raises an uncatchable `MemoryError` at
+its next check. Frees outside a window are not refunded, so the meter can only
+over-count. Measured cost: none outside a window, ~3 ns per alloc/free pair
+inside; `python3 -c pass` stays ~8 ms end to end in the CLI.
 
-Bashkit cannot supply the missing allocator. It is an embeddable library, so
-the global allocator belongs to the downstream binary, and `bashkit-python` is a
-CPython extension module where the allocator is CPython's. `monty-alloc` is
-built for Monty's own out-of-process worker model ("a Monty *worker's* hard
-memory ceiling"), which bashkit does not use.
+Fail closed: the meter only works when `MeteredAllocator` is the global
+allocator. The CLI, the Python/Node/C/wasm bindings and bashkit's own tests
+install it (a `#[global_allocator]` in a `cdylib` governs only that library's
+Rust allocations, not CPython's or Node's). A Rust embedder must add it:
 
-Four existing threat-model regression tests fail on the bump and are the
-standing guard for this, they need no new test to be added:
+```rust
+#[global_allocator]
+static ALLOC: bashkit::MeteredAllocator = bashkit::MeteredAllocator;
+```
 
-- `python_security_tests::whitebox_resource_limits::nested_list_bomb`
-- `python_security_tests::whitebox_resource_limits::successive_allocations_accumulate`
-- `python_security_tests::whitebox_resource_limits::tight_memory_blocks_many_small_objects`
-- `threat_model_tests::python_security_regressions::threat_python_pow_exhaustion`
+Without it `python3` exits 1 with `python3: Monty memory limits need
+bashkit::MeteredAllocator as the global allocator` instead of running unbounded.
 
-The duration, recursion, and print-collect-cap limits are unaffected and still
-pass, which localises the regression to allocator-backed memory.
+Host policy: each run uses `OsPolicy` with a fixed virtual clock
+(2024-01-01T00:00:00Z, the same instant bashkit's `date` uses),
+`SleepMode::Zero`, and the shell cwd via `set_cwd`; Monty's defaults (host
+clock, real sleep, system random) would leak host state. Every Monty OS call
+pauses to bashkit: VFS, env, time, `Path.glob`/`rglob`/`walk` through
+`OsFunctionCall::Scan` (a VFS walk capped at 100,000 entries), and `import`
+of anything Monty does not bundle returns `ModuleNotFoundError`.
 
-There is a second security blocker: `ResourceTracker` becomes a concrete
-struct in all three releases, removing Bashkit's VM checkpoint hooks.
-`BudgetTracker` checks request cancellation/deadlines during execution and
-charges shared work on VM/allocation checkpoints. Charging only around a
-synchronous `start`/`resume` call cannot interrupt or meter an uninterrupted
-Python loop, so it is not a safe replacement. The per-entry admission
-reservation enforcing TM-DOS-096 remains necessary but is not a substitute.
-An upgrade requires both per-VM memory enforcement without owning the host's
-global allocator and equivalent in-VM budget/cancellation checkpoints.
+Shared object graphs: 1.x `MontyObject` is an opaque graph that can share
+children, so a host conversion can expand exponentially. Every bashkit
+converter (scripted-tool JSON, Python binding, runtime values) walks it with a
+node cap.
 
-The API-only changes (`ResourceLimits::new()` becomes `Default`, builders
-take plain values instead of `Option`s) are not security blockers.
+Guarding tests: `python_tenant_isolation_tests` (concurrent tenants under one
+limit, a greedy tenant beside small ones, many small objects, `str.join` bomb)
+and the `whitebox_resource_limits` / `threat_python_pow_exhaustion` regression
+tests that failed on every earlier bump attempt.
 
-Lifting the hold also **removes** a `[patch.crates-io]` git pin: the patch in
-the root `Cargo.toml` exists only because `monty 0.0.19` requires
-`jiter ^0.15.0`, whose published release holds the graph below pyo3 0.29.
-Monty 0.0.21 depends on the published `jiter 0.16.0`, which already tracks
-pyo3 0.29, so the workspace would build from crates.io alone with no git
-dependency in the release graph. That is a real supply-chain win waiting on the
-memory fix, it is not a reason to take the bump early.
+Known upstream gaps in 1.4.0: `repr` of nested 2-item lists only checks time
+every 64 items, and `str.join` can overshoot `max_memory` before the next
+check (bounded by the meter, not by Monty).
 
 ### Python Feature Support
 
@@ -164,11 +178,11 @@ defaults, `*args`/`**kwargs`, star unpacking, PEP 448), control flow,
 exceptions, comprehensions/generator expressions, f-strings, core data
 structures (list/dict/tuple/set/frozenset/namedtuple) with their operators
 and views, `@property`, the common builtins (print, len, range, sorted,
-isinstance, open, input, ...), and stdlib modules: sys, typing, math,
-pathlib, os (getenv/environ), json, datetime (incl. `date.today()`,
-`datetime.now(tz)`).
+isinstance, open, input, ...), `exec`/`eval`, and stdlib modules: json,
+math, re, datetime, pathlib, os, sys, typing, csv, collections, itertools,
+functools, dataclasses, hashlib, base64, random, decimal, unicodedata.
 
-Simple classes (methods, attributes) work since Monty 0.0.19. Not supported
+Simple classes (methods, attributes) work. Not supported
 (Monty limitations): class inheritance and metaclasses, match statements, third-party imports, most stdlib modules, and HTTP/network I/O,
 no `socket`/`urllib`/`requests`/`http.client`; Monty has no OsCall variants
 for network operations, so there is no way to bridge these.
@@ -188,10 +202,10 @@ result (or a Python exception).
 
 Supported operations (one line): `open()`/`Path.open()` (read/write/append),
 `Path.read_text/read_bytes/write_text/write_bytes/exists/is_file/is_dir/
-is_symlink/mkdir/unlink/rmdir/iterdir/stat/rename/resolve/absolute`,
+is_symlink/mkdir/unlink/rmdir/iterdir/stat/rename/resolve/absolute/glob/rglob/walk`,
 `os.getenv()`/`os.environ`, `datetime.date.today()`/`datetime.now(tz)`.
 
-> **Note:** Monty 0.0.10+ has native filesystem mounting (`MountTable`,
+> **Note:** Monty has native filesystem mounting (`MountTable`,
 > `MountDir`, `MountMode`) against host directories. Bashkit uses the OsCall
 > bridge instead because our VFS is in-memory and may not be backed by host
 > directories; the native mount system suits standalone real-filesystem use.
@@ -204,7 +218,7 @@ serialization overhead; arguments arrive as raw `MontyObject` values.
 
 ```rust
 let handler: PythonExternalFnHandler = Arc::new(|name, args, kwargs| {
-    Box::pin(async move { ExtFunctionResult::Return(MontyObject::Int(42)) })
+    Box::pin(async move { ExtFunctionResult::Return(MontyObject::int(42)) })
 });
 let bash = Bash::builder()
     .python_with_external_handler(PythonLimits::default(), vec!["get_answer".into()], handler)
@@ -218,7 +232,8 @@ let bash = Bash::builder()
 - **Prelude:** `Python::with_external_handler_and_prelude(names, handler, prelude)` (public) evaluates host-provided Python before user code, e.g. classes that route `tools.orders.list(...)` to one external function.
 - **Timeouts:** Each awaited handler call is wrapped in the remaining `PythonLimits::max_duration` wall-clock budget for the current Python invocation. If the budget expires while a handler is pending, Bashkit resumes Python with a `RuntimeError` instead of waiting for the handler indefinitely.
 - **Trust model:** same as `BashBuilder::builtin()` and `ScriptedTool` callbacks, host registers trusted Rust code, untrusted scripts invoke by name. Handlers are trusted host code and should still enforce independent limits for outbound I/O, remote services, and other resources they consume.
-- **Unstable re-exports:** `MontyObject`, `ExtFunctionResult`, `MontyException`, `ExcType` re-exported from the `monty` crate (pre-1.0, tracked at `0.0.x`); may break between bashkit releases.
+- **Values:** `MontyObject` is an opaque graph. Build with constructors (`MontyObject::int`, `string`, `list`, `dict`, `tuple`, `none`, ...); read through `obj.as_ref()` (`ObjectRef::as_int`, `as_str`, `items`, `pairs`, `type_name`). `bashkit::monty_unstable` re-exports Monty's node-level API for full walks.
+- **Unstable re-exports:** `MontyObject`, `ObjectRef`, `ExtFunctionResult`, `MontyException`, `ExcType` re-exported from the forked `monty_types`; may break between bashkit releases.
 
 ### Security
 
@@ -240,21 +255,18 @@ file not found, missing `-c` argument, unknown option.
 
 Registration via `BashToolBuilder::python()` contributes a hint to `help()` /
 `system_prompt()` documenting the limitations (stdlib subset, VFS-only file
-I/O, no network/third-party imports, simple classes only, `re` disabled);
+I/O, no network/third-party imports, simple classes only, no generators);
 `test_llm_hint_matches_runtime` fails if the hint drifts from what Monty runs through the general
 `Builtin::llm_hint()` mechanism (hints deduplicated automatically).
 
-The regex module `re` is intentionally disabled in Bashkit due to
-catastrophic-backtracking DoS risk in untrusted code execution. The gate parses
-the code with `ruff_python_parser` (the parser Monty itself runs first) and walks
-every statement body, so `pass; import re`, `if x: import re` or an import inside
-a function, class, loop or `try` is caught. Strings and comments that mention
-`re` are not. A line-prefix scan used before 2026-11-05 missed all of these.
-Monty 0.0.19 has no `__import__`, `importlib`, `exec`, `eval` or `compile`, so
-`import`/`from` statements are the only module loaders; a unit test pins that.
-`ruff_python_parser`/`ruff_python_ast` are pinned to Monty's bundled 0.0.3 and
-ignored by Dependabot, so the gate and the executor parse the same grammar.
-Source is charged to the execution budget before the gate parses it.
+`re` is enabled (decision 2026-11-05). It was disabled on 0.0.19 because one
+native match bypassed Monty's time checks (ReDoS). In 1.4, `re` runs plain
+patterns on the linear-time `regex` engine and only backreference/lookaround
+patterns on `fancy-regex`, whose backtrack cap raises `re.PatternError`
+instead of spinning; a Python loop of matches is stopped by the time limit.
+`exec`/`eval` exist in 1.4, so an import gate could not be complete anyway.
+`python_security_tests::regex_*` pins the bounds (seven classic ReDoS
+patterns, a match loop that must exit 124, and a huge pattern).
 
 ### Integration with Bashkit
 

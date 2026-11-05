@@ -1,0 +1,694 @@
+//! Collection building and unpacking helpers for the VM.
+
+use super::VM;
+use crate::{
+    defer_drop, defer_drop_mut,
+    exception_private::{ExcType, ExcTypeExt, RunError, RunResult, SimpleException},
+    heap::{DropGuard, DropWithContext, Heap, HeapData, HeapReadOutput},
+    intern::StringId,
+    types::{
+        Dict, List, PyTrait, Set, Slice, allocate_tuple, collect_iterable, collect_iterable_bounded,
+        instance::instance_defines_iter, slice::value_to_option_i64,
+    },
+    value::{VALUE_SIZE, Value},
+};
+
+impl VM<'_> {
+    /// Builds a list from the top n stack values.
+    pub(super) fn build_list(&mut self, count: usize) {
+        let items = self.pop_n(count);
+        let list = List::new(items);
+        let heap_id = self.heap.allocate(HeapData::List(list));
+        self.push(Value::Ref(heap_id));
+    }
+
+    /// Builds a tuple from the top n stack values.
+    ///
+    /// Uses the empty tuple singleton when count is 0, and SmallVec
+    /// optimization for small tuples (≤2 elements).
+    pub(super) fn build_tuple(&mut self, count: usize) {
+        let items = self.pop_n(count);
+        let value = allocate_tuple(items.into(), self.heap);
+        self.push(value);
+    }
+
+    /// Builds a dict from the top 2n stack values (key/value pairs).
+    ///
+    /// An insertion can raise — the key may be unhashable, or a colliding
+    /// `__eq__` may raise — so both the pairs still on the way in and the
+    /// half-built dict ride in guards until the dict reaches the heap.
+    pub(super) fn build_dict(&mut self, count: usize) -> Result<(), RunError> {
+        let this = self;
+        let items = this.pop_n(count * 2).into_iter();
+        defer_drop_mut!(items, this);
+        let mut dict_guard = DropGuard::new(Dict::new(), this);
+        loop {
+            let (dict, this) = dict_guard.as_parts_mut();
+            let (Some(key), Some(value)) = (items.next(), items.next()) else {
+                break;
+            };
+            // A duplicate literal key (`{k: 1, k: 2}`) replaces the earlier
+            // value, which must be dropped or its refcount leaks.
+            if let Some(old_value) = dict.set(key, value, this)? {
+                old_value.drop_with(this);
+            }
+        }
+        let (dict, this) = dict_guard.into_parts();
+        let heap_id = this.heap.allocate(HeapData::Dict(dict));
+        this.push(Value::Ref(heap_id));
+        Ok(())
+    }
+
+    /// Builds a set from the top n stack values.
+    ///
+    /// An insertion can raise — the item may be unhashable, or a colliding
+    /// `__eq__` may raise — so both the items still on the way in and the
+    /// half-built set ride in guards until the set reaches the heap.
+    pub(super) fn build_set(&mut self, count: usize) -> Result<(), RunError> {
+        let this = self;
+        let items = this.pop_n(count).into_iter();
+        defer_drop_mut!(items, this);
+        let mut set_guard = DropGuard::new(Set::new(), this);
+        loop {
+            let (set, this) = set_guard.as_parts_mut();
+            let Some(item) = items.next() else {
+                break;
+            };
+            set.add(item, this)?;
+        }
+        let (set, this) = set_guard.into_parts();
+        let heap_id = this.heap.allocate(HeapData::Set(set));
+        this.push(Value::Ref(heap_id));
+        Ok(())
+    }
+
+    /// Builds a slice object from the top 3 stack values.
+    ///
+    /// Stack: [start, stop, step] -> [slice]
+    /// Each value can be None (for default) or an integer.
+    pub(super) fn build_slice(&mut self) -> Result<(), RunError> {
+        let this = self;
+
+        let step_val = this.pop();
+        defer_drop!(step_val, this);
+        let stop_val = this.pop();
+        defer_drop!(stop_val, this);
+        let start_val = this.pop();
+        defer_drop!(start_val, this);
+
+        let start = value_to_option_i64(start_val, this)?;
+        let stop = value_to_option_i64(stop_val, this)?;
+        let step = value_to_option_i64(step_val, this)?;
+
+        let slice = Slice::new(start, stop, step);
+        let heap_id = this.heap.allocate(HeapData::Slice(slice));
+        this.push(Value::Ref(heap_id));
+        Ok(())
+    }
+
+    /// Extends a list with items from an iterable, for PEP 448 `*expr` literal unpacking.
+    ///
+    /// Stack: [list, iterable] -> [list]
+    /// Pops the iterable, extends the list in place, leaves list on stack.
+    ///
+    /// Raises `TypeError("Value after * must be an iterable, not {type}")` for non-iterables,
+    /// matching CPython's message for list/tuple literal unpacking (`[*x]`, `(*x,)`).
+    ///
+    /// Uses `DropGuard` for `list_ref` because it is pushed back on success,
+    /// and `defer_drop!` for `iterable` because it is always dropped.
+    pub(super) fn list_extend(&mut self) -> Result<(), RunError> {
+        let this = self;
+
+        let iterable = this.pop();
+        defer_drop!(iterable, this);
+        // DropGuard for list_ref: pushed back on success via into_parts, dropped on error
+        let mut list_ref_guard = DropGuard::new(this.pop(), this);
+        let (list_ref, this) = list_ref_guard.as_parts();
+
+        if !iterable.py_is_iterable(this) {
+            let type_ = iterable.py_type_name(this);
+            return Err(if opts_out_of_iter(iterable, this) {
+                ExcType::type_error_not_iterable(&type_)
+            } else {
+                ExcType::type_error_value_after_star(&type_)
+            });
+        }
+
+        {
+            let copied_items: Vec<Value> = collect_iterable(iterable, this)?;
+            defer_drop_mut!(copied_items, this);
+
+            // Check if any copied items are refs (for updating contains_refs)
+            let has_refs = copied_items.iter().any(|v| matches!(v, Value::Ref(_)));
+
+            // Extend the list
+            if let Value::Ref(id) = list_ref {
+                let HeapReadOutput::List(list) = this.heap.read(*id) else {
+                    panic!("list_extend: expected List on heap");
+                };
+                let list = list.get_mut(this.heap);
+                // Update contains_refs before extending
+                if has_refs {
+                    list.set_contains_refs();
+                }
+                list.as_vec_mut().append(copied_items);
+            }
+        }
+
+        // Push list_ref back on the stack (don't drop it)
+        let (list_ref, this) = list_ref_guard.into_parts();
+        this.push(list_ref);
+        Ok(())
+    }
+
+    /// Converts a list to a tuple.
+    ///
+    /// Stack: [list] -> [tuple]
+    pub(super) fn list_to_tuple(&mut self) -> Result<(), RunError> {
+        let this = self;
+
+        let list_ref = this.pop();
+        defer_drop!(list_ref, this);
+
+        let Value::Ref(id) = list_ref else {
+            return Err(RunError::internal("ListToTuple: expected list ref"));
+        };
+        let HeapData::List(list) = this.heap.get(*id) else {
+            return Err(RunError::internal("ListToTuple: expected list"));
+        };
+        let items = list.as_slice().iter().map(|v| v.clone_with_heap(this.heap)).collect();
+        let value = allocate_tuple(items, this.heap);
+        this.push(value);
+        Ok(())
+    }
+
+    /// Merges a mapping into a dict for **kwargs unpacking.
+    ///
+    /// Stack: [dict, mapping] -> [dict]
+    /// Validates that mapping is a dict and that keys are strings.
+    ///
+    /// Uses `defer_drop!` for `mapping` (always dropped) and `DropGuard` for
+    /// `dict_ref` (pushed back on success, dropped on error).
+    pub(super) fn dict_merge(&mut self, func_name_id: u16) -> Result<(), RunError> {
+        let func_name = func_name_for_dict_merge(func_name_id, self);
+        self.dict_merge_inner(&func_name)
+    }
+
+    /// Method-call variant of [`Self::dict_merge`]. Qualifies the error wording
+    /// with the receiver's Python type by peeking the stack — when this op
+    /// runs the receiver sits 4 slots below TOS (`[receiver, args_tuple,
+    /// kwargs_dict, mapping]`), since the call body hasn't issued any pops
+    /// yet. Produces e.g. `list.sort() got multiple values for keyword
+    /// argument 'key'` to match CPython.
+    pub(super) fn method_dict_merge(&mut self, func_name_id: u16) -> Result<(), RunError> {
+        let func_name = if func_name_id == 0xFFFF {
+            "<unknown>".to_string()
+        } else {
+            let method = self.interns.get_str(StringId::from_index(func_name_id)).to_string();
+            let recv_type = self.stack[self.stack.len() - 4].py_type_name(self);
+            format!("{recv_type}.{method}")
+        };
+        self.dict_merge_inner(&func_name)
+    }
+
+    /// Shared body of [`Self::dict_merge`] and [`Self::method_dict_merge`] —
+    /// only the `func_name` used in error wording differs between them.
+    fn dict_merge_inner(&mut self, func_name: &str) -> Result<(), RunError> {
+        let this = self;
+
+        let mapping = this.pop();
+        defer_drop!(mapping, this);
+        // DropGuard for dict_ref: pushed back on success via into_parts, dropped on error
+        let mut dict_ref_guard = DropGuard::new(this.pop(), this);
+        let (dict_ref, this) = dict_ref_guard.as_parts();
+
+        // Check that mapping is a dict (Ref pointing to Dict) and clone key-value pairs
+        let copied_items: Vec<(Value, Value)> = if let Value::Ref(id) = mapping {
+            if let HeapData::Dict(dict) = this.heap.get(*id) {
+                dict.iter()
+                    .map(|(k, v)| (k.clone_with_heap(this), v.clone_with_heap(this)))
+                    .collect()
+            } else {
+                let type_name = mapping.py_type_name(this).to_string();
+                return Err(ExcType::type_error_kwargs_not_mapping(func_name, &type_name));
+            }
+        } else {
+            let type_name = mapping.py_type_name(this).to_string();
+            return Err(ExcType::type_error_kwargs_not_mapping(func_name, &type_name));
+        };
+
+        // Merge into the dict, validating string keys
+        let dict_id = if let Value::Ref(id) = dict_ref {
+            *id
+        } else {
+            return Err(RunError::internal("DictMerge: expected dict ref"));
+        };
+
+        {
+            let copied_items = copied_items.into_iter();
+            defer_drop_mut!(copied_items, this);
+            for (key, value) in copied_items {
+                // Validate key is a string (InternString or heap-allocated Str)
+                let is_string = match &key {
+                    Value::InternString(_) => true,
+                    Value::Ref(id) => matches!(this.heap.get(*id), HeapData::Str(_)),
+                    _ => false,
+                };
+                if !is_string {
+                    key.drop_with(this);
+                    value.drop_with(this);
+                    return Err(ExcType::type_error_kwargs_nonstring_key());
+                }
+
+                // Get the string key for error messages (needed before moving key into closure)
+                let key_str = match &key {
+                    Value::InternString(id) => this.interns.get_str(*id).to_string(),
+                    Value::Ref(id) => {
+                        if let HeapData::Str(s) = this.heap.get(*id) {
+                            s.as_str().to_string()
+                        } else {
+                            "<unknown>".to_string()
+                        }
+                    }
+                    _ => "<unknown>".to_string(),
+                };
+
+                let HeapReadOutput::Dict(dict) = this.heap.read(dict_id) else {
+                    unreachable!("DictMerge: entry is not a Dict")
+                };
+
+                if let Some(old_value) = dict.set(key, value, this)? {
+                    old_value.drop_with(this);
+                    return Err(ExcType::type_error_multiple_values(func_name, &key_str));
+                }
+            }
+        }
+
+        // Push dict_ref back on the stack (don't drop it)
+        let (dict_ref, this) = dict_ref_guard.into_parts();
+        this.push(dict_ref);
+        Ok(())
+    }
+
+    // ========================================================================
+    // PEP 448 Literal Building
+    // ========================================================================
+
+    /// Silently merges a mapping into the dict literal at `depth` on the stack.
+    ///
+    /// Used for `{**x, ...}` dict literals where later keys silently overwrite
+    /// earlier ones (unlike [`dict_merge`] which raises `TypeError` on duplicate keys
+    /// and is used for function-call `**kwargs`).
+    ///
+    /// Stack (depth = 0): `[..., dict, mapping]` → `[..., dict]`
+    ///
+    /// # Errors
+    ///
+    /// Returns `TypeError: '{type}' object is not a mapping` if the TOS is not a dict.
+    pub(super) fn dict_update(&mut self, depth: usize) -> Result<(), RunError> {
+        let this = self;
+
+        let mapping = this.pop();
+        defer_drop!(mapping, this);
+
+        // Clone all key/value pairs out of the mapping before mutating the target dict
+        let copied_items: Vec<(Value, Value)> = if let Value::Ref(id) = mapping {
+            if let HeapData::Dict(dict) = this.heap.get(*id) {
+                dict.iter()
+                    .map(|(k, v)| (k.clone_with_heap(this), v.clone_with_heap(this)))
+                    .collect()
+            } else {
+                let type_ = mapping.py_type_name(this);
+                return Err(ExcType::type_error_not_mapping(&type_));
+            }
+        } else {
+            let type_ = mapping.py_type_name(this);
+            return Err(ExcType::type_error_not_mapping(&type_));
+        };
+
+        // The target dict sits at `depth` positions below TOS (which is now gone after pop)
+        let stack_len = this.stack.len();
+        let dict_pos = stack_len - 1 - depth;
+        // SAFETY: the compiler always emits BuildDict before DictUpdate, so the
+        // target is always a Value::Ref.  This is a VM invariant: reaching this else
+        // arm means a compiler bug.
+        let Value::Ref(dict_id) = this.stack[dict_pos] else {
+            unreachable!("DictUpdate: target is always a Ref — compiler invariant")
+        };
+
+        let copied_items = copied_items.into_iter();
+        defer_drop_mut!(copied_items, this);
+        for (key, value) in copied_items {
+            let HeapReadOutput::Dict(dict) = this.heap.read(dict_id) else {
+                unreachable!("DictUpdate: heap entry is always a Dict — compiler invariant")
+            };
+            let old = dict.set(key, value, this)?;
+            // Silently drop any old value — PEP 448 dict literals allow duplicate keys
+            if let Some(old_val) = old {
+                old_val.drop_with(this);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Extends a set literal with all items from an iterable.
+    ///
+    /// Used for `{*x, ...}` set literals (PEP 448). Follows the same item-copying
+    /// pattern as [`list_extend`]; raises `TypeError` for non-iterable sources.
+    ///
+    /// Stack (depth = 0): `[..., set, iterable]` → `[..., set]`
+    ///
+    /// # Errors
+    ///
+    /// Returns `TypeError: '{type}' object is not iterable` if TOS is not iterable.
+    pub(super) fn set_extend(&mut self, depth: usize) -> Result<(), RunError> {
+        let this = self;
+
+        let iterable = this.pop();
+        defer_drop!(iterable, this);
+
+        // See `list_extend`: drained generically, with only the message differing.
+        if !iterable.py_is_iterable(this) {
+            let type_ = iterable.py_type_name(this);
+            return Err(ExcType::type_error_not_iterable(&type_));
+        }
+        let copied_items: Vec<Value> = collect_iterable(iterable, this)?;
+
+        // The target set sits at `depth` positions below TOS (which is now gone after pop)
+        let stack_len = this.stack.len();
+        let set_pos = stack_len - 1 - depth;
+        // SAFETY: the compiler always emits BuildSet before SetExtend, so the
+        // target is always a Value::Ref.  This is a VM invariant: reaching this else
+        // arm means a compiler bug.
+        let Value::Ref(set_id) = this.stack[set_pos] else {
+            unreachable!("SetExtend: target is always a Ref — compiler invariant")
+        };
+
+        let copied_items = copied_items.into_iter();
+        defer_drop_mut!(copied_items, this);
+        for item in copied_items {
+            let HeapReadOutput::Set(set) = this.heap.read(set_id) else {
+                unreachable!("SetExtend: heap entry is always a Set — compiler invariant")
+            };
+            set.add(item, this)?;
+        }
+
+        Ok(())
+    }
+
+    // ========================================================================
+    // Comprehension Building
+    // ========================================================================
+
+    /// Appends TOS to list for comprehension.
+    ///
+    /// Stack: [..., list, iter1, ..., iterN, value] -> [..., list, iter1, ..., iterN]
+    /// The `depth` parameter is the number of iterators between the list and the value.
+    /// List is at stack position: len - 2 - depth (0-indexed from bottom).
+    pub(super) fn list_append(&mut self, depth: usize) -> Result<(), RunError> {
+        let value = self.pop();
+        let stack_len = self.stack.len();
+        let list_pos = stack_len - 1 - depth;
+
+        // Get the list reference
+        let Value::Ref(list_id) = self.stack[list_pos] else {
+            value.drop_with(self);
+            return Err(RunError::internal("ListAppend: expected list ref on stack"));
+        };
+
+        let HeapReadOutput::List(list) = self.heap.read(list_id) else {
+            value.drop_with(self);
+            return Err(RunError::internal("ListAppend: expected list on heap"));
+        };
+        list.append(self, value)
+    }
+
+    /// Adds TOS to set for comprehension.
+    ///
+    /// Stack: [..., set, iter1, ..., iterN, value] -> [..., set, iter1, ..., iterN]
+    /// The `depth` parameter is the number of iterators between the set and the value.
+    /// May raise TypeError if value is unhashable.
+    pub(super) fn set_add(&mut self, depth: usize) -> Result<(), RunError> {
+        let value = self.pop();
+        let stack_len = self.stack.len();
+        let set_pos = stack_len - 1 - depth;
+
+        // Get the set reference
+        let Value::Ref(set_id) = self.stack[set_pos] else {
+            value.drop_with(self);
+            return Err(RunError::internal("SetAdd: expected set ref on stack"));
+        };
+
+        let HeapReadOutput::Set(set) = self.heap.read(set_id) else {
+            value.drop_with(self);
+            return Err(RunError::internal("SetAdd: expected set on heap"));
+        };
+        set.add(value, self)?;
+
+        Ok(())
+    }
+
+    /// Sets dict[key] = value for comprehension.
+    ///
+    /// Stack: [..., dict, iter1, ..., iterN, key, value] -> [..., dict, iter1, ..., iterN]
+    /// The `depth` parameter is the number of iterators between the dict and the key-value pair.
+    /// May raise TypeError if key is unhashable.
+    pub(super) fn dict_set_item(&mut self, depth: usize) -> Result<(), RunError> {
+        let value = self.pop();
+        let key = self.pop();
+        let stack_len = self.stack.len();
+        let dict_pos = stack_len - 1 - depth;
+
+        // Get the dict reference
+        let Value::Ref(dict_id) = self.stack[dict_pos] else {
+            key.drop_with(self);
+            value.drop_with(self);
+            return Err(RunError::internal("DictSetItem: expected dict ref on stack"));
+        };
+
+        let HeapReadOutput::Dict(dict) = self.heap.read(dict_id) else {
+            key.drop_with(self);
+            value.drop_with(self);
+            return Err(RunError::internal("DictSetItem: expected dict on heap"));
+        };
+        let old_value = dict.set(key, value, self)?;
+
+        // Drop old value if key already existed
+        if let Some(old) = old_value {
+            old.drop_with(self);
+        }
+
+        Ok(())
+    }
+
+    // ========================================================================
+    // Unpacking
+    // ========================================================================
+
+    /// Unpacks an iterable into exactly `count` values on the stack.
+    ///
+    /// Accepts anything iterable, not a fixed set of sequence types — a `str`
+    /// unpacks to its characters, a `dict` to its keys.
+    pub(super) fn unpack_sequence(&mut self, count: usize) -> Result<(), RunError> {
+        let this = self;
+
+        let value = this.pop();
+        defer_drop!(value, this);
+
+        // Fast path: tuple, list, push onto stack without a temporary vector.
+        if let Some(items) = exact_sequence_items(value, this.heap) {
+            if items.len() != count {
+                return Err(ExcType::unpack_size_error(count, items.len()));
+            }
+            if count > this.stack.capacity() - this.stack.len() {
+                let capacity = this.stack.len().saturating_add(count);
+                this.heap
+                    .tracker
+                    .check_allocation(capacity.saturating_mul(VALUE_SIZE))?;
+                this.stack.reserve_exact(count);
+            }
+            this.stack
+                .extend(items.iter().rev().map(|item| item.clone_with_heap(this.heap)));
+            return Ok(());
+        }
+        let items = unpack_exact(value, count, this)?;
+        // Push items in reverse order so first item is on top
+        for item in items.into_iter().rev() {
+            this.push(item);
+        }
+        Ok(())
+    }
+
+    /// Unpacks a sequence with a starred target.
+    ///
+    /// `before` is the number of targets before the star, `after` is the number after.
+    /// The starred target collects all middle items into a list.
+    ///
+    /// For example, `first, *rest, last = [1, 2, 3, 4, 5]` has before=1, after=1.
+    /// After execution, the stack has: first (top), rest_list, last.
+    pub(super) fn unpack_ex(&mut self, before: usize, after: usize) -> Result<(), RunError> {
+        let this = self;
+
+        let value = this.pop();
+        defer_drop_mut!(value, this);
+
+        let min_items = before + after;
+
+        if !value.py_is_iterable(this) {
+            return Err(unpack_type_error(value, this));
+        }
+        // Drained in full: a starred target consumes everything, so unlike
+        // `unpack_sequence` there is no bound to stop at — and therefore always
+        // a true total to report when there are too few values.
+        let mut items_guard = DropGuard::new(collect_iterable(value, this)?, this);
+        let (items, _) = items_guard.as_parts();
+        if items.len() < min_items {
+            return Err(unpack_ex_too_few_error(min_items, items.len()));
+        }
+
+        let (items, this) = items_guard.into_parts();
+        this.push_unpack_ex_results(items, before, after);
+        Ok(())
+    }
+
+    /// Helper to push unpacked items with starred target onto the stack.
+    ///
+    /// Takes a slice of items and creates the middle list.
+    fn push_unpack_ex_results(&mut self, items: Vec<Value>, before: usize, after: usize) {
+        let this = self;
+
+        defer_drop_mut!(items, this);
+
+        // Items get pushed onto the stack backwards, so a lot of .rev() calls
+
+        for item in items.drain(items.len() - after..).rev() {
+            this.push(item);
+        }
+
+        // Middle items as a list (starred target)
+        let middle_list: Vec<Value> = items.drain(before..).collect();
+        let list_id = this.heap.allocate(HeapData::List(List::new(middle_list)));
+        this.push(Value::Ref(list_id));
+
+        // Before items
+        for item in items.drain(..).rev() {
+            this.push(item);
+        }
+    }
+}
+
+/// Resolves the function-name string used by `DictMerge` error wording.
+/// `0xFFFF` is the compiler sentinel for "unknown caller".
+fn func_name_for_dict_merge(func_name_id: u16, vm: &VM<'_>) -> String {
+    if func_name_id == 0xFFFF {
+        "<unknown>".to_string()
+    } else {
+        vm.interns.get_str(StringId::from_index(func_name_id)).to_string()
+    }
+}
+
+/// Creates the ValueError for star unpacking when there are too few values.
+fn unpack_ex_too_few_error(min_needed: usize, actual: usize) -> RunError {
+    let message = format!("not enough values to unpack (expected at least {min_needed}, got {actual})");
+    SimpleException::new_msg(ExcType::ValueError, message).into()
+}
+
+/// `a, b, c = value` as owned items: exactly `count` of them, with CPython's
+/// unpack errors. Shared by `UNPACK_SEQUENCE` and native code that mirrors a
+/// Python unpack (`random.setstate`). Consumes at most `count + 1` items, so an
+/// endless iterable still fails.
+pub(crate) fn unpack_exact(value: &Value, count: usize, vm: &mut VM<'_>) -> RunResult<Vec<Value>> {
+    // Fast path: tuple, list; unpack without iterator.
+    if let Some(items) = exact_sequence_items(value, vm.heap) {
+        if items.len() != count {
+            return Err(ExcType::unpack_size_error(count, items.len()));
+        }
+        vm.heap.tracker.check_allocation(count.saturating_mul(VALUE_SIZE))?;
+        return Ok(items.iter().map(|item| item.clone_with_heap(vm.heap)).collect());
+    }
+    if !value.py_is_iterable(vm) {
+        return Err(unpack_type_error(value, vm));
+    }
+    // Dicts also report their total size in the "too many" error; other
+    // iterables stop at the first surplus item without reporting a total.
+    let total = match value {
+        Value::Ref(id) => match vm.heap.get(*id) {
+            HeapData::Dict(dict) => Some(dict.len()),
+            _ => None,
+        },
+        _ => None,
+    };
+    // Pull one past `count` so a too-long iterable is detected without
+    // draining it — CPython stops consuming there too, which is why every
+    // other type has no total to report.
+    let items = collect_iterable_bounded(value, count + 1, vm)?;
+    if items.len() == count {
+        Ok(items)
+    } else {
+        let err = if items.len() > count {
+            match total {
+                Some(total) => ExcType::unpack_size_error(count, total),
+                None => unpack_too_many_unknown_error(count),
+            }
+        } else {
+            // Short of `count`, so the iterable was drained and its true
+            // length is known whether or not the type could report one.
+            ExcType::unpack_size_error(count, items.len())
+        };
+        items.drop_with(vm);
+        Err(err)
+    }
+}
+
+/// Returns borrowed items for built-in tuples and lists so unpacking can bypass the iterator protocol.
+fn exact_sequence_items<'a>(value: &Value, heap: &'a Heap) -> Option<&'a [Value]> {
+    let Value::Ref(id) = value else {
+        return None;
+    };
+    match heap.get(*id) {
+        HeapData::Tuple(tuple) => Some(tuple.as_slice()),
+        HeapData::List(list) => Some(list.as_slice()),
+        _ => None,
+    }
+}
+
+/// Creates the "too many values" ValueError when the total is unknown.
+///
+/// Unpacking an iterator stops at the first surplus item, so unlike
+/// [`ExcTypeExt::unpack_size_error`] there is no total to report — matching CPython.
+fn unpack_too_many_unknown_error(expected: usize) -> RunError {
+    SimpleException::new_msg(
+        ExcType::ValueError,
+        format!("too many values to unpack (expected {expected})"),
+    )
+    .into()
+}
+
+/// Creates a TypeError for attempting to unpack a non-iterable value.
+///
+/// Takes the value rather than its name because the wording depends on *why* it
+/// is not iterable — see [`opts_out_of_iter`].
+fn unpack_type_error(value: &Value, vm: &VM<'_>) -> RunError {
+    let type_name = value.py_type_name(vm);
+    if opts_out_of_iter(value, vm) {
+        ExcType::type_error_not_iterable(&type_name)
+    } else {
+        SimpleException::new_msg(
+            ExcType::TypeError,
+            format!("cannot unpack non-iterable {type_name} object"),
+        )
+        .into()
+    }
+}
+
+/// Whether a value already known to be non-iterable owes that to `__iter__ =
+/// None`, and so keeps the plain "not iterable" message at an unpacking site.
+///
+/// CPython substitutes site-specific wording ("cannot unpack non-iterable ...",
+/// "Value after * must be an iterable ...") only when the type has no `tp_iter`
+/// slot at all; a class opting out with `__iter__ = None` still fills the slot,
+/// so `slot_tp_iter`'s own error survives.
+fn opts_out_of_iter(value: &Value, vm: &VM<'_>) -> bool {
+    matches!(value, Value::Ref(id) if instance_defines_iter(*id, vm))
+}

@@ -59,35 +59,49 @@ fn number(value: f64) -> Result<Value> {
 }
 
 /// Encode a Python value as JSON, rejecting unsupported objects.
+/// TRIAL PORT (monty 1.4): read through `ObjectRef` accessors.
 #[cfg(feature = "python")]
 pub fn encode_python(value: &crate::MontyObject) -> Result<Value> {
-    fn encode(value: &crate::MontyObject, depth: usize) -> Result<Value> {
-        use crate::MontyObject as M;
+    // Security decision: Monty values are graphs with shared sub-objects, so a
+    // 31-node value can expand to 2^30 JSON leaves. Cap nodes, not only depth.
+    const MAX_NODES: usize = 100_000;
+    fn encode(
+        value: monty_types::ObjectRef<'_>,
+        depth: usize,
+        visited: &mut usize,
+    ) -> Result<Value> {
         depth_guard(depth)?;
-        Ok(match value {
-            M::None => Value::Null,
-            M::Bool(v) => Value::Bool(*v),
-            M::Int(v) => Value::from(*v),
-            M::BigInt(v) => Value::from(v.to_string().parse::<i64>().map_err(|_| {
+        *visited += 1;
+        if *visited > MAX_NODES {
+            return Err(Error::Execution(
+                "Python host value has too many elements".into(),
+            ));
+        }
+        Ok(match value.type_name() {
+            "NoneType" => Value::Null,
+            "bool" => Value::Bool(value.as_bool().unwrap_or(false)),
+            "int" => Value::from(value.as_int().ok_or_else(|| {
                 Error::Execution("host integers must fit in signed 64 bits".into())
             })?),
-            M::Float(v) => number(*v)?,
-            M::String(v) => Value::String(v.clone()),
-            M::List(values) | M::Tuple(values) => Value::Array(
-                values
-                    .iter()
-                    .map(|v| encode(v, depth + 1))
+            "float" => number(value.as_float().unwrap_or(f64::NAN))?,
+            "str" => Value::String(value.as_str().unwrap_or_default().to_owned()),
+            "list" | "tuple" => Value::Array(
+                value
+                    .items()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|v| encode(v, depth + 1, visited))
                     .collect::<Result<_>>()?,
             ),
-            M::Dict(values) => {
+            "dict" => {
                 let mut object = serde_json::Map::new();
-                for (key, value) in values {
-                    let M::String(key) = key else {
+                for (key, value) in value.pairs().unwrap_or_default() {
+                    let Some(key) = key.as_str() else {
                         return Err(Error::Execution(
                             "host dictionaries require string keys".into(),
                         ));
                     };
-                    object.insert(key.clone(), encode(value, depth + 1)?);
+                    object.insert(key.to_owned(), encode(value, depth + 1, visited)?);
                 }
                 Value::Object(object)
             }
@@ -98,7 +112,7 @@ pub fn encode_python(value: &crate::MontyObject) -> Result<Value> {
             }
         })
     }
-    encode(value, 0)
+    encode(value.as_ref(), 0, &mut 0)
 }
 
 /// Decode JSON into the Python host-function value subset.
@@ -107,19 +121,18 @@ pub fn decode_python(value: &Value) -> Result<crate::MontyObject> {
     fn decode(value: &Value) -> crate::MontyObject {
         use crate::MontyObject as M;
         match value {
-            Value::Null => M::None,
-            Value::Bool(v) => M::Bool(*v),
+            Value::Null => M::none(),
+            Value::Bool(v) => M::bool(*v),
             Value::Number(v) => match v.as_i64() {
-                Some(v) => M::Int(v),
-                None => M::Float(v.as_f64().expect("validated JSON number")),
+                Some(v) => M::int(v),
+                None => M::float(v.as_f64().expect("validated JSON number")),
             },
-            Value::String(v) => M::String(v.clone()),
-            Value::Array(values) => M::List(values.iter().map(decode).collect()),
+            Value::String(v) => M::string(v.clone()),
+            Value::Array(values) => M::list(values.iter().map(decode)),
             Value::Object(values) => M::dict(
                 values
                     .iter()
-                    .map(|(k, v)| (M::String(k.clone()), decode(v)))
-                    .collect::<Vec<_>>(),
+                    .map(|(k, v)| (M::string(k.clone()), decode(v))),
             ),
         }
     }
@@ -216,9 +229,9 @@ mod tests {
             encode_python(&decode_python(&value).unwrap()).unwrap(),
             value
         );
-        assert!(encode_python(&M::Float(f64::NAN)).is_err());
-        assert!(encode_python(&M::Bytes(vec![1])).is_err());
-        assert!(encode_python(&M::dict(vec![(M::Int(1), M::None)])).is_err());
+        assert!(encode_python(&M::float(f64::NAN)).is_err());
+        assert!(encode_python(&M::bytes(vec![1])).is_err());
+        assert!(encode_python(&M::dict(vec![(M::int(1), M::none())])).is_err());
     }
 
     #[cfg(feature = "typescript")]

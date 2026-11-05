@@ -119,46 +119,21 @@ unit-prefix = "0.5"
 os_display = "0.1.3"
 
 # Embedded Python interpreter (optional).
-# Registry dep since monty 0.0.19 — the first version published to crates.io.
-# Keeps `python` usable for downstream crates and lets the publish workflow
-# ship the feature instead of stripping it.
 #
-# Important decision (security): held at 0.0.19. Cargo treats `0.0.z` as its own
-# compatibility range (`^0.0.19` == `>=0.0.19, <0.0.20`), so this is already an
-# exact pin; the matching `ignore` entries in .github/dependabot.yml stop the
-# bump PRs from being regenerated.
-#
-# 0.0.20–0.0.22 move `max_memory` enforcement from host-side accounting to a probe of
-# the `LIVE_MEMORY`/`BASELINE_MEMORY` globals, which only the separate
-# `monty-alloc` crate writes — and only when installed as the process-wide
-# global allocator. Bashkit is an embeddable library (and bashkit-python is a
-# CPython extension module), so it cannot impose a global allocator on its
-# hosts. Without one, `probe_memory()` is `0.saturating_sub(usize::MAX)` == 0
-# and the Python sandbox's memory ceiling silently stops being enforced.
-# These versions also remove the ResourceTracker trait used for shared work
-# and cancellation checkpoints; charging only around start/resume loses that
-# enforcement during an uninterrupted VM loop.
-# See knowledge/runtimes/python-builtin.md § Upgrade blocker.
-monty = { version = "=0.0.19", optional = true }
+# Important decision (security): Monty 1.x enforces `max_memory` through a
+# process-wide allocator counter and has no in-VM host checkpoint. Bashkit runs
+# many tenants in one process, so it uses forks published as `bashkit-monty` and
+# `bashkit-monty-types` (crates/bashkit-monty*) with two hooks added
+# (`set_memory_probe`, pydantic/monty#740, and `set_checkpoint_hook`) plus its
+# own per-VM `MeteredAllocator` (src/python_meter.rs). The lib names stay
+# `monty`/`monty_types`; see knowledge/runtimes/python-builtin.md.
+monty = { package = "bashkit-monty", path = "../bashkit-monty", version = "0.20.3", optional = true }
+monty-types = { package = "bashkit-monty-types", path = "../bashkit-monty-types", version = "0.20.3", optional = true }
 
 # Real CPython 3.14 as a WASI guest, precompiled to Pulley (cpython feature).
 # See knowledge/runtimes/cpython-wasm.md.
 bashkit-cpython-wasm = { path = "../bashkit-cpython-wasm", version = "0.20.3", optional = true }
 wasmtime = { workspace = true, optional = true, features = ["pooling-allocator"] }
-monty-types = { version = "=0.0.19", optional = true }
-# Monty's ruff AST uses compact_str 0.9; get-size2 >=0.10.2 only implements
-# GetSize for compact_str 0.10. Enforce downstream too, not only in Cargo.lock.
-#
-# No bashkit source uses this crate. It is declared solely to hold the whole
-# graph at 0.10.1 — bumping it releases ruff's copy to float to 0.10.3 and
-# breaks the `GetSize` derive (#2381). Dependabot ignores it for that reason;
-# keep the ignore in .github/dependabot.yml in step with this pin.
-get-size2 = { version = "=0.10.1", optional = true }
-# Same parser Monty uses (already in the tree through monty =0.0.19). Bashkit
-# parses user code with it to find `import` statements; see
-# `is_disabled_import` in builtins/python.rs. Keep in step with Monty's pin.
-ruff_python_parser = { version = "=0.0.3", optional = true }
-ruff_python_ast = { version = "=0.0.3", optional = true }
 
 # Embedded TypeScript interpreter (optional)
 
@@ -266,13 +241,7 @@ git = []
 ssh = ["russh"]
 # Enable python/python3 builtins via embedded Monty interpreter
 # Usage: cargo build --features python
-python = [
-    "dep:monty",
-    "dep:monty-types",
-    "dep:get-size2",
-    "dep:ruff_python_parser",
-    "dep:ruff_python_ast",
-]
+python = ["dep:monty", "dep:monty-types"]
 # Enable python/python3 builtins via real CPython 3.14 in a WebAssembly sandbox
 # Usage: cargo build --features cpython
 cpython = ["dep:bashkit-cpython-wasm", "dep:wasmtime"]

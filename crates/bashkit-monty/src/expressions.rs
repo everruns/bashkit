@@ -1,0 +1,1110 @@
+#[cfg(test)]
+use strum::IntoEnumIterator;
+
+use crate::{
+    args::{ArgExprs, Signature},
+    builtins::Builtins,
+    fstring::FStringPart,
+    intern::{BytesId, LongIntId, StringId},
+    namespace::NamespaceId,
+    parse::{CodeRange, ParsedSignature, Try},
+    value::{EitherStr, Marker},
+};
+
+/// Indicates which namespace a variable reference belongs to.
+///
+/// This is determined at prepare time based on Python's scoping rules:
+/// - Variables assigned in a function are Local (unless declared `global`)
+/// - Variables only read (not assigned) that exist at module level are Global
+/// - The `global` keyword explicitly marks a variable as Global
+/// - Variables declared `nonlocal` or implicitly captured from enclosing scopes
+///   are accessed through Cells
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub enum NameScope {
+    /// Variable is in the current frame's local namespace (assigned somewhere in this function).
+    ///
+    /// If accessed before assignment, raises `UnboundLocalError`.
+    #[default]
+    #[serde(rename = "L")]
+    Local,
+    /// Variable is in the module-level global namespace.
+    #[serde(rename = "G")]
+    Global,
+    /// Variable accessed through a cell (heap-allocated container).
+    ///
+    /// Used for both:
+    /// - Variables captured from enclosing scopes (free variables)
+    /// - Variables in this function that are captured by nested functions (cell variables)
+    ///
+    /// The namespace slot contains `Value::Ref(cell_id)` pointing to a `HeapData::Cell`.
+    /// Access requires dereferencing through the cell.
+    #[serde(rename = "C")]
+    Cell,
+    /// Comprehension target stored in isolated operand-stack storage.
+    ///
+    /// The namespace ID is a comprehension-local slot ID. The compiler stores
+    /// uncaptured targets directly and gives captured targets a stable cell.
+    #[serde(rename = "V")]
+    CompVar,
+    /// Top-level name of an `eval()` / `exec()` snippet that runs with a locals
+    /// dict or dict globals: resolved by name at runtime through the frame's
+    /// namespace. The namespace ID is the session global slot for the name (a
+    /// scratch slot under dict globals) so the slot-globals tail of the lookup
+    /// reuses the `LoadGlobal` machinery.
+    #[serde(rename = "N")]
+    Name,
+}
+
+/// Identifies where an enclosing scope stores a cell captured by a callable.
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+pub enum CaptureSource {
+    /// Cell reference stored in an ordinary enclosing-frame namespace slot.
+    Namespace(NamespaceId),
+    /// Cell reference stored in an active comprehension's stable stack slot.
+    CompVar(u16),
+}
+
+/// An identifier (variable or function name) with source location and scope information.
+///
+/// The name is stored as a `StringId` which indexes into the string interner.
+/// To get the actual string, look it up in the `Interns` storage.
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+pub struct Identifier {
+    #[serde(rename = "P")]
+    pub position: CodeRange,
+    /// Interned name ID - look up in Interns to get the actual string.
+    #[serde(rename = "N")]
+    pub name_id: StringId,
+    #[serde(rename = "I")]
+    opt_namespace_id: Option<NamespaceId>,
+    /// Which namespace this identifier refers to (determined at prepare time)
+    #[serde(rename = "S")]
+    pub scope: NameScope,
+}
+
+impl Identifier {
+    /// Creates a new identifier with unknown scope (to be resolved during prepare phase).
+    pub fn new(name_id: StringId, position: CodeRange) -> Self {
+        Self {
+            name_id,
+            position,
+            opt_namespace_id: None,
+            scope: NameScope::Local,
+        }
+    }
+
+    /// Creates a new identifier with resolved namespace index and explicit scope.
+    pub fn new_with_scope(name_id: StringId, position: CodeRange, namespace_id: NamespaceId, scope: NameScope) -> Self {
+        Self {
+            name_id,
+            position,
+            opt_namespace_id: Some(namespace_id),
+            scope,
+        }
+    }
+
+    pub fn namespace_id(&self) -> NamespaceId {
+        self.opt_namespace_id
+            .expect("Identifier not prepared with namespace_id")
+    }
+}
+
+/// A dotted-import component and its full path for `ModuleNotFoundError` messages.
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+pub struct Submodule {
+    /// The attribute name (`b`).
+    pub name: StringId,
+    /// The path through this component (`a.b`).
+    pub path: StringId,
+}
+
+/// One entry of an `import` statement, with its dotted components and binding target.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ImportName {
+    /// The top-level module to load (`a` for `import a.b`).
+    pub module_name: StringId,
+    /// The further components of a dotted name, in order.
+    pub submodules: Vec<Submodule>,
+    /// Whether the statement binds the top-level module (`import a.b` binds
+    /// `a`) rather than the last component (`import a.b as x` binds `a.b`).
+    pub binds_top_level: bool,
+    /// The binding target — the alias if provided, otherwise the module name
+    /// (or its top-level package when dotted).
+    /// After the prepare phase, this includes the resolved namespace slot.
+    pub binding: Identifier,
+}
+
+/// Target of a function call expression.
+///
+/// Represents a callable that can be either:
+/// - A builtin function or exception resolved at parse time (`print`, `len`, `ValueError`, etc.)
+/// - A name that will be looked up in the namespace at runtime (for callable variables)
+///
+/// Separate from Value to allow deriving Clone without Value's Clone restrictions.
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+pub enum Callable {
+    /// A builtin function like `print`, `len`, `str`, etc.
+    Builtin(Builtins),
+    /// A name to be looked up in the namespace at runtime (e.g., `x` in `x = len; x('abc')`).
+    Name(Identifier),
+}
+
+/// An item in a list, tuple, or set literal.
+///
+/// PEP 448 allows any number of `*expr` unpack items to appear alongside
+/// regular values in list/tuple/set literals (e.g., `[1, *a, 2]`).
+/// This enum represents either a plain value or an iterable to be unpacked.
+///
+/// Used in `Expr::List`, `Expr::Tuple`, and `Expr::Set` to represent each
+/// element of the literal. When the fast path is taken (no unpack items),
+/// only `Value` variants are present and the compiler emits a single
+/// `BuildList`/`BuildTuple`/`BuildSet` instruction. When any `Unpack` item
+/// is present, the compiler emits `Build*(0)` followed by per-item
+/// `ListAppend`/`SetAdd` and `ListExtend`/`SetExtend` instructions.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub(crate) enum SequenceItem {
+    /// A plain expression value in the literal.
+    Value(ExprLoc),
+    /// An `*expr` unpack — the iterable is expanded in-place.
+    Unpack(ExprLoc),
+}
+
+/// An item in a dict literal.
+///
+/// PEP 448 allows `**expr` unpack items to appear alongside normal key:value
+/// pairs in dict literals (e.g., `{'a': 1, **d, 'b': 2}`). Duplicate keys
+/// from later items silently overwrite earlier ones (unlike `**kwargs` in
+/// function calls, where duplicates raise `TypeError`).
+///
+/// Used in `Expr::Dict`. When no `Unpack` items are present the compiler
+/// emits a single `BuildDict` instruction. Otherwise it emits `BuildDict(0)`
+/// followed by per-item `DictSetItem` and `DictUpdate` instructions.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub(crate) enum DictItem {
+    /// A plain `key: value` pair.
+    Pair(ExprLoc, ExprLoc),
+    /// A `**expr` unpack — the mapping is merged in-place, later keys win.
+    Unpack(ExprLoc),
+}
+
+/// An expression in the AST.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub enum Expr {
+    Literal(Literal),
+    Builtin(Builtins),
+    Name(Identifier),
+    /// Function call expression.
+    ///
+    /// The `callable` can be a Builtin, ExcType (resolved at parse time), or a Name
+    /// that will be looked up in the namespace at runtime.
+    Call {
+        callable: Callable,
+        /// ArgExprs is relatively large and would require Box anyway since it uses ExprLoc, so keep Expr small
+        /// by using a box here
+        args: Box<ArgExprs>,
+    },
+    /// Method call on an object (e.g., `obj.method(args)`).
+    ///
+    /// The object expression is evaluated first, then the method is looked up
+    /// and called with the given arguments. Supports chained attribute access
+    /// like `a.b.c.method()`.
+    AttrCall {
+        object: Box<ExprLoc>,
+        attr: EitherStr,
+        /// same as above for Box
+        args: Box<ArgExprs>,
+    },
+    /// Expression call (e.g., `(lambda x: x + 1)(5)` or `get_func()(args)`).
+    ///
+    /// Calls an arbitrary expression as a callable. The callable expression
+    /// is evaluated first, then called with the given arguments.
+    IndirectCall {
+        /// The expression that evaluates to a callable.
+        callable: Box<ExprLoc>,
+        args: Box<ArgExprs>,
+    },
+    /// Attribute access expression (e.g., `point.x` or `a.b.c`).
+    ///
+    /// Retrieves the value of an attribute from an object. For dataclasses,
+    /// this returns the field value. For other types, this may trigger
+    /// special attribute handling. Supports chained attribute access.
+    AttrGet {
+        object: Box<ExprLoc>,
+        attr: EitherStr,
+    },
+    Op {
+        left: Box<ExprLoc>,
+        op: Operator,
+        right: Box<ExprLoc>,
+    },
+    CmpOp {
+        left: Box<ExprLoc>,
+        op: CmpOperator,
+        right: Box<ExprLoc>,
+    },
+    /// Chain comparison expression: `a < b < c < d`
+    ///
+    /// Unlike single comparisons, chain comparisons evaluate intermediate values
+    /// only once and short-circuit on the first false result. Compiled to bytecode
+    /// that uses stack manipulation (Dup, Rot) rather than temporary variables,
+    /// avoiding namespace pollution.
+    ChainCmp {
+        /// The leftmost operand in the chain.
+        left: Box<ExprLoc>,
+        /// Sequence of (operator, operand) pairs: `[(op1, b), (op2, c), ...]`
+        comparisons: Vec<(CmpOperator, ExprLoc)>,
+    },
+    /// List literal: `[a, *b, c]`
+    ///
+    /// Each element is a `SequenceItem` which may be a plain value or an `*unpack`.
+    /// When no unpack items are present (common case), the compiler emits a single
+    /// `BuildList(N)`. When any unpack is present it emits `BuildList(0)` followed
+    /// by per-item `ListAppend`/`ListExtend` instructions.
+    List(Vec<SequenceItem>),
+    /// Tuple literal: `(a, *b, c)` or `a, *b, c`
+    ///
+    /// Same compilation strategy as `List` but ends with `ListToTuple`.
+    Tuple(Vec<SequenceItem>),
+    Subscript {
+        object: Box<ExprLoc>,
+        index: Box<ExprLoc>,
+    },
+    /// Slice literal expression from `x[start:stop:step]` syntax.
+    ///
+    /// Each component is optional (None means use the default for that position).
+    /// This expression creates a `slice` object when evaluated.
+    Slice {
+        lower: Option<Box<ExprLoc>>,
+        upper: Option<Box<ExprLoc>>,
+        step: Option<Box<ExprLoc>>,
+    },
+    /// Dict literal: `{'a': 1, **d, 'b': 2}`
+    ///
+    /// Each element is a `DictItem` which may be a plain `key: value` pair or a `**unpack`.
+    /// When no unpack items are present the compiler emits `BuildDict(N)`. Otherwise it
+    /// emits `BuildDict(0)` followed by per-item `DictSetItem`/`DictUpdate` instructions.
+    /// Duplicate keys from later items silently overwrite earlier ones.
+    Dict(Vec<DictItem>),
+    /// Set literal expression: `{1, *a, 2}`.
+    ///
+    /// Note: `{}` is always a dict, not an empty set. Use `set()` for empty sets.
+    /// Compilation strategy mirrors `List` but uses `SetAdd`/`SetExtend`.
+    Set(Vec<SequenceItem>),
+    /// Unary `not` expression - evaluates to the boolean negation of the operand's truthiness.
+    Not(Box<ExprLoc>),
+    /// Unary minus expression - negates a numeric value.
+    UnaryMinus(Box<ExprLoc>),
+    /// Unary plus expression - returns value as-is for numbers, converts bools to int.
+    UnaryPlus(Box<ExprLoc>),
+    /// Unary bitwise NOT expression - inverts all bits of an integer.
+    UnaryInvert(Box<ExprLoc>),
+    /// Await expression - suspends execution until the awaited value resolves.
+    ///
+    /// Can await `ExternalFuture`, `Coroutine`, or `GatherFuture` values.
+    /// Raises `TypeError` for non-awaitable values.
+    /// Unlike standard Python, `await` is allowed at module level (like Jupyter notebooks).
+    Await(Box<ExprLoc>),
+    /// F-string expression containing literal and interpolated parts.
+    ///
+    /// At evaluation time, each part is processed in sequence:
+    /// - Literal parts are used directly
+    /// - Interpolation parts have their expression evaluated, converted, and formatted
+    ///
+    /// The results are concatenated to produce the final string.
+    FString(Vec<FStringPart>),
+    /// Conditional expression (ternary operator): `body if test else orelse`
+    ///
+    /// Only one of body/orelse is evaluated based on the truthiness of test.
+    /// This implements short-circuit evaluation - the branch not taken is never executed.
+    IfElse {
+        test: Box<ExprLoc>,
+        body: Box<ExprLoc>,
+        orelse: Box<ExprLoc>,
+    },
+    /// List comprehension: `[elt for target in iter if cond...]`
+    ///
+    /// Builds a new list by iterating and optionally filtering. Loop variables
+    /// are scoped to the comprehension and do not leak to the enclosing scope.
+    ListComp {
+        elt: Box<ExprLoc>,
+        generators: Vec<Comprehension>,
+        /// Lexical target slots captured by callables in this comprehension.
+        captured_slots: Vec<u16>,
+    },
+    /// Set comprehension: `{elt for target in iter if cond...}`
+    ///
+    /// Builds a new set by iterating and optionally filtering. Duplicate values
+    /// are deduplicated. Loop variables are scoped to the comprehension.
+    SetComp {
+        elt: Box<ExprLoc>,
+        generators: Vec<Comprehension>,
+        /// Lexical target slots captured by callables in this comprehension.
+        captured_slots: Vec<u16>,
+    },
+    /// Dict comprehension: `{key: value for target in iter if cond...}`
+    ///
+    /// Builds a new dict by iterating and optionally filtering. Later values
+    /// overwrite earlier ones for duplicate keys. Loop variables are scoped
+    /// to the comprehension.
+    DictComp {
+        key: Box<ExprLoc>,
+        value: Box<ExprLoc>,
+        generators: Vec<Comprehension>,
+        /// Lexical target slots captured by callables in this comprehension.
+        captured_slots: Vec<u16>,
+    },
+    /// Raw lambda expression from the parser, before preparation.
+    ///
+    /// This variant is produced during parsing and contains unprepared data.
+    /// During the prepare phase, it gets converted to `Expr::Lambda` with a
+    /// fully prepared `PreparedFunctionDef`.
+    LambdaRaw {
+        /// The interned `<lambda>` name ID.
+        name_id: StringId,
+        /// The parsed lambda signature (parameters and defaults).
+        signature: ParsedSignature,
+        /// The lambda body expression (not yet prepared).
+        body: Box<ExprLoc>,
+    },
+    /// Lambda expression: `lambda args: body` (prepared form).
+    ///
+    /// A lambda is an anonymous function that returns a single expression.
+    /// It's compiled identically to a regular function, but with the name `<lambda>`
+    /// and an implicit return of the body expression. The resulting function value
+    /// stays on the stack as an expression result (not stored to a name).
+    Lambda {
+        /// The prepared function definition containing signature, body, and closure info.
+        /// The body is wrapped as `[Node::Return(body_expr)]` during preparation.
+        func_def: Box<PreparedFunctionDef>,
+    },
+    /// Named expression (walrus operator): `(target := value)`
+    ///
+    /// Evaluates `value`, assigns it to `target`, and returns the value as the
+    /// expression result. The target is treated as an assignment for scope analysis,
+    /// so it creates a local binding in the enclosing scope.
+    ///
+    /// Per PEP 572, in comprehensions the target binds in the enclosing scope,
+    /// not the comprehension's implicit scope.
+    Named {
+        target: Identifier,
+        value: Box<ExprLoc>,
+    },
+}
+
+/// Target for tuple unpacking - a name, attribute, subscript, nested tuple or
+/// starred target.
+///
+/// Supports recursive structures like `(a, b), c` or `a, (b, c)`.
+/// Also supports starred targets like `first, *rest = [1, 2, 3, 4]`.
+/// Used in assignment statements, for loop targets, and comprehension targets.
+///
+/// `Attr` and `Subscript` mirror the same-named [`AssignTarget`] variants and
+/// compile to the same stores, so `self.x, self.y = pair` behaves as the two
+/// single-target assignments would. Comprehension targets are the exception:
+/// their leaves live on the operand stack as comp-var slots, so only names
+/// reach that path (`prepare` rejects the rest).
+///
+/// Their expressions are boxed: `Node::For` and `Node::With` embed a target
+/// inline, so an inline `ExprLoc` here would grow every `Node`.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub enum UnpackTarget {
+    /// Single identifier: `a`
+    Name(Identifier),
+    /// Nested tuple: `(a, b)` - can contain further nested tuples
+    Tuple {
+        /// The targets to unpack into (can be names or nested tuples)
+        targets: Vec<Self>,
+        /// Source position covering all targets (for error caret placement)
+        position: CodeRange,
+    },
+    /// Starred target: `*rest` - captures remaining values into a list.
+    ///
+    /// Only one starred target is allowed per unpacking level.
+    Starred(Box<Self>),
+    /// Attribute target: `obj.attr`.
+    Attr {
+        /// Expression evaluating to the object whose attribute is being set.
+        object: Box<ExprLoc>,
+        /// The attribute name.
+        attr: EitherStr,
+        /// Position of the full attribute expression (for traceback carets).
+        position: CodeRange,
+    },
+    /// Subscript target: `container[index]`.
+    Subscript {
+        /// Expression evaluating to the container object.
+        container: Box<ExprLoc>,
+        /// Expression evaluating to the index/key.
+        index: Box<ExprLoc>,
+        /// Position of the full subscript expression (for traceback carets).
+        position: CodeRange,
+    },
+}
+
+/// One `case` clause of a [`Node::Match`]: its pattern, optional guard and body.
+///
+/// Generic over the node type so it rides the same Raw -> Prepared pipeline as
+/// [`Try`]. The pattern's capture names are resolved to slots during prepare,
+/// like any other assignment target.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct MatchCase<N> {
+    pub pattern: Pattern,
+    /// `case PATTERN if GUARD:` - evaluated only after the pattern matches and
+    /// its names are bound, so a failing guard still leaves the captures bound.
+    pub guard: Option<ExprLoc>,
+    pub body: Vec<N>,
+    /// Source range of the pattern (the `case` header's caret range).
+    pub position: CodeRange,
+}
+
+/// A structural pattern inside a `case` clause (PEP 634).
+///
+/// The shapes mirror `ast.pattern`; the compiler lowers them following
+/// CPython's `codegen_pattern_*` so capture bindings happen only once the whole
+/// pattern has matched.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub enum Pattern {
+    /// `case 1:` / `case 'x':` / `case Color.RED:` - matches when `subject == value`.
+    Value(ExprLoc),
+    /// `case None:` / `case True:` / `case False:` - matches by identity.
+    Singleton(ExprLoc),
+    /// `case [a, *rest, b]:` - matches a sequence (not `str`/`bytes`) of the right length.
+    Sequence {
+        /// Sub-patterns in order; at most one may be [`Pattern::Star`].
+        patterns: Vec<Self>,
+        position: CodeRange,
+    },
+    /// `case {'k': v, **rest}:` - matches a mapping containing every key.
+    Mapping {
+        /// Key expressions (literals or dotted names), paired with `patterns`.
+        keys: Vec<ExprLoc>,
+        /// One sub-pattern per key, matched against the looked-up values.
+        patterns: Vec<Self>,
+        /// `**rest`: bound to a new `dict` of the entries the keys did not consume.
+        rest: Option<Identifier>,
+        position: CodeRange,
+    },
+    /// `case Point(0, y=1):` - `isinstance` check plus attribute sub-patterns.
+    Class {
+        /// Expression evaluating to the class (a name or dotted name).
+        cls: ExprLoc,
+        /// Positional sub-patterns, resolved through the class's `__match_args__`.
+        patterns: Vec<Self>,
+        /// Keyword attribute names, paired with `kwd_patterns`.
+        kwd_attrs: Vec<StringId>,
+        kwd_patterns: Vec<Self>,
+        position: CodeRange,
+    },
+    /// `*name` / `*_` inside a sequence pattern; captures the surplus items as a `list`.
+    Star {
+        name: Option<Identifier>,
+        position: CodeRange,
+    },
+    /// `case x:` (capture), `case _:` (wildcard) or `case PATTERN as x:`.
+    ///
+    /// `pattern: None` is the bare capture/wildcard form; `name: None` with no
+    /// pattern is the `_` wildcard.
+    As {
+        pattern: Option<Box<Self>>,
+        name: Option<Identifier>,
+        position: CodeRange,
+    },
+    /// `case 1 | 2 | x:` - alternatives tried left to right; all must bind the same names.
+    Or { patterns: Vec<Self>, position: CodeRange },
+}
+
+impl Pattern {
+    /// The source range of the pattern, for diagnostics and traceback carets.
+    #[must_use]
+    pub fn position(&self) -> CodeRange {
+        match self {
+            Self::Value(expr) | Self::Singleton(expr) => expr.position,
+            Self::Sequence { position, .. }
+            | Self::Mapping { position, .. }
+            | Self::Class { position, .. }
+            | Self::Star { position, .. }
+            | Self::As { position, .. }
+            | Self::Or { position, .. } => *position,
+        }
+    }
+
+    /// Whether this is the bare `_` wildcard, which matches anything and binds nothing.
+    #[must_use]
+    pub fn is_wildcard(&self) -> bool {
+        matches!(
+            self,
+            Self::As {
+                pattern: None,
+                name: None,
+                ..
+            }
+        )
+    }
+
+    /// Whether this is `*_`: a starred wildcard inside a sequence pattern.
+    #[must_use]
+    pub fn is_star_wildcard(&self) -> bool {
+        matches!(self, Self::Star { name: None, .. })
+    }
+}
+
+/// Target of a single assignment step within a chained assignment.
+///
+/// Chained assignments (`a = b[i] = obj.x = expr`) evaluate `expr` once and
+/// then assign the resulting value to each target in left-to-right order.
+/// `AssignTarget` captures just the target portion of each of the usual
+/// single-target assignment node variants (`Assign`, `SubscriptAssign`,
+/// `AttrAssign`, `UnpackAssign`) so they can share a common list in
+/// `Node::ChainAssign` without embedding a dummy source expression.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub enum AssignTarget {
+    /// Simple name target: `a`.
+    Name(Identifier),
+    /// Subscript target: `container[index]`.
+    Subscript {
+        /// Expression evaluating to the container object.
+        target: ExprLoc,
+        /// Expression evaluating to the index/key.
+        index: ExprLoc,
+        /// Position of the full subscript expression (for traceback carets).
+        target_position: CodeRange,
+    },
+    /// Attribute target: `obj.attr`.
+    Attr {
+        /// Expression evaluating to the object whose attribute is being set.
+        object: ExprLoc,
+        /// The attribute name.
+        attr: EitherStr,
+        /// Position of the full attribute expression (for traceback carets).
+        target_position: CodeRange,
+    },
+    /// Tuple/list unpacking target: `a, b` or `[a, *rest]`.
+    Unpack {
+        /// The individual unpack targets (can be names, starred, or nested tuples).
+        targets: Vec<UnpackTarget>,
+        /// Source position covering all targets (for error caret placement).
+        targets_position: CodeRange,
+    },
+}
+
+/// A generator clause in a comprehension: `for target in iter [if cond1] [if cond2]...`
+///
+/// Represents one `for` clause with zero or more `if` filters. Multiple generators
+/// create nested iteration (the rightmost varies fastest).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct Comprehension {
+    /// Loop variable - either single identifier or tuple unpacking pattern.
+    pub target: UnpackTarget,
+    /// Iterable expression to loop over.
+    pub iter: ExprLoc,
+    /// Zero or more filter conditions (all must be truthy for the element to be included).
+    pub ifs: Vec<ExprLoc>,
+}
+
+impl Expr {
+    pub fn is_none(&self) -> bool {
+        matches!(self, Self::Literal(Literal::None))
+    }
+}
+
+/// Represents values that can be produced purely from the parser/prepare pipeline.
+///
+/// Const values are intentionally detached from the runtime heap so we can keep
+/// parse-time transformations (constant folding, namespace seeding, etc.) free from
+/// reference-count semantics. Only once execution begins are these literals turned
+/// into real `Value`s that participate in the interpreter's runtime rules.
+///
+/// Note: unlike the AST `Constant` type, we store tuples only as expressions since they
+/// can't always be recorded as constants.
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+pub enum Literal {
+    Ellipsis,
+    None,
+    Bool(bool),
+    Int(i64),
+    Float(f64),
+    /// An imaginary literal such as `2j`, holding its imaginary part (the real
+    /// part is always zero). It has no constant-pool form: the compiler emits a
+    /// `complex()` constructor call, since a complex value lives on the heap.
+    Complex(f64),
+    /// An interned string literal. The StringId references the string in the Interns table.
+    Str(StringId),
+    /// An interned bytes literal. The BytesId references the bytes in the Interns table.
+    Bytes(BytesId),
+    /// An interned long integer literal. The `LongIntId` references the value in the Interns table.
+    /// Used for integer literals that exceed the i64 range.
+    LongInt(LongIntId),
+    /// A marker value (e.g., typing constructs like Any, Optional, etc.).
+    Marker(Marker),
+}
+
+/// An expression with its source location.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ExprLoc {
+    pub position: CodeRange,
+    pub expr: Expr,
+}
+
+impl ExprLoc {
+    pub fn new(position: CodeRange, expr: Expr) -> Self {
+        Self { position, expr }
+    }
+}
+
+/// An AST node parameterized by the function definition type.
+///
+/// This generic enum represents statements in both parsed and prepared forms:
+/// - `Node<RawFunctionDef>` (aka `ParseNode`): Output of the parser, contains unprepared function bodies
+/// - `Node<PreparedFunctionDef>` (aka `PreparedNode`): Output of prepare phase, has resolved names
+///
+/// Some variants (`Pass`, `Global`, `Nonlocal`) only appear in parsed form and are filtered
+/// out during the prepare phase.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub enum Node<F> {
+    /// No-op statement. Only present in parsed form, filtered out during prepare.
+    Pass,
+    Expr(ExprLoc),
+    Return(Option<ExprLoc>),
+    Raise(Option<ExprLoc>),
+    Assert {
+        test: ExprLoc,
+        msg: Option<ExprLoc>,
+    },
+    Assign {
+        target: Identifier,
+        object: ExprLoc,
+    },
+    /// Tuple unpacking assignment (e.g., `a, b = some_tuple` or `(a, b), c = nested`).
+    ///
+    /// The right-hand side is evaluated, then unpacked into the targets in order.
+    /// Supports nested unpacking like `(a, b), c = ((1, 2), 'x')`.
+    UnpackAssign {
+        /// The targets to unpack into (can be names or nested tuples)
+        targets: Vec<UnpackTarget>,
+        /// Source position covering all targets (for error message caret placement)
+        targets_position: CodeRange,
+        object: ExprLoc,
+    },
+    OpAssign {
+        target: Identifier,
+        op: Operator,
+        /// The right-hand side value of the augmented assignment (e.g., `1` in `x += 1`).
+        value: ExprLoc,
+    },
+    /// Augmented subscript assignment (e.g., `totals[key] += value` or `a[0][1] += 1`).
+    ///
+    /// This evaluates the container expression and index exactly once, then performs the
+    /// inplace operation on the current item before storing the result back.
+    /// Limiting duplicate evaluation is important because index expressions may
+    /// have side effects and CPython only evaluates them once.
+    /// The `target` is an arbitrary expression evaluating to the container — it can be
+    /// a simple name, a nested subscript (`a[0]`), or an attribute access (`obj.field`).
+    SubscriptOpAssign {
+        target: ExprLoc,
+        index: ExprLoc,
+        op: Operator,
+        /// The right-hand side value of the augmented assignment (e.g., `1` in `a[0] += 1`).
+        value: ExprLoc,
+        /// Position of the subscript expression (e.g., `totals[key]`) for traceback carets.
+        target_position: CodeRange,
+    },
+    /// Subscript assignment (e.g., `lst[0] = value` or `a[0][1] = value`).
+    ///
+    /// The `target` is an arbitrary expression evaluating to the container — it can be
+    /// a simple name, a nested subscript (`a[0]`), or an attribute access (`obj.field`).
+    SubscriptAssign {
+        target: ExprLoc,
+        index: ExprLoc,
+        value: ExprLoc,
+        /// Position of the subscript expression (e.g., `lst[10]`) for traceback carets.
+        target_position: CodeRange,
+    },
+    /// Augmented attribute assignment (e.g., `point.x += 1` or `a.b.c -= 5`).
+    ///
+    /// Evaluates the object expression once, loads the attribute, performs the
+    /// inplace operation with the right-hand side, then stores the result back.
+    /// The `object` is an arbitrary expression — it can be a name, a subscript,
+    /// or a chained attribute access.
+    AttrOpAssign {
+        object: ExprLoc,
+        attr: EitherStr,
+        op: Operator,
+        value: ExprLoc,
+        /// Position of the attribute expression (e.g., `point.x`) for traceback carets.
+        target_position: CodeRange,
+    },
+    /// Attribute assignment (e.g., `point.x = 5` or `a.b.c = 5`).
+    ///
+    /// Assigns a value to an attribute on an object. For mutable dataclasses,
+    /// this sets the field value. Returns an error for immutable objects.
+    /// Supports chained attribute access on the left-hand side.
+    AttrAssign {
+        object: ExprLoc,
+        attr: EitherStr,
+        target_position: CodeRange,
+        value: ExprLoc,
+    },
+    /// Chained assignment (e.g., `a = b = c = value` or `a = lst[i] = obj.x = value`).
+    ///
+    /// Python evaluates the right-hand side exactly once and then assigns the resulting
+    /// value to each target in left-to-right source order. The compiler realises this
+    /// by evaluating `object`, duplicating its value on the stack before each non-final
+    /// target's store, and letting the final target consume the remaining copy.
+    ///
+    /// Only emitted when there are two or more targets; single-target assignments still
+    /// use the simpler `Assign`/`UnpackAssign`/`SubscriptAssign`/`AttrAssign` variants
+    /// so the hot path stays flat.
+    ChainAssign {
+        /// Targets to assign to, in left-to-right source order.
+        targets: Vec<AssignTarget>,
+        /// The right-hand side expression, evaluated exactly once.
+        object: ExprLoc,
+    },
+    For {
+        /// Loop target - either a single identifier or tuple unpacking pattern.
+        target: UnpackTarget,
+        iter: ExprLoc,
+        body: Vec<Self>,
+        or_else: Vec<Self>,
+    },
+    /// While loop statement: `while test: body [else: orelse]`
+    ///
+    /// Executes body repeatedly while test is truthy. If the loop exits normally
+    /// (not via break), the else block runs.
+    While {
+        test: ExprLoc,
+        body: Vec<Self>,
+        or_else: Vec<Self>,
+    },
+    /// Break statement - exits the innermost loop.
+    ///
+    /// When executed, control flow jumps past the loop's else block (if any).
+    /// Must be inside a loop, otherwise a `SyntaxError` is raised at compile time.
+    Break {
+        position: CodeRange,
+    },
+    /// Continue statement - jumps to the next iteration of the innermost loop.
+    ///
+    /// When executed, control flow jumps back to the loop's iterator advancement.
+    /// Must be inside a loop, otherwise a `SyntaxError` is raised at compile time.
+    Continue {
+        position: CodeRange,
+    },
+    If {
+        test: ExprLoc,
+        body: Vec<Self>,
+        or_else: Vec<Self>,
+    },
+    /// Function definition (e.g. `def foo(): ...`).
+    ///
+    /// Decorators live on the statement rather than inside `F` because `F` is
+    /// also a class body and a method, neither of which can carry them — and
+    /// because a decorator is part of the `def` statement, not of the function
+    /// object it produces. Mirrors [`Node::ClassDef`].
+    FunctionDef {
+        /// The function itself: signature and body, riding the `F` =
+        /// Raw→Prepared pipeline.
+        def: F,
+        /// In source order; evaluated in the enclosing scope and applied
+        /// bottom-up (`foo = deco(foo)`), like CPython.
+        decorators: Vec<ExprLoc>,
+    },
+    /// Class definition (e.g. `class Foo: ...`).
+    ///
+    /// Modelled on CPython's class-body code object: the class body is a
+    /// synthetic zero-argument function ([`body`](Self::ClassDef::body), riding
+    /// the same `F` = Raw→Prepared pipeline as [`Node::FunctionDef`]) that
+    /// executes the class statements top-to-bottom into its own scope, then
+    /// assembles the namespace and returns a `Class`. Methods are ordinary
+    /// `FunctionDef`s in that body (with `self` as the first parameter); class
+    /// variables are `Assign`s. Class decorators are supported (see
+    /// [`decorators`](Self::ClassDef::decorators)); inheritance, metaclasses and
+    /// decorators on a `def` — including `classmethod`/`staticmethod`/`property`
+    /// — are rejected at parse time. See `limitations/classes.md`.
+    ClassDef {
+        /// The class name identifier (resolved to an enclosing-scope slot at prepare time).
+        name: Identifier,
+        /// The synthetic class-body function: its body is the class statements
+        /// in source order. Prepared and compiled exactly like a function; its
+        /// emitted code ends by building the namespace `Dict` and returning the
+        /// `Class` object.
+        body: F,
+        /// Top-level member names (methods + class vars) in source order.
+        /// Each is resolved to a class-body-local slot during prepare; the
+        /// compiler uses them to assemble the namespace dict.
+        members: Vec<Identifier>,
+        /// In source order; evaluated in the enclosing scope and applied
+        /// bottom-up (`cls = deco(cls)`), like CPython.
+        decorators: Vec<ExprLoc>,
+        /// Source position of the `class` statement (for error reporting).
+        position: CodeRange,
+    },
+    /// Global variable declaration. Only present in parsed form, consumed during prepare.
+    ///
+    /// Declares that the listed names refer to module-level (global) variables,
+    /// allowing functions to read and write them instead of creating local variables.
+    Global {
+        position: CodeRange,
+        names: Vec<StringId>,
+    },
+    /// Nonlocal variable declaration. Only present in parsed form, consumed during prepare.
+    ///
+    /// Declares that the listed names refer to variables in enclosing function scopes,
+    /// allowing nested functions to read and write them instead of creating local variables.
+    Nonlocal {
+        position: CodeRange,
+        names: Vec<StringId>,
+    },
+    /// Try/except/else/finally block.
+    ///
+    /// Executes body, catches matching exceptions with handlers, runs else if no exception,
+    /// and always runs finally.
+    Try(Try<Self>),
+    /// `match SUBJECT:` with one or more `case` clauses (PEP 634).
+    ///
+    /// The subject is evaluated once; cases are tried top to bottom and the
+    /// first whose pattern matches (and whose guard, if any, is truthy) runs.
+    /// Nothing happens when no case matches. See `limitations/match.md`.
+    Match {
+        subject: ExprLoc,
+        cases: Vec<MatchCase<Self>>,
+        /// Source position of the `match` statement, for caret placement.
+        position: CodeRange,
+    },
+    /// `with EXPR [as TARGET]: BODY` — runs BODY with a context manager.
+    ///
+    /// Semantics match CPython: `EXPR` is evaluated, `__enter__` is called on
+    /// the result and bound to `TARGET` (if present), then `BODY` runs. On a
+    /// normal exit `__exit__(None, None, None)` is called; on exception,
+    /// `__exit__(type, value, None)` is called (Monty has no traceback objects),
+    /// and a truthy return value suppresses the exception.
+    ///
+    /// `target` is `Option<UnpackTarget>` to permit `with foo() as (a, b):`
+    /// shapes uniformly with [`Node::For`]; today the parser only emits the
+    /// `Name` variant since other unpack patterns are not yet exercised by
+    /// any user.
+    ///
+    /// Multi-item `with a() as x, b() as y:` is desugared into nested `With`
+    /// nodes by the parser, so this variant only ever carries a single
+    /// context. See `parse.rs` for the lowering and `limitations/with.md`
+    /// for the user-facing semantics.
+    With {
+        context: ExprLoc,
+        target: Option<UnpackTarget>,
+        body: Vec<Self>,
+        position: CodeRange,
+    },
+    /// Import statement (e.g., `import sys`, `import sys, os`, `import sys as s`).
+    ///
+    /// Loads one or more modules and binds them to names in the current namespace.
+    /// Multi-module imports like `import sys, os` are represented as a single node
+    /// with multiple entries in the vector.
+    Import {
+        /// The modules to import, each with a module name and binding target.
+        names: Vec<ImportName>,
+    },
+    /// From-import statement (e.g., `from typing import TYPE_CHECKING`).
+    ///
+    /// Imports specific names from a module into the current namespace.
+    ImportFrom {
+        /// The top-level module to load (`a` for `from a.b import c`).
+        module_name: StringId,
+        /// The further components of a dotted module name, in order.
+        submodules: Vec<Submodule>,
+        /// Names to import: (import_name, binding) pairs.
+        /// The import_name is the name in the module, the binding is the local name
+        /// (alias if provided, otherwise the import name) with resolved namespace slot.
+        names: Vec<(StringId, Identifier)>,
+        /// Source position for error reporting.
+        position: CodeRange,
+    },
+}
+
+/// A prepared function definition with resolved names and scope information.
+///
+/// This is created during the prepare phase and contains everything needed to
+/// compile the function to bytecode. The function body has all names resolved
+/// to namespace indices with proper scoping.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct PreparedFunctionDef {
+    /// The function name identifier with resolved namespace index.
+    pub name: Identifier,
+    /// The function signature with parameter names and default counts.
+    pub signature: Signature,
+    /// The prepared function body with resolved names.
+    pub body: Vec<Node<Self>>,
+    /// Number of local variable slots needed in the namespace.
+    pub namespace_size: usize,
+    /// Enclosing locations for variables captured from enclosing scopes.
+    ///
+    /// At definition time each source supplies a cell `HeapId` to bundle into
+    /// the `Closure`. Parallel (same index/order) to [`Self::free_var_slots`].
+    pub free_var_enclosing_slots: Vec<CaptureSource>,
+    /// This function's own namespace slots that receive the captured free-var
+    /// cells, parallel to [`Self::free_var_enclosing_slots`]: cell `i` (gathered
+    /// from `free_var_enclosing_slots[i]` in the enclosing frame) is installed
+    /// at `free_var_slots[i]` when this frame is created.
+    ///
+    /// Slots are explicit rather than positional because a transitively
+    /// captured (pass-through) variable's slot is allocated late during
+    /// preparation and so does not fall in the contiguous param/cell/free
+    /// region the namespace layout otherwise follows.
+    pub free_var_slots: Vec<NamespaceId>,
+    /// Names parallel to `free_var_slots`, including captures never read by this body.
+    /// The compiler records them so `locals()` can report pass-through cells.
+    pub free_var_names: Vec<StringId>,
+    /// This function's own namespace slots for cell variables (locals captured
+    /// by nested functions). A fresh cell is created for each at call time and
+    /// stored at `cell_var_slots[i]`. Parallel to [`Self::cell_param_indices`].
+    pub cell_var_slots: Vec<NamespaceId>,
+    /// Maps each cell variable (parallel to [`Self::cell_var_slots`]) to its
+    /// parameter index, if the cell is for a captured parameter.
+    ///
+    /// When a parameter is also captured by nested functions, its bound value
+    /// must be copied into the cell after argument binding; `Some(param_index)`
+    /// names that parameter, `None` means the cell starts `Undefined`.
+    pub cell_param_indices: Vec<Option<usize>>,
+    /// Prepared default value expressions, evaluated at function definition time.
+    ///
+    /// Layout: `[pos_defaults...][arg_defaults...][kwarg_defaults...]`
+    /// Each group contains only the parameters that have defaults, in declaration order.
+    /// The counts in `signature` indicate how many defaults exist for each group.
+    pub default_exprs: Vec<ExprLoc>,
+    /// Whether this is an async function (`async def`).
+    ///
+    /// When true, calling this function creates a `Coroutine` object instead of
+    /// immediately pushing a frame.
+    pub is_async: bool,
+}
+
+/// Type alias for prepared AST nodes (output of prepare phase).
+pub type PreparedNode = Node<PreparedFunctionDef>;
+
+/// Binary operators for arithmetic, bitwise, and boolean operations.
+///
+/// The comment on each variant shows the source-level symbol.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum Operator {
+    // `+`
+    Add,
+    // `-`
+    Sub,
+    // `*`
+    Mult,
+    // `@`
+    MatMult,
+    // `/`
+    Div,
+    // `%`
+    Mod,
+    // `**`
+    Pow,
+    // `<<`
+    LShift,
+    // `>>`
+    RShift,
+    // `|`
+    BitOr,
+    // `^`
+    BitXor,
+    // `&`
+    BitAnd,
+    // `//`
+    FloorDiv,
+    // bool operators
+    // `and`
+    And,
+    // `or`
+    Or,
+}
+
+/// Defined separately since these operators always return a bool.
+///
+/// The strum `serialize` attribute on each variant is the source-level symbol,
+/// and drives both `Display` and [`as_str`](Self::as_str).
+#[repr(u8)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    serde::Serialize,
+    serde::Deserialize,
+    strum::Display,
+    strum::EnumIter,
+    strum::FromRepr,
+    strum::IntoStaticStr,
+)]
+pub enum CmpOperator {
+    #[strum(serialize = "==")]
+    Eq = 0,
+    #[strum(serialize = "!=")]
+    NotEq = 1,
+    #[strum(serialize = "<")]
+    Lt = 2,
+    #[strum(serialize = "<=")]
+    LtE = 3,
+    #[strum(serialize = ">")]
+    Gt = 4,
+    #[strum(serialize = ">=")]
+    GtE = 5,
+    #[strum(serialize = "is")]
+    Is = 6,
+    #[strum(serialize = "is not")]
+    IsNot = 7,
+    #[strum(serialize = "in")]
+    In = 8,
+    #[strum(serialize = "not in")]
+    NotIn = 9,
+}
+
+impl CmpOperator {
+    /// The source-level symbol, e.g. `==` or `not in`. Same string `Display`
+    /// renders, but borrowed rather than formatted, so the error paths that
+    /// need it (incomparable ordering `TypeError`s, assert failure messages)
+    /// don't allocate.
+    pub fn as_str(self) -> &'static str {
+        self.into()
+    }
+
+    /// Stable u8 encoding used in the low nibble of the `Assert` /
+    /// `AssertFailed` flags operand (see `bytecode::op::assert_flags`).
+    pub const fn as_operand(self) -> u8 {
+        self as u8
+    }
+}
+
+/// Computes an FNV-1a hash over comparison-operator identities and serialization.
+#[cfg(test)]
+pub(crate) fn comparison_operators_fingerprint() -> u64 {
+    const OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
+    const PRIME: u64 = 0x0100_0000_01b3;
+
+    fn update(hash: &mut u64, bytes: &[u8]) {
+        for byte in u32::try_from(bytes.len())
+            .expect("fingerprint field length fits u32")
+            .to_le_bytes()
+        {
+            *hash ^= u64::from(byte);
+            *hash = hash.wrapping_mul(PRIME);
+        }
+        for byte in bytes {
+            *hash ^= u64::from(*byte);
+            *hash = hash.wrapping_mul(PRIME);
+        }
+    }
+
+    let mut operators = CmpOperator::iter().collect::<Vec<_>>();
+    operators.sort_unstable_by_key(|operator| *operator as u8);
+    let mut hash = OFFSET_BASIS;
+    for operator in operators {
+        update(&mut hash, &[operator as u8]);
+        update(&mut hash, format!("{operator:?}").as_bytes());
+        update(&mut hash, operator.as_str().as_bytes());
+        update(
+            &mut hash,
+            &postcard::to_allocvec(&operator).expect("CmpOperator serialization cannot fail"),
+        );
+    }
+    hash
+}

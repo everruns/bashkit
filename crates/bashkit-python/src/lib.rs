@@ -29,11 +29,17 @@ use bashkit::{
     DirEntry as FsDirEntry, ExcType, ExecResult as RustExecResult, ExecutionExtensions,
     ExecutionLimits, ExtFunctionResult, FileSystem, FileSystemExt, FileType as FsFileType,
     FsLimits, InMemoryFs, Metadata as FsMetadata, MontyException, MontyObject, NetworkAllowlist,
-    OutputCallback as RustOutputCallback, OverlayFs, PosixFs, PythonExternalFnHandler,
+    ObjectRef, OutputCallback as RustOutputCallback, OverlayFs, PosixFs, PythonExternalFnHandler,
     PythonLimits, ReadOnlyFs, ShellStateView as RustShellStateView,
     SnapshotOptions as RustSnapshotOptions, Tool, ToolRequest, async_trait,
 };
 use bashkit_scripted_tool::{ScriptedTool as RustScriptedTool, ToolArgs, ToolDef};
+
+// Monty python3 charges each VM for its own allocations through this
+// allocator (see bashkit::MeteredAllocator). In a cdylib it only governs this
+// library's Rust allocations, never the host runtime's allocator.
+#[global_allocator]
+static METERED_ALLOC: bashkit::MeteredAllocator = bashkit::MeteredAllocator;
 
 /// Typed named execution-policy selector for Python constructors.
 #[pyclass(name = "ExecutionProfile", eq, eq_int, from_py_object)]
@@ -7700,85 +7706,89 @@ fn _bashkit(m: &Bound<'_, PyModule>) -> PyResult<()> {
 // MontyObject <-> Python conversion helpers
 // ============================================================================
 
+/// Most graph nodes one Monty -> Python conversion may visit.
+///
+/// Security decision: Monty 1.x values are graphs that share sub-objects, so
+/// `x = [x, x]` thirty times is 31 nodes but 2^30 leaves once expanded into
+/// Python objects. The depth cap alone does not bound that; this does.
+const MAX_CONVERTED_NODES: usize = 1_000_000;
+
 fn monty_to_py(py: Python<'_>, obj: &MontyObject) -> PyResult<Py<PyAny>> {
-    monty_to_py_inner(py, obj, 0)
+    let mut visited = 0;
+    monty_to_py_inner(py, obj.as_ref(), 0, &mut visited)
 }
 
-fn monty_to_py_inner(py: Python<'_>, obj: &MontyObject, depth: usize) -> PyResult<Py<PyAny>> {
+fn monty_to_py_inner(
+    py: Python<'_>,
+    obj: ObjectRef<'_>,
+    depth: usize,
+    visited: &mut usize,
+) -> PyResult<Py<PyAny>> {
+    use bashkit::monty_unstable::{MontyNode, child, node};
     if depth > MAX_NESTING_DEPTH {
         return Err(pyo3::exceptions::PyValueError::new_err(
             "MontyObject nesting depth exceeds maximum of 64",
         ));
     }
-    match obj {
-        MontyObject::None => Ok(py.None()),
-        MontyObject::Bool(b) => Ok(b.into_pyobject(py)?.to_owned().into_any().unbind()),
-        MontyObject::Int(i) => Ok(i.into_pyobject(py)?.into_any().unbind()),
+    *visited += 1;
+    if *visited > MAX_CONVERTED_NODES {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "MontyObject has too many elements to convert",
+        ));
+    }
+    let items = |ids: &[bashkit::monty_unstable::NodeId], visited: &mut usize| {
+        ids.iter()
+            .map(|id| monty_to_py_inner(py, child(obj, *id), depth + 1, visited))
+            .collect::<PyResult<Vec<_>>>()
+    };
+    match node(obj) {
+        MontyNode::None => Ok(py.None()),
+        MontyNode::Bool(b) => Ok(b.into_pyobject(py)?.to_owned().into_any().unbind()),
+        MontyNode::Int(i) => Ok(i.into_pyobject(py)?.into_any().unbind()),
         // BigInt: convert to Python int via its decimal string representation.
-        MontyObject::BigInt(b) => {
+        MontyNode::BigInt(b) => {
             let int_str = b.to_string();
             let py_int = py.import("builtins")?.getattr("int")?.call1((int_str,))?;
             Ok(py_int.into_any().unbind())
         }
-        MontyObject::Float(f) => Ok(f.into_pyobject(py)?.into_any().unbind()),
-        MontyObject::String(s) => Ok(s.into_pyobject(py)?.into_any().unbind()),
+        MontyNode::Float(f) => Ok(f.into_pyobject(py)?.into_any().unbind()),
+        MontyNode::String(s) => Ok(s.into_pyobject(py)?.into_any().unbind()),
         // Known limitation: Path becomes a plain Python str, not pathlib.Path.
-        MontyObject::Path(s) => Ok(s.into_pyobject(py)?.into_any().unbind()),
-        MontyObject::Bytes(b) => Ok(b.as_slice().into_pyobject(py)?.into_any().unbind()),
-        MontyObject::Tuple(items) => {
-            let py_items = items
-                .iter()
-                .map(|v| monty_to_py_inner(py, v, depth + 1))
-                .collect::<PyResult<Vec<_>>>()?;
-            Ok(PyTuple::new(py, &py_items)?.into_any().unbind())
-        }
-        MontyObject::List(items) => {
-            let py_items = items
-                .iter()
-                .map(|v| monty_to_py_inner(py, v, depth + 1))
-                .collect::<PyResult<Vec<_>>>()?;
-            Ok(PyList::new(py, &py_items)?.into_any().unbind())
-        }
-        MontyObject::Set(items) => {
-            let py_items = items
-                .iter()
-                .map(|v| monty_to_py_inner(py, v, depth + 1))
-                .collect::<PyResult<Vec<_>>>()?;
-            Ok(PySet::new(py, &py_items)?.into_any().unbind())
-        }
-        MontyObject::FrozenSet(items) => {
-            let py_items = items
-                .iter()
-                .map(|v| monty_to_py_inner(py, v, depth + 1))
-                .collect::<PyResult<Vec<_>>>()?;
-            Ok(PyFrozenSet::new(py, &py_items)?.into_any().unbind())
-        }
+        MontyNode::Path(s) => Ok(s.into_pyobject(py)?.into_any().unbind()),
+        MontyNode::Bytes(b) => Ok(b.as_slice().into_pyobject(py)?.into_any().unbind()),
+        MontyNode::Tuple(ids) => Ok(PyTuple::new(py, &items(ids, visited)?)?.into_any().unbind()),
+        MontyNode::List(ids) => Ok(PyList::new(py, &items(ids, visited)?)?.into_any().unbind()),
+        MontyNode::Set(ids) => Ok(PySet::new(py, &items(ids, visited)?)?.into_any().unbind()),
+        MontyNode::FrozenSet(ids) => Ok(PyFrozenSet::new(py, &items(ids, visited)?)?
+            .into_any()
+            .unbind()),
         // NamedTuple: convert to dict mapping field names to values, preserving field names.
-        MontyObject::NamedTuple {
+        MontyNode::NamedTuple {
             field_names,
             values,
             ..
         } => {
             let dict = PyDict::new(py);
             for (name, value) in field_names.iter().zip(values.iter()) {
-                dict.set_item(name, monty_to_py_inner(py, value, depth + 1)?)?;
+                dict.set_item(
+                    name,
+                    monty_to_py_inner(py, child(obj, *value), depth + 1, visited)?,
+                )?;
             }
             Ok(dict.into_any().unbind())
         }
-        MontyObject::Dict(dict_pairs) => {
+        MontyNode::Dict(pairs) => {
             let dict = PyDict::new(py);
-            // DictPairs only implements IntoIterator (consuming), so clone is required
-            // to iterate without moving out of the match guard.
-            for (k, v) in dict_pairs.clone() {
+            for (k, v) in pairs {
                 dict.set_item(
-                    monty_to_py_inner(py, &k, depth + 1)?,
-                    monty_to_py_inner(py, &v, depth + 1)?,
+                    monty_to_py_inner(py, child(obj, *k), depth + 1, visited)?,
+                    monty_to_py_inner(py, child(obj, *v), depth + 1, visited)?,
                 )?;
             }
             Ok(dict.into_any().unbind())
         }
         // All other variants (Exception, Type, Function, etc.) — repr as string.
-        other => Ok(other.py_repr().into_pyobject(py)?.into_any().unbind()),
+        _ => Ok(obj.py_repr().into_pyobject(py)?.into_any().unbind()),
     }
 }
 
@@ -7800,14 +7810,14 @@ fn py_to_monty_inner(
         ));
     }
     if obj.is_none() {
-        return Ok(MontyObject::None);
+        return Ok(MontyObject::none());
     }
     // bool must come before int — bool is a subtype of int in Python
     if let Ok(b) = obj.extract::<bool>() {
-        return Ok(MontyObject::Bool(b));
+        return Ok(MontyObject::bool(b));
     }
     if let Ok(i) = obj.extract::<i64>() {
-        return Ok(MontyObject::Int(i));
+        return Ok(MontyObject::int(i));
     }
     // Large Python int that overflows i64: convert via decimal string → BigInt.
     if obj.is_instance_of::<PyInt>() {
@@ -7815,37 +7825,37 @@ fn py_to_monty_inner(
         let b = s.parse::<num_bigint::BigInt>().map_err(|e| {
             PyValueError::new_err(format!("failed to parse Python int as BigInt: {e}"))
         })?;
-        return Ok(MontyObject::BigInt(b));
+        return Ok(MontyObject::bigint(b));
     }
     // Guard f64 with an isinstance check so large Python ints (which widen to f64)
     // are not incorrectly classified as floats.
     if obj.is_instance_of::<PyFloat>()
         && let Ok(f) = obj.extract::<f64>()
     {
-        return Ok(MontyObject::Float(f));
+        return Ok(MontyObject::float(f));
     }
     if let Ok(s) = obj.extract::<String>() {
-        return Ok(MontyObject::String(s));
+        return Ok(MontyObject::string(s));
     }
     // Guard bytes with isinstance to avoid ambiguity with str-like objects.
     if obj.is_instance_of::<PyBytes>()
         && let Ok(b) = obj.extract::<Vec<u8>>()
     {
-        return Ok(MontyObject::Bytes(b));
+        return Ok(MontyObject::bytes(b));
     }
     if let Ok(tuple) = obj.cast::<PyTuple>() {
         let items = tuple
             .iter()
             .map(|v| py_to_monty_inner(py, &v, depth + 1))
             .collect::<PyResult<Vec<_>>>()?;
-        return Ok(MontyObject::Tuple(items));
+        return Ok(MontyObject::tuple(items));
     }
     if let Ok(list) = obj.cast::<PyList>() {
         let items = list
             .iter()
             .map(|v| py_to_monty_inner(py, &v, depth + 1))
             .collect::<PyResult<Vec<_>>>()?;
-        return Ok(MontyObject::List(items));
+        return Ok(MontyObject::list(items));
     }
     if let Ok(dict) = obj.cast::<PyDict>() {
         let pairs: Vec<(MontyObject, MontyObject)> = dict
@@ -7864,15 +7874,15 @@ fn py_to_monty_inner(
             .iter()
             .map(|v| py_to_monty_inner(py, &v, depth + 1))
             .collect::<PyResult<Vec<_>>>()?;
-        return Ok(MontyObject::Set(items));
+        return Ok(MontyObject::set(items));
     }
     if let Ok(fset) = obj.cast::<PyFrozenSet>() {
         let items = fset
             .iter()
             .map(|v| py_to_monty_inner(py, &v, depth + 1))
             .collect::<PyResult<Vec<_>>>()?;
-        return Ok(MontyObject::FrozenSet(items));
+        return Ok(MontyObject::frozenset(items));
     }
     // Fallback: convert to string via __str__
-    Ok(MontyObject::String(obj.str()?.extract::<String>()?))
+    Ok(MontyObject::string(obj.str()?.extract::<String>()?))
 }

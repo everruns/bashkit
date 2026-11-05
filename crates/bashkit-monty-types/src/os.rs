@@ -1,0 +1,787 @@
+//! OS-level operations that require host system access.
+//!
+//! Defines [`OsFunctionCall`] — a tagged dispatch value whose variants carry
+//! the typed args each OS-call accepts. Sandboxed code suspends with one of
+//! these; the host (a `MountTable`, an `os` callback) decides whether to
+//! permit it. The interpreter itself never performs I/O.
+//!
+//! The fs/ layer matches on the enum directly (no value introspection);
+//! host bindings get a generic `(positional, keyword)` view via
+//! [`OsFunctionCall::to_args`].
+
+use std::{borrow::Cow, fmt, ops::Deref, time::Duration};
+
+use crate::{
+    args::ToArgs,
+    exceptions::{ExcType, MontyException},
+    file_mode::FileMode,
+    format::StringRepr,
+    graph::{MontyGraph, MontyNode, NodeId},
+    object::{CallArgs, MontyObject, MontyTimeZone},
+    scan::ScanArgs,
+    unstable::{self, PushValue},
+    virtual_path::normalize_virtual_path,
+};
+// =============================================================================
+// OsFunctionCall — the central public dispatch value.
+// =============================================================================
+
+/// [`OsFunctionCall::Import`]'s dispatch name. Hosts resolve it from their modules before other OS handlers.
+pub const IMPORT_CALL: &str = "import";
+
+/// [`OsFunctionCall::ImportStubs`]'s dispatch name, handled like [`IMPORT_CALL`].
+pub const IMPORT_STUBS_CALL: &str = "import_stubs";
+
+/// Reserved pre-feed [`OsFunctionCall::ImportStubs`] ID, outside the interpreter's IDs counted from zero.
+pub const IMPORT_STUBS_CALL_ID: u32 = u32::MAX;
+
+/// Tagged dispatch value for OS-level operations.
+///
+/// Each variant carries the strongly-typed args/kwargs the corresponding OS
+/// call needs. The fs/ layer matches on this enum directly (no value
+/// introspection); host bindings get a generic `(positional, keyword)` view
+/// via [`OsFunctionCall::to_args`].
+///
+/// See the module docs for how to add a new variant.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, strum::IntoStaticStr)]
+pub enum OsFunctionCall {
+    // ---- FS read / check (single path) ------------------------------------
+    /// Check if a path exists.
+    #[strum(serialize = "Path.exists")]
+    Exists(MontyPath),
+    /// Check if path is a regular file.
+    #[strum(serialize = "Path.is_file")]
+    IsFile(MontyPath),
+    /// Check if path is a directory.
+    #[strum(serialize = "Path.is_dir")]
+    IsDir(MontyPath),
+    /// Check if path is a symbolic link.
+    #[strum(serialize = "Path.is_symlink")]
+    IsSymlink(MontyPath),
+    /// Read file contents as text.
+    #[strum(serialize = "Path.read_text")]
+    ReadText(MontyPath),
+    /// Read file contents as bytes.
+    #[strum(serialize = "Path.read_bytes")]
+    ReadBytes(MontyPath),
+    /// `stat()` — return a stat result tuple.
+    #[strum(serialize = "Path.stat")]
+    Stat(MontyPath),
+    /// List directory contents.
+    #[strum(serialize = "Path.iterdir")]
+    Iterdir(MontyPath),
+    /// Read a bounded subtree in one call, for `os.scandir`, `os.walk`,
+    /// `Path.walk`, `Path.glob` and `Path.rglob` (see [`crate::scan`]).
+    #[strum(serialize = "Path.scan")]
+    Scan(ScanArgs),
+    /// Resolve symlinks and return absolute path.
+    #[strum(serialize = "Path.resolve")]
+    Resolve(MontyPath),
+    /// Absolute path without symlink resolution.
+    #[strum(serialize = "Path.absolute")]
+    Absolute(MontyPath),
+
+    // ---- FS write (path + data) -------------------------------------------
+    /// Write text to file (truncating).
+    #[strum(serialize = "Path.write_text")]
+    WriteText(PathStringDataArgs),
+    /// Append text to file.
+    #[strum(serialize = "Path.append_text")]
+    AppendText(PathStringDataArgs),
+    /// Write bytes to file (truncating).
+    #[strum(serialize = "Path.write_bytes")]
+    WriteBytes(PathBytesDataArgs),
+    /// Append bytes to file.
+    #[strum(serialize = "Path.append_bytes")]
+    AppendBytes(PathBytesDataArgs),
+
+    // ---- FS mutate (custom shapes) ----------------------------------------
+    /// Open a file. The host performs the open-time effect (truncate for
+    /// `w`/`w+`, create-if-missing for `a`/`a+`, existence check for `r`/`r+`)
+    /// and returns a [`MontyFileHandle`](crate::MontyFileHandle) — it never holds a live OS
+    /// handle across calls.
+    #[strum(serialize = "open")]
+    Open(OpenCallArgs),
+    /// Create directory (`parents`/`exist_ok` kwargs).
+    #[strum(serialize = "Path.mkdir")]
+    Mkdir(MkdirCallArgs),
+    /// Remove file.
+    #[strum(serialize = "Path.unlink")]
+    Unlink(MontyPath),
+    /// Remove directory.
+    #[strum(serialize = "Path.rmdir")]
+    Rmdir(MontyPath),
+    /// Rename / move (src → dst).
+    #[strum(serialize = "Path.rename")]
+    Rename(RenameCallArgs),
+
+    // ---- Non-FS -----------------------------------------------------------
+    /// Get an environment variable value.
+    #[strum(serialize = "os.getenv")]
+    Getenv(GetenvArgs),
+    /// Get the entire environment as a dictionary.
+    #[strum(serialize = "os.environ")]
+    GetEnviron,
+    /// Get today's date from the host system (for `date.today()`).
+    #[strum(serialize = "date.today")]
+    DateToday,
+    /// Get the current date/time from the host system (for `datetime.now(tz=...)`).
+    /// Carries the timezone argument, `None` for a naive result.
+    #[strum(serialize = "datetime.now")]
+    DateTimeNow(Option<MontyTimeZone>),
+    /// Read `size` bytes of entropy from the host (for `os.urandom(size)`, and
+    /// how the `random` module seeds an unseeded generator).
+    #[strum(serialize = "os.urandom")]
+    Urandom(UrandomArgs),
+    /// Read the host clock as `time.time()` does: seconds since the Unix
+    /// epoch, answered with [`MontyObject::float`]. Every clock-reading `time`
+    /// function arrives here; [`TimeCaller`], the call's only argument, says which.
+    #[strum(serialize = "time.time")]
+    Time(TimeCaller),
+    /// `time.sleep(seconds)` under `SleepMode::CallHost` — the host's `os`
+    /// handler waits, then answers with any value (`time.sleep` discards it
+    /// and evaluates to `None`).
+    #[strum(serialize = "time.sleep")]
+    Sleep(Duration),
+    /// `time.sleep(seconds)` under `SleepMode::System`, capped at its maximum.
+    /// The host charges `max_total_sleep`, waits and returns `None` without its
+    /// `os` handler. The distinct name identifies the policy for the host.
+    #[strum(serialize = "system.sleep")]
+    SystemSleep(Duration),
+    /// `asyncio.sleep(delay)` — like [`Sleep`](Self::Sleep), except the
+    /// sandbox turns the answer into an awaitable, so a host that runs an
+    /// event loop should answer with a future (`ExtFunctionResult::Future`)
+    /// and resolve it when the delay elapses, letting sibling tasks run
+    /// meanwhile. The answer's value is ignored: the sandbox keeps the
+    /// `result` argument itself and produces it from the `await`.
+    #[strum(serialize = "asyncio.sleep")]
+    AsyncSleep(Duration),
+    /// `asyncio.sleep(delay)` under `SleepMode::System`: the awaitable form of
+    /// [`SystemSleep`](Self::SystemSleep), which a host running an event loop
+    /// answers with a future it resolves once the delay elapses.
+    #[strum(serialize = "system.async_sleep")]
+    AsyncSystemSleep(Duration),
+
+    // ---- Host modules ------------------------------------------------------
+    /// Requests a missing module by top-level name. The host returns its value, an exception,
+    /// or `not_found` / `not_handled` to raise `ModuleNotFoundError`.
+    /// `from m import a` and `import m.sub` then load attributes from that value.
+    #[strum(serialize = "import")] // IMPORT_CALL
+    Import(String),
+    /// Requests stubs for previously unrequested top-level imports before type-checking a feed.
+    /// The host returns a dict of dotted module paths to stub source (or `None`),
+    /// or `not_found` / `not_handled` for no stubs.
+    #[strum(serialize = "import_stubs")] // IMPORT_STUBS_CALL
+    ImportStubs(Vec<String>),
+}
+
+impl OsFunctionCall {
+    /// Whether this [`name`](Self::name) accepts `ExtFunctionResult::Future`,
+    /// letting other tasks run until the host resolves it. Only `asyncio.sleep`
+    /// qualifies, in either sleep mode; all other calls require an immediate answer.
+    #[must_use]
+    pub fn accepts_future(name: &str) -> bool {
+        matches!(name, "asyncio.sleep" | "system.async_sleep")
+    }
+
+    /// Stable string name for this OS function — surfaces in
+    /// [`Self::on_no_handler`] errors, host `os` callbacks, and serialised
+    /// snapshots. The strum `serialize` string on each variant.
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        self.into()
+    }
+
+    /// Projects this call's args into the [`CallArgs`] delivered to a host
+    /// callback, with lexically normalized paths. Empty paths stay empty. The
+    /// interpreter checks NUL bytes before dispatch; hosts constructing calls
+    /// must use [`Self::check_path_null_bytes`] first. Mounts must validate
+    /// length limits on the original typed call.
+    #[must_use]
+    pub fn to_args(mut self) -> CallArgs {
+        for path in self.fs_paths_mut() {
+            if !path.is_empty()
+                && let Cow::Owned(normalized) = normalize_virtual_path(path)
+            {
+                *path = MontyPath::new(normalized);
+            }
+        }
+        match self {
+            // Single-path variants — just the path in positionals.
+            Self::Exists(p)
+            | Self::IsFile(p)
+            | Self::IsDir(p)
+            | Self::IsSymlink(p)
+            | Self::ReadText(p)
+            | Self::ReadBytes(p)
+            | Self::Stat(p)
+            | Self::Iterdir(p)
+            | Self::Resolve(p)
+            | Self::Absolute(p)
+            | Self::Unlink(p)
+            | Self::Rmdir(p) => single_arg(p),
+            // Multi-field variants delegate to their derived `ToArgs`.
+            Self::WriteText(a) | Self::AppendText(a) => a.to_args(),
+            Self::WriteBytes(a) | Self::AppendBytes(a) => a.to_args(),
+            Self::Open(a) => a.to_args(),
+            Self::Mkdir(a) => a.to_args(),
+            Self::Rename(a) => a.to_args(),
+            Self::Scan(a) => a.to_args(),
+            Self::Getenv(a) => a.to_args(),
+            Self::Urandom(a) => a.to_args(),
+            // Unit & single-value non-FS variants.
+            Self::GetEnviron | Self::DateToday => CallArgs::new(),
+            Self::Time(caller) => single_arg(caller),
+            Self::DateTimeNow(tz) => single_arg(tz.map_or(MontyNode::None, MontyNode::TimeZone)),
+            Self::Sleep(delay) | Self::SystemSleep(delay) | Self::AsyncSleep(delay) | Self::AsyncSystemSleep(delay) => {
+                single_arg(MontyNode::Float(delay.as_secs_f64()))
+            }
+            Self::Import(name) => single_arg(MontyObject::string(name)),
+            Self::ImportStubs(names) => single_arg(MontyObject::list(names.into_iter().map(MontyObject::string))),
+        }
+    }
+
+    /// Whether this call mutates filesystem state — the read-only-mount gate.
+    /// `Open`'s write-ness is mode-dependent (`w`/`w+`/`a`/`a+` write; `r`/`r+`
+    /// don't).
+    #[must_use]
+    pub fn is_write(&self) -> bool {
+        match self {
+            Self::WriteText(_)
+            | Self::WriteBytes(_)
+            | Self::AppendText(_)
+            | Self::AppendBytes(_)
+            | Self::Mkdir(_)
+            | Self::Unlink(_)
+            | Self::Rmdir(_)
+            | Self::Rename(_) => true,
+            Self::Open(args) => args.mode.create(),
+            _ => false,
+        }
+    }
+
+    /// Whether this operation checks existence without reading content.
+    /// Existence checks return `false` for nonexistent paths rather than
+    /// raising `FileNotFoundError`, matching CPython's `pathlib.Path`.
+    #[must_use]
+    pub fn is_existence_check(&self) -> bool {
+        matches!(
+            self,
+            Self::Exists(_) | Self::IsFile(_) | Self::IsDir(_) | Self::IsSymlink(_)
+        )
+    }
+
+    /// Checks both raw filesystem paths before normalization can hide a NUL byte.
+    /// Returns the operation-specific `ValueError` message; existence predicates
+    /// should return `False` instead of raising it.
+    pub fn check_path_null_bytes(&self) -> Result<(), &'static str> {
+        if self.fs_primary_path().is_some_and(|path| path.contains('\0')) {
+            Err(self.embedded_null_message(false))
+        } else if self.rename_destination().is_some_and(|path| path.contains('\0')) {
+            Err(self.embedded_null_message(true))
+        } else {
+            Ok(())
+        }
+    }
+
+    /// CPython's `ValueError` message for a path containing a null byte.
+    ///
+    /// The wording is not uniform in CPython: it comes from whichever layer
+    /// first inspects the path, so the content operations go through `open()`
+    /// and say `embedded null byte`, while the metadata ones are named by the
+    /// syscall their `os` wrapper was about to make. `for_destination` picks
+    /// the rename argument that carried the byte.
+    #[must_use]
+    pub fn embedded_null_message(&self, for_destination: bool) -> &'static str {
+        match self {
+            Self::Mkdir(_) => "mkdir: embedded null character in path",
+            Self::Unlink(_) => "unlink: embedded null character in path",
+            Self::Rmdir(_) => "rmdir: embedded null character in path",
+            Self::Stat(_) => "stat: embedded null character in path",
+            // `pathlib.Path.iterdir` reaches `os.scandir`, not `os.listdir`.
+            Self::Iterdir(_) | Self::Scan(_) => "scandir: embedded null character in path",
+            Self::Rename(_) if for_destination => "rename: embedded null character in dst",
+            Self::Rename(_) => "rename: embedded null character in src",
+            // `resolve()` lstats each component before returning.
+            Self::Resolve(_) => "lstat: embedded null character in path",
+            // Reads, writes, appends and `open` all land in `io.open`.
+            // `absolute()` shares that generic wording: it is pure string work
+            // that CPython never raises from, so naming a syscall would be a
+            // fiction (see `limitations/filesystem.md`). The predicates never
+            // reach here — they answer `False`.
+            _ => "embedded null byte",
+        }
+    }
+
+    /// The call's primary path if it's a FS operation, `None` otherwise.
+    ///
+    /// Used for routing and error reporting.
+    #[must_use]
+    pub fn fs_primary_path(&self) -> Option<&str> {
+        match self {
+            Self::Exists(p)
+            | Self::IsFile(p)
+            | Self::IsDir(p)
+            | Self::IsSymlink(p)
+            | Self::ReadText(p)
+            | Self::ReadBytes(p)
+            | Self::Stat(p)
+            | Self::Iterdir(p)
+            | Self::Resolve(p)
+            | Self::Absolute(p)
+            | Self::Unlink(p)
+            | Self::Rmdir(p) => Some(p.as_str()),
+            Self::WriteText(a) | Self::AppendText(a) => Some(a.path.as_str()),
+            Self::WriteBytes(a) | Self::AppendBytes(a) => Some(a.path.as_str()),
+            Self::Open(a) => Some(a.path.as_str()),
+            Self::Mkdir(a) => Some(a.path.as_str()),
+            Self::Scan(a) => Some(a.path.as_str()),
+            Self::Rename(a) => Some(a.src.as_str()),
+            Self::Getenv(_)
+            | Self::GetEnviron
+            | Self::DateToday
+            | Self::DateTimeNow(_)
+            | Self::Urandom(_)
+            | Self::Time(_)
+            | Self::Sleep(_)
+            | Self::SystemSleep(_)
+            | Self::AsyncSleep(_)
+            | Self::AsyncSystemSleep(_)
+            | Self::Import(_)
+            | Self::ImportStubs(_) => None,
+        }
+    }
+
+    /// The rename destination path, or `None` for every other variant — the
+    /// second routing key a mount table needs (both rename endpoints must
+    /// resolve to the same mount).
+    #[must_use]
+    pub fn rename_destination(&self) -> Option<&str> {
+        match self {
+            Self::Rename(a) => Some(a.dst.as_str()),
+            _ => None,
+        }
+    }
+
+    /// Every path this call carries, mutably: the primary path plus the
+    /// rename destination. The interpreter resolves relative paths against
+    /// the sandbox working directory here before the call reaches the host,
+    /// so host backends only ever see absolute virtual paths.
+    pub fn fs_paths_mut(&mut self) -> impl Iterator<Item = &mut MontyPath> {
+        let (primary, dst) = match self {
+            Self::Exists(p)
+            | Self::IsFile(p)
+            | Self::IsDir(p)
+            | Self::IsSymlink(p)
+            | Self::ReadText(p)
+            | Self::ReadBytes(p)
+            | Self::Stat(p)
+            | Self::Iterdir(p)
+            | Self::Resolve(p)
+            | Self::Absolute(p)
+            | Self::Unlink(p)
+            | Self::Rmdir(p) => (Some(p), None),
+            Self::WriteText(a) | Self::AppendText(a) => (Some(&mut a.path), None),
+            Self::WriteBytes(a) | Self::AppendBytes(a) => (Some(&mut a.path), None),
+            Self::Open(a) => (Some(&mut a.path), None),
+            Self::Mkdir(a) => (Some(&mut a.path), None),
+            Self::Scan(a) => (Some(&mut a.path), None),
+            Self::Rename(a) => (Some(&mut a.src), Some(&mut a.dst)),
+            Self::Getenv(_)
+            | Self::GetEnviron
+            | Self::DateToday
+            | Self::DateTimeNow(_)
+            | Self::Urandom(_)
+            | Self::Time(_)
+            | Self::Sleep(_)
+            | Self::SystemSleep(_)
+            | Self::AsyncSleep(_)
+            | Self::AsyncSystemSleep(_)
+            | Self::Import(_)
+            | Self::ImportStubs(_) => (None, None),
+        };
+        primary.into_iter().chain(dst)
+    }
+
+    /// Exception to raise when no handler accepted this call: `PermissionError`
+    /// for FS ops (with the path), `ModuleNotFoundError` for an import,
+    /// `RuntimeError` for the other non-FS ops.
+    #[must_use]
+    pub fn on_no_handler(&self) -> MontyException {
+        if let Self::Import(name) = self {
+            MontyException::new(
+                ExcType::ModuleNotFoundError,
+                Some(format!("No module named {}", StringRepr(name))),
+            )
+        } else if let Some(path) = self.fs_primary_path() {
+            let path = if path.is_empty() {
+                Cow::Borrowed(path)
+            } else {
+                normalize_virtual_path(path)
+            };
+            MontyException::new(
+                ExcType::PermissionError,
+                Some(format!("Permission denied: {}", StringRepr(&path))),
+            )
+        } else {
+            MontyException::new(
+                ExcType::RuntimeError,
+                Some(format!("'{}' is not supported in this environment", self.name())),
+            )
+        }
+    }
+}
+
+impl fmt::Display for OsFunctionCall {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.name())
+    }
+}
+
+/// Which `time` function is reading the clock in an [`OsFunctionCall::Time`].
+///
+/// All share the `time.time` call name since all want the current instant as epoch
+/// seconds; the caller, passed as the call's single positional argument spelled as
+/// the Python function (`"time.perf_counter"`), lets a host that cares answer them
+/// differently (say a virtual clock advancing only for `time.monotonic`).
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    strum::EnumIter,
+    strum::EnumString,
+    strum::IntoStaticStr,
+)]
+pub enum TimeCaller {
+    /// `time.time()`.
+    #[strum(serialize = "time.time")]
+    Time,
+    /// `time.time_ns()`.
+    #[strum(serialize = "time.time_ns")]
+    TimeNs,
+    /// `time.monotonic()`.
+    #[strum(serialize = "time.monotonic")]
+    Monotonic,
+    /// `time.monotonic_ns()`.
+    #[strum(serialize = "time.monotonic_ns")]
+    MonotonicNs,
+    /// `time.perf_counter()`.
+    #[strum(serialize = "time.perf_counter")]
+    PerfCounter,
+    /// `time.perf_counter_ns()`.
+    #[strum(serialize = "time.perf_counter_ns")]
+    PerfCounterNs,
+    /// `time.gmtime()` with no argument.
+    #[strum(serialize = "time.gmtime")]
+    Gmtime,
+    /// `time.localtime()` with no argument.
+    #[strum(serialize = "time.localtime")]
+    Localtime,
+    /// `time.asctime()` with no argument.
+    #[strum(serialize = "time.asctime")]
+    Asctime,
+    /// `time.ctime()` with no argument.
+    #[strum(serialize = "time.ctime")]
+    Ctime,
+    /// `time.strftime(format)` with no time argument.
+    #[strum(serialize = "time.strftime")]
+    Strftime,
+}
+
+impl TimeCaller {
+    /// The Python function's name, as the host receives it.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        self.into()
+    }
+}
+
+impl fmt::Display for TimeCaller {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// A call with one positional argument.
+fn single_arg(value: impl PushValue) -> CallArgs {
+    let mut call = CallArgs::new();
+    unstable::push_arg(&mut call, value);
+    call
+}
+
+// =============================================================================
+// Args structs — per-variant payloads carried by `OsFunctionCall`.
+// =============================================================================
+//
+// Each variant carries a struct that derives `ToArgs` for projection to
+// `CallArgs`. Zero-arg variants use empty structs so `to_args()` has no
+// special arms. Producers construct these directly via struct literals (see
+// `types/path.rs`, `builtins/open.rs`, etc.).
+
+/// `path + str data` shape used by `WriteText` and `AppendText`.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, monty_macros::ToArgs)]
+pub struct PathStringDataArgs {
+    pub path: MontyPath,
+    pub data: String,
+}
+
+/// `path + bytes data` shape used by `WriteBytes` and `AppendBytes`.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, monty_macros::ToArgs)]
+pub struct PathBytesDataArgs {
+    pub path: MontyPath,
+    #[serde(with = "serde_bytes")]
+    pub data: Vec<u8>,
+}
+
+/// Arguments to `open()`: a virtual path and a parsed file mode.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, monty_macros::ToArgs)]
+pub struct OpenCallArgs {
+    pub path: MontyPath,
+    pub mode: FileMode,
+}
+
+/// `mkdir(path, parents=False, exist_ok=False)` shape. `parents`/`exist_ok`
+/// are kw-only so [`ToArgs`](crate::args::ToArgs) emits them as kwargs (matching CPython).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, monty_macros::ToArgs)]
+pub struct MkdirCallArgs {
+    pub path: MontyPath,
+    #[from_args(kw_only)]
+    pub parents: bool,
+    #[from_args(kw_only)]
+    pub exist_ok: bool,
+}
+
+/// `rename(src, dst)` shape.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, monty_macros::ToArgs)]
+pub struct RenameCallArgs {
+    pub src: MontyPath,
+    pub dst: MontyPath,
+}
+
+/// `os.getenv(key, default=None)` shape. The host decides whether to
+/// substitute `default` when the variable is unset.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, monty_macros::ToArgs)]
+pub struct GetenvArgs {
+    pub key: String,
+    pub default: MontyObject,
+}
+
+/// `os.urandom(size)` shape. The interpreter rejects a negative `size` before
+/// suspending, so the count is unsigned; the host answers with exactly `size`
+/// bytes. `size` is sandbox-controlled, so a handler should cap it before allocating.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, monty_macros::ToArgs)]
+pub struct UrandomArgs {
+    pub size: u64,
+}
+
+/// Longest sleep the sleep calls accept, matching the point where CPython's
+/// `PyTime_t` (nanoseconds in an `i64`) overflows.
+pub const MAX_SLEEP_SECONDS: f64 = 9_223_372_036.854_775;
+
+/// Why a requested sleep length cannot be carried by an OS call.
+///
+/// The caller picks the Python-level consequence: `time.sleep` raises
+/// (`ValueError` for the first two, `OverflowError` for the third) while
+/// `asyncio.sleep` raises only for NaN and clamps the rest, as CPython does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SleepError {
+    /// The delay was NaN.
+    NotANumber,
+    /// The delay was negative.
+    Negative,
+    /// The delay was past [`MAX_SLEEP_SECONDS`] (infinity included).
+    TooLarge,
+}
+
+/// Converts a Python sleep argument into the [`Duration`] an OS call carries.
+///
+/// Sleep payloads are `Duration` rather than raw seconds precisely so no host
+/// is ever handed a NaN, negative or unrepresentable span to convert — the
+/// obvious `Duration::from_secs_f64` panics on all three. Both producers, the
+/// interpreter and the wire decoder, go through here.
+pub fn sleep_duration(seconds: f64) -> Result<Duration, SleepError> {
+    // Range before sign, as CPython converts to `PyTime_t` before checking
+    // the sign: `-inf` and huge negatives overflow rather than being negative.
+    if seconds.is_nan() {
+        Err(SleepError::NotANumber)
+    } else if seconds.abs() > MAX_SLEEP_SECONDS {
+        Err(SleepError::TooLarge)
+    } else if seconds < 0.0 {
+        Err(SleepError::Negative)
+    } else {
+        Duration::try_from_secs_f64(seconds).map_err(|_| SleepError::TooLarge)
+    }
+}
+
+/// Like [`sleep_duration`], but for `asyncio.sleep`, which clamps rather than
+/// raising: a negative delay becomes no wait at all (CPython returns
+/// immediately) and an over-long one saturates at [`MAX_SLEEP_SECONDS`]. Only
+/// NaN is refused, the one delay CPython rejects there.
+pub fn sleep_duration_saturating(seconds: f64) -> Result<Duration, SleepError> {
+    match sleep_duration(seconds) {
+        Ok(delay) => Ok(delay),
+        // `delay <= 0` returns at once in CPython, however far below zero.
+        Err(SleepError::Negative) => Ok(Duration::ZERO),
+        Err(SleepError::TooLarge) if seconds < 0.0 => Ok(Duration::ZERO),
+        Err(SleepError::TooLarge) => Ok(Duration::from_secs_f64(MAX_SLEEP_SECONDS)),
+        Err(err @ SleepError::NotANumber) => Err(err),
+    }
+}
+
+// =============================================================================
+// MontyPath — owned virtual-sandbox path used by every path-bearing variant.
+// =============================================================================
+
+/// Owned virtual (sandbox) path carried by OS-call args.
+///
+/// Preserves the supplied string, including invalid components, for host validation.
+/// Derefs to `&str` for routing.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct MontyPath(String);
+
+impl MontyPath {
+    /// Stores the path without validation or normalization; hosts validate before I/O.
+    #[must_use]
+    pub fn new(path: String) -> Self {
+        Self(path)
+    }
+
+    /// Borrows the original spelling for host validation and error messages.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// Takes the original string without copying it.
+    #[must_use]
+    pub fn into_string(self) -> String {
+        self.0
+    }
+}
+
+impl Deref for MontyPath {
+    type Target = str;
+
+    fn deref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<String> for MontyPath {
+    fn from(s: String) -> Self {
+        Self(s)
+    }
+}
+
+impl From<&str> for MontyPath {
+    fn from(s: &str) -> Self {
+        Self(s.to_owned())
+    }
+}
+
+impl PushValue for MontyPath {
+    fn push_into(self, graph: &mut MontyGraph) -> NodeId {
+        graph.push(MontyNode::Path(self.0))
+    }
+}
+// =============================================================================
+// stat_result builders — separate utility API used by host backends.
+// =============================================================================
+//
+// These functions create namedtuple values that match Python's
+// os.stat_result structure. The stat_result has 10 fields:
+// st_mode, st_ino, st_dev, st_nlink, st_uid, st_gid, st_size, st_atime, st_mtime, st_ctime.
+
+/// Creates a `stat_result` for a regular file.
+///
+/// The file type bits (`0o100_000`) are automatically added if not present.
+///
+/// # Arguments
+/// * `mode` - File permissions as octal. Common values:
+///   - `0o644` - rw-r--r-- (owner read/write, others read)
+///   - `0o600` - rw------- (owner read/write only)
+///   - `0o755` - rwxr-xr-x (executable, owner full, others read/execute)
+///   - `0o100644` - same as 0o644 with explicit file type bits
+/// * `size` - File size in bytes
+/// * `mtime` - Modification time as Unix timestamp
+#[must_use]
+pub fn file_stat(mode: i64, size: i64, mtime: f64) -> MontyObject {
+    let mode = if mode < 0o1000 { mode | 0o100_000 } else { mode };
+    stat_result(mode, 0, 0, 1, 0, 0, size, mtime, mtime, mtime)
+}
+
+/// Creates a `stat_result` for a directory.
+///
+/// The directory type bits (`0o040_000`) are automatically added if not present.
+///
+/// # Arguments
+/// * `mode` - Directory permissions as octal. Common values:
+///   - `0o755` - rwxr-xr-x (owner full, others read/execute)
+///   - `0o700` - rwx------ (owner only)
+///   - `0o040755` - same as 0o755 with explicit directory type bits
+/// * `mtime` - Modification time as Unix timestamp
+#[must_use]
+pub fn dir_stat(mode: i64, mtime: f64) -> MontyObject {
+    let mode = if mode < 0o1000 { mode | 0o040_000 } else { mode };
+    stat_result(mode, 0, 0, 2, 0, 0, 4096, mtime, mtime, mtime)
+}
+
+/// Creates a `stat_result` for a symbolic link.
+///
+/// The symlink type bits (`0o120_000`) are automatically added if not present.
+///
+/// # Arguments
+/// * `mode` - Symlink permissions as octal. Common values:
+///   - `0o777` - rwxrwxrwx (symlinks typically have full permissions)
+///   - `0o120777` - same as 0o777 with explicit symlink type bits
+/// * `mtime` - Modification time as Unix timestamp
+#[must_use]
+pub fn symlink_stat(mode: i64, mtime: f64) -> MontyObject {
+    let mode = if mode < 0o1000 { mode | 0o120_000 } else { mode };
+    stat_result(mode, 0, 0, 1, 0, 0, 0, mtime, mtime, mtime)
+}
+
+/// Creates a full `stat_result` with all 10 fields specified.
+///
+/// This is the low-level builder; prefer `file_stat()`, `dir_stat()`, or `symlink_stat()`
+/// for common cases.
+#[must_use]
+#[expect(clippy::too_many_arguments)]
+pub fn stat_result(
+    st_mode: i64,
+    st_ino: i64,
+    st_dev: i64,
+    st_nlink: i64,
+    st_uid: i64,
+    st_gid: i64,
+    st_size: i64,
+    st_atime: f64,
+    st_mtime: f64,
+    st_ctime: f64,
+) -> MontyObject {
+    MontyObject::named_tuple(
+        STAT_RESULT_TYPE_NAME,
+        STAT_RESULT_FIELDS.iter().copied(),
+        [
+            MontyObject::int(st_mode),
+            MontyObject::int(st_ino),
+            MontyObject::int(st_dev),
+            MontyObject::int(st_nlink),
+            MontyObject::int(st_uid),
+            MontyObject::int(st_gid),
+            MontyObject::int(st_size),
+            MontyObject::float(st_atime),
+            MontyObject::float(st_mtime),
+            MontyObject::float(st_ctime),
+        ],
+    )
+}
+
+const STAT_RESULT_TYPE_NAME: &str = "StatResult";
+const STAT_RESULT_FIELDS: &[&str] = &[
+    "st_mode", "st_ino", "st_dev", "st_nlink", "st_uid", "st_gid", "st_size", "st_atime", "st_mtime", "st_ctime",
+];

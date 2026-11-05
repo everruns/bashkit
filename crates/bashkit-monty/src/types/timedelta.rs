@@ -1,0 +1,562 @@
+//! Python `datetime.timedelta` implementation.
+//!
+//! Monty stores timedeltas using `chrono::TimeDelta`, while preserving CPython's
+//! normalized `(days, seconds, microseconds)` semantics for constructors, arithmetic,
+//! and formatting.
+
+use std::{
+    cmp::Ordering,
+    collections::hash_map::DefaultHasher,
+    fmt::Write,
+    hash::{Hash, Hasher},
+};
+
+use chrono::TimeDelta as ChronoTimeDelta;
+use smallvec::smallvec;
+
+use crate::{
+    args::{ArgValues, FromArgs, FromValue, FromValueFail, is_long_int},
+    bytecode::{CallResult, VM},
+    exception_private::{ExcType, ExcTypeExt, RunError, RunResult, SimpleException},
+    hash::HashValue,
+    heap::{Heap, HeapData, HeapId, HeapItem, HeapObjectRead, HeapReadOutput},
+    intern::StaticStrings,
+    types::{
+        CmpOrder, LazyHeapSet, PyTrait, Type, date, datetime, long_int, str::allocate_string, tuple::allocate_tuple,
+    },
+    value::{EitherStr, Value},
+};
+
+/// Minimum allowed day magnitude for `timedelta`.
+pub(crate) const MIN_TIMEDELTA_DAYS: i32 = -999_999_999;
+/// Maximum allowed day magnitude for `timedelta`.
+pub(crate) const MAX_TIMEDELTA_DAYS: i32 = 999_999_999;
+
+const DAY_SECONDS: i32 = 86_400;
+pub(crate) const SECONDS_PER_HOUR: i32 = 3_600;
+pub(crate) const SECONDS_PER_MINUTE: i32 = 60;
+pub(crate) const MICROSECONDS_PER_SECOND: i128 = 1_000_000;
+const MILLISECONDS_PER_SECOND: i128 = 1_000;
+pub(crate) const DAY_MICROSECONDS: i128 = (DAY_SECONDS as i128) * MICROSECONDS_PER_SECOND;
+const HOUR_MICROSECONDS: i128 = (SECONDS_PER_HOUR as i128) * MICROSECONDS_PER_SECOND;
+const MINUTE_MICROSECONDS: i128 = (SECONDS_PER_MINUTE as i128) * MICROSECONDS_PER_SECOND;
+
+/// `datetime.timedelta` storage backed by `chrono::TimeDelta`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize)]
+pub(crate) struct TimeDelta(pub(crate) ChronoTimeDelta);
+
+/// Creates a normalized timedelta value from CPython components.
+pub(crate) fn new(days: i32, seconds: i32, microseconds: i32) -> RunResult<TimeDelta> {
+    if !(MIN_TIMEDELTA_DAYS..=MAX_TIMEDELTA_DAYS).contains(&days) {
+        return Err(SimpleException::new_msg(
+            ExcType::OverflowError,
+            format!("days={days}; must have magnitude <= 999999999"),
+        )
+        .into());
+    }
+    if !(0..DAY_SECONDS).contains(&seconds)
+        || !(0..i32::try_from(MICROSECONDS_PER_SECOND).unwrap()).contains(&microseconds)
+    {
+        return Err(SimpleException::new_msg(ExcType::ValueError, "timedelta normalized fields out of range").into());
+    }
+    let total_microseconds =
+        i128::from(days) * DAY_MICROSECONDS + i128::from(seconds) * MICROSECONDS_PER_SECOND + i128::from(microseconds);
+    from_total_microseconds(total_microseconds)
+}
+
+/// Returns CPython normalized `(days, seconds, microseconds)` components.
+#[must_use]
+pub(crate) fn components(delta: &TimeDelta) -> (i32, i32, i32) {
+    let total_microseconds = total_microseconds(delta);
+    let days = total_microseconds.div_euclid(DAY_MICROSECONDS);
+    let rem = total_microseconds.rem_euclid(DAY_MICROSECONDS);
+    let seconds = rem / MICROSECONDS_PER_SECOND;
+    let micros = rem % MICROSECONDS_PER_SECOND;
+    (
+        i32::try_from(days).expect("chrono day range fits CPython i32 day bounds"),
+        i32::try_from(seconds).expect("seconds are bounded by one day"),
+        i32::try_from(micros).expect("microseconds are bounded by one second"),
+    )
+}
+
+/// Returns the duration as total microseconds.
+#[must_use]
+pub(crate) fn total_microseconds(delta: &TimeDelta) -> i128 {
+    // `subsec_nanos` can be negative for negative durations; summing both parts
+    // yields an exact signed duration as long as we keep microsecond precision.
+    let seconds = i128::from(delta.0.num_seconds());
+    let microseconds =
+        i128::from(delta.0.subsec_nanos() / i32::try_from(MILLISECONDS_PER_SECOND).expect("1000 fits in i32"));
+    seconds * MICROSECONDS_PER_SECOND + microseconds
+}
+
+/// Returns the duration as total whole seconds plus fractional microseconds.
+#[must_use]
+pub(crate) fn total_seconds(delta: &TimeDelta) -> f64 {
+    total_microseconds(delta) as f64 / (MICROSECONDS_PER_SECOND as f64)
+}
+
+/// Returns total seconds only when exact (no microseconds), otherwise `None`.
+#[must_use]
+pub(crate) fn exact_total_seconds(delta: &TimeDelta) -> Option<i128> {
+    let (days, seconds, microseconds) = components(delta);
+    if microseconds == 0 {
+        Some(i128::from(days) * i128::from(DAY_SECONDS) + i128::from(seconds))
+    } else {
+        None
+    }
+}
+
+/// Exposes the underlying chrono duration for datetime/date arithmetic.
+#[must_use]
+pub(crate) fn chrono_delta(delta: &TimeDelta) -> ChronoTimeDelta {
+    delta.0
+}
+
+/// Divides a timedelta by an integer divisor using CPython's rounding rule.
+///
+/// CPython rounds to the nearest microsecond with ties going to the even result,
+/// rather than truncating toward zero.
+#[must_use]
+pub(crate) fn div_microseconds_round_ties_even(total_microseconds: i128, divisor: i128) -> i128 {
+    debug_assert_ne!(divisor, 0);
+
+    let negative = total_microseconds.is_negative() ^ divisor.is_negative();
+    let numerator = total_microseconds.abs();
+    let denominator = divisor.abs();
+    let quotient = numerator / denominator;
+    let remainder = numerator % denominator;
+
+    let rounded = match (remainder * 2).cmp(&denominator) {
+        Ordering::Less => quotient,
+        Ordering::Greater => quotient + 1,
+        Ordering::Equal => {
+            if quotient % 2 == 0 {
+                quotient
+            } else {
+                quotient + 1
+            }
+        }
+    };
+
+    if negative { -rounded } else { rounded }
+}
+
+/// Converts a chrono duration to Monty's bounded timedelta.
+pub(crate) fn from_chrono(delta: ChronoTimeDelta) -> RunResult<TimeDelta> {
+    from_total_microseconds(
+        i128::from(delta.num_seconds()) * MICROSECONDS_PER_SECOND
+            + i128::from(delta.subsec_nanos() / i32::try_from(MILLISECONDS_PER_SECOND).expect("1000 fits in i32")),
+    )
+}
+
+/// Builds a normalized timedelta from an arbitrary microsecond count.
+pub(crate) fn from_total_microseconds(total_microseconds: i128) -> RunResult<TimeDelta> {
+    let days = total_microseconds.div_euclid(DAY_MICROSECONDS);
+    if !(i128::from(MIN_TIMEDELTA_DAYS)..=i128::from(MAX_TIMEDELTA_DAYS)).contains(&days) {
+        return Err(SimpleException::new_msg(
+            ExcType::OverflowError,
+            format!("days={days}; must have magnitude <= 999999999"),
+        )
+        .into());
+    }
+
+    let seconds = total_microseconds.div_euclid(MICROSECONDS_PER_SECOND);
+    let micros = total_microseconds.rem_euclid(MICROSECONDS_PER_SECOND);
+
+    let seconds = i64::try_from(seconds)
+        .map_err(|_| SimpleException::new_msg(ExcType::OverflowError, "timedelta value out of range"))?;
+    let nanos = u32::try_from(micros * MILLISECONDS_PER_SECOND)
+        .expect("microsecond remainder is in 0..1_000_000 and fits u32 nanoseconds");
+
+    let delta = ChronoTimeDelta::new(seconds, nanos)
+        .ok_or_else(|| SimpleException::new_msg(ExcType::OverflowError, "timedelta value out of range"))?;
+    Ok(TimeDelta(delta))
+}
+
+/// Total microseconds of a `timedelta` divisor, or `None` if `other` is not one.
+///
+/// The zero check lives here so `/`, `//`, `%` and `divmod` all raise the same
+/// `ZeroDivisionError` rather than each repeating it.
+pub(crate) fn rhs_microseconds(other: &Value, vm: &VM<'_>) -> RunResult<Option<i128>> {
+    let Value::Ref(id) = other else {
+        return Ok(None);
+    };
+    let HeapData::TimeDelta(rhs) = vm.heap.get(*id) else {
+        return Ok(None);
+    };
+    let total = total_microseconds(rhs);
+    if total == 0 {
+        return Err(ExcType::zero_division().into());
+    }
+    Ok(Some(total))
+}
+
+/// Wraps a `td // td` quotient as a Python int.
+///
+/// Dividing by `timedelta.resolution` counts every microsecond in the range, so
+/// the quotient reaches ~8.6e19 and overflows `i64` — hence the `LongInt` arm.
+pub(crate) fn int_from_microseconds(quotient: i128, heap: &Heap) -> Value {
+    match i64::try_from(quotient) {
+        Ok(quotient) => Value::Int(quotient),
+        Err(_) => long_int::wide_i128_into_value(quotient, heap),
+    }
+}
+
+/// Python's floor division and remainder for `i128`.
+///
+/// Rust's `/` truncates toward zero and `div_euclid` forces a positive
+/// remainder; Python floors and gives the remainder the *divisor's* sign, so
+/// `3 // -2` is `-2` remainder `-1`. Callers must reject a zero divisor first;
+/// both operands are microsecond counts, far inside `i128`, so neither step
+/// can overflow.
+pub(crate) fn floor_div_rem(total: i128, divisor: i128) -> (i128, i128) {
+    let quotient = total / divisor;
+    let remainder = total % divisor;
+    if remainder != 0 && (remainder < 0) != (divisor < 0) {
+        (quotient - 1, remainder + divisor)
+    } else {
+        (quotient, remainder)
+    }
+}
+
+/// Allocates a `timedelta` from a microsecond count known to be in range.
+///
+/// Used for the class constants (`resolution`, `min`, `max`) and by
+/// `utcoffset()`; anything derived from user input must go through [`new`] or
+/// [`from_total_microseconds`] so the overflow is reported rather than panicked.
+pub(crate) fn allocate_micros(total_microseconds: i128, heap: &Heap) -> Value {
+    let delta = from_total_microseconds(total_microseconds).expect("caller guarantees an in-range timedelta");
+    Value::Ref(heap.allocate(HeapData::TimeDelta(delta)))
+}
+
+/// Creates a `timedelta` from constructor arguments.
+///
+/// Supports positional `(days, seconds, microseconds)` and keyword arguments
+/// `days`, `seconds`, `microseconds`, `milliseconds`, `minutes`, `hours`, `weeks`.
+pub(crate) fn init(vm: &mut VM<'_>, args: ArgValues) -> RunResult<Value> {
+    let TimedeltaArgs {
+        days,
+        seconds,
+        microseconds,
+        milliseconds,
+        minutes,
+        hours,
+        weeks,
+    } = TimedeltaArgs::from_args(args, vm)?;
+
+    let total_microseconds = checked_component(weeks, 7 * DAY_MICROSECONDS)?
+        + checked_component(days, DAY_MICROSECONDS)?
+        + checked_component(hours, HOUR_MICROSECONDS)?
+        + checked_component(minutes, MINUTE_MICROSECONDS)?
+        + checked_component(seconds, MICROSECONDS_PER_SECOND)?
+        + checked_component(milliseconds, MILLISECONDS_PER_SECOND)?
+        + microseconds.0;
+
+    let delta = from_total_microseconds(total_microseconds)?;
+    Ok(Value::Ref(vm.heap.allocate(HeapData::TimeDelta(delta))))
+}
+
+/// Argument shape for `timedelta(days=0, seconds=0, microseconds=0, *, milliseconds=0, minutes=0, hours=0, weeks=0)`.
+///
+/// CPython accepts the first three as positional-or-keyword and the rest as
+/// keyword-only. All default to 0 so an empty `timedelta()` is legal.
+#[derive(FromArgs)]
+#[from_args(name = "timedelta")]
+struct TimedeltaArgs {
+    #[from_args(default)]
+    days: DeltaComponent,
+    #[from_args(default)]
+    seconds: DeltaComponent,
+    #[from_args(default)]
+    microseconds: DeltaComponent,
+    #[from_args(kw_only, default)]
+    milliseconds: DeltaComponent,
+    #[from_args(kw_only, default)]
+    minutes: DeltaComponent,
+    #[from_args(kw_only, default)]
+    hours: DeltaComponent,
+    #[from_args(kw_only, default)]
+    weeks: DeltaComponent,
+}
+
+/// One `timedelta(...)` constructor component, held as `i128` so the
+/// microsecond-normalisation arithmetic in [`init`] cannot wrap.
+///
+/// Carries its own `FromValue` impl (rather than a generic `i128` one)
+/// because the overflow semantics are timedelta-specific: CPython's
+/// accumulator converts each component through C int, so ints wider than
+/// i64 raise `OverflowError: Python int too large to convert to C int`
+/// even though they would fit in i128.
+#[derive(Clone, Copy, Default)]
+struct DeltaComponent(i128);
+
+impl FromValue for DeltaComponent {
+    const EXPECTED_TYPE_NAME: Option<&'static str> = Some("int");
+
+    fn from_value(value: Value, vm: &mut VM<'_>) -> Result<Self, FromValueFail> {
+        let result = match value {
+            Value::Bool(b) => Ok(Self(i128::from(b))),
+            Value::Int(i) => Ok(Self(i128::from(i))),
+            _ if is_long_int(&value, vm) => Err(FromValueFail::Raise(ExcType::overflow_c_int())),
+            _ => Err(FromValueFail::WrongType),
+        };
+        value.drop_with(vm);
+        result
+    }
+
+    fn type_error(got: &str) -> RunError {
+        ExcType::type_error_not_integer(got)
+    }
+}
+
+fn checked_component(value: DeltaComponent, unit_microseconds: i128) -> RunResult<i128> {
+    value.0.checked_mul(unit_microseconds).ok_or_else(|| {
+        SimpleException::new_msg(ExcType::OverflowError, "timedelta argument overflow while normalizing").into()
+    })
+}
+
+/// Formats a `TimeDelta` as its Python `repr()` string, e.g. `"datetime.timedelta(days=1, seconds=3600)"`.
+///
+/// Shared by `TimeDelta::py_repr_fmt` and `timezone.rs` for formatting offsets.
+#[must_use]
+pub(crate) fn format_repr(delta: &TimeDelta) -> String {
+    let (days, seconds, microseconds) = components(delta);
+    if days == 0 && seconds == 0 && microseconds == 0 {
+        return "datetime.timedelta(0)".to_owned();
+    }
+
+    let mut repr = String::from("datetime.timedelta(");
+    let mut first = true;
+    if days != 0 {
+        write!(repr, "days={days}").expect("writing to String cannot fail");
+        first = false;
+    }
+    if seconds != 0 {
+        if !first {
+            repr.push_str(", ");
+        }
+        write!(repr, "seconds={seconds}").expect("writing to String cannot fail");
+        first = false;
+    }
+    if microseconds != 0 {
+        if !first {
+            repr.push_str(", ");
+        }
+        write!(repr, "microseconds={microseconds}").expect("writing to String cannot fail");
+    }
+    repr.push(')');
+    repr
+}
+
+impl HeapItem for TimeDelta {
+    fn py_dec_ref_ids(&mut self, _stack: &mut Vec<HeapId>) {}
+}
+
+/// `HeapRead`-based dispatch for `TimeDelta`, enabling the `HeapReadOutput` enum to
+/// delegate `PyTrait` calls to heap-resident timedeltas.
+impl<'h> PyTrait<'h> for HeapObjectRead<'h, TimeDelta> {
+    fn py_type(&self, _vm: &VM<'h>) -> Type {
+        Type::TimeDelta
+    }
+
+    fn py_len(&self, _vm: &VM<'h>) -> Option<usize> {
+        None
+    }
+
+    fn py_eq_impl(&self, other: &Value, vm: &mut VM<'h>) -> RunResult<Option<bool>> {
+        let Some(HeapReadOutput::TimeDelta(other)) = other.read_heap(vm) else {
+            return Ok(None);
+        };
+        Ok(Some(
+            total_microseconds(self.get(vm.heap)) == total_microseconds(other.get(vm.heap)),
+        ))
+    }
+
+    fn py_hash(&self, vm: &mut VM<'h>) -> RunResult<Option<HashValue>> {
+        let mut hasher = DefaultHasher::new();
+        self.get(vm.heap).hash(&mut hasher);
+        Ok(Some(HashValue::new(hasher.finish())))
+    }
+
+    fn py_cmp(&self, other: &Self, vm: &mut VM<'h>) -> RunResult<CmpOrder> {
+        Ok(CmpOrder::Ordered(
+            total_microseconds(self.get(vm.heap)).cmp(&total_microseconds(other.get(vm.heap))),
+        ))
+    }
+
+    fn py_bool(&self, vm: &mut VM<'h>) -> RunResult<bool> {
+        Ok(total_microseconds(self.get(vm.heap)) != 0)
+    }
+
+    fn py_repr_fmt(&self, f: &mut impl Write, vm: &mut VM<'h>, _heap_ids: &mut LazyHeapSet) -> RunResult<()> {
+        f.write_str(&format_repr(self.get(vm.heap)))?;
+        Ok(())
+    }
+
+    fn py_str(&self, vm: &mut VM<'h>) -> RunResult<Value> {
+        let (days, seconds, microseconds) = components(self.get(vm.heap));
+        let hours = seconds / SECONDS_PER_HOUR;
+        let minutes = (seconds % SECONDS_PER_HOUR) / SECONDS_PER_MINUTE;
+        let second = seconds % SECONDS_PER_MINUTE;
+        let time = if microseconds == 0 {
+            format!("{hours}:{minutes:02}:{second:02}")
+        } else {
+            format!("{hours}:{minutes:02}:{second:02}.{microseconds:06}")
+        };
+
+        let s = if days == 0 {
+            time
+        } else {
+            let day_word = if days.abs() == 1 { "day" } else { "days" };
+            format!("{days} {day_word}, {time}")
+        };
+        Ok(allocate_string(s, vm.heap))
+    }
+
+    fn py_abs_impl(&self, vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+        let delta = from_total_microseconds(total_microseconds(self.get(vm.heap)).abs())?;
+        Ok(Some(Value::Ref(vm.heap.allocate(HeapData::TimeDelta(delta)))))
+    }
+
+    /// Negation can overflow because the upper bound includes a partial day
+    /// beyond `999999999` days, while the lower bound is exactly `-999999999` days.
+    fn py_neg_impl(&self, vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+        let negated = from_total_microseconds(-total_microseconds(self.get(vm.heap)))?;
+        Ok(Some(Value::Ref(vm.heap.allocate(HeapData::TimeDelta(negated)))))
+    }
+
+    /// `+delta` is the identity, so hand back this same immutable value. The
+    /// caller owns the result, hence the extra reference.
+    fn py_pos_impl(&self, vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+        Ok(Some(self.clone_value(vm.heap)))
+    }
+
+    fn py_add_impl(&self, other: &Value, vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+        match other.read_heap(vm) {
+            Some(HeapReadOutput::Date(other)) => Ok(date::py_add(*other.get(vm.heap), *self.get(vm.heap), vm.heap)),
+            Some(HeapReadOutput::DateTime(other)) => {
+                let other = other.get(vm.heap).clone();
+                let value = *self.get(vm.heap);
+                Ok(datetime::py_add(&other, &value, vm.heap))
+            }
+            Some(HeapReadOutput::TimeDelta(other)) => {
+                let total = total_microseconds(self.get(vm.heap)).checked_add(total_microseconds(other.get(vm.heap)));
+                let Some(total) = total else { return Ok(None) };
+                let Ok(result) = from_total_microseconds(total) else {
+                    return Ok(None);
+                };
+                Ok(Some(Value::Ref(vm.heap.allocate(HeapData::TimeDelta(result)))))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    fn py_sub_impl(&self, other: &Value, vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+        let Some(HeapReadOutput::TimeDelta(other)) = other.read_heap(vm) else {
+            return Ok(None);
+        };
+        let total = total_microseconds(self.get(vm.heap)).checked_sub(total_microseconds(other.get(vm.heap)));
+        let Some(total) = total else { return Ok(None) };
+        let Ok(result) = from_total_microseconds(total) else {
+            return Ok(None);
+        };
+        Ok(Some(Value::Ref(vm.heap.allocate(HeapData::TimeDelta(result)))))
+    }
+
+    fn py_mul_impl(&self, other: &Value, vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+        let multiplier = match other {
+            Value::Int(value) => i128::from(*value),
+            Value::Bool(value) => i128::from(*value),
+            _ => return Ok(None),
+        };
+        let total = total_microseconds(self.get(vm.heap))
+            .checked_mul(multiplier)
+            .ok_or_else(|| SimpleException::new_msg(ExcType::OverflowError, "timedelta multiplication overflow"))?;
+        let result = from_total_microseconds(total)?;
+        Ok(Some(Value::Ref(vm.heap.allocate(HeapData::TimeDelta(result)))))
+    }
+
+    fn py_rmul_impl(&self, other: &Value, vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+        self.py_mul_impl(other, vm)
+    }
+
+    fn py_truediv_impl(&self, other: &Value, vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+        // `td / td` is a plain ratio, so it yields a float rather than a duration.
+        if let Some(rhs) = rhs_microseconds(other, vm)? {
+            let ratio = total_microseconds(self.get(vm.heap)) as f64 / rhs as f64;
+            return Ok(Some(Value::Float(ratio)));
+        }
+        let divisor = match other {
+            Value::Int(0) | Value::Bool(false) => return Err(ExcType::zero_division().into()),
+            Value::Int(value) => i128::from(*value),
+            Value::Bool(true) => 1,
+            _ => return Ok(None),
+        };
+        let total = total_microseconds(self.get(vm.heap));
+        let result = div_microseconds_round_ties_even(total, divisor);
+        let result = from_total_microseconds(result)?;
+        Ok(Some(Value::Ref(vm.heap.allocate(HeapData::TimeDelta(result)))))
+    }
+
+    fn py_floordiv_impl(&self, other: &Value, vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+        // `td // td` counts whole divisors, so it yields an int.
+        if let Some(rhs) = rhs_microseconds(other, vm)? {
+            let (quotient, _) = floor_div_rem(total_microseconds(self.get(vm.heap)), rhs);
+            return Ok(Some(int_from_microseconds(quotient, vm.heap)));
+        }
+        let divisor = match other {
+            Value::Int(0) | Value::Bool(false) => return Err(ExcType::zero_division().into()),
+            Value::Int(value) => i128::from(*value),
+            Value::Bool(true) => 1,
+            _ => return Ok(None),
+        };
+        let total = total_microseconds(self.get(vm.heap));
+        let (quotient, _) = floor_div_rem(total, divisor);
+        let result = from_total_microseconds(quotient)?;
+        Ok(Some(Value::Ref(vm.heap.allocate(HeapData::TimeDelta(result)))))
+    }
+
+    fn py_mod_impl(&self, other: &Value, vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+        // Only defined against another timedelta; `td % int` is a TypeError in
+        // CPython, so anything else falls through to the caller's error.
+        let Some(rhs) = rhs_microseconds(other, vm)? else {
+            return Ok(None);
+        };
+        let (_, remainder) = floor_div_rem(total_microseconds(self.get(vm.heap)), rhs);
+        let result = from_total_microseconds(remainder)?;
+        Ok(Some(Value::Ref(vm.heap.allocate(HeapData::TimeDelta(result)))))
+    }
+
+    fn py_divmod_impl(&self, other: &Value, vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+        // Like `%`, only defined against another timedelta. It pairs the whole
+        // count `//` yields with the duration `%` leaves over.
+        let Some(rhs) = rhs_microseconds(other, vm)? else {
+            return Ok(None);
+        };
+        let (quotient, remainder) = floor_div_rem(total_microseconds(self.get(vm.heap)), rhs);
+        let quotient = int_from_microseconds(quotient, vm.heap);
+        let remainder = allocate_micros(remainder, vm.heap);
+        Ok(Some(allocate_tuple(smallvec![quotient, remainder], vm.heap)))
+    }
+
+    fn py_call_attr(&mut self, vm: &mut VM<'h>, attr: &EitherStr, args: ArgValues) -> RunResult<CallResult> {
+        if attr.static_string(vm.interns) == Some(StaticStrings::TotalSeconds) {
+            // Copy the TimeDelta to release the HeapRead borrow before checking args
+            let td = *self.get(vm.heap);
+            args.check_zero_args("timedelta.total_seconds", vm.heap)?;
+            return Ok(CallResult::Value(Value::Float(total_seconds(&td))));
+        }
+        Err(ExcType::attribute_error_method(Type::TimeDelta, attr, args, vm))
+    }
+
+    fn py_getattr(&self, attr: &EitherStr, vm: &mut VM<'h>) -> RunResult<Option<CallResult>> {
+        let (days, seconds, microseconds) = components(self.get(vm.heap));
+        match attr.static_string(vm.interns) {
+            Some(StaticStrings::Days) => Ok(Some(CallResult::Value(Value::Int(i64::from(days))))),
+            Some(StaticStrings::Seconds) => Ok(Some(CallResult::Value(Value::Int(i64::from(seconds))))),
+            Some(StaticStrings::Microseconds) => Ok(Some(CallResult::Value(Value::Int(i64::from(microseconds))))),
+            _ => Ok(None),
+        }
+    }
+}

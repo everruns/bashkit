@@ -1,0 +1,173 @@
+use std::{
+    cell::OnceCell,
+    fmt::{self, Write},
+};
+
+use crate::{args::Signature, bytecode::Code, expressions::Identifier, intern::Interns, namespace::NamespaceId};
+
+/// How an exact positional call can bypass argument binding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ExactPositionalCall {
+    /// Arguments can remain on the VM stack as synchronous frame locals.
+    Sync(usize),
+    /// Arguments can move directly from the VM stack into a coroutine namespace.
+    Async(usize),
+}
+
+/// A defined function once compiled and ready for execution.
+///
+/// Contains compiled code, parameter metadata and closure layout.
+/// Committed functions have stable addresses in `Interns` and are referenced by `FunctionId`.
+///
+/// # Namespace Layout
+///
+/// Parameters occupy slots `0..signature.param_count()` (see `Signature`).
+/// Cell variables, captured free variables, and ordinary locals follow, but
+/// their slots are **explicit** (carried in `cell_var_slots` / `free_var_slots`)
+/// rather than positional: a transitively captured (pass-through) free variable
+/// is discovered late during preparation and is assigned a slot in the locals
+/// region, so the old contiguous `[params][cells][free][locals]` invariant no
+/// longer holds. Each cell/free slot is therefore placed individually at frame
+/// setup (see `install_closure_cells`).
+///
+/// # Closure Support
+///
+/// - `free_var_enclosing_slots[i]`: legacy compiler record of the enclosing
+///   slot for captured cell `i`; runtime closure creation uses bytecode.
+/// - `free_var_slots[i]`: slot in *this* frame where that captured cell is
+///   installed at call time (parallel to `free_var_enclosing_slots`).
+/// - `cell_var_slots[i]`: slot in this frame for an owned cell (a local captured
+///   by a nested function); a fresh cell is created there at call time.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub(crate) struct Function {
+    /// The function name (used for error messages and repr).
+    #[serde(rename = "N")]
+    pub name: Identifier,
+    /// The function signature.
+    #[serde(rename = "S")]
+    pub signature: Signature,
+    /// Size of the initial namespace (number of local variable slots).
+    #[serde(rename = "Z")]
+    pub namespace_size: usize,
+    /// Legacy compiler record of enclosing slots; closure creation uses bytecode.
+    #[serde(rename = "E")]
+    pub free_var_enclosing_slots: Vec<NamespaceId>,
+    /// This frame's slots that receive the captured free-var cells, parallel to
+    /// [`Self::free_var_enclosing_slots`]. Explicit (not positional) so
+    /// late-allocated pass-through slots land correctly.
+    #[serde(rename = "F")]
+    pub free_var_slots: Vec<NamespaceId>,
+    /// This frame's slots for owned cell variables (locals captured by nested
+    /// functions); a fresh cell is created for each at call time. Parallel to
+    /// [`Self::cell_param_indices`].
+    #[serde(rename = "C")]
+    pub cell_var_slots: Vec<NamespaceId>,
+    /// Maps each cell variable (parallel to [`Self::cell_var_slots`]) to its
+    /// parameter index when the cell is for a captured parameter, so the bound
+    /// value can be copied in; `None` means the cell starts `Undefined`.
+    #[serde(rename = "P")]
+    pub cell_param_indices: Vec<Option<usize>>,
+    /// Number of default parameter values.
+    ///
+    /// At function definition time, this many default values are evaluated and stored
+    /// in a separate defaults array. The signature indicates how these map to parameters.
+    #[serde(rename = "D")]
+    pub defaults_count: usize,
+    /// Whether this is an async function (`async def`).
+    ///
+    /// When true, calling this function creates a `Coroutine` object instead of
+    /// immediately pushing a frame. The coroutine captures the bound arguments
+    /// and starts execution only when awaited.
+    #[serde(rename = "A")]
+    pub is_async: bool,
+    /// Cached binder-free call plan, derived from the fields above and cached
+    /// via [`Self::exact_positional_call`].
+    ///
+    /// Never serialized: a function loaded from a REPL dump starts with this
+    /// empty and derives it fresh on first call, so staleness with respect to
+    /// an older binary's derivation logic is structurally impossible rather
+    /// than merely checked.
+    #[serde(skip)]
+    exact_positional_call: OnceCell<Option<ExactPositionalCall>>,
+    /// Compiled body borrowed by active frames, which track body-relative instruction offsets.
+    #[serde(rename = "B")]
+    pub code: Code,
+}
+
+impl Function {
+    /// Create a new compiled function.
+    ///
+    /// This is typically called by the bytecode compiler after compiling a `PreparedFunctionDef`.
+    ///
+    /// # Arguments
+    /// * `name` - The function name identifier
+    /// * `signature` - The function signature with parameter names and defaults
+    /// * `namespace_size` - Number of local variable slots needed
+    /// * `free_var_enclosing_slots` - Enclosing-frame slots for captured cells
+    /// * `free_var_slots` - This frame's slots receiving the captured cells
+    /// * `cell_var_slots` - This frame's slots for owned cells
+    /// * `cell_param_indices` - Maps each owned cell to a parameter index, if any
+    /// * `defaults_count` - Number of default parameter values
+    /// * `is_async` - Whether this is an async function
+    /// * `code` - The compiled bytecode for the function body
+    #[expect(clippy::too_many_arguments)]
+    pub fn new(
+        name: Identifier,
+        signature: Signature,
+        namespace_size: usize,
+        free_var_enclosing_slots: Vec<NamespaceId>,
+        free_var_slots: Vec<NamespaceId>,
+        cell_var_slots: Vec<NamespaceId>,
+        cell_param_indices: Vec<Option<usize>>,
+        defaults_count: usize,
+        is_async: bool,
+        code: Code,
+    ) -> Self {
+        Self {
+            name,
+            signature,
+            namespace_size,
+            free_var_enclosing_slots,
+            free_var_slots,
+            cell_var_slots,
+            cell_param_indices,
+            defaults_count,
+            is_async,
+            exact_positional_call: OnceCell::new(),
+            code,
+        }
+    }
+
+    /// Returns the binder-free call plan for this function, deriving and
+    /// caching it on first use.
+    pub(crate) fn exact_positional_call(&self) -> Option<ExactPositionalCall> {
+        *self
+            .exact_positional_call
+            .get_or_init(|| self.derive_exact_positional_call())
+    }
+
+    /// Derives the binder-free call plan from authoritative function metadata.
+    fn derive_exact_positional_call(&self) -> Option<ExactPositionalCall> {
+        if self.cell_var_slots.is_empty() && self.free_var_slots.is_empty() {
+            self.signature.exact_positional_count().map(|count| {
+                if self.is_async {
+                    ExactPositionalCall::Async(count)
+                } else {
+                    ExactPositionalCall::Sync(count)
+                }
+            })
+        } else {
+            None
+        }
+    }
+
+    /// Writes the Python repr() string for this function to a formatter.
+    pub fn py_repr_fmt<W: Write>(&self, f: &mut W, interns: &Interns, py_id: impl fmt::LowerHex) -> fmt::Result {
+        write!(
+            f,
+            "<function '{}' at 0x{:x}>",
+            interns.get_str(self.name.name_id),
+            py_id
+        )
+    }
+}

@@ -436,7 +436,8 @@ release-check:
     echo ""
     echo "Dry-run publish all release crates..."
     cargo publish --dry-run --allow-dirty \
-        -p bashkit-cpython-wasm -p bashkit -p bashkit-cli -p bashkit-scripted-tool
+        -p bashkit-cpython-wasm -p bashkit-monty-types -p bashkit-monty \
+        -p bashkit -p bashkit-cli -p bashkit-scripted-tool
 
     echo ""
     echo "All release checks passed!"

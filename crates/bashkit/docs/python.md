@@ -2,7 +2,7 @@
 
 > **Experimental.** Monty is an early-stage Python interpreter that may have
 > undiscovered crash or security bugs. Resource limits are enforced by Monty's
-> runtime. The integration should be treated as experimental.
+> runtime and a per-VM allocator meter. The integration should be treated as experimental.
 
 Bashkit embeds the [Monty](https://github.com/pydantic/monty) Python interpreter,
 a pure-Rust implementation of Python 3.12. Python runs entirely in-memory with
@@ -17,10 +17,15 @@ configurable resource limits and no host access.
 
 ## Quick Start
 
-Enable the `python` feature and register via builder:
+Enable the `python` feature, install `bashkit::MeteredAllocator` as the global
+allocator (Monty's memory limit reads it; without it `python3` refuses to run),
+and register via builder:
 
 ```rust
 use bashkit::Bash;
+
+#[global_allocator]
+static ALLOC: bashkit::MeteredAllocator = bashkit::MeteredAllocator;
 
 # #[tokio::main]
 # async fn main() -> bashkit::Result<()> {
@@ -181,6 +186,13 @@ let bash = Bash::builder()
 | Memory | 64 MB | Heap memory cap, also caps collected `print` output |
 | Recursion | 200 | Call stack depth |
 
+Memory is counted per run from real allocator bytes, so concurrent runs in one
+process (one per tenant, for example) never share or steal each other's
+budget, and hitting the cap raises `MemoryError` in that run only. This needs
+`bashkit::MeteredAllocator` as the global allocator of your binary; the CLI and
+the Python, Node and C bindings already install it. It wraps the system
+allocator and only does work while a Monty run is executing on the thread.
+
 ## LLM Tool Integration
 
 When using `BashTool` for AI agents, call `.python()` on the tool builder:
@@ -223,13 +235,17 @@ Monty has no network primitives and no OsCall variants for network operations.
 **Simple classes only.** Classes with methods and attributes work; inheritance,
 metaclasses and `match` statements are not supported by Monty yet.
 
-**No third-party imports.** Only builtin modules (`sys`, `typing`, `os`, `pathlib`,
-`math`, `json`, `datetime`, `unicodedata`) are available. No `pip install`, no `import numpy`.
+**No third-party imports.** Only Monty's bundled modules (`json`, `math`, `re`,
+`datetime`, `pathlib`, `os`, `sys`, `typing`, `csv`, `collections`, `itertools`,
+`functools`, `dataclasses`, `hashlib`, `base64`, `random`, `decimal`,
+`unicodedata`) are available. No `pip install`, no `import numpy`.
 
-**No `re` module.** Disabled due to catastrophic backtracking DoS risk in
-untrusted code execution.
+**`re` is bounded.** Plain patterns run on a linear-time engine; patterns with
+backreferences or lookaround hit a backtracking cap (`re.PatternError`) rather
+than hanging, and loops of matches stop at the time limit.
 
-**No `str.format()`.** Use f-strings instead: `f"value={x}"` not `"value={}".format(x)`.
+**Fixed clock.** `datetime.now()` and `date.today()` return a fixed virtual
+instant (2024-01-01), and `time.sleep` returns immediately.
 
 ## Security
 
@@ -241,6 +257,6 @@ All Python execution runs in a virtual environment:
 - **Resource limited**: time, memory (including collected output), and recursion caps
 - **Path traversal safe**: `../..` is resolved by VFS path normalization
 
-See threat IDs TM-PY-001 through TM-PY-029 in the [threat model](./threat-model.md).
+See threat IDs TM-PY-001 through TM-PY-035 in the [threat model](./threat-model.md).
 
 [spec]: https://github.com/everruns/bashkit/blob/main/knowledge/runtimes/python-builtin.md

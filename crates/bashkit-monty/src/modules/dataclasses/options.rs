@@ -1,0 +1,124 @@
+//! The `@dataclass(...)` options, and the `__dataclass_params__` object a
+//! decorated class keeps them in.
+
+use std::fmt::Write;
+
+use crate::{
+    bytecode::{CallResult, VM},
+    exception_private::{ExcType, ExcTypeExt, RunResult},
+    hash::{HashValue, identity_hash},
+    heap::{HeapId, HeapItem, HeapObjectRead},
+    types::{LazyHeapSet, PyTrait, Type},
+    value::{EitherStr, Value},
+};
+
+/// The `@dataclass(...)` options Monty implements.
+///
+/// Small and `Copy`, so it doubles as the payload of the *configured decorator*
+/// (`dataclass(frozen=True)`) without a heap allocation. Every other CPython
+/// flag is rejected at the call, so each is either stored here or known to hold
+/// its default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub(crate) struct DataclassOptions {
+    /// Synthesize a field-wise `__eq__` (CPython's `eq`, default `True`).
+    pub eq: bool,
+    /// Reject attribute assignment, and hash by field values when `eq` is also
+    /// set (CPython's `frozen`, default `False`).
+    pub frozen: bool,
+}
+
+impl Default for DataclassOptions {
+    /// CPython's defaults: `eq=True, frozen=False`.
+    fn default() -> Self {
+        Self {
+            eq: true,
+            frozen: false,
+        }
+    }
+}
+
+/// The `__dataclass_params__` object `@dataclass` writes into a class
+/// namespace: CPython's `dataclasses._DataclassParams`.
+///
+/// A record of the decoration only: the generated methods were built from the
+/// options, so rebinding `__dataclass_params__` changes nothing, as in CPython.
+/// Holds no heap references.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub(crate) struct DataclassParams {
+    options: DataclassOptions,
+}
+
+impl DataclassParams {
+    /// Wraps the options the decorator was called with.
+    #[must_use]
+    pub fn new(options: DataclassOptions) -> Self {
+        Self { options }
+    }
+
+    /// The options the class was decorated with, which `legacy` rebuilds the
+    /// generated methods from.
+    #[must_use]
+    pub(super) fn options(&self) -> DataclassOptions {
+        self.options
+    }
+}
+
+impl<'h> PyTrait<'h> for HeapObjectRead<'h, DataclassParams> {
+    fn py_type(&self, _vm: &VM<'h>) -> Type {
+        Type::DataclassParams
+    }
+
+    fn py_len(&self, _vm: &VM<'h>) -> Option<usize> {
+        None
+    }
+
+    fn py_eq_impl(&self, _other: &Value, _vm: &mut VM<'h>) -> RunResult<Option<bool>> {
+        // `_DataclassParams` defines no `__eq__`, so it compares by identity,
+        // which `Value::py_eq_impl` resolves before ever reaching here.
+        Ok(None)
+    }
+
+    fn py_hash(&self, _vm: &mut VM<'h>) -> RunResult<Option<HashValue>> {
+        Ok(Some(identity_hash(self.id())))
+    }
+
+    /// CPython's `_DataclassParams.__repr__`, flag for flag. The eight
+    /// unimplemented options print as constants, which cannot misreport a class
+    /// because any other value is refused at decoration.
+    fn py_repr_fmt(&self, f: &mut impl Write, vm: &mut VM<'h>, _heap_ids: &mut LazyHeapSet) -> RunResult<()> {
+        let options = self.get(vm.heap).options;
+        Ok(write!(
+            f,
+            "_DataclassParams(init=True,repr=True,eq={},order=False,unsafe_hash=False,frozen={},\
+             match_args=True,kw_only=False,slots=False,weakref_slot=False)",
+            python_bool(options.eq),
+            python_bool(options.frozen),
+        )?)
+    }
+
+    /// Every flag CPython exposes; the unimplemented ones read as the defaults
+    /// the decorator insists on.
+    fn py_getattr(&self, attr: &EitherStr, vm: &mut VM<'h>) -> RunResult<Option<CallResult>> {
+        let attr_str = attr.as_str(vm.interns);
+        let options = self.get(vm.heap).options;
+        let value = match attr_str {
+            "eq" => Value::Bool(options.eq),
+            "frozen" => Value::Bool(options.frozen),
+            "init" | "repr" | "match_args" => Value::Bool(true),
+            "order" | "unsafe_hash" | "kw_only" | "slots" | "weakref_slot" => Value::Bool(false),
+            _ => return Err(ExcType::attribute_error("_DataclassParams", attr_str)),
+        };
+        Ok(Some(CallResult::Value(value)))
+    }
+}
+
+/// Python's spelling of a bool, for the constant flags in the repr above.
+fn python_bool(value: bool) -> &'static str {
+    if value { "True" } else { "False" }
+}
+
+impl HeapItem for DataclassParams {
+    fn py_dec_ref_ids(&mut self, _stack: &mut Vec<HeapId>) {
+        // Two bools, no heap references.
+    }
+}

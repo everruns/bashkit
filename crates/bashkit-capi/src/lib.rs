@@ -26,6 +26,12 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::runtime::{Builder, Runtime};
 
+// Monty python3 charges each VM for its own allocations through this
+// allocator (see bashkit::MeteredAllocator). In a cdylib it only governs this
+// library's Rust allocations, never the host runtime's allocator.
+#[global_allocator]
+static METERED_ALLOC: bashkit::MeteredAllocator = bashkit::MeteredAllocator;
+
 pub const BASHKIT_ABI_VERSION_1: u32 = 1;
 pub const BASHKIT_MAX_CONFIG_BYTES: usize = 10_000_000;
 pub const BASHKIT_RESULT_STDOUT_TRUNCATED: u32 = 1 << 0;

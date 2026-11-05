@@ -136,7 +136,14 @@ class ReleaseWorkflowTests(unittest.TestCase):
 
         # New internal dependencies are absent from crates.io until publication.
         # Cargo stages them together only when every release package is selected.
-        for package in ("bashkit-cpython-wasm", "bashkit", "bashkit-cli", "bashkit-scripted-tool"):
+        for package in (
+            "bashkit-cpython-wasm",
+            "bashkit-monty-types",
+            "bashkit-monty",
+            "bashkit",
+            "bashkit-cli",
+            "bashkit-scripted-tool",
+        ):
             self.assertRegex(recipe, rf"-p {package}(?:\s|$)")
         self.assertIn("--dry-run", recipe)
         self.assertNotIn("--no-verify", recipe)

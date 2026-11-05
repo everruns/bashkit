@@ -225,7 +225,7 @@ pub(super) fn python_handler(registration: Registration) -> bashkit::PythonExter
     Arc::new(move |name, args, kwargs| {
         Box::pin(async move {
             let result = async {
-            let args = runtime_value::encode_python(&bashkit::MontyObject::Tuple(args)).map_err(|e| e.to_string())?;
+            let args = runtime_value::encode_python(&bashkit::MontyObject::tuple(args)).map_err(|e| e.to_string())?;
             let kwargs = runtime_value::encode_python(&bashkit::MontyObject::dict(kwargs)).map_err(|e| e.to_string())?;
             let value = dispatch(registration, serde_json::json!({"language":"python", "name":name, "args":args, "kwargs":kwargs})).await?;
             runtime_value::decode_python(&value).map_err(|e| e.to_string())

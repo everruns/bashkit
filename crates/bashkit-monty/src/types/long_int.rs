@@ -1,0 +1,1256 @@
+//! LongInt wrapper for arbitrary precision integer support.
+//!
+//! This module provides the `LongInt` wrapper type around `num_bigint::BigInt`.
+//! Named `LongInt` to avoid confusion with the external `BigInt` type. Python has
+//! one `int` type, and LongInt is an implementation detail - we use i64 for performance
+//! when values fit, and promote to LongInt on overflow.
+//!
+//! The design centralizes BigInt-related logic into methods on `LongInt` rather than
+//! having freestanding functions scattered across the codebase.
+
+pub(crate) mod arithmetic;
+
+use std::{
+    borrow::Cow,
+    cmp::Ordering,
+    fmt::{self, Display, Write},
+    ops::{Add, Mul, Neg, Sub},
+    sync::OnceLock,
+};
+
+use monty_types::ResourceTracker;
+use num_bigint::{BigInt, BigUint};
+use num_integer::Integer;
+use num_traits::{FromPrimitive, One, Signed, ToPrimitive, Zero};
+use smallvec::smallvec;
+
+use self::arithmetic::IntArithmetic;
+use crate::{
+    bytecode::VM,
+    exception_private::{ExcType, ExcTypeExt, RunResult},
+    hash::{HashValue, hash_python_long_int},
+    heap::{Heap, HeapData, HeapObjectRead},
+    identity::Identity,
+    intern::LongIntId,
+    py_value::PyValue,
+    resource_checks::{check_div_size, check_lshift_size, check_mult_size, check_pow_size},
+    types::{
+        LazyHeapSet, PyTrait, Type,
+        numeric::{round_bigint, round_digits, round_int},
+        py_trait::PyObjectIdentity,
+        str::allocate_string,
+        tuple::allocate_tuple,
+    },
+    value::{Value, eq_bigint, float_pow_value},
+};
+
+/// Maximum number of decimal digits allowed for integer-string conversion.
+///
+/// Matches CPython 3.11+'s `sys.int_max_str_digits` default (4300).
+/// This limit prevents O(n^2) DoS attacks when converting very large integers
+/// to/from decimal strings. The limit only applies to base-10 conversions;
+/// bin/hex/oct use O(n) algorithms and are unrestricted.
+///
+/// This is a hardcoded safety limit, not configurable from Python code.
+pub(crate) const INT_MAX_STR_DIGITS: usize = 4300;
+
+/// Cached decimal threshold used for `INT_MAX_STR_DIGITS` comparisons.
+///
+/// Any integer with absolute value greater than or equal to `10**4300` has more
+/// than 4300 decimal digits and must raise before string conversion.
+static INT_MAX_STR_DIGITS_THRESHOLD: OnceLock<BigInt> = OnceLock::new();
+
+/// Wrapper around `num_bigint::BigInt` for arbitrary precision integers.
+///
+/// Named `LongInt` to avoid confusion with the external `BigInt` type from `num_bigint`.
+/// The inner `BigInt` is accessible via `.0` for arithmetic operations that need direct
+/// access to the underlying type.
+///
+/// Python treats all integers as one type - we use `Value::Int(i64)` for values that fit
+/// and `LongInt` for larger values. The `into_value()` method automatically demotes to
+/// i64 when the value fits, maintaining this optimization.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+pub struct LongInt(pub BigInt);
+
+/// A Python integer view preserving small, interned-big and heap-big storage.
+/// Small-integer operations stay allocation-free unless their result overflows.
+pub(crate) enum PyInt<'h> {
+    Small(i64),
+    Interned(LongIntId),
+    Heap(HeapObjectRead<'h, LongInt>),
+}
+
+impl<'h> PyInt<'h> {
+    /// Formats the signed, prefixed representation used by `bin`, `oct` and `hex`.
+    /// Panics for radices other than 2, 8 and 16.
+    pub(crate) fn radix_repr(&self, radix: u32, vm: &VM<'h>) -> String {
+        let prefix = match radix {
+            2 => "0b",
+            8 => "0o",
+            16 => "0x",
+            _ => panic!("unsupported integer repr radix"),
+        };
+        let (negative, digits) = self.with_value(
+            vm,
+            |value| {
+                let magnitude = value.unsigned_abs();
+                let digits = match radix {
+                    2 => format!("{magnitude:b}"),
+                    8 => format!("{magnitude:o}"),
+                    _ => format!("{magnitude:x}"),
+                };
+                (value < 0, digits)
+            },
+            |value| (value.is_negative(), value.magnitude().to_str_radix(radix)),
+        );
+        let sign = if negative { "-" } else { "" };
+        format!("{sign}{prefix}{digits}")
+    }
+
+    /// Writes decimal digits without an intermediate string, enforcing the integer digit limit.
+    pub(crate) fn write_decimal(&self, out: &mut impl Write, vm: &VM<'h>) -> RunResult<()> {
+        match self {
+            Self::Small(value) => Ok(out.write_str(itoa::Buffer::new().format(*value))?),
+            Self::Interned(id) => bigint_repr_fmt(vm.interns.get_long_int(*id), out),
+            Self::Heap(value) => bigint_repr_fmt(value.get(vm.heap).inner(), out),
+        }
+    }
+
+    /// Returns the absolute value, promoting `i64::MIN` without overflowing.
+    pub(crate) fn abs(&self, vm: &VM<'h>) -> Value {
+        self.with_value(
+            vm,
+            |value| match value.checked_abs() {
+                Some(value) => Value::Int(value),
+                None => wide_i128_into_value(i128::from(value).abs(), vm.heap),
+            },
+            |value| LongInt::new(value.abs()).into_value(vm.heap),
+        )
+    }
+
+    /// Computes Python's bitwise complement at the integer's full precision.
+    pub(crate) fn invert(&self, vm: &VM<'h>) -> Value {
+        self.with_value(
+            vm,
+            |value| Value::Int(!value),
+            |value| LongInt::new(!value).into_value(vm.heap),
+        )
+    }
+
+    /// Narrows an integer for consumers which choose their own overflow error.
+    pub(crate) fn to_i64(&self, vm: &VM<'h>) -> Option<i64> {
+        self.with_value(vm, Some, ToPrimitive::to_i64)
+    }
+
+    /// Converts to float, leaving non-finite results for the consumer to reject.
+    pub(crate) fn to_f64(&self, vm: &VM<'h>) -> Option<f64> {
+        self.with_value(vm, |value| Some(value as f64), ToPrimitive::to_f64)
+    }
+
+    /// Converts to a finite float with Python's integer-overflow error.
+    pub(crate) fn to_f64_checked(&self, vm: &VM<'h>) -> RunResult<f64> {
+        self.to_f64(vm)
+            .filter(|value| value.is_finite())
+            .ok_or_else(ExcType::overflow_int_to_float)
+    }
+
+    /// Truncates to the low 32 bits for wrapping consumers such as CRC seeds.
+    pub(crate) fn wrapping_u32(&self, vm: &VM<'h>) -> u32 {
+        self.with_value(
+            vm,
+            |value| u32::try_from(value.rem_euclid(1_i64 << 32)).expect("reduced below 2**32"),
+            |value| (value & BigInt::from(u32::MAX)).to_u32().expect("masked below 2**32"),
+        )
+    }
+
+    /// Clamps a collection limit to `0..=usize::MAX` instead of raising on overflow.
+    pub(crate) fn collection_limit(&self, vm: &VM<'h>) -> usize {
+        self.with_value(
+            vm,
+            |value| usize::try_from(value.max(0)).unwrap_or(usize::MAX),
+            |value| if value.is_negative() { 0 } else { usize::MAX },
+        )
+    }
+
+    /// Resolves a sequence repetition count, treating negatives as zero.
+    pub(crate) fn repeat_count(&self, vm: &VM<'h>) -> RunResult<usize> {
+        self.with_value(
+            vm,
+            |value| usize::try_from(value.max(0)).ok(),
+            |value| if value.is_negative() { Some(0) } else { value.to_usize() },
+        )
+        .ok_or_else(|| ExcType::overflow_index_sized_int().into())
+    }
+
+    /// Runs size-specific integer operations without materializing or cloning a BigInt.
+    pub(crate) fn with_value<R>(&self, vm: &VM<'h>, small: impl FnOnce(i64) -> R, big: impl FnOnce(&BigInt) -> R) -> R {
+        match self {
+            Self::Small(value) => small(*value),
+            Self::Interned(id) => big(vm.interns.get_long_int(*id)),
+            Self::Heap(value) => big(value.get(vm.heap).inner()),
+        }
+    }
+}
+
+/// Keeps storage selection here; a heap integer forwards to its concrete protocol.
+macro_rules! int_binary {
+    ($method:ident, $operation:ident, $reflected:literal) => {
+        #[inline(always)]
+        fn $method(&self, other: &Value, vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+            match self {
+                Self::Small(value) => IntArithmetic::$operation(value, other, vm, $reflected),
+                Self::Interned(id) => IntArithmetic::$operation(vm.interns.get_long_int(*id), other, vm, $reflected),
+                Self::Heap(value) => value.$method(other, vm),
+            }
+        }
+    };
+    ($method:ident, $operator:tt) => {
+        #[inline(always)]
+        fn $method(&self, other: &Value, vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+            match self {
+                Self::Small(value) => Ok(value.bitwise(other, vm, |a, b| a $operator b, |a, b| a $operator b)),
+                Self::Interned(id) => Ok(vm.interns.get_long_int(*id).bitwise(other, vm, |a, b| a $operator b, |a, b| a $operator b)),
+                Self::Heap(value) => value.$method(other, vm),
+            }
+        }
+    };
+}
+
+impl PyObjectIdentity for PyInt<'_> {
+    fn py_identity(&self) -> Identity {
+        match self {
+            Self::Small(value) => Identity::Int(*value),
+            Self::Interned(id) => Identity::InternLongInt(id.index()),
+            Self::Heap(value) => value.py_identity(),
+        }
+    }
+}
+
+#[expect(
+    clippy::inline_always,
+    reason = "small-int fast paths must fold into `Value`'s operator dispatch to avoid a call per operation"
+)]
+impl<'h> PyTrait<'h> for PyInt<'h> {
+    fn py_type(&self, _vm: &VM<'h>) -> Type {
+        Type::Int
+    }
+
+    fn py_len(&self, _vm: &VM<'h>) -> Option<usize> {
+        None
+    }
+
+    fn py_eq_impl(&self, other: &Value, vm: &mut VM<'h>) -> RunResult<Option<bool>> {
+        match self {
+            Self::Small(value) => Value::Int(*value).py_eq_impl(other, vm),
+            Self::Interned(id) => Value::InternLongInt(*id).py_eq_impl(other, vm),
+            Self::Heap(value) => value.py_eq_impl(other, vm),
+        }
+    }
+
+    #[inline(always)]
+    fn py_bool(&self, vm: &mut VM<'h>) -> RunResult<bool> {
+        Ok(match self {
+            Self::Small(value) => *value != 0,
+            // Interned big integers cannot be zero: zero is stored inline.
+            Self::Interned(_) => true,
+            Self::Heap(value) => !value.get(vm.heap).is_zero(),
+        })
+    }
+
+    fn py_repr_fmt(&self, f: &mut impl Write, vm: &mut VM<'h>, _heap_ids: &mut LazyHeapSet) -> RunResult<()> {
+        self.write_decimal(f, vm)
+    }
+
+    fn py_str(&self, vm: &mut VM<'h>) -> RunResult<Value> {
+        match self {
+            Self::Small(value) => Value::Int(*value).py_str(vm),
+            Self::Interned(id) => Value::InternLongInt(*id).py_repr(vm),
+            Self::Heap(value) => value.py_str(vm),
+        }
+    }
+
+    #[inline(always)]
+    fn py_index_impl(&self, vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+        self.py_pos_impl(vm)
+    }
+
+    fn py_abs_impl(&self, vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+        Ok(Some(self.abs(vm)))
+    }
+
+    #[inline(always)]
+    fn py_invert_impl(&self, vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+        Ok(Some(self.invert(vm)))
+    }
+
+    fn py_round_impl(&self, ndigits: Option<&Value>, vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+        if let Some(digits) = round_digits(ndigits, vm)?
+            && digits < 0
+        {
+            Ok(Some(self.with_value(
+                vm,
+                |value| round_int(value, Some(digits), vm.heap),
+                |value| round_bigint(value, digits.unsigned_abs(), vm.heap),
+            )))
+        } else {
+            self.py_pos_impl(vm)
+        }
+    }
+
+    fn py_int_impl(&self, vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+        self.py_pos_impl(vm)
+    }
+
+    fn py_float_impl(&self, vm: &mut VM<'h>) -> RunResult<Option<f64>> {
+        self.to_f64_checked(vm).map(Some)
+    }
+
+    fn py_floor_impl(&self, vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+        self.py_int_impl(vm)
+    }
+
+    fn py_ceil_impl(&self, vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+        self.py_int_impl(vm)
+    }
+
+    fn py_trunc_impl(&self, vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+        self.py_int_impl(vm)
+    }
+
+    #[inline(always)]
+    fn py_pos_impl(&self, vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+        Ok(Some(match self {
+            Self::Small(value) => Value::Int(*value),
+            Self::Interned(id) => Value::InternLongInt(*id),
+            Self::Heap(value) => value.clone_value(vm.heap),
+        }))
+    }
+
+    #[inline(always)]
+    fn py_neg_impl(&self, vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+        match self {
+            Self::Small(value) => Ok(Some(match value.checked_neg() {
+                Some(value) => Value::Int(value),
+                None => wide_i128_into_value(-i128::from(*value), vm.heap),
+            })),
+            Self::Interned(id) => Ok(Some(LongInt::new(-vm.interns.get_long_int(*id)).into_value(vm.heap))),
+            Self::Heap(value) => value.py_neg_impl(vm),
+        }
+    }
+
+    int_binary!(py_sub_impl, sub, false);
+    int_binary!(py_rsub_impl, sub, true);
+    int_binary!(py_truediv_impl, truediv, false);
+    int_binary!(py_rtruediv_impl, truediv, true);
+    int_binary!(py_floordiv_impl, floordiv, false);
+    int_binary!(py_rfloordiv_impl, floordiv, true);
+    int_binary!(py_mod_impl, modulo, false);
+    int_binary!(py_rmod_impl, modulo, true);
+    int_binary!(py_divmod_impl, divmod, false);
+    int_binary!(py_rdivmod_impl, divmod, true);
+
+    fn py_pow_impl(&self, other: &Value, modulus: Option<&Value>, vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+        match self {
+            Self::Small(value) => match modulus {
+                Some(modulus) => modular_pow(&BigInt::from(*value), other, modulus, vm),
+                None => IntArithmetic::pow(value, other, vm, false),
+            },
+            Self::Interned(id) => match modulus {
+                Some(modulus) => modular_pow(vm.interns.get_long_int(*id), other, modulus, vm),
+                None => IntArithmetic::pow(vm.interns.get_long_int(*id), other, vm, false),
+            },
+            Self::Heap(value) => value.py_pow_impl(other, modulus, vm),
+        }
+    }
+
+    fn py_rpow_impl(&self, other: &Value, modulus: Option<&Value>, vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+        match self {
+            Self::Heap(value) => value.py_rpow_impl(other, modulus, vm),
+            _ if modulus.is_some() => Ok(None),
+            Self::Small(value) => IntArithmetic::pow(value, other, vm, true),
+            Self::Interned(id) => IntArithmetic::pow(vm.interns.get_long_int(*id), other, vm, true),
+        }
+    }
+
+    int_binary!(py_and_impl, &);
+    int_binary!(py_rand_impl, &);
+    int_binary!(py_or_impl, |);
+    int_binary!(py_ror_impl, |);
+    int_binary!(py_xor_impl, ^);
+    int_binary!(py_rxor_impl, ^);
+    int_binary!(py_lshift_impl, lshift, false);
+    int_binary!(py_rlshift_impl, lshift, true);
+    int_binary!(py_rshift_impl, rshift, false);
+    int_binary!(py_rrshift_impl, rshift, true);
+
+    #[inline(always)]
+    fn py_radd_impl(&self, other: &Value, vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+        self.py_add_impl(other, vm)
+    }
+
+    #[inline(always)]
+    fn py_mul_impl(&self, other: &Value, vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+        match self {
+            Self::Small(lhs) => {
+                let rhs = match other {
+                    Value::Int(rhs) => *rhs,
+                    Value::Bool(rhs) => i64::from(*rhs),
+                    Value::Float(rhs) => return Ok(Some(Value::Float(*lhs as f64 * rhs))),
+                    _ => return Ok(None),
+                };
+                Ok(Some(match lhs.checked_mul(rhs) {
+                    Some(result) => Value::Int(result),
+                    None => wide_i128_into_value(i128::from(*lhs) * i128::from(rhs), vm.heap),
+                }))
+            }
+            Self::Interned(id) => multiply_bigint(vm.interns.get_long_int(*id), other, vm),
+            Self::Heap(value) => value.py_mul_impl(other, vm),
+        }
+    }
+
+    fn py_rmul_impl(&self, other: &Value, vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+        match self {
+            Self::Heap(value) => value.py_rmul_impl(other, vm),
+            Self::Interned(id) => multiply_bigint(vm.interns.get_long_int(*id), other, vm),
+            Self::Small(_) => Ok(None),
+        }
+    }
+
+    #[inline(always)]
+    fn py_add_impl(&self, other: &Value, vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+        match self {
+            Self::Small(lhs) => {
+                let rhs = match other {
+                    Value::Int(rhs) => *rhs,
+                    Value::Bool(rhs) => i64::from(*rhs),
+                    Value::Float(rhs) => return Ok(Some(Value::Float(*lhs as f64 + rhs))),
+                    _ => return Ok(None),
+                };
+                Ok(Some(match lhs.checked_add(rhs) {
+                    Some(result) => Value::Int(result),
+                    None => wide_i128_into_value(i128::from(*lhs) + i128::from(rhs), vm.heap),
+                }))
+            }
+            Self::Interned(id) => add_bigint(vm.interns.get_long_int(*id), other, vm),
+            Self::Heap(value) => value.py_add_impl(other, vm),
+        }
+    }
+}
+
+/// Formats large integers consistently across interned and heap storage.
+fn bigint_repr_fmt(value: &BigInt, f: &mut impl Write) -> RunResult<()> {
+    check_bigint_str_digits_limit(value)?;
+    Ok(write!(f, "{value}")?)
+}
+
+/// Multiplication shared by logical integer views and concrete heap dispatch.
+fn multiply_bigint(lhs: &BigInt, other: &Value, vm: &VM<'_>) -> RunResult<Option<Value>> {
+    let result = match other {
+        Value::Int(rhs) => {
+            check_mult_size(lhs.bits(), i64_bits(*rhs), &vm.heap.tracker)?;
+            Some(LongInt::new(lhs * rhs).into_value(vm.heap))
+        }
+        Value::Bool(rhs) => Some(if *rhs {
+            LongInt::new(lhs.clone()).into_value(vm.heap)
+        } else {
+            Value::Int(0)
+        }),
+        Value::Float(rhs) => Some(Value::Float(bigint_to_f64_checked(lhs)? * rhs)),
+        Value::InternLongInt(id) => {
+            let rhs = vm.interns.get_long_int(*id);
+            check_mult_size(lhs.bits(), rhs.bits(), &vm.heap.tracker)?;
+            Some(LongInt::new(lhs * rhs).into_value(vm.heap))
+        }
+        Value::Ref(id) if let HeapData::LongInt(rhs) = vm.heap.get(*id) => {
+            check_mult_size(lhs.bits(), rhs.bits(), &vm.heap.tracker)?;
+            Some(LongInt::new(lhs * rhs.inner()).into_value(vm.heap))
+        }
+        _ => None,
+    };
+    Ok(result)
+}
+
+/// Addition shared by logical integer views and concrete heap dispatch.
+fn add_bigint(lhs: &BigInt, other: &Value, vm: &VM<'_>) -> RunResult<Option<Value>> {
+    let result = match other {
+        Value::Int(rhs) => lhs + rhs,
+        Value::Bool(rhs) => lhs + i64::from(*rhs),
+        Value::Float(rhs) => return Ok(Some(Value::Float(bigint_to_f64_checked(lhs)? + rhs))),
+        Value::InternLongInt(id) => lhs + vm.interns.get_long_int(*id),
+        Value::Ref(id) if let HeapData::LongInt(rhs) = vm.heap.get(*id) => lhs + rhs.inner(),
+        _ => return Ok(None),
+    };
+    Ok(Some(LongInt::new(result).into_value(vm.heap)))
+}
+
+/// Allocates an `i128` already known not to fit the immediate integer representation.
+pub(crate) fn wide_i128_into_value(value: i128, heap: &Heap) -> Value {
+    debug_assert!(i64::try_from(value).is_err());
+    let id = heap.allocate(HeapData::LongInt(LongInt::new(BigInt::from(value))));
+    Value::Ref(id)
+}
+
+impl LongInt {
+    /// Creates a new `LongInt` from a `BigInt`.
+    pub fn new(bi: BigInt) -> Self {
+        Self(bi)
+    }
+
+    /// Converts a nonnegative `u128` to its most compact Python integer representation.
+    ///
+    /// The common immediate path avoids constructing a temporary `BigInt`.
+    pub(crate) fn value_from_u128(value: u128, heap: &Heap) -> Value {
+        if let Ok(value) = i64::try_from(value) {
+            Value::Int(value)
+        } else {
+            let long_int = Self::new(BigInt::from(value));
+            let heap_id = heap.allocate(HeapData::LongInt(long_int));
+            Value::Ref(heap_id)
+        }
+    }
+
+    /// Truncates a float into its most compact Python integer representation.
+    ///
+    /// Finite values outside the immediate range become arbitrary-precision integers;
+    /// infinity and NaN raise the exceptions required by Python.
+    pub(crate) fn value_from_f64(value: f64, heap: &Heap) -> RunResult<Value> {
+        if value.is_infinite() {
+            Err(ExcType::overflow_float_infinity_to_integer())
+        } else if value.is_nan() {
+            Err(ExcType::value_error_float_nan_to_integer())
+        } else if value >= i64::MIN as f64 && value < i64::MAX as f64 {
+            // `i64::MAX as f64` rounds up to 2**63, so the upper bound is strict.
+            #[expect(clippy::cast_possible_truncation, reason = "finite value is within the i64 range")]
+            Ok(Value::Int(value as i64))
+        } else {
+            let value = BigInt::from_f64(value).expect("finite f64 converts to BigInt");
+            Ok(Self::new(value).into_value(heap))
+        }
+    }
+
+    /// Converts to a `Value`, demoting to i64 if it fits.
+    ///
+    /// For performance, we want to keep values as `Value::Int(i64)` whenever possible.
+    /// This method checks if the value fits in an i64 and returns `Value::Int` if so,
+    /// otherwise allocates a `HeapData::LongInt` on the heap.
+    pub fn into_value(self, heap: &Heap) -> Value {
+        // Try to demote back to i64 for performance
+        if let Some(i) = self.0.to_i64() {
+            Value::Int(i)
+        } else {
+            let heap_id = heap.allocate(HeapData::LongInt(self));
+            Value::Ref(heap_id)
+        }
+    }
+
+    /// Computes a hash consistent with i64 hashing.
+    ///
+    /// Critical: For values that fit in i64, this must return the same hash as
+    /// hashing the i64 directly. This ensures dict key consistency - e.g.,
+    /// `hash(5)` must equal `hash(LongInt(5))`. Delegates to the canonical
+    /// helper so that interned and heap `int` values hash identically.
+    pub fn hash(&self) -> HashValue {
+        hash_python_long_int(&self.0)
+    }
+
+    /// Returns a reference to the inner `BigInt`.
+    ///
+    /// Use this when you need read-only access to the underlying `BigInt`
+    /// for operations like formatting or comparison.
+    pub fn inner(&self) -> &BigInt {
+        &self.0
+    }
+
+    /// Checks if the value is zero.
+    pub fn is_zero(&self) -> bool {
+        self.0.is_zero()
+    }
+
+    /// Checks if the value is negative.
+    pub fn is_negative(&self) -> bool {
+        self.0.is_negative()
+    }
+
+    /// Tries to convert to i64.
+    ///
+    /// Returns `Some(i64)` if the value fits, `None` otherwise.
+    pub fn to_i64(&self) -> Option<i64> {
+        self.0.to_i64()
+    }
+
+    /// Converts to `f64`, raising `OverflowError` when the magnitude exceeds the float range.
+    ///
+    /// Mirrors CPython's `PyLong_AsDouble`, which every mixed int/float operation goes through.
+    pub fn to_f64_checked(&self) -> RunResult<f64> {
+        bigint_to_f64_checked(&self.0)
+    }
+
+    /// Compares this integer against an `f64` *exactly* (no precision loss).
+    ///
+    /// Thin wrapper around [`bigint_cmp_f64`]; see it for the semantics. The
+    /// result is the ordering of `self` relative to `f`.
+    pub fn partial_cmp_f64(&self, f: f64) -> Option<Ordering> {
+        bigint_cmp_f64(&self.0, f)
+    }
+
+    /// Returns the number of significant bits in this LongInt.
+    ///
+    /// Zero returns 0 bits. For non-zero values, this is the position of the
+    /// highest set bit plus one.
+    pub fn bits(&self) -> u64 {
+        self.0.bits()
+    }
+
+    /// Checks whether converting this LongInt to a decimal string would exceed
+    /// the `INT_MAX_STR_DIGITS` limit.
+    ///
+    /// This compares the absolute value against the cached `10**4300`
+    /// threshold so values with exactly 4300 digits still stringify while
+    /// 4301-digit values reliably raise the same error as CPython.
+    pub fn check_str_digits_limit(&self) -> RunResult<()> {
+        check_bigint_str_digits_limit(&self.0)
+    }
+
+    /// Left-shifts an immediate integer, promoting only when the result requires it.
+    pub(crate) fn left_shift_i64(value: i64, shift: u64, vm: &VM<'_>) -> RunResult<Value> {
+        let bits = u64::from(i64::BITS - value.unsigned_abs().leading_zeros());
+        check_lshift_size(bits, shift, &vm.heap.tracker)?;
+        if value == 0 {
+            Ok(Value::Int(0))
+        } else if let Ok(shift) = u32::try_from(shift)
+            && shift < i64::BITS
+            && let Some(result) = value.checked_shl(shift)
+            && (result >> shift) == value
+        {
+            Ok(Value::Int(result))
+        } else {
+            let input = i128::from(value);
+            if let Ok(shift) = u32::try_from(shift)
+                && shift < i128::BITS
+                && let Some(result) = input.checked_shl(shift)
+                && (result >> shift) == input
+            {
+                Ok(wide_i128_into_value(result, vm.heap))
+            } else {
+                Ok(Self::new(BigInt::from(value) << shift).into_value(vm.heap))
+            }
+        }
+    }
+}
+
+/// Extracts a Python integer as a sequence repetition count.
+pub(crate) fn repeat_count(value: &Value, vm: &VM<'_>) -> RunResult<Option<usize>> {
+    match value.py_value(vm) {
+        PyValue::Int(value) => value.repeat_count(vm).map(Some),
+        PyValue::Bool(value) => Ok(Some(usize::from(value))),
+        _ => Ok(None),
+    }
+}
+
+/// Compares a `BigInt` against an `f64` *exactly*, matching CPython's mixed
+/// `int`/`float` comparison with no precision loss in either direction
+/// (neither operand is rounded to the other's type).
+///
+/// The result is the ordering of `b` relative to `f` (e.g. `Some(Ordering::Less)`
+/// means `b < f`). Returns `None` only when `f` is NaN (unordered); an infinite
+/// `f` yields a definite ordering. Equality is `== Some(Ordering::Equal)`.
+pub fn bigint_cmp_f64(b: &BigInt, f: f64) -> Option<Ordering> {
+    if f.is_nan() {
+        None
+    } else if f.is_infinite() {
+        // +inf is greater than any finite integer, -inf is less.
+        Some(if f > 0.0 { Ordering::Less } else { Ordering::Greater })
+    } else {
+        // `f` is finite. Split it into its integer part `trunc` and the
+        // fractional remainder `f - trunc` in (-1, 1). `trunc` is integral and
+        // finite, so it converts to `BigInt` without loss.
+        let trunc = f.trunc();
+        let ord = if let Some(f_int) = trunc.to_i64() {
+            bigint_cmp_i64(b, f_int)
+        } else {
+            let f_int = BigInt::from_f64(trunc).expect("finite f64 converts to BigInt");
+            b.cmp(&f_int)
+        };
+        match ord {
+            // Integer parts match: the sign of `f`'s fractional part breaks the
+            // tie. A positive fraction makes `f` larger, so `b < f`.
+            Ordering::Equal => (f - trunc).partial_cmp(&0.0).map(Ordering::reverse),
+            ord => Some(ord),
+        }
+    }
+}
+
+/// Checks bigint/float equality exactly, avoiding allocation for common floats.
+pub fn bigint_eq_f64(b: &BigInt, f: f64) -> bool {
+    f.is_finite()
+        && f.fract() == 0.0
+        && if let Some(i) = f.to_i64() {
+            bigint_eq_i64(b, i)
+        } else {
+            bigint_cmp_f64(b, f) == Some(Ordering::Equal)
+        }
+}
+
+/// Compares a borrowed bigint with an i64 without allocating a temporary bigint.
+pub(crate) fn bigint_eq_i64(b: &BigInt, i: i64) -> bool {
+    b.to_i64() == Some(i)
+}
+
+/// Orders a borrowed bigint against an i64 without allocating a temporary bigint.
+pub(crate) fn bigint_cmp_i64(b: &BigInt, i: i64) -> Ordering {
+    if let Some(value) = b.to_i64() {
+        value.cmp(&i)
+    } else if b.sign() == num_bigint::Sign::Minus {
+        Ordering::Less
+    } else {
+        Ordering::Greater
+    }
+}
+
+/// Compares an `i64` against an `f64` *exactly* (no precision loss), matching
+/// CPython's mixed `int`/`float` comparison.
+///
+/// Equivalent to [`bigint_cmp_f64`] but avoids a `BigInt` allocation for the
+/// common machine-integer case. The result is the ordering of `a` relative to
+/// `f`; `None` only for NaN.
+pub fn i64_cmp_f64(a: i64, f: f64) -> Option<Ordering> {
+    // 2^63 as f64 (exactly representable): the first power of two past i64::MAX.
+    const TWO_POW_63: f64 = 9_223_372_036_854_775_808.0;
+    if f.is_nan() {
+        None
+    } else if f >= TWO_POW_63 {
+        Some(Ordering::Less) // f (incl. +inf) exceeds i64::MAX ≥ a
+    } else if f < -TWO_POW_63 {
+        Some(Ordering::Greater) // f (incl. -inf) is below i64::MIN ≤ a
+    } else {
+        // -2^63 ≤ f < 2^63 and finite, so `trunc` fits in i64 exactly.
+        let trunc = f.trunc();
+        #[expect(clippy::cast_possible_truncation, reason = "bounds-checked: -2^63 ≤ trunc < 2^63")]
+        match a.cmp(&(trunc as i64)) {
+            Ordering::Equal => (f - trunc).partial_cmp(&0.0).map(Ordering::reverse),
+            ord => Some(ord),
+        }
+    }
+}
+
+/// Checks whether a decimal digit count exceeds `INT_MAX_STR_DIGITS`.
+///
+/// This is used by parsing code paths that can count decimal digits directly
+/// from the original source text before constructing a `BigInt`.
+pub fn check_decimal_digit_count(digit_count: usize) -> RunResult<()> {
+    if digit_count > INT_MAX_STR_DIGITS {
+        return Err(ExcType::value_error_int_str_too_large(digit_count));
+    }
+    Ok(())
+}
+
+/// Counts the decimal digits in an ASCII integer representation.
+///
+/// Leading `+` or `-` signs are ignored so the return value matches CPython's
+/// `value has N digits` wording.
+pub fn decimal_digit_count_ascii(value: &[u8]) -> usize {
+    value.iter().filter(|byte| byte.is_ascii_digit()).count()
+}
+
+/// Checks whether a `BigInt` would exceed the decimal digit limit when
+/// converted to a string.
+///
+/// Values are compared against `10**4300` rather than using an upper-bound bit
+/// estimate so boundary values like `10**4300 - 1` remain allowed.
+pub fn check_bigint_str_digits_limit(value: &BigInt) -> RunResult<()> {
+    let threshold = int_max_str_digits_threshold();
+    let abs_value = value.abs();
+    if abs_value.bits() > threshold.bits() || (abs_value.bits() == threshold.bits() && abs_value >= *threshold) {
+        return Err(ExcType::value_error_int_too_large_for_str());
+    }
+    Ok(())
+}
+
+/// Checks whether an integer with the given bit count might exceed the decimal
+/// digit limit when converted to a string.
+///
+/// This remains as a cheap preflight helper for code that only needs a fast
+/// upper-bound check and does not require the exact boundary behavior.
+pub fn check_bits_str_digits_limit(bits: u64) -> RunResult<()> {
+    // log10(2) ≈ 0.30103 = 30_103/100_000
+    // estimated_digits is an upper bound on the actual decimal digit count.
+    let estimated_digits = bits.saturating_mul(30_103) / 100_000 + 1;
+    if estimated_digits > INT_MAX_STR_DIGITS as u64 {
+        return Err(ExcType::value_error_int_too_large_for_str());
+    }
+    Ok(())
+}
+
+/// Returns the cached `10**INT_MAX_STR_DIGITS` threshold used by decimal
+/// string-conversion guards.
+fn int_max_str_digits_threshold() -> &'static BigInt {
+    INT_MAX_STR_DIGITS_THRESHOLD.get_or_init(|| {
+        BigInt::from(10u8).pow(u32::try_from(INT_MAX_STR_DIGITS).expect("INT_MAX_STR_DIGITS should fit in u32"))
+    })
+}
+
+// === Trait Implementations ===
+
+impl<'h> PyTrait<'h> for HeapObjectRead<'h, LongInt> {
+    fn py_type(&self, _vm: &VM<'h>) -> Type {
+        Type::Int
+    }
+
+    fn py_len(&self, _vm: &VM<'h>) -> Option<usize> {
+        None
+    }
+
+    fn py_bool(&self, vm: &mut VM<'h>) -> RunResult<bool> {
+        Ok(!self.get(vm.heap).is_zero())
+    }
+
+    /// A `LongInt` *is* an int, so it indexes as itself — the caller narrows it
+    /// (or reports the overflow its own way).
+    fn py_index_impl(&self, vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+        Ok(Some(self.clone_value(vm.heap)))
+    }
+
+    fn py_eq_impl(&self, other: &Value, vm: &mut VM<'h>) -> RunResult<Option<bool>> {
+        Ok(eq_bigint(self.get(vm.heap).inner(), other, vm))
+    }
+
+    fn py_hash(&self, vm: &mut VM<'h>) -> RunResult<Option<HashValue>> {
+        Ok(Some(self.get(vm.heap).hash()))
+    }
+
+    fn py_repr_fmt(&self, f: &mut impl Write, vm: &mut VM<'h>, _heap_ids: &mut LazyHeapSet) -> RunResult<()> {
+        bigint_repr_fmt(self.get(vm.heap).inner(), f)
+    }
+
+    fn py_str(&self, vm: &mut VM<'h>) -> RunResult<Value> {
+        let value = self.get(vm.heap);
+        value.check_str_digits_limit()?;
+        Ok(allocate_string(value.to_string(), vm.heap))
+    }
+
+    fn py_add_impl(&self, other: &Value, vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+        add_bigint(self.get(vm.heap).inner(), other, vm)
+    }
+
+    fn py_radd_impl(&self, other: &Value, vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+        // `+` is commutative here, and the id is unused by the direct form.
+        self.py_add_impl(other, vm)
+    }
+
+    fn py_abs_impl(&self, vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+        Ok(Some(LongInt::new(self.get(vm.heap).inner().abs()).into_value(vm.heap)))
+    }
+
+    fn py_invert_impl(&self, vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+        Ok(Some(LongInt::new(!self.get(vm.heap).inner()).into_value(vm.heap)))
+    }
+
+    fn py_round_impl(&self, ndigits: Option<&Value>, vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+        let digits = round_digits(ndigits, vm)?;
+        Ok(Some(match digits {
+            Some(d) if d < 0 => round_bigint(self.get(vm.heap).inner(), d.unsigned_abs(), vm.heap),
+            _ => self.clone_value(vm.heap),
+        }))
+    }
+
+    fn py_int_impl(&self, vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+        Ok(Some(self.clone_value(vm.heap)))
+    }
+
+    fn py_float_impl(&self, vm: &mut VM<'h>) -> RunResult<Option<f64>> {
+        self.get(vm.heap).to_f64_checked().map(Some)
+    }
+
+    fn py_floor_impl(&self, vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+        self.py_int_impl(vm)
+    }
+
+    fn py_ceil_impl(&self, vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+        self.py_int_impl(vm)
+    }
+
+    fn py_trunc_impl(&self, vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+        self.py_int_impl(vm)
+    }
+
+    fn py_neg_impl(&self, vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+        let negated = -LongInt::new(self.get(vm.heap).inner().clone());
+        // A negated LongInt may fit back in an `i64`, which `into_value` demotes.
+        Ok(Some(negated.into_value(vm.heap)))
+    }
+
+    fn py_pos_impl(&self, vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+        // `+x` on an int is the identity, so hand back this same LongInt rather
+        // than allocating a copy of its digits. The caller owns the returned
+        // value, hence the extra reference.
+        Ok(Some(self.clone_value(vm.heap)))
+    }
+
+    fn py_sub_impl(&self, other: &Value, vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+        IntArithmetic::sub(self.get(vm.heap).inner(), other, vm, false)
+    }
+
+    fn py_rsub_impl(&self, other: &Value, vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+        IntArithmetic::sub(self.get(vm.heap).inner(), other, vm, true)
+    }
+
+    fn py_mod_impl(&self, other: &Value, vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+        IntArithmetic::modulo(self.get(vm.heap).inner(), other, vm, false)
+    }
+
+    fn py_rmod_impl(&self, other: &Value, vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+        IntArithmetic::modulo(self.get(vm.heap).inner(), other, vm, true)
+    }
+
+    fn py_mul_impl(&self, other: &Value, vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+        multiply_bigint(self.get(vm.heap).inner(), other, vm)
+    }
+
+    fn py_rmul_impl(&self, other: &Value, vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+        self.py_mul_impl(other, vm)
+    }
+
+    fn py_truediv_impl(&self, other: &Value, vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+        IntArithmetic::truediv(self.get(vm.heap).inner(), other, vm, false)
+    }
+
+    fn py_rtruediv_impl(&self, other: &Value, vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+        IntArithmetic::truediv(self.get(vm.heap).inner(), other, vm, true)
+    }
+
+    fn py_floordiv_impl(&self, other: &Value, vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+        IntArithmetic::floordiv(self.get(vm.heap).inner(), other, vm, false)
+    }
+
+    fn py_rfloordiv_impl(&self, other: &Value, vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+        IntArithmetic::floordiv(self.get(vm.heap).inner(), other, vm, true)
+    }
+
+    fn py_divmod_impl(&self, other: &Value, vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+        IntArithmetic::divmod(self.get(vm.heap).inner(), other, vm, false)
+    }
+
+    fn py_rdivmod_impl(&self, other: &Value, vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+        IntArithmetic::divmod(self.get(vm.heap).inner(), other, vm, true)
+    }
+
+    fn py_pow_impl(&self, other: &Value, modulus: Option<&Value>, vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+        let base = self.get(vm.heap);
+        if let Some(modulus) = modulus {
+            modular_pow(base.inner(), other, modulus, vm)
+        } else {
+            IntArithmetic::pow(base.inner(), other, vm, false)
+        }
+    }
+
+    fn py_rpow_impl(&self, other: &Value, modulus: Option<&Value>, vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+        if modulus.is_some() {
+            Ok(None)
+        } else {
+            IntArithmetic::pow(self.get(vm.heap).inner(), other, vm, true)
+        }
+    }
+
+    fn py_and_impl(&self, other: &Value, vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+        Ok(self.get(vm.heap).inner().bitwise(other, vm, |a, b| a & b, |a, b| a & b))
+    }
+
+    fn py_rand_impl(&self, other: &Value, vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+        self.py_and_impl(other, vm)
+    }
+
+    fn py_or_impl(&self, other: &Value, vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+        Ok(self.get(vm.heap).inner().bitwise(other, vm, |a, b| a | b, |a, b| a | b))
+    }
+
+    fn py_ror_impl(&self, other: &Value, vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+        self.py_or_impl(other, vm)
+    }
+
+    fn py_xor_impl(&self, other: &Value, vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+        Ok(self.get(vm.heap).inner().bitwise(other, vm, |a, b| a ^ b, |a, b| a ^ b))
+    }
+
+    fn py_rxor_impl(&self, other: &Value, vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+        self.py_xor_impl(other, vm)
+    }
+
+    fn py_lshift_impl(&self, other: &Value, vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+        IntArithmetic::lshift(self.get(vm.heap).inner(), other, vm, false)
+    }
+
+    fn py_rlshift_impl(&self, other: &Value, vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+        IntArithmetic::lshift(self.get(vm.heap).inner(), other, vm, true)
+    }
+
+    fn py_rshift_impl(&self, other: &Value, vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+        IntArithmetic::rshift(self.get(vm.heap).inner(), other, vm, false)
+    }
+
+    fn py_rrshift_impl(&self, other: &Value, vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+        IntArithmetic::rshift(self.get(vm.heap).inner(), other, vm, true)
+    }
+}
+
+/// Work above which `modular_pow` polls the time limit between exponent bits.
+///
+/// Measured in exponent bits × modulus digits², the cost of square-and-multiply with a
+/// quadratic reduction. Below it `num-bigint`'s monolithic `modpow` runs uninterrupted,
+/// about 0.2 s on a 2024 laptop and well inside the pool's grace on slower hosts.
+const MODPOW_UNPOLLED_WORK: u64 = 1 << 27;
+
+/// Performs modular exponentiation for integer values of any storage representation.
+///
+/// Small inputs take `num-bigint`'s Montgomery `modpow`; anything past
+/// `MODPOW_UNPOLLED_WORK` takes the slower [`polled_modpow`] so a time limit can
+/// interrupt it, as CPython computes these rather than rejecting them.
+pub(crate) fn modular_pow(base: &BigInt, exponent: &Value, modulus: &Value, vm: &VM<'_>) -> RunResult<Option<Value>> {
+    let heap = &vm.heap;
+    let Some(exponent) = integer_value(exponent, vm) else {
+        return Ok(None);
+    };
+    let Some(modulus) = integer_value(modulus, vm) else {
+        return Ok(None);
+    };
+    if modulus.is_zero() {
+        return Err(ExcType::value_error_pow_modulus_zero());
+    }
+    if exponent.is_negative() {
+        return Err(ExcType::value_error_pow_negative_exponent());
+    }
+
+    let modulus_abs = modulus.abs();
+    // Reducing first keeps the base non-negative and no larger than the modulus.
+    let base = base.mod_floor(&modulus_abs);
+    let (base, exponent, modulus_mag) = (base.magnitude(), exponent.magnitude(), modulus_abs.magnitude());
+    // A `num-bigint` digit is pointer-sized, so wasm32 counts twice as many words.
+    let words = modulus_mag.bits().div_ceil(u64::from(usize::BITS));
+    let work = exponent.bits().saturating_mul(words.saturating_mul(words));
+    let result = if work <= MODPOW_UNPOLLED_WORK {
+        base.modpow(exponent, modulus_mag)
+    } else {
+        polled_modpow(base, exponent, modulus_mag, &heap.tracker)?
+    };
+    let mut result = BigInt::from(result);
+    if modulus.is_negative() && !result.is_zero() {
+        result -= modulus_abs;
+    }
+    Ok(Some(LongInt::new(result).into_value(heap)))
+}
+
+/// Left-to-right square-and-multiply that polls the time limit before every exponent bit.
+///
+/// Slower than Montgomery reduction, so only the large inputs `modular_pow` routes here pay
+/// for it. Each step is one squaring and one reduction of a value no larger than the
+/// modulus, so intermediates stay within a constant multiple of already-tracked inputs.
+/// It polls every bit rather than every 64th because one step on a huge modulus can take
+/// most of a second on its own.
+fn polled_modpow(
+    base: &BigUint,
+    exponent: &BigUint,
+    modulus: &BigUint,
+    tracker: &ResourceTracker,
+) -> RunResult<BigUint> {
+    let mut result = BigUint::one() % modulus;
+    for bit in (0..exponent.bits()).rev() {
+        tracker.check_time()?;
+        result = &result * &result % modulus;
+        if exponent.bit(bit) {
+            result = result * base % modulus;
+        }
+    }
+    Ok(result)
+}
+
+/// Raises one arbitrary-precision integer to another.
+fn long_int_pow_value(base: &BigInt, exponent: &BigInt, heap: &Heap) -> RunResult<Option<Value>> {
+    if exponent.is_negative() {
+        // CPython hands off to `float_pow`, converting both operands before its zero-base check.
+        Ok(Some(float_pow_value(
+            bigint_to_f64_checked(base)?,
+            bigint_to_f64_checked(exponent)?,
+            heap,
+        )?))
+    } else if exponent.is_zero() || base.is_one() {
+        Ok(Some(Value::Int(1)))
+    } else if base.is_zero() {
+        Ok(Some(Value::Int(0)))
+    } else if *base == BigInt::from(-1) {
+        Ok(Some(Value::Int(if (exponent % 2i32).is_zero() { 1 } else { -1 })))
+    } else if let Some(exponent) = exponent.to_u64() {
+        check_pow_size(base.bits(), exponent, &heap.tracker)?;
+        Ok(Some(LongInt::new(bigint_pow(base.clone(), exponent)).into_value(heap)))
+    } else {
+        Err(ExcType::overflow_exponent_too_large())
+    }
+}
+
+/// Borrows or promotes an integer value into its arbitrary-precision representation.
+fn integer_value<'a>(value: &Value, vm: &'a VM<'_>) -> Option<Cow<'a, BigInt>> {
+    match value {
+        Value::Int(value) => Some(Cow::Owned(BigInt::from(*value))),
+        Value::Bool(value) => Some(Cow::Owned(BigInt::from(*value))),
+        Value::InternLongInt(id) => Some(Cow::Borrowed(vm.interns.get_long_int(*id))),
+        Value::Ref(id) if let HeapData::LongInt(value) = vm.heap.get(*id) => Some(Cow::Borrowed(value.inner())),
+        _ => None,
+    }
+}
+
+/// Converts an arbitrary-precision integer to float, raising `OverflowError` when out of range.
+///
+/// `to_f64` yields infinity for magnitudes past `f64::MAX`; Python raises instead of
+/// letting that infinity leak into arithmetic.
+pub(crate) fn bigint_to_f64_checked(value: &BigInt) -> RunResult<f64> {
+    value
+        .to_f64()
+        .filter(|f| f.is_finite())
+        .ok_or_else(ExcType::overflow_int_to_float)
+}
+
+/// Divides two integers to a single correctly rounded `f64`, after CPython's `long_true_divide`.
+///
+/// Converting each operand to `f64` first rounds twice, and overflows whenever an operand
+/// exceeds the float range even though the quotient fits. Instead the integer quotient is
+/// computed with two extra bits plus a sticky bit and rounded half-to-even exactly once.
+///
+/// The scaled operand and the remainder are temporaries of about the operands' size, so
+/// they are preflighted against `tracker` like any other division before being allocated.
+pub(crate) fn bigint_true_divide(a: &BigInt, b: &BigInt, tracker: &ResourceTracker) -> RunResult<f64> {
+    const MANT_DIG: i64 = f64::MANTISSA_DIGITS as i64;
+    const MIN_EXP: i64 = f64::MIN_EXP as i64;
+    const MAX_EXP: i64 = f64::MAX_EXP as i64;
+    if b.is_zero() {
+        return Err(ExcType::zero_division().into());
+    }
+    let negative = a.is_negative() != b.is_negative();
+    if a.is_zero() {
+        return Ok(if negative { -0.0 } else { 0.0 });
+    }
+    let (a, b) = (a.magnitude(), b.magnitude());
+    let bits = |value: &BigUint| i64::try_from(value.bits()).unwrap_or(i64::MAX);
+    // The quotient lies in `[2^(diff-1), 2^(diff+1))`.
+    let diff = bits(a) - bits(b);
+    let magnitude = if bits(a) <= MANT_DIG && bits(b) <= MANT_DIG {
+        // Both operands are exact floats, so hardware division rounds once.
+        Ok(a.to_f64().unwrap_or(f64::NAN) / b.to_f64().unwrap_or(f64::NAN))
+    } else if diff > MAX_EXP {
+        Err(ExcType::overflow_int_division_to_float())
+    } else if diff < MIN_EXP - MANT_DIG - 1 {
+        Ok(0.0)
+    } else {
+        // Scale so the integer quotient has 55 bits, fewer only when the result is subnormal
+        // and the rounding position moves up accordingly.
+        let shift = diff.max(MIN_EXP) - MANT_DIG - 2;
+        // Peak temporaries: the shifted operand plus a remainder smaller than the divisor.
+        let temporary_bits = if shift <= 0 {
+            bits(a) + shift.abs() + bits(b)
+        } else {
+            2 * (bits(b) + shift)
+        };
+        check_div_size(temporary_bits.unsigned_abs(), tracker)?;
+        let (quotient, remainder) = if shift <= 0 {
+            (a << shift.unsigned_abs()).div_rem(b)
+        } else {
+            a.div_rem(&(b << shift.unsigned_abs()))
+        };
+        let quotient = quotient.to_u64().unwrap_or(u64::MAX);
+        let quotient_bits = 64 - quotient.leading_zeros();
+        // Round half-to-even at `extra_bits` (at least 2), with the remainder as a sticky bit.
+        let extra_bits = i64::from(quotient_bits).max(MIN_EXP - shift) - MANT_DIG;
+        let half = 1u64 << u32::try_from(extra_bits - 1).unwrap_or(0);
+        let mut low = quotient | u64::from(!remainder.is_zero());
+        if low & half != 0 && low & (3 * half - 1) != 0 {
+            low += half;
+        }
+        let rounded = low & !(2 * half - 1);
+        let exponent = shift + i64::from(quotient_bits);
+        // A rounding carry to `2^quotient_bits` can push the result past the float range.
+        if exponent > MAX_EXP || (exponent == MAX_EXP && rounded == 1u64 << quotient_bits) {
+            Err(ExcType::overflow_int_division_to_float())
+        } else {
+            Ok(libm::ldexp(rounded as f64, i32::try_from(shift).unwrap_or(i32::MIN)))
+        }
+    }?;
+    Ok(if negative { -magnitude } else { magnitude })
+}
+
+/// Raises a `BigInt` to a `u64` exponent without truncating the exponent.
+fn bigint_pow(mut base: BigInt, mut exp: u64) -> BigInt {
+    let mut result = BigInt::from(1);
+    while exp > 0 {
+        if exp & 1 == 1 {
+            result *= &base;
+        }
+        exp >>= 1;
+        if exp > 0 {
+            base = &base * &base;
+        }
+    }
+    result
+}
+
+/// Returns the significant bit count of an immediate integer.
+fn i64_bits(value: i64) -> u64 {
+    u64::from(i64::BITS - value.unsigned_abs().leading_zeros())
+}
+
+/// Builds `divmod()`'s `(quotient, remainder)` tuple for arbitrary-precision operands.
+///
+/// `div_mod_floor` gives Python's floor semantics directly, so the remainder takes the
+/// divisor's sign. Callers must reject a zero divisor and preflight the quotient's size.
+pub(crate) fn bigint_divmod_tuple(lhs: &BigInt, rhs: &BigInt, heap: &Heap) -> Value {
+    let (quotient, remainder) = lhs.div_mod_floor(rhs);
+    let quotient = LongInt::new(quotient).into_value(heap);
+    let remainder = LongInt::new(remainder).into_value(heap);
+    allocate_tuple(smallvec![quotient, remainder], heap)
+}
+
+impl From<BigInt> for LongInt {
+    fn from(bi: BigInt) -> Self {
+        Self(bi)
+    }
+}
+
+impl From<i64> for LongInt {
+    fn from(i: i64) -> Self {
+        Self(BigInt::from(i))
+    }
+}
+
+impl Add for LongInt {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        Self(self.0 + rhs.0)
+    }
+}
+
+impl Sub for LongInt {
+    type Output = Self;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        Self(self.0 - rhs.0)
+    }
+}
+
+impl Mul for LongInt {
+    type Output = Self;
+
+    fn mul(self, rhs: Self) -> Self::Output {
+        Self(self.0 * rhs.0)
+    }
+}
+
+impl Neg for LongInt {
+    type Output = Self;
+
+    fn neg(self) -> Self::Output {
+        Self(-self.0)
+    }
+}
+
+impl Display for LongInt {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}

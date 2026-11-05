@@ -107,12 +107,12 @@ jobs:
           fi
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
+        uses: dtolnay/rust-toolchain@d86e0fa8f147d6539442c26a61ebba8becc19489 # 1.96.0
 
       - name: Verify bashkit-cpython-wasm package without credentials
         run: |
           cargo publish --dry-run -p bashkit-cpython-wasm
-          # Cargo 1.95 publish dry-runs retain a temporary archive. Finalize
+          # Cargo 1.95+ publish dry-runs retain a temporary archive. Finalize
           # the verified package at Cargo's package output before measuring it.
           cargo package -p bashkit-cpython-wasm
           # crates.io rejects crates over 10 MiB; the embedded snapshot and
@@ -136,11 +136,95 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
 
+  # Publish the Monty forks (bashkit's `python` feature). bashkit-monty depends
+  # on bashkit-monty-types, and bashkit on both, so they go first, in order.
+  # See knowledge/runtimes/python-builtin.md.
+  publish-bashkit-monty-types:
+    name: Publish bashkit-monty-types
+    needs: validate-tag
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.validate-tag.outputs.sha }}
+          persist-credentials: false
+
+      - name: Verify publish source is on main
+        run: |
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          SOURCE_SHA=$(git rev-parse HEAD)
+          if ! git merge-base --is-ancestor "$SOURCE_SHA" origin/main; then
+            echo "Error: publish source $SOURCE_SHA is not reachable from origin/main"
+            exit 1
+          fi
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@d86e0fa8f147d6539442c26a61ebba8becc19489 # 1.96.0
+
+      - name: Verify bashkit-monty-types package without credentials
+        run: cargo publish --dry-run -p bashkit-monty-types
+
+      # Exchange after package verification so the 30-minute token stays fresh.
+      - name: Authenticate to crates.io
+        id: auth
+        uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
+
+      - name: Publish bashkit-monty-types to crates.io
+        run: cargo publish --no-verify -p bashkit-monty-types
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+
+  publish-bashkit-monty:
+    name: Publish bashkit-monty
+    needs: [validate-tag, publish-bashkit-monty-types]
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.validate-tag.outputs.sha }}
+          persist-credentials: false
+
+      - name: Verify publish source is on main
+        run: |
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          SOURCE_SHA=$(git rev-parse HEAD)
+          if ! git merge-base --is-ancestor "$SOURCE_SHA" origin/main; then
+            echo "Error: publish source $SOURCE_SHA is not reachable from origin/main"
+            exit 1
+          fi
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@d86e0fa8f147d6539442c26a61ebba8becc19489 # 1.96.0
+
+      - name: Wait for crates.io index update
+        run: sleep 30
+
+      - name: Verify bashkit-monty package without credentials
+        run: cargo publish --dry-run -p bashkit-monty
+
+      # Exchange after package verification so the 30-minute token stays fresh.
+      - name: Authenticate to crates.io
+        id: auth
+        uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
+
+      - name: Publish bashkit-monty to crates.io
+        run: cargo publish --no-verify -p bashkit-monty
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+
   # Publish bashkit (core library) to crates.io
   publish-bashkit:
     name: Publish bashkit
     runs-on: ubuntu-latest
-    needs: [validate-tag, publish-bashkit-cpython-wasm]
+    needs: [validate-tag, publish-bashkit-cpython-wasm, publish-bashkit-monty]
     environment: release
     permissions:
       contents: read
@@ -162,7 +246,7 @@ jobs:
           echo "Publish source verified on origin/main: $SOURCE_SHA"
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
+        uses: dtolnay/rust-toolchain@d86e0fa8f147d6539442c26a61ebba8becc19489 # 1.96.0
 
       - name: Verify version matches tag
         env:
@@ -208,7 +292,7 @@ jobs:
           persist-credentials: false
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
+        uses: dtolnay/rust-toolchain@d86e0fa8f147d6539442c26a61ebba8becc19489 # 1.96.0
 
       - name: Wait for crates.io index update
         run: sleep 30
@@ -242,7 +326,7 @@ jobs:
           persist-credentials: false
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
+        uses: dtolnay/rust-toolchain@d86e0fa8f147d6539442c26a61ebba8becc19489 # 1.96.0
 
       - name: Wait for crates.io index update
         run: sleep 30
@@ -266,7 +350,7 @@ jobs:
   verify-publish:
     name: Verify published versions
     runs-on: ubuntu-latest
-    needs: [validate-tag, publish-bashkit-cpython-wasm, publish-bashkit, publish-bashkit-cli, publish-bashkit-scripted-tool]
+    needs: [validate-tag, publish-bashkit-cpython-wasm, publish-bashkit-monty-types, publish-bashkit-monty, publish-bashkit, publish-bashkit-cli, publish-bashkit-scripted-tool]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -283,4 +367,4 @@ jobs:
         run: |
           EXPECTED="${RELEASE_TAG#v}"
           echo "Expected version: $EXPECTED"
-          python3 scripts/verify_crates_publish.py --expected "$EXPECTED" bashkit-cpython-wasm bashkit bashkit-cli bashkit-scripted-tool
+          python3 scripts/verify_crates_publish.py --expected "$EXPECTED" bashkit-cpython-wasm bashkit-monty-types bashkit-monty bashkit bashkit-cli bashkit-scripted-tool

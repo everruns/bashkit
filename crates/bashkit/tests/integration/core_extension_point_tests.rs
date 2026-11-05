@@ -38,7 +38,7 @@ fn python_bash() -> Bash {
     use std::sync::Arc;
 
     let handler: PythonExternalFnHandler = Arc::new(|_, _, _| {
-        Box::pin(async move { ExtFunctionResult::Return(MontyObject::String(current_tenant())) })
+        Box::pin(async move { ExtFunctionResult::Return(MontyObject::string(current_tenant())) })
     });
     Bash::builder()
         .python_with_external_handler(PythonLimits::default(), vec!["tenant".into()], handler)
