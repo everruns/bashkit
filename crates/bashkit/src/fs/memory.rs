@@ -932,7 +932,7 @@ impl InMemoryFs {
         if let Some(parent) = path.parent() {
             let mut current = PathBuf::from("/");
             for component in parent.components().skip(1) {
-                current.push(component);
+                current = vfs_join(&current, component);
                 if !entries.contains_key(&current) {
                     entries.insert(
                         current.clone(),
@@ -1020,7 +1020,7 @@ impl InMemoryFs {
         // Create the directory and every ancestor that does not already exist.
         let mut current = PathBuf::from("/");
         for component in path.components().skip(1) {
-            current.push(component);
+            current = vfs_join(&current, component);
             if entries.contains_key(&current) {
                 continue;
             }
@@ -1098,7 +1098,7 @@ impl InMemoryFs {
         if let Some(parent) = path.parent() {
             let mut current = PathBuf::from("/");
             for component in parent.components().skip(1) {
-                current.push(component);
+                current = vfs_join(&current, component);
                 if !entries.contains_key(&current) {
                     entries.insert(
                         current.clone(),
@@ -1483,7 +1483,7 @@ impl FileSystem for InMemoryFs {
         if recursive {
             let mut current = PathBuf::from("/");
             for component in path.components().skip(1) {
-                current.push(component);
+                current = vfs_join(&current, component);
                 match entries.get(&current) {
                     Some(FsEntry::Directory { .. }) => {
                         // Directory exists, continue to next component
@@ -2009,6 +2009,30 @@ mod tests {
         let entries = fs.read_dir(Path::new("/dst/nested")).await.unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].name, "main.rs");
+    }
+
+    // Issue #2830: implicit parent directories become entry-map keys directly,
+    // so they must use `/` even where the host separator is `\\`.
+    #[tokio::test]
+    async fn windows_containment_implicit_parents_use_slash_keys() {
+        let fs = InMemoryFs::new();
+        fs.mkdir(Path::new("/m/a/b"), true).await.unwrap();
+        fs.add_file("/f/x/file.txt", b"x", 0o644);
+        fs.add_dir("/d/y/z", 0o755);
+        fs.add_lazy_file("/l/w/lazy.bin", 1, 0o644, Arc::new(|| b"z".to_vec()));
+
+        let keys: Vec<String> = fs
+            .entries
+            .read()
+            .unwrap()
+            .keys()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect();
+        let bad: Vec<&String> = keys.iter().filter(|k| k.contains('\\')).collect();
+        assert!(bad.is_empty(), "host separator in VFS keys: {bad:?}");
+        for dir in ["/m/a", "/m/a/b", "/f/x", "/d/y", "/d/y/z", "/l/w"] {
+            assert!(keys.iter().any(|k| k == dir), "missing key {dir}");
+        }
     }
 
     // A regular file in the path is ENOTDIR (bash: `f/x: Not a directory`),

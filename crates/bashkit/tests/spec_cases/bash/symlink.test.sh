@@ -146,3 +146,21 @@ lnk
 sub
 ../elsewhere
 ### end
+
+### symlink_write_through_link_in_linked_dir
+# issue #2829: > and >> through a link inside a symlinked dir write the target
+mkdir -p /tmp/slw/sub && cd /tmp/slw
+printf a > file
+ln -s ../file sub/link
+ln -s sub dl
+printf b >> dl/link
+printf c >> dl/link
+cat file; echo
+printf d > dl/link
+cat file; echo
+readlink sub/link
+### expect
+abc
+d
+../file
+### end

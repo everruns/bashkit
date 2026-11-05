@@ -290,6 +290,10 @@ the read-error path in `tail`/`rev`/`tac`/`shuf`/`sort`/`uniq`/`wc` did the same
 `to.join(suffix)` straight into the entry map, so on Windows the renamed
 children were keyed `\`-style and every normalized lookup afterwards missed
 them.
+The implicit-parent loops in `add_file`, `add_dir`, `add_lazy_file` and
+recursive `mkdir` had the same shape (`current.push(component)` used as a map
+key): lookups worked, but `snapshot()` exposed `/tmp\a` keys (issue #2830).
+They now build keys with `vfs_join`.
 
 The same host/VFS mismatch has a second shape: `Path::is_absolute()` is false
 on Windows for a VFS-absolute path like `/etc/passwd`, because there is no
@@ -388,7 +392,9 @@ their `stat` is an `lstat`, and they refuse to read or write through a link.
   `file`, `rm`, `find` (`-P` default), Python `Path.is_symlink`.
 - Targets are VFS paths: absolute from the VFS root, relative to the link's
   directory, `..` clamped at `/` (TM-ESC-002). Writes through a dangling link
-  create the target.
+  create the target. Writes resolve the final component even when a parent
+  is a link (`> dl/link` with `dl -> sub`), so they never replace a link
+  with a file (issue #2829).
 - Recursive `find` and `grep` share `fs::canonicalize`, resolving links through
   `lstat`/`read_link` with the same 40-hop cap. It uses VFS joins and root-aware
   symlink targets on every host. Walkers compare resolved ancestor
