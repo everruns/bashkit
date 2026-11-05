@@ -4,6 +4,7 @@
 
 * **Python `re` gate parses code**: the embedded Monty `python3` blocked `import re` by matching lines that start with `import`/`from`, so `pass; import re` or `if True: import re` loaded the module anyway (found by a downstream integration review). The gate now walks the parsed statement tree. See [Python Builtin](runtimes/python-builtin.md).
 * **Python call cap and final-value hang**: each embedded `python3` call reserved `max_memory / 64` work units up front, so a default script failed on its 96th call; heap growth is now charged as it happens. The last expression is no longer echoed (CPython never does for `-c`/files/stdin): exporting it ran outside Monty's limits, and `x = [x, x]` thirty times hung past the timeout. Found reviewing a downstream integration. See [Python Builtin](runtimes/python-builtin.md).
+* **`re` gate follow-ups**: source is charged to the execution budget before the gate parses it; `ruff_python_parser`/`ruff_python_ast` are Dependabot-ignored so they move only with Monty; a test pins that Monty has no `exec`/`eval`/`compile`. See [Python Builtin](runtimes/python-builtin.md).
 
 ## 2026-11-03
 

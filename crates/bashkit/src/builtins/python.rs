@@ -544,6 +544,10 @@ impl Builtin for Python {
             ));
         };
 
+        // Charge the source before the import gate parses it, so untrusted
+        // input is accounted for before any work is done on it.
+        ctx.consume_budget_input(code.len())?;
+        ctx.consume_budget_work(u64::try_from(code.len().div_ceil(64)).unwrap_or(u64::MAX))?;
         if let Some(module) = is_disabled_import(&code) {
             return Ok(ExecResult::err(
                 format!(
@@ -552,8 +556,6 @@ impl Builtin for Python {
                 1,
             ));
         }
-        ctx.consume_budget_input(code.len())?;
-        ctx.consume_budget_work(u64::try_from(code.len().div_ceil(64)).unwrap_or(u64::MAX))?;
 
         // THREAT[TM-INF]: Python environment access is intentionally scoped
         // to exported variables only (`ctx.env`). Shell-local variables in
@@ -1969,6 +1971,17 @@ mod tests {
             "{}",
             r.stderr
         );
+        // `exec`/`eval`/`compile` would run an import the outer AST never
+        // shows. Monty has none of them; pin that too.
+        for code in [
+            "exec('import re')\nprint(re)",
+            "eval(\"__import__('re')\")\nprint(1)",
+            "c = compile('import re', 'x', 'exec')\nprint(c)",
+        ] {
+            let r = run(&["-c", code], None).await;
+            assert_eq!(r.exit_code, 1, "{code}: {}", r.stdout);
+            assert!(r.stdout.is_empty(), "{code}: {}", r.stdout);
+        }
     }
 
     #[tokio::test]
