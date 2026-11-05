@@ -250,8 +250,11 @@ the code with `ruff_python_parser` (the parser Monty itself runs first) and walk
 every statement body, so `pass; import re`, `if x: import re` or an import inside
 a function, class, loop or `try` is caught. Strings and comments that mention
 `re` are not. A line-prefix scan used before 2026-11-05 missed all of these.
-Monty 0.0.19 has no `__import__` or `importlib`, so `import`/`from` statements
-are the only module loaders; a unit test pins that.
+Monty 0.0.19 has no `__import__`, `importlib`, `exec`, `eval` or `compile`, so
+`import`/`from` statements are the only module loaders; a unit test pins that.
+`ruff_python_parser`/`ruff_python_ast` are pinned to Monty's bundled 0.0.3 and
+ignored by Dependabot, so the gate and the executor parse the same grammar.
+Source is charged to the execution budget before the gate parses it.
 
 ### Integration with Bashkit
 

@@ -50,6 +50,12 @@ updates:
       # see knowledge/runtimes/python-builtin.md § Upgrade blocker.
       - dependency-name: "monty"
       - dependency-name: "monty-types"
+      # The python `re` gate parses user code with the same ruff parser Monty
+      # 0.0.19 bundles. A standalone bump would let the gate's grammar drift
+      # from the executor's, and code the gate fails to parse is passed
+      # through. Move these only together with monty.
+      - dependency-name: "ruff_python_parser"
+      - dependency-name: "ruff_python_ast"
 
       # wasmtime is pinned exactly (=48.0.6): the `cpython` feature embeds a
       # module precompiled by build.rs, and a precompiled module loads only
