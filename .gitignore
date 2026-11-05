@@ -8,6 +8,8 @@
 
 # Local files
 local*
+# Upstream Monty source file in the fork; must stay tracked.
+!crates/bashkit-monty/src/builtins/locals.rs
 
 # IDE
 .vscode/
