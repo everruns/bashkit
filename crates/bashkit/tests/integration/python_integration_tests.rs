@@ -1254,6 +1254,13 @@ mod resource_limits {
             .unwrap();
         assert_eq!(r.exit_code, 1);
         assert!(r.stderr.contains("TimeoutError: slow"), "{}", r.stderr);
+        // Even one that copies Monty's limit message is a script error.
+        let r = bash
+            .exec("python3 -c \"raise TimeoutError('time limit exceeded: 1s > 1s')\"")
+            .await
+            .unwrap();
+        assert_eq!(r.exit_code, 1, "{}", r.stderr);
+        assert!(r.stderr.contains("Traceback"), "{}", r.stderr);
     }
 }
 

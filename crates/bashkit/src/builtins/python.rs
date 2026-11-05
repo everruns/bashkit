@@ -33,6 +33,7 @@ use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use super::{Builtin, Context, ExecutionDeadline, RuntimeLimits, resolve_path};
@@ -62,6 +63,9 @@ struct BudgetTracker {
     vm_checkpoints: Cell<u64>,
     /// Highest Monty heap size already charged to `execution`, in bytes.
     charged_memory: Cell<usize>,
+    /// Set when Monty's own time limit fired. Script code can raise a
+    /// look-alike `TimeoutError`, so only this flag marks a real limit hit.
+    time_limit_hit: Arc<AtomicBool>,
 }
 
 impl BudgetTracker {
@@ -125,7 +129,11 @@ impl ResourceTracker for BudgetTracker {
 
     fn check_time(&self) -> std::result::Result<(), ResourceError> {
         self.check_vm()?;
-        self.runtime.check_time()
+        let result = self.runtime.check_time();
+        if matches!(result, Err(ResourceError::Time { .. })) {
+            self.time_limit_hit.store(true, Ordering::Relaxed);
+        }
+        result
     }
 
     fn check_recursion_depth(
@@ -658,11 +666,13 @@ async fn run_python(
         .max_memory(py_limits.common.max_memory)
         .max_recursion_depth(Some(py_limits.common.max_call_depth));
 
+    let time_limit_hit = Arc::new(AtomicBool::new(false));
     let tracker = BudgetTracker {
         runtime: LimitedTracker::new(limits),
         execution: execution_budget.clone(),
         vm_checkpoints: Cell::new(0),
         charged_memory: Cell::new(0),
+        time_limit_hit: time_limit_hit.clone(),
     };
     // Important security decision: cap collected print output at the same
     // memory budget as the VM heap. Monty 0.0.19 added a byte cap on
@@ -688,7 +698,11 @@ async fn run_python(
         ) {
             Ok(p) => (p, buf),
             Err(e) => {
-                return Ok(format_exception_with_output(e, &buf, time_limit));
+                return Ok(format_exception_with_output(
+                    e,
+                    &buf,
+                    timed_out(&time_limit_hit, time_limit),
+                ));
             }
         }
     };
@@ -706,7 +720,11 @@ async fn run_python(
                         progress = next;
                     }
                     Err(e) => {
-                        return Ok(format_exception_with_output(e, &buf, time_limit));
+                        return Ok(format_exception_with_output(
+                            e,
+                            &buf,
+                            timed_out(&time_limit_hit, time_limit),
+                        ));
                     }
                 }
             }
@@ -738,7 +756,11 @@ async fn run_python(
                         progress = next;
                     }
                     Err(e) => {
-                        return Ok(format_exception_with_output(e, &buf, time_limit));
+                        return Ok(format_exception_with_output(
+                            e,
+                            &buf,
+                            timed_out(&time_limit_hit, time_limit),
+                        ));
                     }
                 }
             }
@@ -765,7 +787,11 @@ async fn run_python(
                         progress = next;
                     }
                     Err(e) => {
-                        return Ok(format_exception_with_output(e, &buf, time_limit));
+                        return Ok(format_exception_with_output(
+                            e,
+                            &buf,
+                            timed_out(&time_limit_hit, time_limit),
+                        ));
                     }
                 }
             }
@@ -775,7 +801,11 @@ async fn run_python(
                     ExcType::RuntimeError,
                     Some("async operations not supported in virtual mode".into()),
                 );
-                return Ok(format_exception_with_output(err, &buf, time_limit));
+                return Ok(format_exception_with_output(
+                    err,
+                    &buf,
+                    timed_out(&time_limit_hit, time_limit),
+                ));
             }
             RunProgress::Complete(_) => {
                 return Ok(ExecResult::ok(buf));
@@ -1258,21 +1288,26 @@ fn format_exception(e: MontyException) -> ExecResult {
     ExecResult::err(format!("{e}\n"), 1)
 }
 
+/// The limit to report when Monty's own time limit fired, else `None`.
+fn timed_out(hit: &AtomicBool, limit: Duration) -> Option<Duration> {
+    hit.load(Ordering::Relaxed).then_some(limit)
+}
+
 /// Format exception, preserving any output produced before the error.
 ///
 /// Decision: Monty's time limit reports like the CPython runtime and coreutils
 /// `timeout` (exit 124, `python3: execution timed out after Ns`), so callers can
 /// tell a limit from a script error without parsing a traceback. Monty raises
-/// the limit as an uncatchable `TimeoutError` whose message starts with
-/// `time limit exceeded:` (`ResourceError::Time`'s Display).
+/// the limit as an uncatchable `TimeoutError`; the tracker records that its
+/// check fired, because script code can raise a `TimeoutError` with the same
+/// message.
 fn format_exception_with_output(
     e: MontyException,
     printed: &str,
-    time_limit: Duration,
+    time_limit: Option<Duration>,
 ) -> ExecResult {
-    if e.exc_type() == ExcType::TimeoutError
-        && e.message()
-            .is_some_and(|message| message.starts_with("time limit exceeded:"))
+    if let Some(time_limit) = time_limit
+        && e.exc_type() == ExcType::TimeoutError
     {
         let mut result = ExecResult::with_code(printed.to_string(), 124);
         result.stderr = format!(

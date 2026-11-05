@@ -69,7 +69,8 @@ the value REPL-style.
 A Monty time-limit hit (uncatchable `TimeoutError: time limit exceeded: ...`)
 exits 124 with `python3: execution timed out after Ns` and keeps earlier
 `print` output, matching the CPython runtime and coreutils `timeout`. A
-script's own `TimeoutError` stays an ordinary exit-1 exception.
+script's own `TimeoutError` stays an ordinary exit-1 exception, even one
+that copies the limit message: the tracker records when its time check fired.
 
 Monty enforces its own limits independent of Bashkit's shell limits,
 configurable via `PythonLimits`:
