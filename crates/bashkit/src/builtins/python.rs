@@ -33,6 +33,7 @@ use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use super::{Builtin, Context, ExecutionDeadline, RuntimeLimits, resolve_path};
@@ -62,6 +63,9 @@ struct BudgetTracker {
     vm_checkpoints: Cell<u64>,
     /// Highest Monty heap size already charged to `execution`, in bytes.
     charged_memory: Cell<usize>,
+    /// Set when Monty's own time limit fired. Script code can raise a
+    /// look-alike `TimeoutError`, so only this flag marks a real limit hit.
+    time_limit_hit: Arc<AtomicBool>,
 }
 
 impl BudgetTracker {
@@ -125,7 +129,11 @@ impl ResourceTracker for BudgetTracker {
 
     fn check_time(&self) -> std::result::Result<(), ResourceError> {
         self.check_vm()?;
-        self.runtime.check_time()
+        let result = self.runtime.check_time();
+        if matches!(result, Err(ResourceError::Time { .. })) {
+            self.time_limit_hit.store(true, Ordering::Relaxed);
+        }
+        result
     }
 
     fn check_recursion_depth(
@@ -429,10 +437,11 @@ fn is_disabled_import(code: &str) -> Option<&'static str> {
 impl Builtin for Python {
     fn llm_hint(&self) -> Option<&'static str> {
         Some(
-            "python/python3: Embedded Python (Monty). \
-             Stdlib: math, pathlib, os.getenv, sys, typing. \
-             File I/O via pathlib.Path and open() against the VFS. \
-             No HTTP/network. No classes. No third-party imports.",
+            "python/python3: Embedded Python (Monty), not CPython. \
+             Stdlib: json, math, datetime, pathlib, os.getenv, sys, typing, unicodedata; \
+             `re` is disabled. File I/O via pathlib.Path and open() against the VFS. \
+             Simple classes only (no inheritance), no match statements. \
+             No HTTP/network, subprocess or third-party imports. Output via print().",
         )
     }
 
@@ -657,11 +666,13 @@ async fn run_python(
         .max_memory(py_limits.common.max_memory)
         .max_recursion_depth(Some(py_limits.common.max_call_depth));
 
+    let time_limit_hit = Arc::new(AtomicBool::new(false));
     let tracker = BudgetTracker {
         runtime: LimitedTracker::new(limits),
         execution: execution_budget.clone(),
         vm_checkpoints: Cell::new(0),
         charged_memory: Cell::new(0),
+        time_limit_hit: time_limit_hit.clone(),
     };
     // Important security decision: cap collected print output at the same
     // memory budget as the VM heap. Monty 0.0.19 added a byte cap on
@@ -671,6 +682,7 @@ async fn run_python(
     // `max_memory` keeps one number to reason about: tightening the memory
     // limit tightens the output cap with it.
     let print_cap = Some(py_limits.common.max_memory);
+    let time_limit = py_limits.common.max_duration;
     // Important security decision: cap awaited host callbacks with the same wall-clock
     // budget as Monty so external functions cannot pin execution between VM steps.
     let python_deadline = Instant::now().checked_add(py_limits.common.max_duration);
@@ -686,7 +698,11 @@ async fn run_python(
         ) {
             Ok(p) => (p, buf),
             Err(e) => {
-                return Ok(format_exception_with_output(e, &buf));
+                return Ok(format_exception_with_output(
+                    e,
+                    &buf,
+                    timed_out(&time_limit_hit, time_limit),
+                ));
             }
         }
     };
@@ -704,7 +720,11 @@ async fn run_python(
                         progress = next;
                     }
                     Err(e) => {
-                        return Ok(format_exception_with_output(e, &buf));
+                        return Ok(format_exception_with_output(
+                            e,
+                            &buf,
+                            timed_out(&time_limit_hit, time_limit),
+                        ));
                     }
                 }
             }
@@ -736,7 +756,11 @@ async fn run_python(
                         progress = next;
                     }
                     Err(e) => {
-                        return Ok(format_exception_with_output(e, &buf));
+                        return Ok(format_exception_with_output(
+                            e,
+                            &buf,
+                            timed_out(&time_limit_hit, time_limit),
+                        ));
                     }
                 }
             }
@@ -763,7 +787,11 @@ async fn run_python(
                         progress = next;
                     }
                     Err(e) => {
-                        return Ok(format_exception_with_output(e, &buf));
+                        return Ok(format_exception_with_output(
+                            e,
+                            &buf,
+                            timed_out(&time_limit_hit, time_limit),
+                        ));
                     }
                 }
             }
@@ -773,7 +801,11 @@ async fn run_python(
                     ExcType::RuntimeError,
                     Some("async operations not supported in virtual mode".into()),
                 );
-                return Ok(format_exception_with_output(err, &buf));
+                return Ok(format_exception_with_output(
+                    err,
+                    &buf,
+                    timed_out(&time_limit_hit, time_limit),
+                ));
             }
             RunProgress::Complete(_) => {
                 return Ok(ExecResult::ok(buf));
@@ -1256,8 +1288,35 @@ fn format_exception(e: MontyException) -> ExecResult {
     ExecResult::err(format!("{e}\n"), 1)
 }
 
+/// The limit to report when Monty's own time limit fired, else `None`.
+fn timed_out(hit: &AtomicBool, limit: Duration) -> Option<Duration> {
+    hit.load(Ordering::Relaxed).then_some(limit)
+}
+
 /// Format exception, preserving any output produced before the error.
-fn format_exception_with_output(e: MontyException, printed: &str) -> ExecResult {
+///
+/// Decision: Monty's time limit reports like the CPython runtime and coreutils
+/// `timeout` (exit 124, `python3: execution timed out after Ns`), so callers can
+/// tell a limit from a script error without parsing a traceback. Monty raises
+/// the limit as an uncatchable `TimeoutError`; the tracker records that its
+/// check fired, because script code can raise a `TimeoutError` with the same
+/// message.
+fn format_exception_with_output(
+    e: MontyException,
+    printed: &str,
+    time_limit: Option<Duration>,
+) -> ExecResult {
+    if let Some(time_limit) = time_limit
+        && e.exc_type() == ExcType::TimeoutError
+    {
+        let mut result = ExecResult::with_code(printed.to_string(), 124);
+        result.stderr = format!(
+            "python3: execution timed out after {:.1}s\n",
+            time_limit.as_secs_f64()
+        )
+        .into();
+        return result;
+    }
     let stderr = format!("{e}\n");
     let mut result = ExecResult::err(stderr, 1);
     if !printed.is_empty() {
@@ -2010,6 +2069,41 @@ mod tests {
         .await;
         assert_eq!(r.exit_code, 0, "{}", r.stderr);
         assert_eq!(r.stdout, "import re \"re\"\n");
+    }
+
+    /// The LLM hint must describe what Monty really does: every module it
+    /// names imports, simple classes work, and what it rules out fails.
+    /// Regression: the hint said "No classes" long after Monty added them.
+    #[tokio::test]
+    async fn test_llm_hint_matches_runtime() {
+        let hint = Python::new().llm_hint().unwrap();
+        let stdlib = hint
+            .split("Stdlib: ")
+            .nth(1)
+            .and_then(|rest| rest.split(';').next())
+            .unwrap();
+        for module in stdlib.split(", ") {
+            let module = module.split('.').next().unwrap();
+            let r = run(&["-c", &format!("import {module}")], None).await;
+            assert_eq!(r.exit_code, 0, "hint names {module}: {}", r.stderr);
+        }
+        assert!(hint.contains("Simple classes only (no inheritance)"));
+        let r = run(
+            &[
+                "-c",
+                "class A:\n    def __init__(self):\n        self.v = 1\nprint(A().v)",
+            ],
+            None,
+        )
+        .await;
+        assert_eq!(r.stdout, "1\n", "{}", r.stderr);
+        let r = run(&["-c", "class A: pass\nclass B(A): pass"], None).await;
+        assert_ne!(r.exit_code, 0, "inheritance now works; update the hint");
+        let r = run(&["-c", "match 1:\n    case 1: pass"], None).await;
+        assert_ne!(r.exit_code, 0, "match now works; update the hint");
+        assert!(hint.contains("`re` is disabled"));
+        let r = run(&["-c", "import re"], None).await;
+        assert_ne!(r.exit_code, 0);
     }
 
     #[tokio::test]
