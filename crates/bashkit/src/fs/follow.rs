@@ -157,9 +157,17 @@ impl FollowFs {
         match self.inner.stat(path).await {
             Ok(meta) if meta.file_type.is_symlink() => self.resolve(path, true).await,
             Ok(_) => Ok(path.to_path_buf()),
-            // The inner stat fails on a link in a parent; resolve the final
-            // component too so a write never replaces a link (issue #2829).
-            Err(_) => self.resolve(path, true).await,
+            // The inner stat fails on a missing path or a link in a parent.
+            // Only in the second case can the final component still be a
+            // link (issue #2829); check it then, so plain new-file writes
+            // keep their stat count.
+            Err(_) => match self.parent_followed(path).await? {
+                None => Ok(path.to_path_buf()),
+                Some(target) => match self.inner.stat(&target).await {
+                    Ok(meta) if meta.file_type.is_symlink() => self.resolve(&target, true).await,
+                    _ => Ok(target),
+                },
+            },
         }
     }
 }
