@@ -199,7 +199,7 @@ let help = tool.help();  // Includes a Markdown Notes section with Python hints
 ```
 
 The builtin's `llm_hint()` is automatically included in the tool's documentation,
-so LLMs know file I/O is VFS-scoped and HTTP requests/classes are unavailable.
+so LLMs know file I/O is VFS-scoped, HTTP is unavailable and classes are limited.
 
 `BashTool::builder().python_with_external_handler(limits, names, handler)` exposes the same named callbacks through the Rust tool builder. The Python runtime gate still applies. Foreign bindings can use `bashkit::runtime_value` for bounded JSON conversion; native Rust callbacks keep their Monty value types.
 
@@ -220,10 +220,11 @@ content = Path('/tmp/data.txt').read_text()
 **No HTTP/network.** No `socket`, `urllib`, `requests`, or `http.client` modules.
 Monty has no network primitives and no OsCall variants for network operations.
 
-**No classes.** Class definitions are not yet supported by Monty (planned upstream).
+**Simple classes only.** Classes with methods and attributes work; inheritance,
+metaclasses and `match` statements are not supported by Monty yet.
 
 **No third-party imports.** Only builtin modules (`sys`, `typing`, `os`, `pathlib`,
-`math`, `json`, `datetime`) are available. No `pip install`, no `import numpy`.
+`math`, `json`, `datetime`, `unicodedata`) are available. No `pip install`, no `import numpy`.
 
 **No `re` module.** Disabled due to catastrophic backtracking DoS risk in
 untrusted code execution.

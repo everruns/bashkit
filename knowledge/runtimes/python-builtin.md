@@ -66,6 +66,12 @@ the value REPL-style.
 
 ### Resource Limits
 
+A Monty time-limit hit (uncatchable `TimeoutError: time limit exceeded: ...`)
+exits 124 with `python3: execution timed out after Ns` and keeps earlier
+`print` output, matching the CPython runtime and coreutils `timeout`. A
+script's own `TimeoutError` stays an ordinary exit-1 exception, even one
+that copies the limit message: the tracker records when its time check fired.
+
 Monty enforces its own limits independent of Bashkit's shell limits,
 configurable via `PythonLimits`:
 
@@ -162,8 +168,8 @@ isinstance, open, input, ...), and stdlib modules: sys, typing, math,
 pathlib, os (getenv/environ), json, datetime (incl. `date.today()`,
 `datetime.now(tz)`).
 
-Not supported (Monty limitations): classes (planned upstream), match
-statements, third-party imports, most stdlib modules, and HTTP/network I/O,
+Simple classes (methods, attributes) work since Monty 0.0.19. Not supported
+(Monty limitations): class inheritance and metaclasses, match statements, third-party imports, most stdlib modules, and HTTP/network I/O,
 no `socket`/`urllib`/`requests`/`http.client`; Monty has no OsCall variants
 for network operations, so there is no way to bridge these.
 
@@ -234,7 +240,8 @@ file not found, missing `-c` argument, unknown option.
 
 Registration via `BashToolBuilder::python()` contributes a hint to `help()` /
 `system_prompt()` documenting the limitations (stdlib subset, VFS-only file
-I/O, no network/classes/third-party imports) through the general
+I/O, no network/third-party imports, simple classes only, `re` disabled);
+`test_llm_hint_matches_runtime` fails if the hint drifts from what Monty runs through the general
 `Builtin::llm_hint()` mechanism (hints deduplicated automatically).
 
 The regex module `re` is intentionally disabled in Bashkit due to
