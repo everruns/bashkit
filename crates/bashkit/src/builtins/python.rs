@@ -381,8 +381,9 @@ impl Default for Python {
 // statement that puts the import after a prefix. Monty 0.0.19 has no import
 // hook, so bashkit parses with the same parser Monty runs first
 // (`ruff_python_parser::parse_module`) and walks every statement body.
-// Monty has no `__import__` or `importlib`, so only `import` / `from` statements
-// can load a module. Code that fails to parse is let through: Monty parses it
+// Monty has no `__import__`, `importlib`, `exec`, `eval` or `compile`, so only
+// `import` / `from` statements can load a module; the tripwire for that is
+// `test_re_module_dynamic_import_is_unavailable`. Code that fails to parse is let through: Monty parses it
 // the same way, reports the SyntaxError and runs nothing.
 fn is_disabled_import(code: &str) -> Option<&'static str> {
     use ruff_python_ast::statement_visitor::{StatementVisitor, walk_stmt};
@@ -1960,8 +1961,9 @@ mod tests {
     async fn test_re_module_dynamic_import_is_unavailable() {
         // Monty has no `__import__` or `importlib`, so import statements are
         // the only way to load a module. Pin that: if Monty adds either, the
-        // AST gate in `is_disabled_import` must learn about it.
-        let r = run(&["-c", "m = __import__('re')\nprint(m)"], None).await;
+        // AST gate in `is_disabled_import` must learn about it. Payloads use
+        // only supported modules, so the call itself is what fails.
+        let r = run(&["-c", "m = __import__('json')\nprint(m)"], None).await;
         assert_eq!(r.exit_code, 1, "{}", r.stdout);
         assert!(r.stdout.is_empty(), "{}", r.stdout);
         let r = run(&["-c", "import importlib"], None).await;
@@ -1972,11 +1974,12 @@ mod tests {
             r.stderr
         );
         // `exec`/`eval`/`compile` would run an import the outer AST never
-        // shows. Monty has none of them; pin that too.
+        // shows. Monty has none of them; pin that too. Each payload succeeds
+        // as soon as the builtin exists, so adding one turns this test red.
         for code in [
-            "exec('import re')\nprint(re)",
-            "eval(\"__import__('re')\")\nprint(1)",
-            "c = compile('import re', 'x', 'exec')\nprint(c)",
+            "exec('x = 41')\nprint(x)",
+            "print(eval('6 * 7'))",
+            "c = compile('x = 1', 'x', 'exec')\nprint(c)",
         ] {
             let r = run(&["-c", code], None).await;
             assert_eq!(r.exit_code, 1, "{code}: {}", r.stdout);
