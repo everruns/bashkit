@@ -1227,6 +1227,41 @@ mod resource_limits {
         let r = bash.exec("python3 -c \"while True: pass\"").await.unwrap();
         assert_ne!(r.exit_code, 0, "Infinite loop should be killed by timeout");
     }
+
+    /// A Monty time-limit hit reports like the CPython runtime and `timeout`:
+    /// exit 124 and `python3: execution timed out`, keeping earlier output.
+    /// It used to be exit 1 with a `TimeoutError` traceback, so callers could
+    /// only tell a limit from a script error by parsing stderr.
+    #[tokio::test]
+    async fn timeout_limit_exits_124() {
+        let limits = PythonLimits::default().max_duration(Duration::from_millis(200));
+        let mut bash = bash_python_limits(limits);
+        let r = bash
+            .exec("python3 -c \"print('before')\nwhile True: pass\"; echo \"rc=$?\"")
+            .await
+            .unwrap();
+        assert_eq!(r.stdout, "before\nrc=124\n");
+        assert_eq!(r.stderr, "python3: execution timed out after 0.2s\n");
+    }
+
+    /// A script's own TimeoutError is an ordinary exception (exit 1).
+    #[tokio::test]
+    async fn user_timeout_error_is_not_a_limit() {
+        let mut bash = bash_python();
+        let r = bash
+            .exec("python3 -c \"raise TimeoutError('slow')\"")
+            .await
+            .unwrap();
+        assert_eq!(r.exit_code, 1);
+        assert!(r.stderr.contains("TimeoutError: slow"), "{}", r.stderr);
+        // Even one that copies Monty's limit message is a script error.
+        let r = bash
+            .exec("python3 -c \"raise TimeoutError('time limit exceeded: 1s > 1s')\"")
+            .await
+            .unwrap();
+        assert_eq!(r.exit_code, 1, "{}", r.stderr);
+        assert!(r.stderr.contains("Traceback"), "{}", r.stderr);
+    }
 }
 
 // =============================================================================
