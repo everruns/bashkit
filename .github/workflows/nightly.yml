@@ -25,14 +25,17 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install Rust nightly with Miri
-        uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2 # nightly
-        with:
+      - name: Install Rust stable (default toolchain)
+        uses: dtolnay/rust-toolchain@d86e0fa8f147d6539442c26a61ebba8becc19489 # 1.96.0
+
+      # The action no longer accepts a `toolchain:` input (it installs
+      # the rust-toolchain.toml toolchain), so install the pinned nightly
+      # explicitly below.
           # Pinned: nightly 2026-10-31 (rustc f9ceb4a4d) fails to compile bashkit
           # (E0391 async-drop cycle on parser::ast::CommandList). Unpin once a
           # later nightly builds `cargo +nightly check -p bashkit --lib`.
-          toolchain: nightly-2026-10-30
-          components: miri
+      - name: Install Rust nightly with Miri
+        run: rustup toolchain install nightly-2026-10-30 --profile minimal --component miri
 
       - name: Setup Miri
         run: cargo +nightly-2026-10-30 miri setup
@@ -67,14 +70,14 @@ jobs:
       # dependencies resolve unlocked, and an MSRV bump in one of them past our
       # pinned toolchain broke this step once already in CI.
       - name: Install cargo-audit
-        uses: taiki-e/install-action@682ce6c3c696a4cd5168a05f98e51aa02b877941 # v2
+        uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2
         with:
           tool: cargo-audit
 
       # pnpm (and the node it needs) for the npm half of the scan; the PyPI
       # half reads uv.lock with the stdlib. Neither needs an install step.
       - name: Setup pnpm
-        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         with:
           version: 10.33.0
 
@@ -147,14 +150,17 @@ jobs:
       - name: Free disk space
         uses: ./.github/actions/free-disk-space
 
-      - name: Install Rust nightly
-        uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2 # nightly
-        with:
+      - name: Install Rust stable (default toolchain)
+        uses: dtolnay/rust-toolchain@d86e0fa8f147d6539442c26a61ebba8becc19489 # 1.96.0
+
+      # The action no longer accepts a `toolchain:` input (it installs
+      # the rust-toolchain.toml toolchain), so install the pinned nightly
+      # explicitly below.
           # Pinned: nightly 2026-10-31 (rustc f9ceb4a4d) fails to compile bashkit
           # (E0391 async-drop cycle on parser::ast::CommandList). Unpin once a
           # later nightly builds `cargo +nightly check -p bashkit --lib`.
-          toolchain: nightly-2026-10-30
-          components: rust-src
+      - name: Install Rust nightly with rust-src for build-std
+        run: rustup toolchain install nightly-2026-10-30 --profile minimal --component rust-src
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:

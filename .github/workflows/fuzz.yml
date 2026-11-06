@@ -33,13 +33,17 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install Rust nightly
-        uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2 # nightly
-        with:
+      - name: Install Rust stable (default toolchain)
+        uses: dtolnay/rust-toolchain@d86e0fa8f147d6539442c26a61ebba8becc19489 # 1.96.0
+
+      # The action no longer accepts a `toolchain:` input (it installs
+      # the rust-toolchain.toml toolchain), so install the pinned nightly
+      # explicitly below.
           # Pinned: nightly 2026-10-31 (rustc f9ceb4a4d) fails to compile bashkit
           # (E0391 async-drop cycle on parser::ast::CommandList). Unpin once a
           # later nightly builds `cargo +nightly check -p bashkit --lib`.
-          toolchain: nightly-2026-10-30
+      - name: Install Rust nightly
+        run: rustup toolchain install nightly-2026-10-30 --profile minimal
 
       - name: Install cargo-fuzz
         run: cargo install cargo-fuzz --locked
