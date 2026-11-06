@@ -1,5 +1,9 @@
 # Bashkit Knowledge Update Log
 
+## 2026-11-06
+
+* **Dependabot jobs green again**: the weekly cargo "/" job failed since 2026-10-19 because `turso_core = "0.8.0-pre.1"` (lock at 0.8.3) made Dependabot try 0.9.0-pre.2 as an in-range lockfile update, which cargo rejects; the requirement is now the stable `0.8.3`. The example/fixture job failed since 2026-10-13 because Dependabot follows the `crates/bashkit` path dep into the root workspace and tries to bump bashkit's own (root-owned, partly optional) deps; that entry now `allow`s only each manifest's own deps and uses `versioning-strategy: increase` for the lockfile-less fixtures. Crates only the Monty forks declare are ignored in the "/" entry so they move with upstream (#2848 had bumped them and broke the build). All three are pinned by `scripts/tests/test_dependabot_coverage.py`. See [Dependencies](operations/dependencies.md).
+
 ## 2026-11-05
 
 * **Writes through links under linked dirs**: `> dl/link` (with `dl -> sub`, `sub/link -> ../file`) replaced `sub/link` with a regular file and `>>` failed with NotFound, because the write path resolved only the parents once the inner `stat` failed. Writes now resolve the final component too (issue #2829). See [Virtual Filesystem](foundations/vfs.md#symlink-handling).

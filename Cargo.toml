@@ -145,7 +145,13 @@ tower = { version = "0.5", features = ["util"] }
 russh = "0.65"
 # Embedded SQLite engine (Turso, pure Rust). Upstream is BETA — gated behind
 # the `sqlite` feature and disabled by default; see knowledge/runtimes/sqlite-builtin.md.
-turso_core = "0.8.0-pre.1"
+# Stable requirement on purpose. A prerelease requirement (it was "0.8.0-pre.1"
+# while the lockfile held 0.8.3) makes Dependabot treat prereleases like
+# 0.9.0-pre.2 as in range and try a lockfile-only `cargo update --precise`,
+# which cargo rejects (`^0.8.0-pre.1` stops below 0.9). That failed the weekly
+# "/" update job on every run since 2026-10-19. A deliberate prerelease bump
+# edits this line by hand.
+turso_core = "0.8.3"
 # Not used by any bashkit code. Present only to turn ON `branches/std` for the
 # whole graph: `turso_core` depends on `branches` with `default-features = false`,
 # and the resulting no_std path compiles `core::intrinsics::abort()`, which rustc
