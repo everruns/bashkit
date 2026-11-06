@@ -12,7 +12,7 @@ use std::{
     error::Error,
     fmt,
     sync::{
-        OnceLock,
+        OnceLock, // bashkit fork: hook storage
         atomic::{AtomicUsize, Ordering},
     },
     time::Duration,
