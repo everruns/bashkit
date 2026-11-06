@@ -39,8 +39,8 @@ doctest = false
 monty-types = { package = "bashkit-monty-types", path = "../bashkit-monty-types", version = "0.20.3" }
 ahash = { version = "0.8.0", features = ["serde"] }
 chrono = { version = "0.4", features = ["serde"] }
-fancy-regex = { version = "0.17.0" }
-getrandom = { version = "0.3" }
+fancy-regex = { version = "0.20.0" }
+getrandom = { version = "0.4" }
 hashbrown = { version = "0.16" }
 indexmap = { version = "2" }
 itertools = { version = "0.14.0" }
