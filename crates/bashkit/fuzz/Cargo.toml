@@ -23,6 +23,9 @@ features = ["jq"]
 # CPython (wasm) python3 target; off by default so `cargo fuzz build` stays
 # light. Run with: cargo +nightly fuzz run cpython_fuzz --features cpython
 cpython = ["bashkit/cpython"]
+# Monty python3 target (bashkit-monty fork). Run with:
+# cargo +nightly fuzz run python_fuzz --features python
+python = ["bashkit/python"]
 
 # Prevent this from interfering with workspaces
 [workspace]
@@ -169,6 +172,14 @@ bench = false
 name = "cpython_http_fuzz"
 path = "fuzz_targets/cpython_http_fuzz.rs"
 required-features = ["cpython"]
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "python_fuzz"
+path = "fuzz_targets/python_fuzz.rs"
+required-features = ["python"]
 test = false
 doc = false
 bench = false
