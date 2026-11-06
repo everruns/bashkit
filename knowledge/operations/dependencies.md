@@ -71,8 +71,9 @@ edits. See [Python Builtin](../runtimes/python-builtin.md#monty-14-embedding-for
 
 `scripts/check_monty_fork.py` (CI lint job, `just check-monty-fork`) diffs both
 forks against the SHA-256-pinned upstream 1.4.0 `.crate` files and fails on any
-changed region without a `bashkit fork:` marker in or up to three lines above
-it, on fork-only files without a marker header, on upstream files missing from
+changed region without a `bashkit fork:` marker in it, in the comment or
+attribute block attached to it (however long), or up to three lines above it,
+on fork-only files without a marker header, on upstream files missing from
 the fork (upstream tests excepted), and on any dependency or feature in a fork
 `Cargo.toml` that differs from upstream's (the `monty-types` rename aside). Dependabot does not bump
 crates only the forks declare, so upstream security fixes arrive by re-sync:

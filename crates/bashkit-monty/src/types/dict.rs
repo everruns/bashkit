@@ -1167,6 +1167,7 @@ impl<'h> HeapRead<'h, Dict> {
             defer_drop!(pair, vm);
             let (key, value) = pair;
             if printed > 0 {
+                // bashkit fork: `?` so a time hit errors instead of truncating (see `repr_check_time`).
                 if repr_check_time(printed, vm)? {
                     f.write_str(", ...[timeout]")?;
                     break;
@@ -1207,6 +1208,7 @@ impl<'h> HeapRead<'h, Dict> {
         f.write_char('{')?;
         for (n, &i) in order.iter().enumerate() {
             if n > 0 {
+                // bashkit fork: `?` so a time hit errors instead of truncating (see `repr_check_time`).
                 if repr_check_time(n, vm)? {
                     f.write_str(", ...[timeout]")?;
                     break;

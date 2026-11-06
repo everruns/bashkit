@@ -78,6 +78,58 @@ class CheckMontyForkTests(unittest.TestCase):
         self.write_fork(UPSTREAM_SRC.replace('fn c() {}\n', ''))
         self.assertEqual(len(cmf.check_crate(self.fork, self.up)), 1)
 
+    # Upstream item whose doc comment and `#[inline]` stay unchanged in the
+    # fork, so a fork note inserted into the doc block and a change to the
+    # signature below it are two separate diff hunks (as in `check_time_every`).
+    DOCUMENTED = (
+        'fn a() {}\n'
+        '/// doc one\n'
+        '/// doc two\n'
+        '#[inline]\n'
+        'fn b() {\n'
+        '    1\n'
+        '}\n'
+    )
+    NOTE = (
+        '/// bashkit fork: first line carries the marker\n'
+        '/// second line of the rationale\n'
+        '/// third line of the rationale\n'
+        '/// fourth line of the rationale\n'
+    )
+
+    def write_pair(self, upstream, fork):
+        (self.up / 'src' / 'lib.rs').write_text(upstream)
+        self.write_fork(fork)
+
+    def test_marker_at_the_top_of_a_long_note_covers_the_item(self):
+        """The marker is on the note's first line, beyond MARKER_WINDOW."""
+        self.write_pair(
+            self.DOCUMENTED,
+            self.DOCUMENTED.replace('#[inline]\n', self.NOTE + '#[inline]\n').replace(
+                'fn b() {', 'fn b(x: u8) {'
+            ),
+        )
+        self.assertEqual(cmf.check_crate(self.fork, self.up), [])
+
+    def test_unmarked_long_note_still_fails(self):
+        note = self.NOTE.replace('bashkit fork: first', 'first')
+        self.write_pair(
+            self.DOCUMENTED,
+            self.DOCUMENTED.replace('#[inline]\n', note + '#[inline]\n').replace(
+                'fn b() {', 'fn b(x: u8) {'
+            ),
+        )
+        self.assertTrue(cmf.check_crate(self.fork, self.up))
+
+    def test_comment_block_does_not_reach_past_code(self):
+        """A note on one item cannot mark drift in the item after it."""
+        self.write_pair(
+            self.DOCUMENTED + 'fn c() {}\n',
+            self.DOCUMENTED.replace('/// doc one', '// bashkit fork: why\n/// doc one')
+            + 'fn c() { 0 }\n',
+        )
+        self.assertTrue(cmf.check_crate(self.fork, self.up))
+
     def test_marker_far_above_does_not_cover_change(self):
         text = '// bashkit fork: unrelated\n' + UPSTREAM_SRC.replace('fn c() {}', 'fn c() { 0 }')
         self.write_fork(text)

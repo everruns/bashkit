@@ -380,7 +380,7 @@ impl ResourceTracker {
             turn_execution_time: Cell::new(Duration::ZERO),
             running_since: Cell::new(None),
             recursion_limit_override: Cell::new(None),
-            tick: Cell::new(0),
+            tick: Cell::new(0), // bashkit fork: see the `tick` field
         }
     }
 
