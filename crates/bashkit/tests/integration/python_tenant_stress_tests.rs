@@ -168,3 +168,43 @@ async fn one_session_reuses_its_budget_across_many_calls() {
         assert_eq!(r.stdout, "10\n", "call {i}");
     }
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn huge_single_allocations_are_refused_up_front() {
+    // A request bigger than the machine has would make the global allocator
+    // fail, and Rust aborts the whole process (every tenant) on allocation
+    // failure. Monty must refuse these by size before allocating; run them
+    // concurrently next to a well-behaved tenant to show the process survives.
+    let bombs = [
+        "x = 'a' * (10**12)",
+        "x = b'a' * (10**12)",
+        "x = [0] * (10**11)",
+        "x = (1,) * (10**11)",
+        "x = 'ab' * (2**62)",
+        "x = 'x'.ljust(10**12)",
+        "x = 'x'.zfill(10**12)",
+        "x = 'a'.center(10**12)",
+        "x = ' '.join(['a'] * 10**10)",
+        "x = 10 ** (10**8)",
+        "x = 2 << (10**10)",
+        "x = list(range(10**11))",
+        "x = '{:>1000000000000}'.format(1)",
+    ];
+    let mut handles = Vec::new();
+    for code in bombs {
+        handles.push(tokio::spawn(async move {
+            let mut bash = tenant(64, 10_000);
+            let r = bash.exec(&format!("python3 -c \"{code}\"")).await.unwrap();
+            assert_ne!(r.exit_code, 0, "{code}: stdout {}", r.stdout);
+            assert!(
+                r.stderr.contains("MemoryError"),
+                "{code}: stderr {}",
+                r.stderr
+            );
+        }));
+    }
+    handles.push(tokio::spawn(run(Load::Good)));
+    for h in handles {
+        h.await.unwrap();
+    }
+}
