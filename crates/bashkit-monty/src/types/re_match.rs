@@ -83,7 +83,7 @@ impl ReMatch {
     /// `subject` is the already-refcounted subject `Value` this match keeps alive
     /// (the caller clones it per match); `regex` supplies named-group mappings.
     pub fn from_captures(
-        caps: &fancy_regex::Captures<'_>,
+        caps: &fancy_regex::Captures<'_, str>,
         subject: Value,
         all_ascii: bool,
         regex: &fancy_regex::Regex,

@@ -41,10 +41,10 @@ jiff = { version = "0.2", features = ["std", "serde"], default-features = false 
 monty-macros = { version = "1.4.0" }
 num-bigint = { version = "0.4", features = ["serde"] }
 num-traits = { version = "0.2" }
-ruff_python_stdlib = { version = "0.0.14" }
+ruff_python_stdlib = { version = "0.0.15" }
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_bytes = { version = "0.11" }
-strum = { version = "0.27", features = ["derive", "phf"] }
+strum = { version = "0.28", features = ["derive", "phf"] }
 unicode-general-category = { version = "1" }
 
 [target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]

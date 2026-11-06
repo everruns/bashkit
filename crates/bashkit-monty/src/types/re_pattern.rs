@@ -180,7 +180,7 @@ impl RePattern {
     /// Builds a single `ReMatch` heap value from a capture result, keeping the
     /// subject alive by refcount (`subject.clone_with_heap`) rather than copying
     /// its text. `all_ascii` is precomputed by the caller (once per `finditer`).
-    fn build_match(&self, caps: &fancy_regex::Captures<'_>, subject: &Value, all_ascii: bool, heap: &Heap) -> Value {
+    fn build_match(&self, caps: &fancy_regex::Captures<'_, str>, subject: &Value, all_ascii: bool, heap: &Heap) -> Value {
         let m = ReMatch::from_captures(caps, subject.clone_with_heap(heap), all_ascii, &self.compiled);
         Value::Ref(heap.allocate(HeapData::ReMatch(Box::new(m))))
     }
