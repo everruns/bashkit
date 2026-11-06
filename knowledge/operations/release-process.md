@@ -119,7 +119,9 @@ silently failed.
    `publish-wasm.yml`, `cli-binaries.yml`, and `c-api-binaries.yml` to
    completion, run the
    post-release verification commands, and only declare "shipped" when all
-   published artifacts (`bashkit`, `bashkit-scripted-tool` + `bashkit-cli` on crates.io, `bashkit`
+   published artifacts (all six crates on crates.io: `bashkit-cpython-wasm`,
+   `bashkit-monty-types`, `bashkit-monty`, `bashkit`, `bashkit-scripted-tool`,
+   `bashkit-cli`; `bashkit`
    on PyPI, both npm packages, Homebrew, and the C ABI archives) report the new
    version. If one fails, open a hotfix PR rather than leaving the release
    half-shipped.
