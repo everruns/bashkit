@@ -7,6 +7,13 @@ use std::sync::{
 };
 use std::time::Duration;
 
+// Monty python3 charges each VM for its own allocations through this
+// allocator (see bashkit::MeteredAllocator). In a cdylib it only governs this
+// library's Rust allocations, never the host runtime's allocator.
+#[cfg(feature = "python")]
+#[global_allocator]
+static METERED_ALLOC: bashkit::MeteredAllocator = bashkit::MeteredAllocator;
+
 fn orders_def() -> ToolDef {
     ToolDef::new("orders.list", "List customer orders")
         .with_category("orders")

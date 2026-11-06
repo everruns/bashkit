@@ -1,0 +1,122 @@
+//! [`BuiltinsFunctions`] — the name-level identity of every interpreter-native
+//! Python builtin, carried by [`MontyObject::builtin_function`](crate::MontyObject::builtin_function).
+
+use strum::{Display, EnumString, FromRepr, IntoStaticStr, VariantNames};
+/// Enumerates every interpreter-native Python builtin function.
+///
+/// Listed alphabetically per <https://docs.python.org/3/library/functions.html>
+/// Commented-out variants are not yet implemented.
+///
+/// Note: Type constructors are handled by the `Type` enum, not here.
+///
+/// Uses strum derives for automatic `Display`, `FromStr`, and `IntoStaticStr` implementations.
+/// All variants serialize to lowercase (e.g., `Print` -> "print").
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Display,
+    EnumString,
+    FromRepr,
+    IntoStaticStr,
+    VariantNames,
+    PartialEq,
+    Eq,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+)]
+// `use_phf` while still below the ~100-variant threshold: it breaks even now and the enum keeps growing.
+#[strum(serialize_all = "lowercase", use_phf)]
+#[serde(rename_all = "lowercase")]
+#[repr(u8)]
+pub enum BuiltinsFunctions {
+    Abs,
+    // Aiter,
+    All,
+    // Anext,
+    Any,
+    // Ascii,
+    Bin,
+    // bool - handled by Type enum
+    // Breakpoint,
+    // bytearray - handled by Type enum
+    // bytes - handled by Type enum
+    // Callable,
+    Chr,
+    // Classmethod,
+    // Compile,
+    // complex - handled by Type enum
+    // Delattr,
+    // dict - handled by Type enum
+    // Dir,
+    Divmod,
+    Enumerate,
+    Filter,
+    // float - handled by Type enum
+    // Format - appended below
+    // frozenset - handled by Type enum
+    Getattr,
+    // Globals,
+    Hasattr,
+    Hash,
+    // Help,
+    Hex,
+    Id,
+    // Input,
+    // int - handled by Type enum
+    Isinstance,
+    // Issubclass,
+    // Iter - handled by Type enum
+    Len,
+    // list - handled by Type enum
+    Map,
+    Max,
+    // memoryview - handled by Type enum
+    Min,
+    Next,
+    // object - handled by Type enum
+    Oct,
+    Open,
+    Ord,
+    Pow,
+    Print,
+    // Property,
+    // range - handled by Type enum
+    Repr,
+    Reversed,
+    Round,
+    // set - handled by Type enum
+    Setattr,
+    // Slice,
+    Sorted,
+    // Staticmethod,
+    // str - handled by Type enum
+    Sum,
+    // Super,
+    // tuple - handled by Type enum
+    Type,
+    // Vars,
+    Zip,
+    // __import__ - not planned
+    // Appended out of alphabetical order: the discriminant is emitted as a
+    // bytecode operand, so this list is append-only.
+    /// `object.__setattr__(obj, name, value)` — the write that bypasses a
+    /// class's attribute hooks, reached only through `object`. Its name is not
+    /// an identifier, so it can never resolve as a bare global.
+    ///
+    /// The first variant whose name is not its lowercased identifier, so it
+    /// needs both renames: serde and strum each carry the name across a
+    /// different boundary (JSON vs. `Display`/`FromStr`) and must agree.
+    #[strum(serialize = "object.__setattr__")]
+    #[serde(rename = "object.__setattr__")]
+    ObjectSetattr,
+    /// `format(value, format_spec='')`, appended after [`Self::ObjectSetattr`].
+    Format,
+    /// `eval(source, /, globals=None, locals=None)`, appended after [`Self::Format`].
+    Eval,
+    /// `exec(source, /, globals=None, locals=None, *, closure=None)`, appended after [`Self::Eval`].
+    Exec,
+    /// `locals()`, appended after [`Self::Exec`].
+    Locals,
+}

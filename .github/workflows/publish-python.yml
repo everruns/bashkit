@@ -148,7 +148,7 @@ jobs:
         with:
           python-version: "3.13"
 
-      # nightly satisfies our deps' MSRV (monty needs 1.95) + edition 2024;
+      # nightly satisfies our deps' MSRV (monty needs 1.96) + edition 2024;
       # its LLVM matches Emscripten 4.0.9's binaryen. pyodide-build manages its
       # own matching emsdk via the cross-build env (no setup-emsdk needed).
       - name: Install nightly Rust with the Emscripten target

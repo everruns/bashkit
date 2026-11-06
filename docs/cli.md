@@ -207,7 +207,7 @@ bashkit -c 'python3 -c "print(2 + 2)"'
 # 4
 ```
 
-Monty is on crates.io since 0.0.19, so `python` is a default CLI feature and
+Monty ships to crates.io (as the `bashkit-monty` fork today), so `python` is a default CLI feature and
 `cargo install bashkit-cli` ships it. Releases published before that stripped
 the feature at publish time; if you are on one of those, install from main:
 

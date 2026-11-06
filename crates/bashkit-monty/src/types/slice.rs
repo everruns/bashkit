@@ -1,0 +1,349 @@
+//! Python slice type implementation.
+//!
+//! Provides a slice object representing start:stop:step indices for sequence slicing.
+//! Each field is optional (None in Python), where None means "use the default for that field".
+
+use std::{
+    collections::hash_map::DefaultHasher,
+    fmt,
+    fmt::Write,
+    hash::{Hash, Hasher},
+};
+
+use super::LazyHeapSet;
+use crate::{
+    args::ArgValues,
+    bytecode::{CallResult, VM},
+    defer_drop,
+    exception_private::{ExcType, ExcTypeExt, RunResult},
+    hash::HashValue,
+    heap::{HeapData, HeapId, HeapItem, HeapObjectRead, HeapReadOutput},
+    intern::StaticStrings,
+    types::{PyTrait, Type},
+    value::{EitherStr, Value},
+};
+
+/// Python slice object representing start:stop:step indices.
+///
+/// Each field is `Option<i64>` where `None` corresponds to Python's `None`,
+/// meaning "use the default value for this field based on context".
+///
+/// When indexing a sequence of length `n`:
+/// - `start` defaults to 0 (or n-1 if step < 0)
+/// - `stop` defaults to n (or -1 sentinel meaning "before index 0" if step < 0)
+/// - `step` defaults to 1
+///
+/// The `indices(length)` method computes concrete indices from these optional values.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub(crate) struct Slice {
+    pub start: Option<i64>,
+    pub stop: Option<i64>,
+    pub step: Option<i64>,
+}
+
+impl Slice {
+    /// Creates a new slice with the given start, stop, and step values.
+    #[must_use]
+    pub fn new(start: Option<i64>, stop: Option<i64>, step: Option<i64>) -> Self {
+        Self { start, stop, step }
+    }
+
+    /// Creates a slice from the `slice()` constructor call.
+    ///
+    /// Supports:
+    /// - `slice(stop)` - slice with only stop (start=None, step=None)
+    /// - `slice(start, stop)` - slice with start and stop (step=None)
+    /// - `slice(start, stop, step)` - slice with all three components
+    ///
+    /// Each argument can be None to indicate "use default".
+    pub fn init(vm: &mut VM<'_>, args: ArgValues) -> RunResult<Value> {
+        let pos_args = args.into_pos_only("slice", vm.heap)?;
+        defer_drop!(pos_args, vm);
+
+        let slice = match pos_args.as_slice() {
+            [] => return Err(ExcType::type_error_at_least("slice", 1, 0)),
+            [first_arg] => {
+                let stop = value_to_option_i64(first_arg, vm)?;
+                Self::new(None, stop, None)
+            }
+            [first_arg, second_arg] => {
+                let start = value_to_option_i64(first_arg, vm)?;
+                let stop = value_to_option_i64(second_arg, vm)?;
+                Self::new(start, stop, None)
+            }
+            [first_arg, second_arg, third_arg] => {
+                let start = value_to_option_i64(first_arg, vm)?;
+                let stop = value_to_option_i64(second_arg, vm)?;
+                let step = value_to_option_i64(third_arg, vm)?;
+                Self::new(start, stop, step)
+            }
+            _ => return Err(ExcType::type_error_at_most("slice", 3, pos_args.len())),
+        };
+
+        Ok(Value::Ref(vm.heap.allocate(HeapData::Slice(slice))))
+    }
+
+    /// Computes concrete indices for a sequence of the given length.
+    ///
+    /// This implements Python's `slice.indices(length)` semantics:
+    /// - Handles negative indices (wrapping from the end)
+    /// - Clamps indices to valid range [0, length]
+    /// - Returns the step direction correctly for negative steps
+    ///
+    /// Returns `(start, stop, step)` as concrete values ready for iteration.
+    /// Returns `Err(())` if step is 0 (invalid).
+    ///
+    /// # Algorithm
+    /// For positive step:
+    /// - start defaults to 0, stop defaults to length
+    /// - Both are clamped to [0, length]
+    ///
+    /// For negative step:
+    /// - start defaults to length-1, stop defaults to -1 (before beginning)
+    /// - start is clamped to [-1, length-1], stop to [-1, length-1]
+    pub fn indices(&self, length: usize) -> RunResult<(i64, i64, i64)> {
+        let step = self.step.unwrap_or(1);
+        if step == 0 {
+            return Err(ExcType::value_error_slice_step_zero());
+        }
+
+        let len = i64::try_from(length).unwrap_or(i64::MAX);
+
+        if step > 0 {
+            // Positive step: iterate forward
+            let default_start = 0;
+            let default_stop = len;
+
+            let start = self.start.map_or(default_start, |s| normalize_index(s, len, 0, len));
+            let stop = self.stop.map_or(default_stop, |s| normalize_index(s, len, 0, len));
+
+            Ok((start, stop, step))
+        } else {
+            // Negative step: iterate backward
+            // For negative step, we need different handling
+            let default_start = len - 1;
+            let default_stop = -1; // Before the beginning
+
+            let start = self
+                .start
+                .map_or(default_start, |s| normalize_index(s, len, -1, len - 1));
+            let stop = self.stop.map_or(default_stop, |s| normalize_index(s, len, -1, len - 1));
+
+            Ok((start, stop, step))
+        }
+    }
+}
+
+/// Converts a slice bound to `Option<i64>`, treating `None` as "no bound".
+///
+/// Used for slice construction from both the `slice()` builtin and
+/// `[start:stop:step]` syntax, and for the `start`/`end` arguments of the
+/// sequence searches (`str.find`, `bytes.startswith`, ...) that accept `None`
+/// for the same purpose — CPython gives them all the same converter, hence the
+/// same "or None" in the `TypeError`.
+pub(crate) fn value_to_option_i64(value: &Value, vm: &mut VM<'_>) -> RunResult<Option<i64>> {
+    match value {
+        Value::None => Ok(None),
+        _ => match saturating_slice_index(value, vm)? {
+            Some(index) => Ok(Some(index)),
+            None => Err(ExcType::type_error_slice_indices()),
+        },
+    }
+}
+
+/// [`value_to_option_i64`] for the `index()` searches that do **not** accept
+/// `None` (`list.index`, `tuple.index`, `deque.index`), whose `TypeError` drops
+/// the "or None" because they have no bound to leave unset.
+pub(crate) fn value_to_i64_bound(value: &Value, vm: &mut VM<'_>) -> RunResult<i64> {
+    saturating_slice_index(value, vm)?.ok_or_else(ExcType::type_error_slice_indices_no_none)
+}
+
+/// [`value_to_option_i64`] normalized against a sequence length, which is the
+/// shape the searches want: `None` selects `default`, anything else is coerced,
+/// saturated and clamped into `0..=len`.
+pub(crate) fn optional_sequence_bound(value: &Value, default: usize, len: usize, vm: &mut VM<'_>) -> RunResult<usize> {
+    let bound = value_to_option_i64(value, vm)?;
+    Ok(bound.map_or(default, |i| normalize_sequence_index(i, len)))
+}
+
+/// CPython's `_PyEval_SliceIndex`: an `int`, or the `__index__` of an object
+/// that has one, **saturated** to `i64` rather than raised on. `Ok(None)` means
+/// the value is not `__index__`-able, leaving the `TypeError` to the caller,
+/// whose wording depends on whether it also accepts `None`.
+///
+/// Saturating is what separates a bound from an index: `[1, 2, 3][10**30:]` is
+/// `[]` and `'abc'.find('a', 10**30)` is `-1`, where the same value used as a
+/// subscript raises `IndexError`.
+fn saturating_slice_index(value: &Value, vm: &mut VM<'_>) -> RunResult<Option<i64>> {
+    match value {
+        Value::Int(i) => Ok(Some(*i)),
+        Value::Bool(b) => Ok(Some(i64::from(*b))),
+        // Also catches an `__index__` that returns a `LongInt`, which the
+        // recursion below funnels back through here.
+        _ if let Some(index) = value.long_int_to_i64_saturating(vm) => Ok(Some(index)),
+        _ => match value.py_index_impl(vm)? {
+            // Recurses exactly once: `py_index_impl` validates an int result, so
+            // the arms above take it on the way back in.
+            Some(index) => {
+                defer_drop!(index, vm);
+                saturating_slice_index(index, vm)
+            }
+            None => Ok(None),
+        },
+    }
+}
+
+/// Normalizes a slice index for a sequence of the given length.
+///
+/// Handles negative indices (counting from end) and clamps to [lower, upper].
+fn normalize_index(index: i64, length: i64, lower: i64, upper: i64) -> i64 {
+    let normalized = if index < 0 { index + length } else { index };
+    normalized.clamp(lower, upper)
+}
+
+impl<'h> PyTrait<'h> for HeapObjectRead<'h, Slice> {
+    fn py_type(&self, _vm: &VM<'h>) -> Type {
+        Type::Slice
+    }
+
+    fn py_len(&self, _vm: &VM<'h>) -> Option<usize> {
+        // Slices don't have a length in Python
+        None
+    }
+
+    fn py_eq_impl(&self, other: &Value, vm: &mut VM<'h>) -> RunResult<Option<bool>> {
+        let Some(HeapReadOutput::Slice(other)) = other.read_heap(vm) else {
+            return Ok(None);
+        };
+        let a = self.get(vm.heap);
+        let b = other.get(vm.heap);
+        Ok(Some(a.start == b.start && a.stop == b.stop && a.step == b.step))
+    }
+
+    fn py_hash(&self, vm: &mut VM<'h>) -> RunResult<Option<HashValue>> {
+        let mut hasher = DefaultHasher::new();
+        self.get(vm.heap).hash(&mut hasher);
+        Ok(Some(HashValue::new(hasher.finish())))
+    }
+
+    fn py_bool(&self, _vm: &mut VM<'h>) -> RunResult<bool> {
+        // Slice always truthy
+        Ok(true)
+    }
+
+    fn py_repr_fmt(&self, f: &mut impl Write, vm: &mut VM<'h>, _heap_ids: &mut LazyHeapSet) -> RunResult<()> {
+        f.write_str("slice(")?;
+        format_option_i64(f, self.get(vm.heap).start)?;
+        f.write_str(", ")?;
+        format_option_i64(f, self.get(vm.heap).stop)?;
+        f.write_str(", ")?;
+        format_option_i64(f, self.get(vm.heap).step)?;
+        Ok(f.write_char(')')?)
+    }
+
+    fn py_getattr(&self, attr: &EitherStr, vm: &mut VM<'h>) -> RunResult<Option<CallResult>> {
+        let this = self.get(vm.heap);
+        match attr.static_string(vm.interns) {
+            Some(StaticStrings::Start) => Ok(Some(CallResult::Value(option_i64_to_value(this.start)))),
+            Some(StaticStrings::Stop) => Ok(Some(CallResult::Value(option_i64_to_value(this.stop)))),
+            Some(StaticStrings::Step) => Ok(Some(CallResult::Value(option_i64_to_value(this.step)))),
+            _ => Ok(None),
+        }
+    }
+}
+
+impl HeapItem for Slice {
+    fn py_dec_ref_ids(&mut self, _stack: &mut Vec<HeapId>) {
+        // Slice doesn't contain heap references, nothing to do
+    }
+}
+
+/// Converts an Option<i64> to a Value (None or Int).
+pub(crate) fn option_i64_to_value(opt: Option<i64>) -> Value {
+    match opt {
+        Some(i) => Value::Int(i),
+        None => Value::None,
+    }
+}
+
+/// Formats an Option<i64> for repr output (None or the integer).
+fn format_option_i64(f: &mut impl Write, value: Option<i64>) -> fmt::Result {
+    match value {
+        Some(i) => write!(f, "{i}"),
+        None => f.write_str("None"),
+    }
+}
+
+/// Applies a Python `slice` to an iterator and collects the result.
+///
+/// This is the shared back-end for `[start:stop:step]` indexing on every
+/// sequence type — `str`, `bytes`, `list`, `tuple` — that wants to evaluate
+/// the slice eagerly into a new container. (`range` is the exception: it
+/// composes the slice symbolically into a new `Range`, so it doesn't go
+/// through here.)
+///
+/// `collect_map` is applied **after** the slicing logic, so per-item work
+/// (e.g. `clone_with_heap` for heap-allocated `Value`s) only runs on items
+/// that survive the slice. Use `|x| x` when no transform is needed.
+pub(crate) fn slice_collect_iterator<Iter: DoubleEndedIterator + Clone, U, T: FromIterator<U>>(
+    vm: &VM<'_>,
+    slice: &Slice,
+    iter: Iter,
+    collect_map: impl Fn(Iter::Item) -> U,
+) -> RunResult<T> {
+    let length = iter.clone().count();
+    let (start, stop, step) = slice.indices(length)?;
+
+    let mut i = 0usize;
+    let final_collect_op = |item| -> RunResult<U> {
+        vm.heap.tracker.check_time_every(i)?;
+        i += 1;
+        Ok(collect_map(item))
+    };
+
+    if step > 0 {
+        // saturate at usize::MAX - will take just the first item if step is too large for usize
+        let step: usize = step.try_into().unwrap_or(usize::MAX);
+        // with step > 0, slice.indices() guarantee 0 <= start/stop <= length
+        let start = start
+            .try_into()
+            .expect("slice.indices() guarantees start > 0 for step > 0");
+        let stop = stop
+            .try_into()
+            .expect("slice.indices() guarantees stop > 0 for step > 0");
+        iter.take(stop)
+            .skip(start)
+            .step_by(step)
+            .map(final_collect_op)
+            .collect()
+    } else {
+        // step < 0, iterate backward
+        let step: usize = step.unsigned_abs().try_into().unwrap_or(usize::MAX);
+
+        // the +1 is because when reverse iterating, at index 'start' we want to include the item at start,
+        // which means we need to skip 'length - start - 1' items from the end. Similar for stop.
+        //
+        // Both start and stop can be in the range [-1, length-1] for negative step, so after the +1 they are
+        // known to be positive and can convert to usize (saturating if needed)
+        let normalized_start = length.saturating_sub(start.saturating_add(1).try_into().unwrap_or(usize::MAX));
+        let normalized_stop = length.saturating_sub(stop.saturating_add(1).try_into().unwrap_or(usize::MAX));
+
+        iter.rev()
+            .take(normalized_stop)
+            .skip(normalized_start)
+            .step_by(step)
+            .map(final_collect_op)
+            .collect()
+    }
+}
+
+/// Normalizes a Python-style index (allowing negative indexing) by adding `length` if negative,
+/// and then clamping to the range [0, length].
+pub(crate) fn normalize_sequence_index(index: i64, len: usize) -> usize {
+    if index < 0 {
+        let abs_index = index.unsigned_abs().try_into().unwrap_or(usize::MAX);
+        len.saturating_sub(abs_index)
+    } else {
+        usize::try_from(index).unwrap_or(len).min(len)
+    }
+}

@@ -704,7 +704,7 @@ Python `pathlib.Path` and `open()` operations are bridged to Bashkit's virtual f
 | Threat | Attack Example | Mitigation | Status |
 |--------|---------------|------------|--------|
 | Infinite loop (TM-PY-001) | `while True: pass` | Monty time limit (30s) | MITIGATED |
-| Memory exhaustion (TM-PY-002) | Large allocation | Monty max_memory (64MB), also caps collected `print` output | MITIGATED |
+| Memory exhaustion (TM-PY-002) | Large allocation | Monty max_memory (64MB) read from the per-run allocator meter, also caps collected `print` output | MITIGATED |
 | Stack overflow (TM-PY-003) | Deep recursion | Monty max_recursion (200) | MITIGATED |
 | Shell escape (TM-PY-004) | `os.system()` | Monty has no os.system/subprocess | MITIGATED |
 | Real FS access (TM-PY-005) | `open()` | VFS bridge opens only Bashkit VFS files | MITIGATED |
@@ -731,9 +731,13 @@ Python `pathlib.Path` and `open()` operations are bridged to Bashkit's virtual f
 | Shell escape via `eval`/`exec` (TM-PY-012) | `eval("os.system(...)")` | Monty has no `os.system`/`subprocess`; eval'd code stays in the interpreter | MITIGATED |
 | Unknown CLI options smuggle behavior (TM-PY-013) | Unknown `python` flag | Rejected with exit 2 | MITIGATED |
 | Escapes Bashkit resource limits (TM-PY-014) | Bypass caps via Python | `ExecutionLimits` apply like any builtin | MITIGATED |
-| Host clock disclosure (TM-PY-029) | `datetime.now()` exposes host time/timezone | Intentional, required for correct datetime semantics | ACCEPTED |
+| Host clock disclosure (TM-PY-029) | `datetime.now()` exposes host time/timezone | Fixed virtual clock (2024-01-01) and zero sleep via Monty `OsPolicy` | FIXED |
 | GIL deadlock/exit crash via async callback (TM-PY-030) | Private-loop dispatch holds the GIL during teardown | Deterministic teardown: detach around dispatch, cancel in-flight callbacks, no attach at finalization | FIXED |
 | ContextVar capture may include sensitive state (TM-PY-031) | `copy_context()` snapshots all caller ContextVars | Accepted: same semantics as `asyncio.Task` inheritance; caller controls what is set | ACCEPTED |
+| Cross-tenant memory accounting / process abort (TM-PY-032) | One tenant's allocations count against another, or Monty's allocator aborts the process | Per-run meter fed by `bashkit::MeteredAllocator` through the forked memory probe; never aborts; `python3` fails closed without it | MITIGATED |
+| ReDoS via `re` (TM-PY-033) | Catastrophic backtracking pattern | Linear-time engine for plain patterns, backtrack cap (`re.PatternError`) for fancy ones, time limit for match loops | MITIGATED |
+| Uninterruptible VM loop (TM-PY-034) | Tight loop ignores cancellation or shared budget | Forked checkpoint hook runs the request `ExecutionBudget` check inside the VM | MITIGATED |
+| Shared-graph expansion in host conversion (TM-PY-035) | `x = [x, x]` repeated, then returned to the host | Every converter walks Monty values with a node cap | MITIGATED |
 
 **Architecture:**
 

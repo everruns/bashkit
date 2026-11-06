@@ -141,6 +141,7 @@ pub mod prompt_resource_tests;
 pub mod proptest_differential;
 pub mod python_integration_tests;
 pub mod python_security_tests;
+pub mod python_tenant_isolation_tests;
 pub mod redirect_error_tests;
 pub mod regex_limit_tests;
 pub mod release_profile_tests;
@@ -189,3 +190,8 @@ pub mod unset_function_tests;
 pub mod urandom_tests;
 pub mod workflow_security_tests;
 pub mod yq_integration_tests;
+
+// Monty python3 fails closed without bashkit's metered allocator.
+#[cfg(feature = "python")]
+#[global_allocator]
+static ALLOC: bashkit::MeteredAllocator = bashkit::MeteredAllocator;

@@ -309,6 +309,11 @@ fn format_panic_message(payload: &dyn std::any::Any) -> String {
     format!("bashkit: internal error: {msg}")
 }
 
+// Per-VM Monty memory metering (see bashkit::MeteredAllocator).
+#[cfg(feature = "python")]
+#[global_allocator]
+static ALLOC: bashkit::MeteredAllocator = bashkit::MeteredAllocator;
+
 fn main() -> Result<()> {
     // THREAT[TM-INF-021]: Suppress stack backtraces to prevent information disclosure.
     // Custom panic hook emits a sanitized message without file paths, line numbers,

@@ -1,0 +1,167 @@
+# monty
+
+[![CI](https://github.com/pydantic/monty/actions/workflows/ci.yml/badge.svg)](https://github.com/pydantic/monty/actions/workflows/ci.yml?query=branch%3Amain)
+[![crates.io](https://img.shields.io/crates/v/monty.svg)](https://crates.io/crates/monty)
+[![license](https://img.shields.io/github/license/pydantic/monty.svg?v=2)](https://github.com/pydantic/monty/blob/main/LICENSE)
+
+The core interpreter crate of [Monty](https://github.com/pydantic/monty) — a secure Python sandbox written in Rust for code written by AI.
+
+Monty runs Python code written by an LLM without the cost, latency and complexity of a container based sandbox. It parses Python with [Ruff](https://github.com/astral-sh/ruff)'s parser and executes it on its own bytecode VM — no CPython, no FFI, no C dependencies. Startup takes microseconds, not hundreds of milliseconds.
+
+This crate runs the interpreter in your own process, so an abort inside it (a stack overflow, an allocator failure) takes your process with it. For untrusted code use [`monty-pool`](https://crates.io/crates/monty-pool), which runs the interpreter in worker subprocesses and replaces one that crashes.
+
+The sandbox has no ambient access to the host: filesystem, environment and network are only reachable through external function calls and mounts that you explicitly provide.
+
+This crate is the pure-Rust core. Most users want one of the bindings built on top of it:
+
+- **Python**: [`pydantic-monty`](https://pypi.org/project/pydantic-monty/)
+- **JavaScript/TypeScript**: [`@pydantic/monty`](https://www.npmjs.com/package/@pydantic/monty)
+- **CLI**: the `monty` binary from the [`monty-runtime`](https://crates.io/crates/monty-runtime) crate
+
+See the [documentation](https://pydantic.dev/docs/monty/) for the motivation, latency measurements, comparison to alternatives and the supported Python subset.
+
+## Basic usage
+
+`MontyRun` parses and compiles code once; `run` executes it with input values and returns the value of the final expression as a `MontyObject`:
+
+```rust
+use monty::MontyRun;
+use monty_types::{CompileOptions, ResourceTracker, MontyObject, PrintWriter, ResourceLimits};
+
+let code = r#"
+def fib(n):
+    if n <= 1:
+        return n
+    return fib(n - 1) + fib(n - 2)
+
+fib(x)
+"#;
+
+let mut runner = MontyRun::new(code.to_owned(), "fib.py", vec!["x".to_owned()], CompileOptions::default()).unwrap();
+let result = runner.run(vec![MontyObject::int(10)], ResourceTracker::default(), PrintWriter::Stdout).unwrap();
+assert_eq!(result, MontyObject::int(55));
+```
+
+`CompileOptions` also carries `source_scan_threshold`, the source length in bytes above which a pre-parse nesting scan runs (4 KiB by default); the docs' language limitations page describes the scan.
+
+Errors are returned as `MontyException`, with a traceback matching what CPython would produce. `PrintWriter` controls where `print()` output goes: `Stdout`, `Disabled`, or collected for the host to inspect — into a `String`, or into a `CollectedStreams` buffer whose `entries()` label each run `stdout` or `stderr`.
+
+## Resource limits
+
+Untrusted code shouldn't be able to hog the host. `ResourceTracker` enforces execution-time and recursion limits and configures GC scheduling. Memory limits additionally require `monty-alloc` as the executable's global allocator.
+
+Hosts enforce `max_suspensions`: count answered suspensions, then call `abort` on `FunctionCall`, `OsCall`, `NameLookup`, or `ResolveFutures` at the first excess. The supplied exception bypasses sandbox exception handlers:
+
+```rust
+use std::time::Duration;
+use monty::MontyRun;
+use monty_types::{CompileOptions, ResourceTracker, PrintWriter, ResourceLimits};
+
+let limits = ResourceLimits {
+    max_feed_duration: Some(Duration::from_millis(20)),
+    ..ResourceLimits::default()
+};
+
+let mut runner = MontyRun::new("while True: pass".to_owned(), "spin.py", vec![], CompileOptions::default()).unwrap();
+let err = runner.run(vec![], ResourceTracker::new(limits), PrintWriter::Stdout).unwrap_err();
+assert!(err.to_string().contains("feed time limit exceeded"));
+```
+
+## External functions and snapshotting
+
+The defining feature of the crate: instead of running to completion, `MontyRun::start` returns a `RunProgress` that pauses execution whenever the sandboxed code calls a function provided by the host. The host runs the real function (an API call, a database query, an LLM tool) and resumes with the result:
+
+```rust
+use monty::{MontyRun, RunProgress};
+use monty_types::{CompileOptions, ResourceTracker, MontyObject, PrintWriter, ResourceLimits};
+
+let code = "data = get_data(3)\ndata * 2";
+let runner = MontyRun::new(code.to_owned(), "main.py", vec!["get_data".to_owned()], CompileOptions::default()).unwrap();
+
+// pass the external function in as an input
+let get_data = MontyObject::function("get_data".to_owned(), None);
+let progress = runner.start(vec![get_data], ResourceTracker::default(), PrintWriter::Stdout).unwrap();
+
+// execution pauses at the `get_data(3)` call
+let RunProgress::FunctionCall(call) = progress else { panic!("expected a function call") };
+assert_eq!(call.function_name, "get_data");
+assert_eq!(call.args.arg(0).unwrap(), MontyObject::int(3));
+
+// the host computes the result and resumes
+let progress = call.resume(MontyObject::int(21), PrintWriter::Stdout).unwrap();
+let RunProgress::Complete(result) = progress else { panic!("expected completion") };
+assert_eq!(result, MontyObject::int(42));
+```
+
+Serialize a REPL session with `dump()` and restore it with `Dump::load()` to continue in another process or machine.
+The dump includes the interpreter state and the supplied script name, type-check state and module stubs.
+Loading checks the dump version:
+
+```rust
+use monty::{Dump, MontyRepl, Session, SessionRef, dump};
+use monty_types::{CompileOptions, MontyObject, PrintWriter, ResourceTracker};
+
+let mut repl = MontyRepl::new("main.py", ResourceTracker::default(), CompileOptions::default());
+repl.feed_run("x = 41", vec![], PrintWriter::Stdout).unwrap();
+let bytes = dump("main.py", None, &[], SessionRef::Idle(&repl)).unwrap();
+
+// later, restore and carry on feeding
+let Session::Idle(mut restored) = Dump::load(&bytes).unwrap().state else {
+    panic!("expected an idle session")
+};
+let result = restored.feed_run("x + 1", vec![], PrintWriter::Stdout).unwrap();
+assert_eq!(result, MontyObject::int(42));
+```
+
+`MontyRun` and `RunProgress` have no dump format of their own, but both implement `serde::Serialize`/`Deserialize`, so a host that wants to cache compiled code or a paused run can serialize them with whatever format it already uses.
+
+For both `Dump::load` and direct serde deserialization, the caller must establish that the bytes are unmodified output from a trusted, compatible Monty producer.
+Monty does not authenticate snapshots or fully validate their contents.
+Invalid snapshots have no correctness or availability guarantees: loading or using them may panic, abort, hang, or produce incorrect results.
+Successful decoding is not evidence of authenticity or validity.
+
+Async host functions are supported too: `FunctionCall::resume_pending` continues execution with a pending future the sandboxed code can `await`; when all tasks are blocked, execution yields `RunProgress::ResolveFutures` for the host to supply results. When `FunctionCall::allow_eager_await` is true the call is awaited immediately and no other task can run, so a host that already has the result can pass it to `FunctionCall::resume_eager` and skip the `ResolveFutures` round trip. `OsCall::allow_eager_await` says the same of an `asyncio.sleep` the host has already waited out.
+
+Imports of unknown modules suspend with `OsFunctionCall::Import` and the top-level module name.
+The host's answer becomes the module; dotted imports read subsequent components as attributes of that value.
+Hosts usually return a host-backed class instance containing the module's attributes.
+`ExtFunctionResult::NotFound`, or running without a host, raises `ModuleNotFoundError`.
+The worker requests module type stubs through `OsFunctionCall::ImportStubs`; the interpreter never raises it.
+
+## Other pieces
+
+- `MontyRepl` — a REPL-style interface: feed code snippet by snippet with state persisting between snippets.
+- `monty-fs` crate — mount real host directories into the sandbox at virtual paths (read-write, read-only, or copy-on-write in-memory overlay), with path resolution hardened against escapes.
+- `RunProgress::OsCall` — filesystem and other `os`-level operations the host can intercept or delegate.
+- `FunctionCall::object_id` and `NameLookup::object_id` identify the host receiver for routed calls and lookups,
+  including class construction via `__call__`.
+  Plain calls and lookups carry `None`.
+- Every suspension carries a `SourceRange` (`FunctionCall::position`, `OsCall::position`, `NameLookup::position`,
+  `ResolveFutures::position()`) locating the suspending expression: the call, the name, or the `await` the main task is
+  blocked on.
+- `MontyRun::with_os_policy` / `MontyRepl::with_os_policy` configure clocks, sleeps and initial random state on every
+  execution path.
+  `DateTimeSource` selects the system clock, a fixed instant or the host; `SandboxTimeZone` independently selects UTC, a
+  fixed offset and name, or an IANA zone (`SandboxTimeZone::named`, resolved from the tz database that `monty-types`'
+  `tzdb` or `tzdb-bundled` feature provides).
+  `SleepMode` selects capped system sleeps, a host handler or no wait; `RandomStart` selects OS entropy, a seed with
+  `random.seed()` semantics or host entropy.
+  Defaults use the system clock, UTC and OS entropy, with sleeps capped at ten seconds.
+  System sleeps suspend for the host to wait without its `os` handler; standard execution waits inline.
+  `CallHost` delegates to the host through `RunProgress::OsCall`.
+
+## Monty crates
+
+- [`monty`](https://crates.io/crates/monty) — the core interpreter: Python parser, bytecode VM, and sandbox. **this crate**
+- [`monty-types`](https://crates.io/crates/monty-types) — the shared boundary data types (values, exceptions, OS calls, resource limits) hosts use without linking the interpreter.
+- [`monty-fs`](https://crates.io/crates/monty-fs) — host-side filesystem mounts: maps virtual sandbox paths to real host directories.
+- [`monty-runtime`](https://crates.io/crates/monty-runtime) — the `monty` binary: REPL, file runner, and subprocess worker mode.
+- [`monty-pool`](https://crates.io/crates/monty-pool) — an elastic pool of crash-isolated `monty` worker subprocesses.
+- [`monty-proto`](https://crates.io/crates/monty-proto) — the protobuf wire protocol spoken between pool parents and workers.
+- [`monty-type-checking`](https://crates.io/crates/monty-type-checking) — type checking of sandboxed code, powered by [ty](https://docs.astral.sh/ty/).
+- [`monty-typeshed`](https://crates.io/crates/monty-typeshed) — the trimmed typeshed stubs describing the stdlib subset Monty implements.
+- [`monty-macros`](https://crates.io/crates/monty-macros) — the proc macros behind `monty`'s argument parsing.
+
+## License
+
+MIT

@@ -456,6 +456,8 @@ mod network;
 /// Parser module - exposed for fuzzing and testing
 pub mod parser;
 mod profile;
+#[cfg(feature = "python")]
+mod python_meter;
 #[cfg(any(feature = "python", feature = "typescript"))]
 mod runtime_call;
 #[cfg(any(feature = "python", feature = "typescript"))]
@@ -574,6 +576,13 @@ pub use builtins::ssh::{SshClient, SshHandler, SshOutput, SshTarget};
 
 #[cfg(feature = "python")]
 pub use builtins::{Python, PythonExternalFnHandler, PythonExternalFns, PythonLimits};
+#[cfg(feature = "python")]
+pub use python_meter::MeteredAllocator;
+
+// Monty python3 fails closed without the metered allocator.
+#[cfg(all(test, feature = "python"))]
+#[global_allocator]
+static TEST_ALLOC: python_meter::MeteredAllocator = python_meter::MeteredAllocator;
 
 // Shared resource-limit core for embedded language VMs (Python, TypeScript).
 #[cfg(any(feature = "python", feature = "typescript", feature = "cpython"))]
@@ -587,10 +596,14 @@ pub use builtins::{CPython, CPythonLimits};
 #[cfg(feature = "sqlite")]
 pub use builtins::{Sqlite, SqliteBackend, SqliteLimits};
 // Re-export monty types needed by external handler consumers.
-// **Unstable:** These types come from monty, which is pre-1.0 (`0.0.x`).
-// They may change in breaking ways between bashkit releases.
+// **Unstable:** these follow Monty's API, which may change in breaking ways
+// between bashkit releases. `MontyObject` is an opaque graph since Monty 1.x:
+// build values with its constructors, read them through `ObjectRef`, and use
+// `monty_unstable` only for whole-graph conversions (bindings).
 #[cfg(feature = "python")]
-pub use monty_types::{ExcType, ExtFunctionResult, MontyException, MontyObject};
+pub use monty_types::unstable as monty_unstable;
+#[cfg(feature = "python")]
+pub use monty_types::{ExcType, ExtFunctionResult, MontyException, MontyObject, ObjectRef};
 
 #[cfg(feature = "typescript")]
 pub use builtins::{

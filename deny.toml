@@ -24,7 +24,13 @@ allow = [
 confidence-threshold = 0.8
 
 # Allow specific exceptions
-exceptions = []
+exceptions = [
+    # Blue Oak Model License 1.0.0: permissive (MIT-style, with an explicit
+    # patent grant), OSI approved. Scoped to the crates Monty 1.4 needs for
+    # snapshot serialization (via bashkit-monty) rather than allowed globally.
+    { allow = ["BlueOak-1.0.0"], crate = "minicbor" },
+    { allow = ["BlueOak-1.0.0"], crate = "minicbor-serde" },
+]
 
 # No license clarifications currently needed. All dependencies have
 # clear license metadata. Add [[licenses.clarify]] entries here if
@@ -71,10 +77,5 @@ reason = "The local jiter audit excludes the optional Python FFI; re-audit befor
 unknown-registry = "deny"
 unknown-git = "deny"
 
-# Monty and its ruff deps now come from crates.io (since monty 0.0.19), so the
-# only remaining git source is jiter: pinned to upstream main via
-# [patch.crates-io] in the root Cargo.toml so the workspace can run pyo3 0.29
-# (security fix); see the patch comment there.
-allow-git = [
-    "https://github.com/pydantic/jiter",
-]
+# No git sources: Monty is embedded as in-workspace forks (crates/bashkit-monty*).
+allow-git = []

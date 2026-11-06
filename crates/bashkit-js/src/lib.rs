@@ -45,6 +45,12 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
 
+// Monty python3 charges each VM for its own allocations through this
+// allocator (see bashkit::MeteredAllocator). In a cdylib it only governs this
+// library's Rust allocations, never the host runtime's allocator.
+#[global_allocator]
+static METERED_ALLOC: bashkit::MeteredAllocator = bashkit::MeteredAllocator;
+
 // ---------------------------------------------------------------------------
 // Shared tokio runtime + concurrency limiter for JS tool callbacks (issue #982).
 // A single multi-thread runtime is created lazily and reused for every callback

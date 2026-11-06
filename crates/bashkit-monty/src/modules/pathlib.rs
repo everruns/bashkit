@@ -1,0 +1,27 @@
+//! Implementation of the `pathlib` module.
+//!
+//! Provides a minimal implementation of Python's `pathlib` module with:
+//! - `Path`: A class for filesystem path operations
+//!
+//! The `Path` class supports both pure methods (no I/O, handled directly) and
+//! filesystem methods (require I/O, yield external function calls for host resolution).
+
+use crate::{
+    builtins::Builtins,
+    bytecode::VM,
+    heap::{HeapData, HeapId},
+    intern::StaticStrings,
+    types::{Module, Type},
+    value::Value,
+};
+
+/// Creates the `pathlib` module and allocates it on the heap.
+///
+pub fn create_module(vm: &mut VM<'_>) -> HeapId {
+    let mut module = Module::new(StaticStrings::Pathlib, vm.interns);
+
+    // pathlib.Path - the Path class (callable to create Path instances)
+    module.set_attr(StaticStrings::PathClass, Value::Builtin(Builtins::Type(Type::Path)), vm);
+
+    vm.heap.allocate(HeapData::Module(Box::new(module)))
+}

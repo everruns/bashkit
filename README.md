@@ -360,6 +360,7 @@ See [knowledge/integrations/git-support.md](knowledge/integrations/git-support.m
 ## Experimental: Python Support
 
 Enable the `python` feature to embed the [Monty](https://github.com/pydantic/monty) Python interpreter (pure Rust, Python 3.12).
+Bashkit uses a slightly patched Monty 1.4, published as `bashkit-monty` and `bashkit-monty-types`: the patch adds a per-run memory probe and a VM checkpoint hook, so concurrent runs in one process get separate memory limits and honour cancellation. The upstream proposal is [pydantic/monty#740](https://github.com/pydantic/monty/pull/740); the forks go away once upstream has the hooks.
 Python code runs in-memory with configurable resource limits and VFS bridging, files created
 by bash are readable from Python and vice versa.
 
@@ -386,9 +387,9 @@ with open('/tmp/data.txt', 'w') as f:
 bash.exec("cat /tmp/data.txt").await?; // "hello from python"
 ```
 
-Stdlib modules: `math`, `pathlib`, `os` (getenv/environ), `sys`, `typing`.
-Security note: `re` is intentionally disabled due to regex backtracking DoS risk.
-Limitations: file I/O is VFS-scoped, no network, no classes, no third-party imports.
+Stdlib modules: `json`, `math`, `re`, `datetime`, `pathlib`, `os`, `sys`, `typing`, `csv`, `collections`, and more.
+Rust embedders install `bashkit::MeteredAllocator` as the global allocator; it gives each run its own memory limit.
+Limitations: file I/O is VFS-scoped, no network, simple classes only (no inheritance), no third-party imports.
 See [crates/bashkit/docs/python.md](crates/bashkit/docs/python.md) for the full guide.
 
 For full CPython 3.14 (complete language and stdlib, CPython CLI semantics), enable the

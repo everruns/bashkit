@@ -67,7 +67,7 @@ pub(super) fn python_handler() -> PythonExternalFnHandler {
     Arc::new(|name, args, kwargs| {
         Box::pin(async move {
             let result = async {
-                let args = runtime_value::encode_python(&bashkit::MontyObject::Tuple(args))
+                let args = runtime_value::encode_python(&bashkit::MontyObject::tuple(args))
                     .map_err(|e| e.to_string())?;
                 let kwargs = runtime_value::encode_python(&bashkit::MontyObject::dict(kwargs))
                     .map_err(|e| e.to_string())?;

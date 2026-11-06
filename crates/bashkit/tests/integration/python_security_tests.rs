@@ -941,36 +941,83 @@ mod blackbox_format_attacks {
 mod blackbox_dos {
     use super::*;
 
+    // Important security decision (2026-11-05): `re` is allowed since Monty
+    // 1.4. Plain patterns run on the linear-time `regex` crate; patterns with
+    // backreferences or lookaround run on fancy-regex, whose backtracking is
+    // step-capped, and Monty checks its time limit between matches. These
+    // tests are the guard: each classic catastrophic pattern must finish (or
+    // be stopped) well inside the Python time limit.
+    const REDOS_CASES: &[(&str, &str)] = &[
+        (
+            "nested quantifier",
+            r"re.match(r'(a+)+$', 'a' * 5000 + 'b')",
+        ),
+        (
+            "overlapping alternation",
+            r"re.match(r'(a|a)+$', 'a' * 5000 + 'b')",
+        ),
+        ("nested star", r"re.match(r'(a*)*b', 'a' * 5000)"),
+        ("backreference", r"re.match(r'(a+)+\1$', 'a' * 5000 + 'b')"),
+        ("lookahead", r"re.match(r'(?=(a+)+$)\w', 'a' * 5000 + 'b')"),
+        (
+            "lookbehind",
+            r"re.search(r'(?<=a)(a+)+$', 'a' * 5000 + 'b')",
+        ),
+        (
+            "email-like",
+            r"re.match(r'^([a-zA-Z0-9])(([\-.]|[_]+)?([a-zA-Z0-9]+))*(@)', 'a' * 5000 + '!')",
+        ),
+    ];
+
     #[tokio::test]
-    async fn regex_redos() {
-        let limits = PythonLimits::default().max_duration(Duration::from_secs(5));
-        let mut bash = bash_python_limits(limits);
-        // Classic ReDoS pattern: (a+)+$ against "aaa...b"
-        let _r = bash
-            .exec("python3 -c \"import re\nre.match('(a+)+$', 'a' * 30 + 'b')\"")
-            .await
-            .unwrap();
-        // Should complete (monty re may not be vulnerable) or be killed by timeout
-        // The key assertion: it should not hang forever
-        // (this test itself has tokio timeout protection)
+    async fn regex_redos_patterns_are_bounded() {
+        for (name, call) in REDOS_CASES {
+            let limits = PythonLimits::default().max_duration(Duration::from_secs(5));
+            let mut bash = bash_python_limits(limits);
+            let script = format!("python3 - <<'EOF'\nimport re\nr = {call}\nprint('done')\nEOF");
+            let started = std::time::Instant::now();
+            let r = bash.exec(&script).await.unwrap();
+            let elapsed = started.elapsed();
+            // Either the match finishes or fancy-regex's backtrack cap raises;
+            // a timeout (124) would mean one match ran past the VM's checks.
+            assert_ne!(r.exit_code, 124, "{name}: hit the time limit: {}", r.stderr);
+            assert!(
+                elapsed < Duration::from_secs(4),
+                "{name}: took {elapsed:?}: {}",
+                r.stderr
+            );
+        }
     }
 
     #[tokio::test]
-    async fn regex_module_cannot_be_imported_behind_a_statement_prefix() {
-        let mut bash = bash_python_limits(PythonLimits::default());
-        for code in [
-            "pass; import re",
-            "if True: import re",
-            "def f():\n    import re\nf()",
-        ] {
-            let r = bash
-                .exec(&format!("python3 - <<'EOF'\n{code}\nprint('loaded')\nEOF"))
-                .await
-                .unwrap();
-            assert_eq!(r.exit_code, 1, "{code}: {}", r.stdout);
-            assert!(r.stdout.is_empty(), "{code}: {}", r.stdout);
-            assert!(r.stderr.contains("importing module 're' is disabled"));
-        }
+    async fn regex_loop_is_stopped_by_time_limit() {
+        // Many cheap-but-slow matches in a loop: the per-match cap alone does
+        // not bound the script, Monty's between-match time check must.
+        let limits = PythonLimits::default().max_duration(Duration::from_secs(2));
+        let mut bash = bash_python_limits(limits);
+        let started = std::time::Instant::now();
+        let r = bash
+            .exec(
+                "python3 - <<'EOF'\nimport re\nwhile True:\n    re.match(r'(?=(a+)+$)\\w', 'a' * 2000 + 'b')\nEOF",
+            )
+            .await
+            .unwrap();
+        assert_eq!(r.exit_code, 124, "{}", r.stderr);
+        assert!(started.elapsed() < Duration::from_secs(6));
+    }
+
+    #[tokio::test]
+    async fn regex_huge_pattern_is_rejected_or_bounded() {
+        // Compile-time blowup: a large counted repetition.
+        let limits = PythonLimits::default().max_duration(Duration::from_secs(5));
+        let mut bash = bash_python_limits(limits);
+        let started = std::time::Instant::now();
+        let r = bash
+            .exec("python3 -c \"import re\nre.compile('(a{1000}){1000}')\nprint('ok')\"")
+            .await
+            .unwrap();
+        assert_ne!(r.exit_code, 124, "{}", r.stderr);
+        assert!(started.elapsed() < Duration::from_secs(4));
     }
 
     #[tokio::test]

@@ -596,15 +596,14 @@ impl ToolRegistry {
 
     #[cfg(feature = "python")]
     pub(crate) fn python_handler(&self) -> bashkit::PythonExternalFnHandler {
-        use bashkit::{ExcType, ExtFunctionResult, MontyException, MontyObject};
+        use bashkit::{ExcType, ExtFunctionResult, MontyException};
         let registry = self.clone();
         Arc::new(move |_external_name, args, _kwargs| {
             let registry = registry.clone();
             Box::pin(async move {
-                let name = args.first().and_then(|value| match value {
-                    MontyObject::String(name) => Some(name.clone()),
-                    _ => None,
-                });
+                let name = args
+                    .first()
+                    .and_then(|value| value.as_ref().as_str().map(str::to_owned));
                 let params = args
                     .get(1)
                     .map(monty_to_json)
@@ -939,57 +938,71 @@ fn json_to_zapcode(value: Value) -> bashkit::ZapcodeValue {
     }
 }
 
+/// Most graph nodes one tool-input conversion may visit. Security decision:
+/// Monty values share sub-objects, so a 31-node graph can expand to 2^30 JSON
+/// leaves; depth alone does not bound that.
+#[cfg(feature = "python")]
+const MAX_TOOL_INPUT_NODES: usize = 100_000;
+
 #[cfg(feature = "python")]
 fn monty_to_json(value: &bashkit::MontyObject) -> Result<Value, String> {
-    use bashkit::MontyObject;
-    Ok(match value {
-        MontyObject::None => Value::Null,
-        MontyObject::Bool(value) => Value::Bool(*value),
-        MontyObject::Int(value) => Value::from(*value),
-        MontyObject::Float(value) => serde_json::Number::from_f64(*value)
-            .map(Value::Number)
-            .ok_or_else(|| "non-finite number is not valid tool input".to_string())?,
-        MontyObject::String(value) | MontyObject::Path(value) => Value::String(value.clone()),
-        MontyObject::List(values) | MontyObject::Tuple(values) => Value::Array(
-            values
-                .iter()
-                .map(monty_to_json)
-                .collect::<Result<Vec<_>, _>>()?,
-        ),
-        MontyObject::Dict(values) => Value::Object(
-            values
-                .into_iter()
-                .map(|(key, value)| {
-                    let MontyObject::String(key) = key else {
-                        return Err("tool input object keys must be strings".to_string());
-                    };
-                    Ok((key.clone(), monty_to_json(value)?))
-                })
-                .collect::<Result<serde_json::Map<_, _>, String>>()?,
-        ),
-        _ => return Err("unsupported Python value in tool input".to_string()),
-    })
+    fn walk(
+        value: bashkit::ObjectRef<'_>,
+        depth: usize,
+        visited: &mut usize,
+    ) -> Result<Value, String> {
+        use bashkit::monty_unstable::{MontyNode, child, node};
+        *visited += 1;
+        if depth > 64 || *visited > MAX_TOOL_INPUT_NODES {
+            return Err("tool input is too large or too deeply nested".to_string());
+        }
+        Ok(match node(value) {
+            MontyNode::None => Value::Null,
+            MontyNode::Bool(v) => Value::Bool(*v),
+            MontyNode::Int(v) => Value::from(*v),
+            MontyNode::Float(v) => serde_json::Number::from_f64(*v)
+                .map(Value::Number)
+                .ok_or_else(|| "non-finite number is not valid tool input".to_string())?,
+            MontyNode::String(v) | MontyNode::Path(v) => Value::String(v.clone()),
+            MontyNode::List(ids) | MontyNode::Tuple(ids) => Value::Array(
+                ids.iter()
+                    .map(|id| walk(child(value, *id), depth + 1, visited))
+                    .collect::<Result<Vec<_>, _>>()?,
+            ),
+            MontyNode::Dict(pairs) => Value::Object(
+                pairs
+                    .iter()
+                    .map(|(k, v)| {
+                        let Some(key) = child(value, *k).as_str() else {
+                            return Err("tool input object keys must be strings".to_string());
+                        };
+                        Ok((key.to_owned(), walk(child(value, *v), depth + 1, visited)?))
+                    })
+                    .collect::<Result<serde_json::Map<_, _>, String>>()?,
+            ),
+            _ => return Err("unsupported Python value in tool input".to_string()),
+        })
+    }
+    walk(value.as_ref(), 0, &mut 0)
 }
 
 #[cfg(feature = "python")]
 fn json_to_monty(value: Value) -> bashkit::MontyObject {
     use bashkit::MontyObject;
     match value {
-        Value::Null => MontyObject::None,
-        Value::Bool(value) => MontyObject::Bool(value),
+        Value::Null => MontyObject::none(),
+        Value::Bool(value) => MontyObject::bool(value),
         Value::Number(value) => value
             .as_i64()
-            .map(MontyObject::Int)
-            .or_else(|| value.as_f64().map(MontyObject::Float))
-            .unwrap_or(MontyObject::None),
-        Value::String(value) => MontyObject::String(value),
-        Value::Array(values) => MontyObject::List(values.into_iter().map(json_to_monty).collect()),
-        Value::Object(values) => MontyObject::Dict(
+            .map(MontyObject::int)
+            .or_else(|| value.as_f64().map(MontyObject::float))
+            .unwrap_or_else(MontyObject::none),
+        Value::String(value) => MontyObject::string(value),
+        Value::Array(values) => MontyObject::list(values.into_iter().map(json_to_monty)),
+        Value::Object(values) => MontyObject::dict(
             values
                 .into_iter()
-                .map(|(key, value)| (MontyObject::String(key), json_to_monty(value)))
-                .collect::<Vec<_>>()
-                .into(),
+                .map(|(key, value)| (MontyObject::string(key), json_to_monty(value))),
         ),
     }
 }

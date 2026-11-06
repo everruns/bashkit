@@ -17,10 +17,8 @@ updates:
           # rather than landing inside an aggregated `chore(deps)` PR.
           - "turso_core"
           - "turso_*"
-          # monty is pre-1.0 and breaks its embedding API on most 0.0.x bumps
-          # (0.0.19 dropped `max_allocations` and added a print-collect cap).
-          # Keep it standalone so the builtin rewrite each bump needs is
-          # reviewed on its own, not buried in an aggregated `chore(deps)` PR.
+          # Monty deps (pulled in by the bashkit-monty forks) change the
+          # embedding API often; keep them out of aggregated PRs.
           - "monty"
           - "monty-*"
     # Surface turso bumps individually with a label that flags them for
@@ -29,7 +27,7 @@ updates:
     # standalone delivery.
     ignore:
       # num-bigint is hard-pinned to 0.4.x in crates/bashkit-python: monty
-      # (0.0.19) depends on num-bigint 0.4, and py_to_monty hands a
+      # (1.4) depends on num-bigint 0.4, and py_to_monty hands a
       # `num_bigint::BigInt` to `MontyObject::BigInt`. A 0.5 bump makes the two
       # BigInt types mismatch and fails to compile. Block major/minor jumps
       # (0.4 -> 0.5) while still allowing 0.4.x patch updates, until monty
@@ -38,24 +36,14 @@ updates:
         update-types:
           - "version-update:semver-major"
           - "version-update:semver-minor"
-      # monty/monty-types are held at 0.0.19 for a security reason, not just an
-      # API-churn one. 0.0.21 replaced host-side memory accounting with a probe
-      # of globals that only the `monty-alloc` global allocator writes, so an
-      # embedder that cannot install a process-wide allocator — which bashkit,
-      # as a library and a CPython extension module, cannot — silently loses the
-      # Python sandbox's `max_memory` ceiling. Four threat-model regression
-      # tests fail on the bump. Without these entries dependabot reopens the
-      # same broken PR every week (#2296, #2297).
-      # Drop the ignores once monty exposes an embedder-usable memory bound;
-      # see knowledge/runtimes/python-builtin.md § Upgrade blocker.
+      # monty/monty-types are not used from crates.io: bashkit embeds patched
+      # forks (crates/bashkit-monty, crates/bashkit-monty-types) that add a
+      # per-VM memory probe and a checkpoint hook. A registry bump would not
+      # touch them; upgrade by re-copying upstream source and re-applying the
+      # patch. See knowledge/runtimes/python-builtin.md.
       - dependency-name: "monty"
       - dependency-name: "monty-types"
-      # The python `re` gate parses user code with the same ruff parser Monty
-      # 0.0.19 bundles. A standalone bump would let the gate's grammar drift
-      # from the executor's, and code the gate fails to parse is passed
-      # through. Move these only together with monty.
-      - dependency-name: "ruff_python_parser"
-      - dependency-name: "ruff_python_ast"
+      - dependency-name: "monty-macros"
 
       # wasmtime is pinned exactly (=48.0.6): the `cpython` feature embeds a
       # module precompiled by build.rs, and a precompiled module loads only
@@ -69,29 +57,8 @@ updates:
       # `idna`'s Unicode back end, and 1.0.x is the "no back end" stream that
       # keeps the 21-crate ICU4X stack out of the tree. Dependabot would read
       # the pin as staleness and bump it straight back to 1.2.x. See the
-      # rationale comment above [patch.crates-io] in the root Cargo.toml.
+      # rationale comment at the end of the root Cargo.toml.
       - dependency-name: "idna_adapter"
-
-      # get-size2 is not a dependency bashkit uses — no bashkit source
-      # references it. It is declared under the `python` feature purely to
-      # hold the *whole graph* at 0.10.1, which is the last version that
-      # implements `GetSize` for compact_str 0.9. monty 0.0.19's
-      # ruff_python_ast derives `get_size2::GetSize` on nodes holding a
-      # `CompactString` from compact_str 0.9, so any get-size2 >= 0.10.2
-      # (which moved those impls to compact_str 0.10) leaves the derive with
-      # no impl:
-      #
-      #   error[E0277]: the trait bound `CompactString: GetSize` is not
-      #   satisfied --> ruff_python_ast-0.0.3/src/nodes.rs:411:41
-      #   note: there are multiple different versions of crate `compact_str`
-      #
-      # Bumping bashkit's declared version does not just fail to help, it
-      # removes the constraint that keeps ruff's copy pinned, letting it
-      # float to 0.10.3 and break (#2381, all 22 build jobs red). Ignore
-      # outright rather than by update-type: the breaking move was a patch
-      # release. Drop this once monty's ruff moves to compact_str 0.10; the
-      # pin comment sits next to the dep in crates/bashkit/Cargo.toml.
-      - dependency-name: "get-size2"
 
       # branches is not a dependency bashkit uses — no bashkit source
       # references it. It is declared under the `sqlite` feature purely to turn
