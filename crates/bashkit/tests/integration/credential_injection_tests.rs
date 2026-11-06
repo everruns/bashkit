@@ -302,6 +302,53 @@ mod scoping {
         assert!(auth_v2.is_none(), "/v2/ should NOT have Authorization");
     }
 
+    /// THREAT[TM-NET-031]/[TM-NET-032]: a script cannot steer injected
+    /// credentials to another virtual host with `-H Host:`, nor out of a
+    /// path-scoped rule with an encoded slash.
+    #[tokio::test]
+    async fn script_cannot_redirect_credentials() {
+        let captured = std::sync::Arc::new(std::sync::Mutex::new(Vec::<(
+            String,
+            Vec<(String, String)>,
+        )>::new()));
+        let captured_clone = captured.clone();
+
+        let mut bash = Bash::builder()
+            .network(NetworkAllowlist::allow_all())
+            .credential(
+                "https://api.example.com/v1/",
+                Credential::bearer("v1_token"),
+            )
+            .before_http(Box::new(move |req: HttpRequestEvent| {
+                captured_clone
+                    .lock()
+                    .unwrap()
+                    .push((req.url.clone(), req.headers.clone()));
+                HookAction::Cancel("captured".into())
+            }))
+            .build();
+
+        bash.exec("curl -s -H 'Host: admin.example.com' https://api.example.com/v1/users")
+            .await
+            .unwrap();
+        bash.exec("curl -s 'https://api.example.com/v1/..%2Fadmin'")
+            .await
+            .unwrap();
+
+        let requests = captured.lock().unwrap();
+        assert_eq!(requests.len(), 2);
+        let host = requests[0]
+            .1
+            .iter()
+            .find(|(name, _)| name.eq_ignore_ascii_case("host"));
+        assert!(host.is_none(), "Host header must be dropped");
+        let auth = requests[1]
+            .1
+            .iter()
+            .find(|(name, _)| name.eq_ignore_ascii_case("authorization"));
+        assert!(auth.is_none(), "encoded slash must not match /v1/");
+    }
+
     /// Multiple credentials for different hosts.
     #[tokio::test]
     async fn multiple_hosts() {

@@ -48,19 +48,7 @@ const MAX_REQUEST_BODY: usize = 16 * 1024 * 1024;
 /// Longest error text handed back to the guest (TM-INF-022).
 const MAX_ERROR_LEN: usize = 512;
 
-/// Headers the host (or reqwest) sets itself; guest values are dropped.
-const HOST_OWNED_HEADERS: &[&str] = &[
-    "host",
-    "content-length",
-    "transfer-encoding",
-    "connection",
-    "keep-alive",
-    "upgrade",
-    "te",
-    "trailer",
-    "proxy-connection",
-    "proxy-authorization",
-];
+use crate::network::is_host_owned_header;
 
 /// Per-call HTTP state of one guest instance.
 pub(crate) struct HttpState {
@@ -167,8 +155,7 @@ pub(crate) fn decode_request(buf: &[u8]) -> Result<Request, String> {
         if value.bytes().any(|b| b == b'\r' || b == b'\n' || b == 0) {
             return Err("invalid header value".to_string());
         }
-        let lower = name.to_ascii_lowercase();
-        if HOST_OWNED_HEADERS.contains(&lower.as_str()) {
+        if is_host_owned_header(name) {
             continue;
         }
         headers.push((name.to_string(), value.trim().to_string()));
@@ -201,7 +188,7 @@ pub(crate) fn check_request_invariants(buf: &[u8]) {
     for (name, value) in &req.headers {
         assert!(is_token(name), "header name {name:?}"); // debug-ok: fuzz assertion
         assert!(!value.bytes().any(|b| b == b'\r' || b == b'\n' || b == 0));
-        assert!(!HOST_OWNED_HEADERS.contains(&name.to_ascii_lowercase().as_str()));
+        assert!(!is_host_owned_header(name));
     }
     assert!(req.body.len() <= MAX_REQUEST_BODY);
 }
