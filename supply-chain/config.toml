@@ -1098,19 +1098,19 @@ version = "3.0.2"
 criteria = "safe-to-deploy"
 
 [[exemptions.jiff]]
-version = "0.2.35"
+version = "0.2.39"
 criteria = "safe-to-deploy"
 
 [[exemptions.jiff-core]]
-version = "0.1.0"
+version = "0.1.2"
 criteria = "safe-to-deploy"
 
 [[exemptions.jiff-static]]
-version = "0.2.35"
+version = "0.2.39"
 criteria = "safe-to-deploy"
 
 [[exemptions.jiff-tzdb]]
-version = "0.1.8"
+version = "0.1.9"
 criteria = "safe-to-deploy"
 
 [[exemptions.jiff-tzdb-platform]]
@@ -1878,35 +1878,35 @@ version = "0.10.0-rc.18"
 criteria = "safe-to-deploy"
 
 [[exemptions.ruff_python_ast]]
-version = "0.0.14"
+version = "0.0.15"
 criteria = "safe-to-deploy"
 
 [[exemptions.ruff_python_codegen]]
-version = "0.0.14"
+version = "0.0.15"
 criteria = "safe-to-deploy"
 
 [[exemptions.ruff_python_literal]]
-version = "0.0.14"
+version = "0.0.15"
 criteria = "safe-to-deploy"
 
 [[exemptions.ruff_python_parser]]
-version = "0.0.14"
+version = "0.0.15"
 criteria = "safe-to-deploy"
 
 [[exemptions.ruff_python_stdlib]]
-version = "0.0.14"
+version = "0.0.15"
 criteria = "safe-to-deploy"
 
 [[exemptions.ruff_python_trivia]]
-version = "0.0.14"
+version = "0.0.15"
 criteria = "safe-to-deploy"
 
 [[exemptions.ruff_source_file]]
-version = "0.0.14"
+version = "0.0.15"
 criteria = "safe-to-deploy"
 
 [[exemptions.ruff_text_size]]
-version = "0.0.14"
+version = "0.0.15"
 criteria = "safe-to-deploy"
 
 [[exemptions.russh]]
@@ -2167,7 +2167,7 @@ version = "0.1.5"
 criteria = "safe-to-deploy"
 
 [[exemptions.speedate]]
-version = "0.17.0"
+version = "0.18.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.spin]]
@@ -2219,7 +2219,7 @@ version = "0.26.3"
 criteria = "safe-to-deploy"
 
 [[exemptions.strum]]
-version = "0.27.2"
+version = "0.28.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.strum_macros]]
@@ -2227,7 +2227,7 @@ version = "0.26.4"
 criteria = "safe-to-deploy"
 
 [[exemptions.strum_macros]]
-version = "0.27.2"
+version = "0.28.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.subtle]]
@@ -2434,8 +2434,16 @@ criteria = "safe-to-deploy"
 version = "1.3.0"
 criteria = "safe-to-deploy"
 
+[[exemptions.unicode_names2]]
+version = "4.0.0"
+criteria = "safe-to-deploy"
+
 [[exemptions.unicode_names2_generator]]
 version = "1.3.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.unicode_names2_generator]]
+version = "4.0.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.unit-prefix]]
