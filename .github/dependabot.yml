@@ -85,6 +85,25 @@ updates:
       # toolchain; see knowledge/runtimes/cpython-wasm.md.
       - dependency-name: "wasmtime"
 
+      # ruff_python_* is held at 0.0.15: 0.0.16+ requires rustc 1.97
+      # against the 1.96.0 in `rust-toolchain.toml`, so any newer proposal
+      # fails every rust job at resolution (the shape that sank #2848).
+      # The crates release in lockstep, so all six share one bound. Lift
+      # together with the toolchain; see the pin comments in
+      # crates/bashkit-monty/Cargo.toml and knowledge/operations/dependencies.md.
+      - dependency-name: "ruff_python_ast"
+        versions: [">=0.0.16"]
+      - dependency-name: "ruff_python_codegen"
+        versions: [">=0.0.16"]
+      - dependency-name: "ruff_python_parser"
+        versions: [">=0.0.16"]
+      - dependency-name: "ruff_python_stdlib"
+        versions: [">=0.0.16"]
+      - dependency-name: "ruff_source_file"
+        versions: [">=0.0.16"]
+      - dependency-name: "ruff_text_size"
+        versions: [">=0.0.16"]
+
       # idna_adapter is deliberately held at 1.0.0. It is not a normal
       # dependency: the crate exists so the top-level lockfile can choose
       # `idna`'s Unicode back end, and 1.0.x is the "no back end" stream that

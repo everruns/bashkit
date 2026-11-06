@@ -184,6 +184,24 @@ the vendored parser in one deliberate change — not inside an aggregated
 
 `scripts/tests/test_dependabot_coverage.py` enforces all three.
 
+## ruff is held at 0.0.15 by the rustc 1.96 pin
+
+`bashkit-monty` and `bashkit-monty-types` declare six ruff crates
+(`ruff_python_ast`, `ruff_python_codegen`, `ruff_python_parser`,
+`ruff_python_stdlib`, `ruff_source_file`, `ruff_text_size`) for the embedded
+Python parser. ruff 0.0.16 raised its MSRV to rustc 1.97 against the 1.96.0 in
+`rust-toolchain.toml`, so #2848's jump to 0.0.20 failed every rust job at
+resolution (the same shape as the wasmtime 49.x failure in #2708). 0.0.15 is
+the newest release each of the six ships with a 1.96-compatible rust-version
+(verified per crate on crates.io; they release in lockstep).
+
+All six are therefore in dependabot's `ignore` list for `>=0.0.16`, with a pin
+comment at each declaration. Lifting them waits on a deliberate Rust 1.97
+toolchain bump, and then means re-checking the two API breaks #2851 adapted
+to (fancy-regex 0.20 `Captures<'_, str>`, ruff 0.0.15 `TokenKind::Identifier`)
+— not inside an aggregated `chore(deps)` PR.
+ (chore(deps): document ruff 0.0.15 hold and ignore >=0.0.16)
+
 ## Measure size and audit surface separately
 
 The `idna_adapter` pin removes 21 crates but only **15 KB (0.16%)** from the

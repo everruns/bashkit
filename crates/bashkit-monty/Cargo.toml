@@ -54,6 +54,7 @@ num-bigint = { version = "0.4", features = ["serde"] }
 num-integer = { version = "0.1" }
 num-traits = { version = "0.2" }
 postcard = { version = "1.1", features = ["alloc"] }
+# Held at 0.0.15: 0.0.16+ needs rustc 1.97 vs pinned 1.96.0 (see dependabot.yml + knowledge/operations/dependencies.md).
 ruff_python_ast = { version = "0.0.15" }
 ruff_python_codegen = { version = "0.0.15" }
 ruff_python_parser = { version = "0.0.15" }

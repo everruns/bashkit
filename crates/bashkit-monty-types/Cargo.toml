@@ -41,6 +41,7 @@ jiff = { version = "0.2", features = ["std", "serde"], default-features = false 
 monty-macros = { version = "1.4.0" }
 num-bigint = { version = "0.4", features = ["serde"] }
 num-traits = { version = "0.2" }
+# Held at 0.0.15: 0.0.16+ needs rustc 1.97 vs pinned 1.96.0 (see dependabot.yml + knowledge/operations/dependencies.md).
 ruff_python_stdlib = { version = "0.0.15" }
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_bytes = { version = "0.11" }
