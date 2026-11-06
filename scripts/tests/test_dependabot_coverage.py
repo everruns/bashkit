@@ -266,6 +266,29 @@ class DependabotCoverageTests(unittest.TestCase):
             with self.subTest(directory=d):
                 self.assertTrue((ROOT / d / 'Cargo.lock').is_file(), d)
 
+    def test_path_dep_lockfiles_pin_the_workspace_bashkit_version(self):
+        # Builds are not `--locked`, so a lockfile left on the old version after
+        # a release bump is silently refreshed in CI while Dependabot and the
+        # advisory scan keep reading the stale one. Fail loudly instead; the
+        # refresh loop is in knowledge/operations/release-process.md.
+        version = tomllib.loads((ROOT / 'Cargo.toml').read_text())['workspace']['package']['version']
+        checked = 0
+        for d in (
+            'crates/bashkit/fuzz',
+            'crates/bashkit-js/test-fixtures/random-fs',
+            'crates/bashkit-python/test-fixtures/random-fs',
+            'examples/hyperlight',
+        ):
+            lock = tomllib.loads((ROOT / d / 'Cargo.lock').read_text())
+            pinned = [
+                p['version'] for p in lock['package']
+                if p['name'] == 'bashkit' and 'source' not in p
+            ]
+            with self.subTest(directory=d):
+                self.assertEqual(pinned, [version], f'{d}/Cargo.lock is stale; refresh it')
+                checked += 1
+        self.assertEqual(checked, 4)
+
     def test_cargo_versioning_strategy_is_one_cargo_accepts(self):
         # #2852 set `increase` on a cargo entry; Dependabot rejected the whole
         # file ("did not match one of: lockfile-only, auto"), which stops every
