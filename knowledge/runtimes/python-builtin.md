@@ -291,3 +291,15 @@ cargo test --features python --lib -- python
 cargo test --features python --test spec_tests -- python
 cargo test --features python --test threat_model_tests -- python
 ```
+
+Fuzzing: `crates/bashkit/fuzz/fuzz_targets/python_fuzz.rs` runs nightly (`fuzz.yml`)
+and is build-checked on every PR (`fuzz-check`). It installs `MeteredAllocator`
+like the shipped bindings, caps each run at 32 MiB / 500 ms, and runs input as a
+file, stdin, `-c` and CLI arguments. A memory-limit bypass trips libFuzzer's RSS
+limit, a time-limit bypass the 5 s per-exec assertion, and stderr goes through
+`fuzz_exec`'s leak checks. The fork is upstream code we now own, so this target
+is where inherited interpreter bugs show up.
+
+```bash
+cargo +nightly-2026-10-30 fuzz run --features python python_fuzz -- -max_total_time=300
+```
