@@ -1,10 +1,11 @@
-"""Opt-in tool runtimes share the VFS and survive interpreter rebuilds."""
+"""Opt-in tool runtimes share the VFS, survive interpreter rebuilds, and honor timeout_seconds."""
 
 import importlib.util
+import time
 
 import pytest
 
-from bashkit import BashTool
+from bashkit import Bash, BashTool, ExecutionProfile
 
 PYTHON_ENV = {"BASHKIT_ALLOW_INPROCESS_PYTHON": "1"}
 
@@ -124,3 +125,19 @@ def test_invalid_runtime_program_reports_failure(runtime, script):
     assert result.exit_code != 0
     assert result.stdout == ""
     assert result.stderr
+
+
+@pytest.mark.parametrize(
+    ("cls", "runtime", "script"),
+    [
+        (Bash, "python", "python3 -c 'while True: pass'"),
+        (BashTool, "typescript", "ts -c 'for (;;) {}'"),
+    ],
+)
+def test_timeout_seconds_raises_runtime_time_limit(cls, runtime, script):
+    # Hardened caps each runtime call at 10 s; timeout_seconds must lift it too.
+    tool = cls(profile=ExecutionProfile.Hardened, timeout_seconds=11, env=PYTHON_ENV, **{runtime: True})
+    start = time.monotonic()
+    result = tool.execute_sync(script)
+    assert result.exit_code != 0
+    assert time.monotonic() - start > 10.5
