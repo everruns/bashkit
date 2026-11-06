@@ -6,7 +6,7 @@ the job set up. Where that is the pinned one (rust-toolchain.toml), an unpinned
 tool resolves to the newest release and an upstream MSRV bump breaks a tree
 that has not changed: cargo-geiger 0.14.0 shipped on 2026-10-12 requiring rustc
 1.97, and nightly run 259 went red the next morning with the unsafe-code audit
-skipped. A job that installs the nightly toolchain is exempt — nightly outruns
+skipped. A job that installs a pinned nightly toolchain is exempt (either spelling below) — nightly outruns
 any released MSRV — which is why `cargo-fuzz` in the fuzz job needs no pin.
 
 The first attempt at pinning geiger passed `version: 0.13.0`. That action has
@@ -64,6 +64,19 @@ def nightly_toolchain_shas():
     return shas
 
 
+# The toolchain action removed its `toolchain:` input, so newer jobs install
+# the pinned nightly with an explicit run step instead of a `# nightly`-marked
+# action ref. Both spellings mark a nightly job.
+RUSTUP_NIGHTLY_INSTALL = re.compile(r'rustup\s+toolchain\s+install\s+\S*nightly')
+
+
+def job_installs_nightly_via_rustup(job):
+    for step in job.get('steps') or []:
+        if RUSTUP_NIGHTLY_INSTALL.search(step.get('run') or ''):
+            return True
+    return False
+
+
 def job_uses_nightly(job, nightly_shas):
     for step in job.get('steps') or []:
         uses = step.get('uses') or ''
@@ -71,7 +84,19 @@ def job_uses_nightly(job, nightly_shas):
             _, _, ref = uses.partition('@')
             if ref in nightly_shas:
                 return True
-    return False
+    return job_installs_nightly_via_rustup(job)
+
+
+def nightly_job_ids():
+    """`workflow:job` ids installing a nightly toolchain, either spelling."""
+    shas = nightly_toolchain_shas()
+    ids = set()
+    for path in sorted(WORKFLOWS.glob('*.yml')):
+        spec = yaml.safe_load(path.read_text())
+        for job_name, job in (spec.get('jobs') or {}).items():
+            if job_uses_nightly(job, shas):
+                ids.add(f'{path.name}:{job_name}')
+    return ids
 
 
 def source_build_steps():
@@ -93,9 +118,11 @@ class PinnedCiToolTests(unittest.TestCase):
         steps = list(source_build_steps())
         self.assertTrue(steps, f'no {SOURCE_BUILD_ACTION} steps found')
         self.assertTrue(
-            nightly_toolchain_shas(),
-            f'no `{TOOLCHAIN_ACTION}@<sha> # nightly` ref found; the comment '
-            'spelling this parser relies on may have changed',
+            nightly_job_ids(),
+            f'no nightly toolchain install found (neither a '
+            f'`{TOOLCHAIN_ACTION}@<sha> # nightly` ref nor a '
+            '`rustup toolchain install nightly-...` step); the spelling '
+            'this parser relies on may have changed',
         )
 
     def test_tools_on_the_pinned_toolchain_pin_a_version(self):
