@@ -86,6 +86,14 @@ metering" below), so it is stricter than the 0.0.19 estimate: a dict of
 ~500k short strings reaches the 64 MiB default. It also caps the host-side
 buffer that collects `print` output. There is no allocation-count knob.
 
+`max_duration` bounds wall-clock time. Monty 1.x pauses its own clock while
+the VM waits on the host (VFS calls, external functions), so Monty alone
+bounds VM time only: a loop of cheap file writes ran ~12x past the limit and
+never yielded the worker thread. Bashkit checks the wall-clock deadline at
+every host call (exit 124 like any time limit) and yields to the executor
+there, so a caller-side timeout can cancel the call and co-tenants on the
+same worker thread are scheduled (TM-PY-036).
+
 Each Python entry also consumes the request-scoped `ExecutionBudget`: source
 bytes are charged as aggregate input, Monty heap growth past the run's
 high-water mark is charged as work (one unit per 64 bytes), and every 64 VM
@@ -303,3 +311,9 @@ is where inherited interpreter bugs show up.
 ```bash
 cargo +nightly-2026-10-30 fuzz run --features python python_fuzz -- -max_total_time=300
 ```
+
+Stress: `tests/integration/python_tenant_stress_tests.rs` runs 20 tenants on 4
+worker threads per round, mixing memory bombs, runaway loops, unbounded
+recursion and well-behaved scripts; it also drops calls mid-run and then checks
+that the worker threads still meter correctly, and reuses one session's budget
+across many calls. 3 rounds per PR; `BASHKIT_STRESS_ROUNDS=N` for a soak.

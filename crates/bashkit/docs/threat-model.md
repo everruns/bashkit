@@ -738,6 +738,7 @@ Python `pathlib.Path` and `open()` operations are bridged to Bashkit's virtual f
 | ReDoS via `re` (TM-PY-033) | Catastrophic backtracking pattern | Linear-time engine for plain patterns, backtrack cap (`re.PatternError`) for fancy ones, time limit for match loops | MITIGATED |
 | Uninterruptible VM loop (TM-PY-034) | Tight loop ignores cancellation or shared budget | Forked checkpoint hook runs the request `ExecutionBudget` check inside the VM | MITIGATED |
 | Shared-graph expansion in host conversion (TM-PY-035) | `x = [x, x]` repeated, then returned to the host | Every converter walks Monty values with a node cap | MITIGATED |
+| Host-call loop outruns the time limit (TM-PY-036) | `while True:` around a cheap file write; Monty's clock pauses on host calls and the VM never yields the thread | Wall-clock deadline and an executor yield at every host call | MITIGATED |
 
 **Architecture:**
 
