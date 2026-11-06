@@ -23,7 +23,7 @@ importers:
     devDependencies:
       '@langchain/core':
         specifier: ^1.2.9
-        version: 1.3.2
+        version: 1.3.3
       '@napi-rs/cli':
         specifier: ^3.9.0
         version: 3.10.9(@emnapi/core@1.11.2)(@emnapi/runtime@1.11.2)(@types/node@26.6.6)(emnapi@1.10.0)
@@ -55,8 +55,8 @@ importers:
 
 packages:
 
-  '@cfworker/json-schema@4.1.3':
-    resolution: {integrity: sha512-7WJxlFqM6opWUGEt3uzf0YePLow50lWtVAA4iyLS/eOXu1hrVohpa/1/4nx/PyeqH4Yb0UmYoJyt6cWdRBABhQ==}
+  '@cfworker/json-schema@4.1.4':
+    resolution: {integrity: sha512-20rPE8EX0dSg6JGOVe31HpqsLYZTDSlcFJZA5mpZqQxcZ71vh/SXCMX+UuHO1mMcZBDKeb752z+3L8IWa+0Svg==}
 
   '@cto.af/wtf8@1.0.0':
     resolution: {integrity: sha512-qI0XnZxcj/FmASB8XXWqG49bSIzu0I/02deAjhnTni9IZ7KMRVlh8EFLE+mmJlMA169lET6rTCFhEsZSjOwlhA==}
@@ -377,8 +377,8 @@ packages:
   '@isaacs/nonrecursive-glob-match@1.0.3':
     resolution: {integrity: sha512-SI7kyKHq4XXDRozw+r9GlRZkia1ZkFrpLW98r2IC2Bpr8YkFGE3fvjzmxCG0x78A++69HmDNrDvSMYBZmHGpKA==}
 
-  '@langchain/core@1.3.2':
-    resolution: {integrity: sha512-kXI5wkIRy6MVNBFzFdN4MyNAGPTsodVZFQ9BRQTyOCNnKy+qPuipMCl+qaybtN6rQ+0YrJvfTxYd+u4goAHtFQ==}
+  '@langchain/core@1.3.3':
+    resolution: {integrity: sha512-kSJ+R1F2FxJjFrHn8Dpxg1wFtOxtb6K2OnmvQ+DUswIyTqEqr1D+Ldc0AIcXyAoLtsEVYvT0R7gRO3YuZVevyw==}
     engines: {node: '>=20'}
 
   '@mapbox/node-pre-gyp@2.0.3':
@@ -1433,8 +1433,8 @@ packages:
   json-with-bigint@3.5.12:
     resolution: {integrity: sha512-uwbF/wSSuOgC7qqlq27Xp5B6a2MHVug3t0idZdTqu0JnlFvgJuH7ju+KAk/J06C7GfhoYy2gnb9wz2INqcne7w==}
 
-  langsmith@0.11.5:
-    resolution: {integrity: sha512-sKKiRmQIogYR2w5KREP9cHF5LWwa+DJAkLwl9G0sTBQE6v5DaWA/ekBS0rZGlDoo6A8TFz37wRkESI+jF2XqDg==}
+  langsmith@0.11.7:
+    resolution: {integrity: sha512-ItiCV3YhUuWHWT92odob5PhEUMY+ixHa03Fixsgwk/EIPEiRgUIZRBQSB8LCm87ypuUhgIwgw01z1gxPX5qTWg==}
     peerDependencies:
       '@opentelemetry/api': '*'
       '@opentelemetry/exporter-trace-otlp-proto': '*'
@@ -1746,7 +1746,7 @@ packages:
 
 snapshots:
 
-  '@cfworker/json-schema@4.1.3': {}
+  '@cfworker/json-schema@4.1.4': {}
 
   '@cto.af/wtf8@1.0.0': {}
 
@@ -1985,12 +1985,12 @@ snapshots:
 
   '@isaacs/nonrecursive-glob-match@1.0.3': {}
 
-  '@langchain/core@1.3.2':
+  '@langchain/core@1.3.3':
     dependencies:
-      '@cfworker/json-schema': 4.1.3
+      '@cfworker/json-schema': 4.1.4
       '@standard-schema/spec': 1.1.0
       js-tiktoken: 1.0.21
-      langsmith: 0.11.5
+      langsmith: 0.11.7
       mustache: 4.2.0
       p-queue: 6.6.2
       zod: 4.6.7
@@ -2842,7 +2842,7 @@ snapshots:
 
   json-with-bigint@3.5.12: {}
 
-  langsmith@0.11.5:
+  langsmith@0.11.7:
     dependencies:
       p-queue: 6.6.2
 
