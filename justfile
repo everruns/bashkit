@@ -49,6 +49,7 @@ check:
     just check-doc-links
     just check-workflow-parity
     just check-changelog
+    just check-monty-fork
 
 # Validate the CHANGELOG release-section convention (Highlights + What's Changed).
 check-changelog:
@@ -73,6 +74,10 @@ check-workflow-parity:
 # bare `jq.md` renders fine on bashkit.sh while 404-ing on GitHub. This checks
 # the source-relative form the site rewriter also accepts.
 # Validate relative markdown links in docs/ and crates/bashkit/docs/
+# Monty forks differ from upstream 1.4.0 only at `bashkit fork:` markers
+check-monty-fork:
+    python3 scripts/check_monty_fork.py
+
 check-doc-links:
     python3 scripts/check_doc_links.py
 
