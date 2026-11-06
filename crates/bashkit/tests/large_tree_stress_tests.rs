@@ -425,6 +425,12 @@ async fn rg_stops_at_the_input_budget_on_a_huge_tree() {
 async fn rg_within_budget_holds_bounded_memory() {
     let _serial = SERIAL.lock().await;
     let (fs, mut bash) = setup().await;
+    // The first rg in the process builds one-time state (4 MiB locally, more
+    // on CI, where it pushed this past BOUNDED_PEAK). It is not per-file
+    // memory, so pay it on a small subtree first and measure only the walk.
+    bash.exec("rg -l nomatch /big/d0 > /dev/null")
+        .await
+        .unwrap();
     for cmd in [
         "rg -l nomatch /big",
         "rg -c nomatch /big/d1 /big/d0",
