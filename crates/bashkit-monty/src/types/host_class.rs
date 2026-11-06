@@ -314,7 +314,8 @@ impl<'h> PyTrait<'h> for HeapObjectRead<'h, HostClass> {
 ///
 /// Each caller supplies its own field list via `field`, mapping an index to that
 /// field's name and a cloned value (dropped here). A cycle renders `...`, a
-/// `None` value `<?>`, and exhausting a time limit truncates `...[timeout]`.
+/// `None` value `<?>`, a memory limit truncates `...[timeout]`, and a time
+/// limit raises (see `repr_check_time`).
 ///
 /// `field` is resolved immediately before that field is written, never all up
 /// front, so a `__repr__` that mutates a later field is observed — matching the
