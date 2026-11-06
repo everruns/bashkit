@@ -156,8 +156,9 @@ trust this repository, the publishing workflow filename, and the `release`
 environment. The workflow is [`publish.yml`](../../.github/workflows/publish.yml).
 The GitHub `release` environment must allow only the `main` branch and `v*`
 tags, preserving the existing main-based recovery path. The validated immutable
-release source and dependency order remain mandatory. Check all four crates:
-`bashkit-cpython-wasm`, `bashkit`, `bashkit-cli`, and `bashkit-scripted-tool`.
+release source and dependency order remain mandatory. Check all six crates:
+`bashkit-cpython-wasm`, `bashkit-monty-types`, `bashkit-monty`, `bashkit`,
+`bashkit-cli`, and `bashkit-scripted-tool`.
 
 A new crate needs its first version published by an owner with a suitably scoped
 API token before crates.io permits a trusted publisher. Complete that bootstrap
