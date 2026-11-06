@@ -72,14 +72,18 @@ edits. See [Python Builtin](../runtimes/python-builtin.md#monty-14-embedding-for
 `scripts/check_monty_fork.py` (CI lint job, `just check-monty-fork`) diffs both
 forks against the SHA-256-pinned upstream 1.4.0 `.crate` files and fails on any
 changed region without a `bashkit fork:` marker in or up to three lines above
-it, and on fork-only files without a marker header. Dependabot does not bump
+it, on fork-only files without a marker header, on upstream files missing from
+the fork (upstream tests excepted), and on any dependency or feature in a fork
+`Cargo.toml` that differs from upstream's (the `monty-types` rename aside). Dependabot does not bump
 crates only the forks declare, so upstream security fixes arrive by re-sync:
 
 1. Watch pydantic/monty releases and security advisories, and `cargo deny`
    advisories against the fork's dependency versions (the Audit job).
 2. For a fix: re-copy the new upstream release into both forks, re-apply every
    `bashkit fork:` edit (the drift check lists what moved), bump `VERSION` and
-   the two hashes in `check_monty_fork.py`, and `MONTY_VERSION`.
+   the two hashes in `check_monty_fork.py`, and copy upstream's new
+   dependencies and features into each fork `Cargo.toml` (the check compares
+   them with upstream's normalized manifest).
 3. Run `python_fuzz` and the tenant stress soak (`BASHKIT_STRESS_ROUNDS=20`)
    before shipping, as the fork's own regression net.
 

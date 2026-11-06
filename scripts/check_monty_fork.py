@@ -24,6 +24,7 @@ import io
 import sys
 import tarfile
 import tempfile
+import tomllib
 import urllib.request
 from pathlib import Path
 
@@ -43,8 +44,20 @@ UPSTREAM = {
         '560e0f529ceb10575efb25dabc95d41e9de0f5036fbb46f02c2ac03d83dc89e3',
     ),
 }
-# Fork-only packaging files, not upstream source.
+# Fork-only packaging files, not upstream source. Cargo.toml is not diffed as
+# text (the fork's is hand-written, upstream's is cargo-normalized); its
+# dependencies and features are compared instead, see `manifest_errors`.
 FORK_ONLY = {'Cargo.toml', 'LICENSE', 'rustfmt.toml'}
+# Upstream files the forks deliberately leave out: upstream tests (not
+# vendored) and packaging that cargo regenerates. Any other upstream file
+# missing from a fork is an error.
+UPSTREAM_DROPPED = ('tests/', 'test_cases/', 'Cargo.lock', 'Cargo.toml.orig', '.cargo_vcs_info.json')
+# Dependency tables compared between the fork and upstream manifests.
+# dev-dependencies are skipped with the tests that use them.
+DEP_TABLES = ('dependencies', 'build-dependencies')
+# Dependencies the forks rename on purpose: upstream name -> fork package.
+# Their version follows the fork, so only features/optionality are compared.
+RENAMED_DEPS = {'monty-types': 'bashkit-monty-types'}
 
 
 def fetch(name: str, sha256: str, dest: Path) -> Path:
@@ -73,8 +86,67 @@ def unmarked_hunks(upstream: list[str], fork: list[str]) -> list[int]:
     return bad
 
 
-def check_crate(fork_dir: Path, upstream_dir: Path) -> list[str]:
+def read_lines(path: Path) -> list[str] | None:
+    """Text lines, or None for a file that is not UTF-8 (compared as bytes)."""
+    try:
+        return path.read_text(encoding='utf-8').splitlines()
+    except UnicodeDecodeError:
+        return None
+
+
+def dep_tables(manifest: dict) -> dict[str, dict]:
+    tables = {t: manifest.get(t, {}) for t in DEP_TABLES}
+    for cfg, target in manifest.get('target', {}).items():
+        for t in DEP_TABLES:
+            if t in target:
+                tables[f'target.{cfg}.{t}'] = target[t]
+    return {name: deps for name, deps in tables.items() if deps}
+
+
+def dep_spec(name: str, spec: dict | str) -> tuple:
+    if isinstance(spec, str):
+        spec = {'version': spec}
+    version = None if name in RENAMED_DEPS else spec.get('version')
+    return (
+        version,
+        tuple(sorted(spec.get('features', []))),
+        spec.get('default-features', spec.get('default_features', True)),
+        spec.get('optional', False),
+    )
+
+
+def manifest_errors(fork_dir: Path, upstream_dir: Path) -> list[str]:
+    """Dependencies and features must match upstream's normalized manifest."""
+    fork = tomllib.loads((fork_dir / 'Cargo.toml').read_text(encoding='utf-8'))
+    upstream = tomllib.loads((upstream_dir / 'Cargo.toml').read_text(encoding='utf-8'))
+    where = f'{fork_dir.name}/Cargo.toml'
     errors = []
+    fork_tables, up_tables = dep_tables(fork), dep_tables(upstream)
+    for table in sorted(set(fork_tables) | set(up_tables)):
+        fork_deps, up_deps = fork_tables.get(table, {}), up_tables.get(table, {})
+        for name in sorted(set(fork_deps) | set(up_deps)):
+            if name not in up_deps:
+                errors.append(f'{where}: [{table}] adds `{name}`, not in upstream')
+            elif name not in fork_deps:
+                errors.append(f'{where}: [{table}] drops upstream `{name}`')
+            else:
+                fork_spec, up_spec = fork_deps[name], up_deps[name]
+                renamed = RENAMED_DEPS.get(name)
+                if renamed and (not isinstance(fork_spec, dict) or fork_spec.get('package') != renamed):
+                    errors.append(f'{where}: [{table}] `{name}` must be package `{renamed}`')
+                if dep_spec(name, fork_spec) != dep_spec(name, up_spec):
+                    errors.append(f'{where}: [{table}] `{name}` differs from upstream {up_spec!r}')
+    if fork.get('features', {}) != upstream.get('features', {}):
+        errors.append(f'{where}: [features] differ from upstream {upstream.get("features", {})!r}')
+    return errors
+
+
+def check_crate(fork_dir: Path, upstream_dir: Path) -> list[str]:
+    errors = manifest_errors(fork_dir, upstream_dir)
+    for path in sorted(upstream_dir.rglob('*')):
+        rel = path.relative_to(upstream_dir).as_posix()
+        if path.is_file() and not rel.startswith(UPSTREAM_DROPPED) and not (fork_dir / rel).is_file():
+            errors.append(f'{fork_dir.name}/{rel}: upstream file missing from the fork')
     for path in sorted(fork_dir.rglob('*')):
         if not path.is_file():
             continue
@@ -82,12 +154,17 @@ def check_crate(fork_dir: Path, upstream_dir: Path) -> list[str]:
         if rel.as_posix() in FORK_ONLY:
             continue
         up = upstream_dir / rel
-        fork_lines = path.read_text().splitlines()
+        fork_lines = read_lines(path)
         if not up.is_file():
-            if not any(MARKER in line for line in fork_lines[:MARKER_WINDOW]):
+            if fork_lines is None or not any(MARKER in line for line in fork_lines[:MARKER_WINDOW]):
                 errors.append(f'{fork_dir.name}/{rel}: not in upstream and has no `{MARKER}` header')
             continue
-        for line in unmarked_hunks(up.read_text().splitlines(), fork_lines):
+        up_lines = read_lines(up)
+        if fork_lines is None or up_lines is None:
+            if path.read_bytes() != up.read_bytes():
+                errors.append(f'{fork_dir.name}/{rel}: binary file differs from upstream')
+            continue
+        for line in unmarked_hunks(up_lines, fork_lines):
             errors.append(f'{fork_dir.name}/{rel}:{line}: differs from upstream without a `{MARKER}` marker')
     return errors
 
@@ -110,7 +187,7 @@ def main(argv: list[str] | None = None) -> int:
     for e in errors:
         print(e, file=sys.stderr)
     if errors:
-        print(f'{len(errors)} unmarked fork change(s); mark each with `// {MARKER} <why>`', file=sys.stderr)
+        print(f'{len(errors)} fork drift error(s); mark source edits with `// {MARKER} <why>`', file=sys.stderr)
         return 1
     print(f'Monty forks match upstream {VERSION} outside `{MARKER}` markers')
     return 0
