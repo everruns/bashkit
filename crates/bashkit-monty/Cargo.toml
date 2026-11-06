@@ -45,7 +45,7 @@ hashbrown = { version = "0.16" }
 indexmap = { version = "2" }
 itertools = { version = "0.14.0" }
 itoa = { version = "1" }
-jiter = { version = "0.17.0", features = ["num-bigint"] }
+jiter = { version = "0.18.0", features = ["num-bigint"] }
 libm = { version = "0.2" }
 memchr = { version = "2.7" }
 minicbor-serde = { version = "0.7", features = ["alloc"], default-features = false }

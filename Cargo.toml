@@ -174,8 +174,8 @@ serial_test = "4"
 # (42 native wheels/release, ~12 MB each) to 7, and future Python releases need
 # no rebuild. `generate-import-lib` kept for the Windows abi3 import lib.
 # See knowledge/runtimes/python-package.md § abi3.
-pyo3 = { version = "0.29", features = ["extension-module", "generate-import-lib", "abi3-py39"] }
-pyo3-async-runtimes = { version = "0.29", features = ["tokio-runtime"] }
+pyo3 = { version = "0.30", features = ["extension-module", "generate-import-lib", "abi3-py39"] }
+pyo3-async-runtimes = { version = "0.30", features = ["tokio-runtime"] }
 
 # JavaScript/Node.js bindings (NAPI-RS)
 napi = { version = "3.8.6", default-features = false, features = ["napi6", "compat-mode", "tokio_rt"] }
