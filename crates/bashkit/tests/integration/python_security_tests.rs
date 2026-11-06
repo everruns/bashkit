@@ -288,6 +288,57 @@ mod blackbox_class_escape {
 mod whitebox_resource_limits {
     use super::*;
 
+    /// Regression: walking a shared graph (`x = [x, x]` thirty times is
+    /// 2^30 nested two-item lists) in repr, `==`, `<` or `in` never read the
+    /// clock, because the fork polled time by the index within one list. It ran for minutes past
+    /// a 2 s limit, synchronously, so the host's exec timeout could not stop
+    /// it either. Each path must now hit the time limit (exit 124) promptly.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn shared_graph_walks_respect_time_limit() {
+        let graph = "x = [1]\nfor _ in range(30):\n    x = [x, x]\n";
+        for (name, tail) in [
+            ("repr", "s = repr(x)"),
+            ("str", "s = str(x)"),
+            ("print", "print(x)"),
+            ("fstring", "s = f\"{x}\""),
+            ("dict", "s = repr({1: x})"),
+            ("tuple", "s = repr((x, x))"),
+            (
+                "eq",
+                "y = [1]\nfor _ in range(30):\n    y = [y, y]\nb = x == y",
+            ),
+            (
+                "lt",
+                "y = [1]\nfor _ in range(30):\n    y = [y, y]\nb = x < y",
+            ),
+            (
+                "in",
+                "y = [1]\nfor _ in range(30):\n    y = [y, y]\nb = x in [y]",
+            ),
+            ("json", "import json\ns = json.dumps(x)"),
+        ] {
+            let mut bash = bash_python_limits(
+                PythonLimits::default().max_duration(std::time::Duration::from_millis(500)),
+            );
+            let script = format!("python3 -c '{graph}{tail}' >/dev/null; echo rc=$?");
+            let started = std::time::Instant::now();
+            // Spawned so the timer runs on another worker: a regression blocks
+            // the thread running the script, not the one awaiting it.
+            let task = tokio::spawn(async move { bash.exec(&script).await });
+            let r = tokio::time::timeout(std::time::Duration::from_secs(20), task).await;
+            let elapsed = started.elapsed();
+            let r = r
+                .unwrap_or_else(|_| panic!("{name}: still running after 20s"))
+                .unwrap()
+                .unwrap();
+            assert!(
+                elapsed < std::time::Duration::from_secs(10),
+                "{name}: took {elapsed:?}"
+            );
+            assert_eq!(r.stdout, "rc=124\n", "{name}: {}", r.stderr);
+        }
+    }
+
     /// Regression: every invocation used to reserve `max_memory / 64` work
     /// units up front (1M at the 64 MiB default) out of the 100M budget, so
     /// the 96th `python3` call in one script failed even for `pass`.

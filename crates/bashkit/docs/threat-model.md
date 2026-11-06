@@ -739,6 +739,7 @@ Python `pathlib.Path` and `open()` operations are bridged to Bashkit's virtual f
 | Uninterruptible VM loop (TM-PY-034) | Tight loop ignores cancellation or shared budget | Forked checkpoint hook runs the request `ExecutionBudget` check inside the VM | MITIGATED |
 | Shared-graph expansion in host conversion (TM-PY-035) | `x = [x, x]` repeated, then returned to the host | Every converter walks Monty values with a node cap | MITIGATED |
 | Host-call loop outruns the time limit (TM-PY-036) | `while True:` around a cheap file write; Monty's clock pauses on host calls and the VM never yields the thread | Wall-clock deadline and an executor yield at every host call | MITIGATED |
+| Shared-graph walk outlives time limit (TM-PY-037) | `x = [x, x]` repeated, then `repr` or `==` inside Python | Forked tracker counts every amortized check on one tick, so recursive walks still check time | MITIGATED |
 
 **Architecture:**
 

@@ -177,9 +177,18 @@ limit, a greedy tenant beside small ones, many small objects, `str.join` bomb)
 and the `whitebox_resource_limits` / `threat_python_pow_exhaustion` regression
 tests that failed on every earlier bump attempt.
 
-Known upstream gaps in 1.4.0: `repr` of nested 2-item lists only checks time
-every 64 items, and `str.join` can overshoot `max_memory` before the next
-check (bounded by the meter, not by Monty).
+Amortized checks (fork edit, TM-PY-037): upstream `check_time_every(i)` and
+`check_memory_time_every(i)` fire when the caller's loop index hits a multiple
+of 64, so a recursive walk over many short loops never checked. `x = [x, x]`
+thirty times, then `repr`/`print`/f-string/`==`/`<`/`in`, ran for minutes past
+a 2 s limit, synchronously, so the shell timeout could not stop it either. The
+fork counts every `*_every` call on one tracker-wide tick instead, and the
+`repr` walk returns a time-limit error (exit 124) where upstream truncated to
+`...[timeout]`; a memory hit still truncates. Pinned by
+`whitebox_resource_limits::shared_graph_walks_respect_time_limit`.
+
+Known upstream gap in 1.4.0: `str.join` can overshoot `max_memory` before the
+next check (bounded by the meter, not by Monty).
 
 ### Python Feature Support
 
