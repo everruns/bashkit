@@ -569,6 +569,22 @@ async fn run_python(
         if let Some(budget) = &execution_budget {
             budget.consume_work(1)?;
         }
+        // Important security decision: Monty's clock pauses while the VM is
+        // suspended on the host, so `max_duration` alone bounds VM time only and
+        // a loop of cheap host calls (file writes) ran ~10x past it. Bound wall
+        // clock at every host call too, and yield to the executor there: the VM
+        // never yields on its own, so without this a caller-side timeout cannot
+        // cancel the call and co-tenants on the same worker thread starve.
+        if !matches!(progress, RunProgress::Complete(_)) {
+            if python_deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+                return Ok(format_exception_with_output(
+                    MontyException::new(ExcType::TimeoutError, None),
+                    &buf,
+                    Some(time_limit),
+                ));
+            }
+            tokio::task::yield_now().await;
+        }
         match progress {
             RunProgress::OsCall(os_call) => {
                 let function_call = os_call.function_call.clone();

@@ -16,7 +16,12 @@ use std::time::Duration;
 fn rounds() -> usize {
     std::env::var("BASHKIT_STRESS_ROUNDS")
         .ok()
-        .and_then(|v| v.parse().ok())
+        .map(|v| {
+            v.parse::<usize>()
+                .ok()
+                .filter(|n| (1..=1000).contains(n))
+                .unwrap_or_else(|| panic!("BASHKIT_STRESS_ROUNDS must be 1..=1000, got {v:?}"))
+        })
         .unwrap_or(3)
 }
 
@@ -118,21 +123,30 @@ async fn mixed_hostile_and_good_tenants_stay_isolated() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn abandoned_calls_do_not_poison_the_worker_threads() {
-    // Drop python3 calls mid-run (caller-side timeout). The metering window is
-    // per thread; if dropping left it set, later VMs on that thread would be
-    // charged to a dead meter and fail or pass wrongly.
+    // Drop python3 calls while they are suspended between VM steps (caller-side
+    // timeout). The VM only yields at host calls, so the script loops on file
+    // writes while holding 8 MiB. Dropping it frees that memory outside any
+    // metering window. If that corrupted the per-thread meter, or charged a
+    // dead budget, later VMs on the same threads (and the same session) would
+    // fail or pass wrongly.
+    const HOLD_AND_YIELD: &str = "python3 -c \"from pathlib import Path\nx = 'a' * (8 * 1024 * 1024)\np = Path('/tmp/spin')\nwhile True:\n    p.write_text('x')\"";
     for _ in 0..rounds() {
         let mut abandoned = Vec::new();
         for _ in 0..8 {
             abandoned.push(tokio::spawn(async {
-                let mut bash = tenant(16, 2000);
-                let _ = tokio::time::timeout(
-                    Duration::from_millis(20),
-                    bash.exec(
-                        "python3 -c \"x = []\nwhile True:\n    x.append(1)\n    x = x[-10:]\"",
-                    ),
-                )
-                .await;
+                let mut bash = tenant(16, 5000);
+                let dropped =
+                    tokio::time::timeout(Duration::from_millis(50), bash.exec(HOLD_AND_YIELD))
+                        .await
+                        .is_err();
+                assert!(dropped, "call finished instead of being abandoned");
+                // Same session right after: its full budget must be available.
+                let r = bash
+                    .exec("python3 -c \"x = 'a' * (10 * 1024 * 1024)\nprint(len(x) // 1048576)\"")
+                    .await
+                    .unwrap();
+                assert_eq!(r.exit_code, 0, "after abandon stderr: {}", r.stderr);
+                assert_eq!(r.stdout, "10\n");
             }));
         }
         for h in abandoned {
@@ -207,4 +221,23 @@ async fn huge_single_allocations_are_refused_up_front() {
     for h in handles {
         h.await.unwrap();
     }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn host_call_loops_stop_at_the_wall_clock_limit() {
+    // Monty's clock pauses while the VM waits on the host, so a loop of cheap
+    // file writes used to run ~10x past max_duration and never yield the
+    // worker thread. The limit must bound wall-clock time.
+    let mut bash = tenant(16, 500);
+    let started = std::time::Instant::now();
+    let r = bash
+        .exec("python3 -c \"from pathlib import Path\np = Path('/tmp/spin')\nwhile True:\n    p.write_text('x')\"")
+        .await
+        .unwrap();
+    let elapsed = started.elapsed();
+    assert_eq!(r.exit_code, 124, "stderr: {}", r.stderr);
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "ran {elapsed:?} past a 500 ms limit"
+    );
 }
