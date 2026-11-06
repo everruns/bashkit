@@ -3014,20 +3014,21 @@ async fn collect_rg_inputs(
     ctx: Context<'_>,
     opts: &RgOptions,
     budget: &mut RgReadBudget,
-) -> std::result::Result<RgCollectedInputs, ExecResult> {
+    out: &mut RgSearch<'_>,
+) -> std::result::Result<(), ExecResult> {
     if opts.paths.is_empty() {
         if !opts.stdin_consumed_for_patterns
             && let Some(stdin) = ctx.stdin
         {
             let stdin = stdin.to_string();
             budget.charge(stdin.len());
-            return Ok(RgCollectedInputs::new(vec![RgInput::explicit(
-                "(stdin)", stdin,
-            )]));
+            out.push(RgInput::explicit("(stdin)", stdin));
+            return Ok(());
         }
 
         if let Some(inputs) = try_indexed_search(&*ctx.fs, opts, ctx.cwd, budget).await {
-            return Ok(RgCollectedInputs::new(inputs));
+            inputs.into_iter().for_each(|input| out.push(input));
+            return Ok(());
         }
 
         let root = RgSearchRoot {
@@ -3035,14 +3036,15 @@ async fn collect_rg_inputs(
             actual: ctx.cwd.to_path_buf(),
             display_hint: RgDisplayHint::None,
         };
-        return Ok(stream_rg_root(&*ctx.fs, root, opts, ctx.cwd, budget).await);
+        stream_rg_roots(&*ctx.fs, vec![root], opts, ctx.cwd, budget, out).await;
+        return Ok(());
     }
 
     if let Some(inputs) = try_indexed_search(&*ctx.fs, opts, ctx.cwd, budget).await {
-        return Ok(RgCollectedInputs::new(inputs));
+        inputs.into_iter().for_each(|input| out.push(input));
+        return Ok(());
     }
 
-    let mut collected = RgCollectedInputs::default();
     let mut candidates = Vec::new();
     let mut roots = Vec::new();
     for p in &opts.paths {
@@ -3066,62 +3068,41 @@ async fn collect_rg_inputs(
                 });
             }
             None => {
-                if budget.exhausted() {
+                if budget.exhausted() || out.stopped() {
                     break;
                 }
-                let text = match read_rg_text_file(&*ctx.fs, &path, ctx.cwd, p, opts).await {
-                    Ok(t) => t,
-                    Err(e) => {
-                        collected.had_errors = true;
-                        if opts.messages {
-                            collected.stderr.push_str(&e.stderr);
-                        }
-                        continue;
+                match read_rg_text_file(&*ctx.fs, &path, ctx.cwd, p, opts).await {
+                    Ok(text) => {
+                        budget.charge(text.len());
+                        out.push(RgInput::explicit(
+                            apply_path_separator_to_display(p, opts),
+                            text,
+                        ));
                     }
-                };
-                budget.charge(text.len());
-                collected.inputs.push(RgInput::explicit(
-                    apply_path_separator_to_display(p, opts),
-                    text,
-                ));
+                    Err(e) => out.error(&e.stderr),
+                }
             }
         }
     }
-    let path_order = opts.sort == RgSort::Path && !opts.sort_reverse;
-    if path_order
-        && roots.len() == 1
-        && let Some(root) = roots.pop()
-    {
-        // Explicit files come first, then the one root's walk in path order:
-        // read them as found instead of holding every candidate.
-        let read = read_rg_files(&*ctx.fs, candidates, ctx.cwd, opts, budget).await;
-        collected.had_errors |= read.had_errors;
-        collected.stderr.push_str(&read.stderr);
-        collected.inputs.extend(read.inputs);
-        let read = stream_rg_root(&*ctx.fs, root, opts, ctx.cwd, budget).await;
-        collected.had_errors |= read.had_errors;
-        collected.stderr.push_str(&read.stderr);
-        collected.inputs.extend(read.inputs);
-        return Ok(collected);
+    if opts.sort == RgSort::Path && !opts.sort_reverse {
+        // Explicit files come first, then the roots' walks in path order.
+        read_rg_files(&*ctx.fs, candidates, ctx.cwd, opts, budget, out).await;
+        stream_rg_roots(&*ctx.fs, roots, opts, ctx.cwd, budget, out).await;
+        return Ok(());
     }
     if !roots.is_empty() {
         candidates.extend(collect_rg_files_recursive(&*ctx.fs, &roots, opts, ctx.cwd).await);
     }
-    if !path_order {
-        sort_rg_candidates(&mut candidates, opts);
-    }
-    let read = read_rg_files(&*ctx.fs, candidates, ctx.cwd, opts, budget).await;
-    collected.had_errors |= read.had_errors;
-    collected.stderr.push_str(&read.stderr);
-    collected.inputs.extend(read.inputs);
-    Ok(collected)
+    sort_rg_candidates(&mut candidates, opts);
+    read_rg_files(&*ctx.fs, candidates, ctx.cwd, opts, budget, out).await;
+    Ok(())
 }
 
 /// Charges file contents to the execution budget as they are read.
 ///
-/// THREAT[TM-DOS-140]: rg holds every searched file's text until output is
-/// built, so a tree bigger than the input budget must stop at the budget,
-/// not load everything first and fail after. Reading stops at the first
+/// THREAT[TM-DOS-140]: rg searches each file as it reads it (`RgSearch`), but
+/// the budget still bounds the total read, so a tree bigger than it stops at
+/// the budget instead of reading everything. Reading stops at the first
 /// refused charge; the caller turns it into the limit error.
 struct RgReadBudget {
     budget: Option<crate::limits::ExecutionBudget>,
@@ -3164,13 +3145,6 @@ impl RgReadBudget {
     }
 }
 
-#[derive(Default)]
-struct RgCollectedInputs {
-    inputs: Vec<RgInput>,
-    stderr: String,
-    had_errors: bool,
-}
-
 struct RgInput {
     display: String,
     content: String,
@@ -3191,15 +3165,6 @@ impl RgInput {
             display: display.into(),
             content,
             explicit: false,
-        }
-    }
-}
-
-impl RgCollectedInputs {
-    fn new(inputs: Vec<RgInput>) -> Self {
-        Self {
-            inputs,
-            ..Default::default()
         }
     }
 }
@@ -3787,7 +3752,7 @@ async fn collect_rg_files_recursive(
 }
 
 /// Where the walk hands each file it accepts.
-enum RgSink<'a> {
+enum RgSink<'a, 'b> {
     /// Keep candidates for the caller to sort or list.
     Collect(Vec<RgFileCandidate>),
     /// Read each file as it is found. THREAT[TM-DOS-140]: on a huge tree the
@@ -3797,11 +3762,11 @@ enum RgSink<'a> {
     Read {
         cwd: &'a Path,
         budget: &'a mut RgReadBudget,
-        out: RgCollectedInputs,
+        out: &'a mut RgSearch<'b>,
     },
 }
 
-impl RgSink<'_> {
+impl RgSink<'_, '_> {
     async fn push(
         &mut self,
         fs: &dyn crate::fs::FileSystem,
@@ -3817,7 +3782,7 @@ impl RgSink<'_> {
     }
 
     fn stopped(&self) -> bool {
-        matches!(self, Self::Read { budget, .. } if budget.exhausted())
+        matches!(self, Self::Read { budget, out, .. } if budget.exhausted() || out.stopped())
     }
 }
 
@@ -3838,7 +3803,7 @@ async fn enter_rg_walk_item(
     opts: &RgOptions,
     cwd: &Path,
     stack: &mut Vec<RgWalkFrame>,
-    sink: &mut RgSink<'_>,
+    sink: &mut RgSink<'_, '_>,
 ) {
     // List first: the listing says which ignore files exist, so missing
     // ones cost no lookup (one `read_dir` per directory on remote VFSes).
@@ -3903,7 +3868,7 @@ async fn walk_rg_files(
     roots: &[RgSearchRoot],
     opts: &RgOptions,
     cwd: &Path,
-    sink: &mut RgSink<'_>,
+    sink: &mut RgSink<'_, '_>,
 ) {
     let mut stack: Vec<RgWalkFrame> = Vec::new();
     for root in roots {
@@ -4107,64 +4072,67 @@ async fn read_rg_files(
     cwd: &Path,
     opts: &RgOptions,
     budget: &mut RgReadBudget,
-) -> RgCollectedInputs {
-    let mut collected = RgCollectedInputs::default();
+    out: &mut RgSearch<'_>,
+) {
     for file in files {
-        if budget.exhausted() {
+        if budget.exhausted() || out.stopped() {
             break;
         }
-        read_rg_candidate(fs, file, cwd, opts, budget, &mut collected).await;
+        read_rg_candidate(fs, file, cwd, opts, budget, out).await;
     }
-    collected
 }
 
-/// Walk one root in path order, reading each file as it is found.
-async fn stream_rg_root(
+/// Walk roots in path order, searching each file as it is found.
+///
+/// THREAT[TM-DOS-140]: neither the candidate list nor the searched text is
+/// held; memory stays at the output plus the walk's open directories.
+/// Roots are walked one after another in path order, which equals the
+/// global path sort unless one root lies inside another (or repeats); that
+/// case keeps the collected, globally sorted list.
+async fn stream_rg_roots(
     fs: &dyn crate::fs::FileSystem,
-    root: RgSearchRoot,
+    mut roots: Vec<RgSearchRoot>,
     opts: &RgOptions,
     cwd: &Path,
     budget: &mut RgReadBudget,
-) -> RgCollectedInputs {
-    if opts.sort != RgSort::Path || opts.sort_reverse {
-        let files = collect_rg_files_recursive(fs, &[root], opts, cwd).await;
-        return read_rg_files(fs, files, cwd, opts, budget).await;
+    out: &mut RgSearch<'_>,
+) {
+    roots.sort_by(|a, b| a.logical.cmp(&b.logical));
+    let nested = roots
+        .windows(2)
+        .any(|w| w[1].logical.starts_with(&w[0].logical));
+    if nested {
+        let files = collect_rg_files_recursive(fs, &roots, opts, cwd).await;
+        read_rg_files(fs, files, cwd, opts, budget, out).await;
+        return;
     }
-    let mut sink = RgSink::Read {
-        cwd,
-        budget,
-        out: RgCollectedInputs::default(),
-    };
-    walk_rg_files(fs, &[root], opts, cwd, &mut sink).await;
-    match sink {
-        RgSink::Read { out, .. } => out,
-        RgSink::Collect(_) => RgCollectedInputs::default(),
+    let mut sink = RgSink::Read { cwd, budget, out };
+    for root in roots {
+        walk_rg_files(fs, std::slice::from_ref(&root), opts, cwd, &mut sink).await;
+        if sink.stopped() {
+            break;
+        }
     }
 }
 
-/// Read one candidate into `out`, charging `budget` (nothing once spent).
+/// Read and search one candidate, charging `budget` (nothing once spent).
 async fn read_rg_candidate(
     fs: &dyn crate::fs::FileSystem,
     file: RgFileCandidate,
     cwd: &Path,
     opts: &RgOptions,
     budget: &mut RgReadBudget,
-    out: &mut RgCollectedInputs,
+    out: &mut RgSearch<'_>,
 ) {
-    if budget.exhausted() {
+    if budget.exhausted() || out.stopped() {
         return;
     }
     let display = candidate_display_path(&file, cwd, opts);
     match read_rg_text_file(fs, &file.actual, cwd, &display, opts).await {
         Ok(text) if !budget.charge(text.len()) => {}
-        Ok(text) if file.explicit => out.inputs.push(RgInput::explicit(display, text)),
-        Ok(text) => out.inputs.push(RgInput::discovered(display, text)),
-        Err(e) => {
-            out.had_errors = true;
-            if opts.messages {
-                out.stderr.push_str(&e.stderr);
-            }
-        }
+        Ok(text) if file.explicit => out.push(RgInput::explicit(display, text)),
+        Ok(text) => out.push(RgInput::discovered(display, text)),
+        Err(e) => out.error(&e.stderr),
     }
 }
 
@@ -5772,21 +5740,12 @@ impl Builtin for Rg {
             .execution_budget()
             .and_then(|budget| budget.try_with(Clone::clone).ok());
         let mut read_budget = RgReadBudget::new(execution_budget);
-        let collected_inputs = match collect_rg_inputs(ctx, &opts, &mut read_budget).await {
-            Ok(inputs) => inputs,
-            Err(result) => return Ok(result),
-        };
-        if let Some(exceeded) = read_budget.exceeded {
-            return Err(exceeded.into());
-        }
-        let inputs = collected_inputs.inputs;
-
         let show_filename = if opts.no_filename {
             false
         } else if opts.show_filename {
             true
         } else {
-            recursive_output || inputs.len() > 1 || opts.paths.len() > 1
+            recursive_output || opts.paths.len() > 1
         };
         let has_context = opts.before_context > 0 || opts.after_context > 0;
         let json_output = opts.json
@@ -5795,16 +5754,159 @@ impl Builtin for Rg {
             && !opts.files_with_matches
             && !opts.files_without_matches;
 
-        let mut output = String::new();
-        let mut any_match = false;
-        let mut json_bytes_searched = 0usize;
-        let mut json_matched_lines = 0usize;
-        let mut json_matches = 0usize;
-        let mut json_searches = 0usize;
-        let mut json_searches_with_match = 0usize;
-        let mut stats = RgSearchStats::default();
+        let mut search = RgSearch {
+            opts: &opts,
+            regex: &regex,
+            output_limit,
+            show_filename,
+            has_context,
+            json_output,
+            output: String::new(),
+            any_match: false,
+            json_bytes_searched: 0,
+            json_matched_lines: 0,
+            json_matches: 0,
+            json_searches: 0,
+            json_searches_with_match: 0,
+            stats: RgSearchStats::default(),
+            stderr: String::new(),
+            had_errors: false,
+            done: None,
+        };
+        if let Err(result) = collect_rg_inputs(ctx, &opts, &mut read_budget, &mut search).await {
+            return Ok(result);
+        }
+        if let Some(result) = search.done {
+            return Ok(result);
+        }
+        if let Some(exceeded) = read_budget.exceeded {
+            return Err(exceeded.into());
+        }
+        let RgSearch {
+            mut output,
+            any_match,
+            json_bytes_searched,
+            json_matched_lines,
+            json_matches,
+            json_searches,
+            json_searches_with_match,
+            stats,
+            stderr,
+            had_errors,
+            ..
+        } = search;
 
-        for input in &inputs {
+        if json_output {
+            write_rg_json_summary(
+                &mut output,
+                json_bytes_searched,
+                json_matched_lines,
+                json_matches,
+                json_searches,
+                json_searches_with_match,
+            );
+        } else if opts.stats {
+            let bytes_printed = if opts.count_only
+                || opts.count_matches
+                || opts.files_with_matches
+                || opts.files_without_matches
+                || opts.quiet
+            {
+                0
+            } else {
+                output.len()
+            };
+            append_rg_stats(&mut output, &stats, bytes_printed);
+        }
+
+        truncate_rg_output(&mut output, output_limit);
+
+        let exit_code = if had_errors {
+            2
+        } else if any_match {
+            0
+        } else {
+            1
+        };
+        Ok(ExecResult {
+            stdout: output.into(),
+            stderr: stderr.into(),
+            exit_code,
+            ..Default::default()
+        })
+    }
+}
+
+/// Search state for one rg run. Inputs are searched as they are read and
+/// dropped right after, so memory holds the output, not the searched text.
+///
+/// THREAT[TM-DOS-140]: a search over millions of files must not keep every
+/// file's text until output is built.
+struct RgSearch<'a> {
+    opts: &'a RgOptions,
+    regex: &'a RgMatcher,
+    output_limit: usize,
+    show_filename: bool,
+    has_context: bool,
+    json_output: bool,
+    output: String,
+    any_match: bool,
+    json_bytes_searched: usize,
+    json_matched_lines: usize,
+    json_matches: usize,
+    json_searches: usize,
+    json_searches_with_match: usize,
+    stats: RgSearchStats,
+    stderr: String,
+    had_errors: bool,
+    /// Set when a mode such as `-q` decided the result early; reading stops.
+    done: Option<ExecResult>,
+}
+
+impl RgSearch<'_> {
+    /// Search one input now (nothing once a result is decided).
+    fn push(&mut self, input: RgInput) {
+        if self.done.is_none() {
+            self.done = self.search(&input);
+        }
+    }
+
+    fn error(&mut self, stderr: &str) {
+        self.had_errors = true;
+        if self.opts.messages {
+            self.stderr.push_str(stderr);
+        }
+    }
+
+    fn stopped(&self) -> bool {
+        self.done.is_some()
+    }
+
+    #[allow(clippy::never_loop)]
+    fn search(&mut self, input: &RgInput) -> Option<ExecResult> {
+        let Self {
+            opts,
+            regex,
+            output_limit,
+            show_filename,
+            has_context,
+            json_output,
+            output,
+            any_match,
+            json_bytes_searched,
+            json_matched_lines,
+            json_matches,
+            json_searches,
+            json_searches_with_match,
+            stats,
+            stderr,
+            ..
+        } = self;
+        let (opts, regex) = (*opts, *regex);
+        let (output_limit, show_filename, has_context, json_output) =
+            (*output_limit, *show_filename, *has_context, *json_output);
+        // One pass; `continue` ends this input like the old per-input loop.
+        for input in std::iter::once(input) {
             let filename = input.display.as_str();
             let content = input.content.as_str();
             let mut match_count = 0usize;
@@ -5814,7 +5916,7 @@ impl Builtin for Rg {
             let binary_offset = first_nul_offset(content).filter(|_| !opts.text);
             let json_binary_search = binary_offset.is_some() && json_output;
             if json_binary_search {
-                json_searches += 1;
+                *json_searches += 1;
                 if !opts.binary && !input.explicit {
                     continue;
                 }
@@ -5831,22 +5933,20 @@ impl Builtin for Rg {
                 let matched = if opts.invert_match { !matched } else { matched };
                 if !matched {
                     if opts.quiet {
-                        if let Some(result) =
-                            rg_quiet_result(&opts, 0, &mut any_match, &collected_inputs.stderr)
-                        {
-                            return Ok(result);
+                        if let Some(result) = rg_quiet_result(opts, 0, any_match, stderr.as_str()) {
+                            return Some(result);
                         }
                         continue;
                     }
                     if opts.files_without_matches {
-                        any_match = true;
+                        *any_match = true;
                         output.push_str(&color_path(
                             filename,
                             opts.color_enabled(),
                             &opts.color_scheme,
                         ));
                         output.push(if opts.null { '\0' } else { '\n' });
-                        truncate_rg_output(&mut output, output_limit);
+                        truncate_rg_output(output, output_limit);
                     } else if (opts.count_only || opts.count_matches) && opts.include_zero {
                         if show_filename {
                             output.push_str(&color_path(
@@ -5861,15 +5961,13 @@ impl Builtin for Rg {
                     continue;
                 }
 
-                any_match = true;
+                *any_match = true;
                 stats.matches += 1;
                 stats.matched_lines += 1;
                 stats.files_with_matches += 1;
                 if opts.quiet {
-                    if let Some(result) =
-                        rg_quiet_result(&opts, 1, &mut any_match, &collected_inputs.stderr)
-                    {
-                        return Ok(result);
+                    if let Some(result) = rg_quiet_result(opts, 1, any_match, stderr.as_str()) {
+                        return Some(result);
                     }
                     continue;
                 }
@@ -5883,7 +5981,7 @@ impl Builtin for Rg {
                         &opts.color_scheme,
                     ));
                     output.push(if opts.null { '\0' } else { '\n' });
-                    truncate_rg_output(&mut output, output_limit);
+                    truncate_rg_output(output, output_limit);
                     continue;
                 }
                 if opts.count_only || opts.count_matches {
@@ -5928,7 +6026,7 @@ impl Builtin for Rg {
                 let search_lines = split_rg_lines(search_content, opts.crlf, opts.null_data);
                 let display_lines = split_rg_lines(content, opts.crlf, opts.null_data);
                 let mut file_matches = 0usize;
-                json_bytes_searched += nul_offset;
+                *json_bytes_searched += nul_offset;
                 stats.bytes_searched += nul_offset;
 
                 for (line_idx, line) in search_lines.iter().enumerate() {
@@ -5950,45 +6048,45 @@ impl Builtin for Rg {
                         1
                     };
                     file_matches += matches_on_line;
-                    json_matches += matches_on_line;
-                    json_matched_lines += 1;
+                    *json_matches += matches_on_line;
+                    *json_matched_lines += 1;
                     stats.matches += matches_on_line;
                     stats.matched_lines += 1;
                     match_lines.push(line_idx);
-                    any_match = true;
+                    *any_match = true;
                 }
 
                 if match_count > 0 {
                     stats.files_with_matches += 1;
-                    write_rg_json_begin(&mut output, filename);
+                    write_rg_json_begin(output, filename);
                     for &line_idx in &match_lines {
                         let display_line = display_lines
                             .get(line_idx)
                             .copied()
                             .unwrap_or(search_lines[line_idx]);
                         write_rg_json_match_with_text(
-                            &mut output,
+                            output,
                             filename,
                             display_line,
                             line_idx,
-                            &regex,
+                            regex,
                             opts.replacement.as_deref(),
                             search_lines[line_idx].match_text,
                         );
-                        truncate_rg_output(&mut output, output_limit);
+                        truncate_rg_output(output, output_limit);
                         if output.len() >= output_limit {
                             break;
                         }
                     }
                     write_rg_json_end(
-                        &mut output,
+                        output,
                         filename,
                         binary_offset,
                         nul_offset,
                         match_count,
                         file_matches,
                     );
-                    json_searches_with_match += 1;
+                    *json_searches_with_match += 1;
                 }
                 continue;
             }
@@ -5999,10 +6097,10 @@ impl Builtin for Rg {
             } else {
                 content
             };
-            let record_terminator = rg_record_terminator(&opts);
-            json_bytes_searched += content.len();
+            let record_terminator = rg_record_terminator(opts);
+            *json_bytes_searched += content.len();
             if !json_binary_search {
-                json_searches += 1;
+                *json_searches += 1;
             }
             stats.bytes_searched += content.len();
 
@@ -6022,18 +6120,15 @@ impl Builtin for Rg {
                     stats.matched_lines += 1;
                     stats.files_with_matches += 1;
                     if !opts.files_without_matches {
-                        any_match = true;
+                        *any_match = true;
                     }
                 }
 
                 if opts.quiet {
-                    if let Some(result) = rg_quiet_result(
-                        &opts,
-                        match_count,
-                        &mut any_match,
-                        &collected_inputs.stderr,
-                    ) {
-                        return Ok(result);
+                    if let Some(result) =
+                        rg_quiet_result(opts, match_count, any_match, stderr.as_str())
+                    {
+                        return Some(result);
                     }
                     continue;
                 }
@@ -6052,7 +6147,7 @@ impl Builtin for Rg {
                 }
                 if opts.files_without_matches {
                     if !matched {
-                        any_match = true;
+                        *any_match = true;
                         output.push_str(&color_path(
                             filename,
                             opts.color_enabled(),
@@ -6116,7 +6211,7 @@ impl Builtin for Rg {
                     stats.matches += matches_on_line;
                     stats.matched_lines += 1;
                     if !opts.files_without_matches {
-                        any_match = true;
+                        *any_match = true;
                     }
 
                     if (opts.files_with_matches || opts.files_without_matches || opts.quiet)
@@ -6131,13 +6226,10 @@ impl Builtin for Rg {
                 }
 
                 if opts.quiet {
-                    if let Some(result) = rg_quiet_result(
-                        &opts,
-                        match_count,
-                        &mut any_match,
-                        &collected_inputs.stderr,
-                    ) {
-                        return Ok(result);
+                    if let Some(result) =
+                        rg_quiet_result(opts, match_count, any_match, stderr.as_str())
+                    {
+                        return Some(result);
                     }
                     continue;
                 }
@@ -6156,7 +6248,7 @@ impl Builtin for Rg {
                 }
                 if opts.files_without_matches {
                     if match_count == 0 {
-                        any_match = true;
+                        *any_match = true;
                         output.push_str(&color_path(
                             filename,
                             opts.color_enabled(),
@@ -6184,7 +6276,7 @@ impl Builtin for Rg {
                     }
                     output.push_str(&count_value.to_string());
                     output.push(record_terminator);
-                    truncate_rg_output(&mut output, output_limit);
+                    truncate_rg_output(output, output_limit);
                     continue;
                 }
             }
@@ -6203,7 +6295,7 @@ impl Builtin for Rg {
                 } else {
                     opts.max_count
                 };
-                let matches = collect_rg_multiline_matches(&regex, content, &lines, collect_limit);
+                let matches = collect_rg_multiline_matches(regex, content, &lines, collect_limit);
                 let match_line_indices = rg_multiline_match_lines(&matches);
                 let context_match_lines = rg_unique_sorted_lines(&match_line_indices);
 
@@ -6229,25 +6321,22 @@ impl Builtin for Rg {
                     } else {
                         0
                     };
-                    json_matched_lines += inverted_match_lines.len();
+                    *json_matched_lines += inverted_match_lines.len();
                     stats.matches += inverted_matches;
                     stats.matched_lines += inverted_match_lines.len();
 
                     if match_count > 0 {
                         stats.files_with_matches += 1;
                         if !opts.files_without_matches {
-                            any_match = true;
+                            *any_match = true;
                         }
                     }
 
                     if opts.quiet {
-                        if let Some(result) = rg_quiet_result(
-                            &opts,
-                            match_count,
-                            &mut any_match,
-                            &collected_inputs.stderr,
-                        ) {
-                            return Ok(result);
+                        if let Some(result) =
+                            rg_quiet_result(opts, match_count, any_match, stderr.as_str())
+                        {
+                            return Some(result);
                         }
                         continue;
                     }
@@ -6266,7 +6355,7 @@ impl Builtin for Rg {
                     }
                     if opts.files_without_matches {
                         if match_count == 0 {
-                            any_match = true;
+                            *any_match = true;
                             output.push_str(&color_path(
                                 filename,
                                 opts.color_enabled(),
@@ -6282,30 +6371,30 @@ impl Builtin for Rg {
                     }
                     if json_output {
                         if match_count > 0 {
-                            write_rg_json_begin(&mut output, filename);
+                            write_rg_json_begin(output, filename);
                             for &line_idx in &inverted_match_lines {
                                 write_rg_json_match(
-                                    &mut output,
+                                    output,
                                     filename,
                                     lines[line_idx],
                                     line_idx,
-                                    &regex,
+                                    regex,
                                     opts.replacement.as_deref(),
                                 );
-                                truncate_rg_output(&mut output, output_limit);
+                                truncate_rg_output(output, output_limit);
                                 if output.len() >= output_limit {
                                     break;
                                 }
                             }
                             write_rg_json_end(
-                                &mut output,
+                                output,
                                 filename,
                                 binary_offset,
                                 content.len(),
                                 inverted_match_lines.len(),
                                 0,
                             );
-                            json_searches_with_match += 1;
+                            *json_searches_with_match += 1;
                         }
                         continue;
                     }
@@ -6323,7 +6412,7 @@ impl Builtin for Rg {
                         }
                         output.push_str(&count_value.to_string());
                         output.push(record_terminator);
-                        truncate_rg_output(&mut output, output_limit);
+                        truncate_rg_output(output, output_limit);
                         continue;
                     }
                     if opts.quiet {
@@ -6333,7 +6422,7 @@ impl Builtin for Rg {
                     let line_show_filename = if opts.heading && show_filename && match_count > 0 {
                         if !output.is_empty() {
                             output.push(record_terminator);
-                            truncate_rg_output(&mut output, output_limit);
+                            truncate_rg_output(output, output_limit);
                         }
                         output.push_str(&color_path(
                             filename,
@@ -6341,7 +6430,7 @@ impl Builtin for Rg {
                             &opts.color_scheme,
                         ));
                         output.push(record_terminator);
-                        truncate_rg_output(&mut output, output_limit);
+                        truncate_rg_output(output, output_limit);
                         false
                     } else {
                         show_filename
@@ -6354,22 +6443,22 @@ impl Builtin for Rg {
                         {
                             output.push_str(&opts.context_separator);
                             output.push(record_terminator);
-                            truncate_rg_output(&mut output, output_limit);
+                            truncate_rg_output(output, output_limit);
                         }
                         write_rg_context(
-                            &mut output,
+                            output,
                             filename,
-                            &regex,
+                            regex,
                             &lines,
                             &inverted_match_lines,
-                            &opts,
+                            opts,
                             line_show_filename,
                             output_limit,
                         );
                     } else {
                         for &line_idx in &inverted_match_lines {
                             write_rg_prefix(
-                                &mut output,
+                                output,
                                 RgPrefix {
                                     filename,
                                     show_filename: line_show_filename,
@@ -6391,13 +6480,13 @@ impl Builtin for Rg {
                             output.push_str(&format_rg_output_line(
                                 lines[line_idx].text,
                                 lines[line_idx].match_text,
-                                &regex,
-                                &opts,
+                                regex,
+                                opts,
                                 true,
-                                rg_output_remaining(&output, output_limit),
+                                rg_output_remaining(output, output_limit),
                             ));
                             output.push(record_terminator);
-                            truncate_rg_output(&mut output, output_limit);
+                            truncate_rg_output(output, output_limit);
                         }
                     }
                     continue;
@@ -6405,26 +6494,23 @@ impl Builtin for Rg {
 
                 match_count = matches.len();
                 count_value = matches.len();
-                json_matches += matches.len();
-                json_matched_lines += match_line_indices.len();
+                *json_matches += matches.len();
+                *json_matched_lines += match_line_indices.len();
                 stats.matches += matches.len();
                 stats.matched_lines += match_line_indices.len();
 
                 if match_count > 0 {
                     stats.files_with_matches += 1;
                     if !opts.files_without_matches {
-                        any_match = true;
+                        *any_match = true;
                     }
                 }
 
                 if opts.quiet {
-                    if let Some(result) = rg_quiet_result(
-                        &opts,
-                        match_count,
-                        &mut any_match,
-                        &collected_inputs.stderr,
-                    ) {
-                        return Ok(result);
+                    if let Some(result) =
+                        rg_quiet_result(opts, match_count, any_match, stderr.as_str())
+                    {
+                        return Some(result);
                     }
                     continue;
                 }
@@ -6443,7 +6529,7 @@ impl Builtin for Rg {
                 }
                 if opts.files_without_matches {
                     if match_count == 0 {
-                        any_match = true;
+                        *any_match = true;
                         output.push_str(&color_path(
                             filename,
                             opts.color_enabled(),
@@ -6459,7 +6545,7 @@ impl Builtin for Rg {
                 }
                 if json_output {
                     if match_count > 0 {
-                        write_rg_json_begin(&mut output, filename);
+                        write_rg_json_begin(output, filename);
                         let match_line_set: HashSet<usize> =
                             context_match_lines.iter().copied().collect();
                         let context_lines = if opts.passthru {
@@ -6478,7 +6564,7 @@ impl Builtin for Rg {
                             Vec::new()
                         };
                         if context_lines.len() > RG_MAX_JSON_CONTEXT_EVENTS {
-                            return Ok(ExecResult::err(
+                            return Some(ExecResult::err(
                                 "rg: too many JSON context events (output capped)\n".to_string(),
                                 2,
                             ));
@@ -6486,14 +6572,14 @@ impl Builtin for Rg {
                         if context_lines.is_empty() {
                             for &mat in &matches {
                                 write_rg_json_multiline_match(
-                                    &mut output,
+                                    output,
                                     filename,
                                     &lines,
                                     mat,
-                                    &regex,
+                                    regex,
                                     opts.replacement.as_deref(),
                                 );
-                                truncate_rg_output(&mut output, output_limit);
+                                truncate_rg_output(output, output_limit);
                                 if output.len() >= output_limit {
                                     break;
                                 }
@@ -6509,36 +6595,36 @@ impl Builtin for Rg {
                             for line_idx in event_lines {
                                 if let Some(mat) = match_by_start_line.get(&line_idx).copied() {
                                     write_rg_json_multiline_match(
-                                        &mut output,
+                                        output,
                                         filename,
                                         &lines,
                                         mat,
-                                        &regex,
+                                        regex,
                                         opts.replacement.as_deref(),
                                     );
                                 } else {
                                     write_rg_json_context(
-                                        &mut output,
+                                        output,
                                         filename,
                                         lines[line_idx],
                                         line_idx,
                                     );
                                 }
-                                truncate_rg_output(&mut output, output_limit);
+                                truncate_rg_output(output, output_limit);
                                 if output.len() >= output_limit {
                                     break;
                                 }
                             }
                         }
                         write_rg_json_end(
-                            &mut output,
+                            output,
                             filename,
                             binary_offset,
                             content.len(),
                             match_line_indices.len(),
                             matches.len(),
                         );
-                        json_searches_with_match += 1;
+                        *json_searches_with_match += 1;
                     }
                     continue;
                 }
@@ -6556,7 +6642,7 @@ impl Builtin for Rg {
                     }
                     output.push_str(&count_value.to_string());
                     output.push(record_terminator);
-                    truncate_rg_output(&mut output, output_limit);
+                    truncate_rg_output(output, output_limit);
                     continue;
                 }
                 if opts.quiet {
@@ -6566,7 +6652,7 @@ impl Builtin for Rg {
                 let line_show_filename = if opts.heading && show_filename && match_count > 0 {
                     if !output.is_empty() {
                         output.push(record_terminator);
-                        truncate_rg_output(&mut output, output_limit);
+                        truncate_rg_output(output, output_limit);
                     }
                     output.push_str(&color_path(
                         filename,
@@ -6574,7 +6660,7 @@ impl Builtin for Rg {
                         &opts.color_scheme,
                     ));
                     output.push(record_terminator);
-                    truncate_rg_output(&mut output, output_limit);
+                    truncate_rg_output(output, output_limit);
                     false
                 } else {
                     show_filename
@@ -6606,9 +6692,9 @@ impl Builtin for Rg {
                                     continue;
                                 }
                                 for &mat in line_matches {
-                                    let segments = rg_multiline_match_segments(mat, &regex, &opts);
+                                    let segments = rg_multiline_match_segments(mat, regex, opts);
                                     write_rg_multiline_match_segments(
-                                        &mut output,
+                                        output,
                                         mat,
                                         &segments,
                                         RgMultilineMatchPrefix {
@@ -6641,7 +6727,7 @@ impl Builtin for Rg {
                             opts.field_context_separator.as_str()
                         };
                         write_rg_prefix(
-                            &mut output,
+                            output,
                             RgPrefix {
                                 filename,
                                 show_filename: line_show_filename,
@@ -6663,21 +6749,21 @@ impl Builtin for Rg {
                         output.push_str(&format_rg_output_line(
                             line.text,
                             line.match_text,
-                            &regex,
-                            &opts,
+                            regex,
+                            opts,
                             matched,
-                            rg_output_remaining(&output, output_limit),
+                            rg_output_remaining(output, output_limit),
                         ));
                         output.push(record_terminator);
-                        truncate_rg_output(&mut output, output_limit);
+                        truncate_rg_output(output, output_limit);
                         line_idx += 1;
                     }
                 } else if opts.vimgrep {
                     for mat in &matches {
                         if opts.only_matching {
-                            let segments = rg_multiline_match_segments(*mat, &regex, &opts);
+                            let segments = rg_multiline_match_segments(*mat, regex, opts);
                             write_rg_multiline_match_segments(
-                                &mut output,
+                                output,
                                 *mat,
                                 &segments,
                                 RgMultilineMatchPrefix {
@@ -6698,7 +6784,7 @@ impl Builtin for Rg {
                             continue;
                         }
                         write_rg_prefix(
-                            &mut output,
+                            output,
                             RgPrefix {
                                 filename,
                                 show_filename: true,
@@ -6716,19 +6802,19 @@ impl Builtin for Rg {
                         output.push_str(&format_rg_output_line(
                             lines[mat.line_idx].text,
                             lines[mat.line_idx].match_text,
-                            &regex,
-                            &opts,
+                            regex,
+                            opts,
                             true,
-                            rg_output_remaining(&output, output_limit),
+                            rg_output_remaining(output, output_limit),
                         ));
                         output.push(record_terminator);
-                        truncate_rg_output(&mut output, output_limit);
+                        truncate_rg_output(output, output_limit);
                     }
                 } else if opts.only_matching {
                     for mat in &matches {
-                        let segments = rg_multiline_match_segments(*mat, &regex, &opts);
+                        let segments = rg_multiline_match_segments(*mat, regex, opts);
                         write_rg_multiline_match_segments(
-                            &mut output,
+                            output,
                             *mat,
                             &segments,
                             RgMultilineMatchPrefix {
@@ -6755,22 +6841,22 @@ impl Builtin for Rg {
                     {
                         output.push_str(&opts.context_separator);
                         output.push(record_terminator);
-                        truncate_rg_output(&mut output, output_limit);
+                        truncate_rg_output(output, output_limit);
                     }
                     write_rg_context(
-                        &mut output,
+                        output,
                         filename,
-                        &regex,
+                        regex,
                         &lines,
                         &context_match_lines,
-                        &opts,
+                        opts,
                         line_show_filename,
                         output_limit,
                     );
                 } else if let Some(replacement) = &opts.replacement {
                     for mat in &matches {
                         write_rg_prefix(
-                            &mut output,
+                            output,
                             RgPrefix {
                                 filename,
                                 show_filename: line_show_filename,
@@ -6790,13 +6876,13 @@ impl Builtin for Rg {
                             },
                         );
                         output.push_str(&format_rg_multiline_replacement(
-                            &regex,
+                            regex,
                             &lines,
                             *mat,
                             replacement,
                         ));
                         output.push(record_terminator);
-                        truncate_rg_output(&mut output, output_limit);
+                        truncate_rg_output(output, output_limit);
                     }
                 } else {
                     let mut seen_line_indices = HashSet::new();
@@ -6811,7 +6897,7 @@ impl Builtin for Rg {
                                 continue;
                             }
                             write_rg_prefix(
-                                &mut output,
+                                output,
                                 RgPrefix {
                                     filename,
                                     show_filename: line_show_filename,
@@ -6833,13 +6919,13 @@ impl Builtin for Rg {
                             output.push_str(&format_rg_output_line(
                                 line.text,
                                 line.match_text,
-                                &regex,
-                                &opts,
+                                regex,
+                                opts,
                                 true,
-                                rg_output_remaining(&output, output_limit),
+                                rg_output_remaining(output, output_limit),
                             ));
                             output.push(record_terminator);
-                            truncate_rg_output(&mut output, output_limit);
+                            truncate_rg_output(output, output_limit);
                         }
                     }
                 }
@@ -6879,13 +6965,13 @@ impl Builtin for Rg {
                     count_value += 1;
                 }
                 if !opts.invert_match {
-                    json_matches += matches_on_line;
+                    *json_matches += matches_on_line;
                 }
                 stats.matches += matches_on_line;
                 stats.matched_lines += 1;
                 match_lines.push(line_idx);
                 if !opts.files_without_matches {
-                    any_match = true;
+                    *any_match = true;
                 }
 
                 if (opts.files_with_matches || opts.files_without_matches || opts.quiet)
@@ -6900,10 +6986,9 @@ impl Builtin for Rg {
             }
 
             if opts.quiet {
-                if let Some(result) =
-                    rg_quiet_result(&opts, match_count, &mut any_match, &collected_inputs.stderr)
+                if let Some(result) = rg_quiet_result(opts, match_count, any_match, stderr.as_str())
                 {
-                    return Ok(result);
+                    return Some(result);
                 }
                 continue;
             }
@@ -6922,7 +7007,7 @@ impl Builtin for Rg {
             }
             if opts.files_without_matches {
                 if match_count == 0 {
-                    any_match = true;
+                    *any_match = true;
                     output.push_str(&color_path(
                         filename,
                         opts.color_enabled(),
@@ -6938,7 +7023,7 @@ impl Builtin for Rg {
             }
             if json_output {
                 if match_count > 0 {
-                    write_rg_json_begin(&mut output, filename);
+                    write_rg_json_begin(output, filename);
                     let match_line_set: HashSet<usize> = match_lines.iter().copied().collect();
                     let context_lines = if opts.passthru {
                         (0..lines.len())
@@ -6956,7 +7041,7 @@ impl Builtin for Rg {
                         Vec::new()
                     };
                     if context_lines.len() > RG_MAX_JSON_CONTEXT_EVENTS {
-                        return Ok(ExecResult::err(
+                        return Some(ExecResult::err(
                             "rg: too many JSON context events (output capped)\n".to_string(),
                             2,
                         ));
@@ -6964,14 +7049,14 @@ impl Builtin for Rg {
                     if context_lines.is_empty() {
                         for &line_idx in &match_lines {
                             write_rg_json_match(
-                                &mut output,
+                                output,
                                 filename,
                                 lines[line_idx],
                                 line_idx,
-                                &regex,
+                                regex,
                                 opts.replacement.as_deref(),
                             );
-                            truncate_rg_output(&mut output, output_limit);
+                            truncate_rg_output(output, output_limit);
                             if output.len() >= output_limit {
                                 break;
                             }
@@ -6982,29 +7067,24 @@ impl Builtin for Rg {
                         for line_idx in event_lines {
                             if match_line_set.contains(&line_idx) {
                                 write_rg_json_match(
-                                    &mut output,
+                                    output,
                                     filename,
                                     lines[line_idx],
                                     line_idx,
-                                    &regex,
+                                    regex,
                                     opts.replacement.as_deref(),
                                 );
                             } else {
-                                write_rg_json_context(
-                                    &mut output,
-                                    filename,
-                                    lines[line_idx],
-                                    line_idx,
-                                );
+                                write_rg_json_context(output, filename, lines[line_idx], line_idx);
                             }
-                            truncate_rg_output(&mut output, output_limit);
+                            truncate_rg_output(output, output_limit);
                             if output.len() >= output_limit {
                                 break;
                             }
                         }
                     }
                     write_rg_json_end(
-                        &mut output,
+                        output,
                         filename,
                         binary_offset,
                         content.len(),
@@ -7014,8 +7094,8 @@ impl Builtin for Rg {
                             .map(|&line_idx| regex.count_matches(lines[line_idx].match_text))
                             .sum(),
                     );
-                    json_matched_lines += match_lines.len();
-                    json_searches_with_match += 1;
+                    *json_matched_lines += match_lines.len();
+                    *json_searches_with_match += 1;
                 }
                 continue;
             }
@@ -7033,7 +7113,7 @@ impl Builtin for Rg {
                 }
                 output.push_str(&count_value.to_string());
                 output.push(record_terminator);
-                truncate_rg_output(&mut output, output_limit);
+                truncate_rg_output(output, output_limit);
                 continue;
             }
             if opts.quiet {
@@ -7043,7 +7123,7 @@ impl Builtin for Rg {
             let line_show_filename = if opts.heading && show_filename && match_count > 0 {
                 if !output.is_empty() {
                     output.push(record_terminator);
-                    truncate_rg_output(&mut output, output_limit);
+                    truncate_rg_output(output, output_limit);
                 }
                 output.push_str(&color_path(
                     filename,
@@ -7051,7 +7131,7 @@ impl Builtin for Rg {
                     &opts.color_scheme,
                 ));
                 output.push(record_terminator);
-                truncate_rg_output(&mut output, output_limit);
+                truncate_rg_output(output, output_limit);
                 false
             } else {
                 show_filename
@@ -7069,12 +7149,12 @@ impl Builtin for Rg {
                         {
                             output.push_str(&rg_replacement_cap_marker());
                             output.push(record_terminator);
-                            truncate_rg_output(&mut output, output_limit);
+                            truncate_rg_output(output, output_limit);
                             continue;
                         }
                         regex.for_each_match(line.match_text, |mat| {
                             write_rg_prefix(
-                                &mut output,
+                                output,
                                 RgPrefix {
                                     filename,
                                     show_filename: line_show_filename,
@@ -7097,7 +7177,7 @@ impl Builtin for Rg {
                                     hyperlink_format: opts.hyperlink_format.as_deref(),
                                 },
                             );
-                            output.push_str(&format_rg_match_text(mat.as_str(), &regex, &opts));
+                            output.push_str(&format_rg_match_text(mat.as_str(), regex, opts));
                             output.push(record_terminator);
                             true
                         });
@@ -7109,7 +7189,7 @@ impl Builtin for Rg {
                         opts.field_context_separator.as_str()
                     };
                     write_rg_prefix(
-                        &mut output,
+                        output,
                         RgPrefix {
                             filename,
                             show_filename: line_show_filename,
@@ -7135,13 +7215,13 @@ impl Builtin for Rg {
                     output.push_str(&format_rg_output_line(
                         line.text,
                         line.match_text,
-                        &regex,
-                        &opts,
+                        regex,
+                        opts,
                         matched,
-                        rg_output_remaining(&output, output_limit),
+                        rg_output_remaining(output, output_limit),
                     ));
                     output.push(record_terminator);
-                    truncate_rg_output(&mut output, output_limit);
+                    truncate_rg_output(output, output_limit);
                 }
             } else if opts.vimgrep && !opts.invert_match {
                 for &line_idx in &match_lines {
@@ -7154,7 +7234,7 @@ impl Builtin for Rg {
                     {
                         output.push_str(&rg_replacement_cap_marker());
                         output.push(record_terminator);
-                        truncate_rg_output(&mut output, output_limit);
+                        truncate_rg_output(output, output_limit);
                         continue;
                     }
                     let mut output_col_offset: usize = 0;
@@ -7165,7 +7245,7 @@ impl Builtin for Rg {
                             mat.start() + 1
                         };
                         write_rg_prefix(
-                            &mut output,
+                            output,
                             RgPrefix {
                                 filename,
                                 show_filename: true,
@@ -7181,7 +7261,7 @@ impl Builtin for Rg {
                             },
                         );
                         if opts.only_matching {
-                            let formatted = format_rg_match_text(mat.as_str(), &regex, &opts);
+                            let formatted = format_rg_match_text(mat.as_str(), regex, opts);
                             if opts.replacement.is_some() {
                                 let orig_len = mat.as_str().len();
                                 let repl_len = formatted.len();
@@ -7197,14 +7277,14 @@ impl Builtin for Rg {
                             output.push_str(&format_rg_output_line(
                                 lines[line_idx].text,
                                 lines[line_idx].match_text,
-                                &regex,
-                                &opts,
+                                regex,
+                                opts,
                                 true,
-                                rg_output_remaining(&output, output_limit),
+                                rg_output_remaining(output, output_limit),
                             ));
                         }
                         output.push(record_terminator);
-                        truncate_rg_output(&mut output, output_limit);
+                        truncate_rg_output(output, output_limit);
                         true
                     });
                 }
@@ -7218,12 +7298,12 @@ impl Builtin for Rg {
                     {
                         output.push_str(&rg_replacement_cap_marker());
                         output.push(record_terminator);
-                        truncate_rg_output(&mut output, output_limit);
+                        truncate_rg_output(output, output_limit);
                         continue;
                     }
                     regex.for_each_match(lines[line_idx].match_text, |mat| {
                         write_rg_prefix(
-                            &mut output,
+                            output,
                             RgPrefix {
                                 filename,
                                 show_filename: line_show_filename,
@@ -7250,10 +7330,10 @@ impl Builtin for Rg {
                             output
                                 .push_str(&regex.replace_first(mat.as_str(), replacement.as_str()));
                         } else {
-                            output.push_str(&color_matches(mat.as_str(), &regex, &opts));
+                            output.push_str(&color_matches(mat.as_str(), regex, opts));
                         }
                         output.push(record_terminator);
-                        truncate_rg_output(&mut output, output_limit);
+                        truncate_rg_output(output, output_limit);
                         true
                     });
                 }
@@ -7265,22 +7345,22 @@ impl Builtin for Rg {
                 {
                     output.push_str(&opts.context_separator);
                     output.push(record_terminator);
-                    truncate_rg_output(&mut output, output_limit);
+                    truncate_rg_output(output, output_limit);
                 }
                 write_rg_context(
-                    &mut output,
+                    output,
                     filename,
-                    &regex,
+                    regex,
                     &lines,
                     &match_lines,
-                    &opts,
+                    opts,
                     line_show_filename,
                     output_limit,
                 );
             } else {
                 for &line_idx in &match_lines {
                     write_rg_prefix(
-                        &mut output,
+                        output,
                         RgPrefix {
                             filename,
                             show_filename: line_show_filename,
@@ -7308,55 +7388,17 @@ impl Builtin for Rg {
                     output.push_str(&format_rg_output_line(
                         lines[line_idx].text,
                         lines[line_idx].match_text,
-                        &regex,
-                        &opts,
+                        regex,
+                        opts,
                         true,
-                        rg_output_remaining(&output, output_limit),
+                        rg_output_remaining(output, output_limit),
                     ));
                     output.push(record_terminator);
-                    truncate_rg_output(&mut output, output_limit);
+                    truncate_rg_output(output, output_limit);
                 }
             }
         }
-
-        if json_output {
-            write_rg_json_summary(
-                &mut output,
-                json_bytes_searched,
-                json_matched_lines,
-                json_matches,
-                json_searches,
-                json_searches_with_match,
-            );
-        } else if opts.stats {
-            let bytes_printed = if opts.count_only
-                || opts.count_matches
-                || opts.files_with_matches
-                || opts.files_without_matches
-                || opts.quiet
-            {
-                0
-            } else {
-                output.len()
-            };
-            append_rg_stats(&mut output, &stats, bytes_printed);
-        }
-
-        truncate_rg_output(&mut output, output_limit);
-
-        let exit_code = if collected_inputs.had_errors {
-            2
-        } else if any_match {
-            0
-        } else {
-            1
-        };
-        Ok(ExecResult {
-            stdout: output.into(),
-            stderr: collected_inputs.stderr.into(),
-            exit_code,
-            ..Default::default()
-        })
+        None
     }
 }
 

@@ -107,8 +107,9 @@ and contents computed from the path, so the tree costs no memory) with ~200k
 files plus a hidden `.git`, and asserts that `find`, `du`, `tree`, `grep -r`
 stay under an 8 MiB heap peak and list each directory once, that `ls -R`
 adds only its output, and that `rg` stops at the aggregate-input budget
-(~14 MB peak at a 1 MiB budget; it held a ~70 MB candidate list before) and
-holds under 250 B per searched file within budget. Scale it with
+(~5 MiB peak at a 1 MiB budget; ~70 MB candidate list, then ~14 MB of held
+text before) and stays under 8 MiB within budget, also over several roots
+(it held ~160 B per searched file before searching moved into the walk). Scale it with
 `BASHKIT_STRESS_FILES=2000000 cargo test --release -p bashkit --test
 large_tree_stress_tests -- --nocapture` (or `just stress`).
 

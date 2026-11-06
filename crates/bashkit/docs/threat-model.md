@@ -34,7 +34,7 @@ through configurable limits.
 | Width-derived allocation (TM-DOS-103) | `printf x \| od -w1152921504606846976` | Reject widths above 65,536 bytes; stack-pad one numeric field; budget output capacity before fallible growth | MITIGATED |
 | Pagination amplification (TM-DOS-137) | Long `pr -h` headers repeated on many short pages | Check the 16 MiB cap before every append; lease input, rows and output capacity before growth; borrow cells/page slices and retain date timestamps; charge input/work and poll cancellation/deadlines, including skipped pages | MITIGATED |
 | Embedded CLI limit escalation (TM-DOS-139) | `markkit extract x --max-input-size 99999999999` | `markkit` limits can only be lowered below their defaults; `fetchkit` bodies capped by HTTP limits; `--ocr` refused | MITIGATED |
-| Tree-walk memory (TM-DOS-140) | `find`, `du` or `rg` over a tree with millions of files | `FileSystem::walk` answers are bounded batches (10k entries) refilled as `find`/`du` descend; `rg` charges each file to the aggregate-input budget as it reads, stops at the first refusal and streams its walk; `ls -R` stops at the stdout limit | MITIGATED |
+| Tree-walk memory (TM-DOS-140) | `find`, `du` or `rg` over a tree with millions of files | `FileSystem::walk` answers are bounded batches (10k entries) refilled as `find`/`du` descend; `rg` searches each file as it reads it without holding the text, charges it to the aggregate-input budget, stops at the first refusal and streams its walk; `ls -R` stops at the stdout limit | MITIGATED |
 | Variable explosion (TM-DOS-003) | `x=$(cat /dev/urandom)` | /dev/urandom returns bounded 8KB | MITIGATED |
 | Array growth (TM-DOS-004) | `arr+=(element)` in loop | Command limit | MITIGATED |
 

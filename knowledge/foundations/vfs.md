@@ -460,15 +460,15 @@ and measured by `benches/remote_fs.rs` over the bashkit checkout:
   listing shows, and tracks "inside a git repo" down the walk instead of a
   `stat` per ancestor. `--max-depth` is applied to index matches. `-L`,
   `--type`, `--max-filesize`, `--sort` other than path still walk.
-- `rg` keeps every searched file's text until output is built; it charges
-  each file to the aggregate-input budget as it reads (default 100 MB) and
-  stops at the first refusal, so a huge tree fails at the budget instead of
-  after loading every file (TM-DOS-140). With one root in path order, the
-  walk visits entries in sorted order and reads each file as it finds it,
-  so no candidate list is held and the walk stops at the budget. Several
-  roots, a non-path `--sort` and `--files` still collect every candidate
-  (paths + metadata) before reading. Follow-ups: stream each root in turn,
-  and search each file as it is read (dropping non-matching text).
+- `rg` searches each file as it reads it and drops the text (`RgSearch`), so
+  memory holds the output, not the searched text. It still charges each
+  file to the aggregate-input budget (default 100 MB) and stops at the first
+  refusal (TM-DOS-140). In path order the walk visits entries sorted and
+  reads each file as it finds it, so no candidate list is held; several
+  roots stream one after another (sorted), which equals the global path
+  sort unless one root lies inside another, which keeps the collected list.
+  `-q` stops the walk at its answer. A non-path `--sort` and `--files` still
+  collect every candidate (paths + metadata) before reading.
 - `ls` (with `-R` or on one wide directory) stops appending lines once its
   output passes `max_stdout_bytes`
   (the rest would be cut), so its memory is bounded by the stdout limit.
