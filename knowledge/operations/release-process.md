@@ -90,8 +90,8 @@ silently failed.
      `target/package/` before the size check; measuring the old publish output
      path stopped 0.19.0 before any Rust crate upload. Regression coverage
      exercises both sides of the 10 MiB boundary without registry credentials.
-   - Verify all four exact release packages together with the pinned Cargo:
-     `cargo publish --dry-run -p bashkit-cpython-wasm -p bashkit -p bashkit-cli -p bashkit-scripted-tool`
+   - Verify all six exact release packages together with the pinned Cargo:
+     `cargo publish --dry-run -p bashkit-cpython-wasm -p bashkit-monty-types -p bashkit-monty -p bashkit -p bashkit-cli -p bashkit-scripted-tool`
      (`--allow-dirty` during preparation). Cargo stages selected workspace
      packages in a temporary registry and builds the packaged dependency graph,
      including new internal crates that do not exist on crates.io yet. A lone
@@ -119,7 +119,9 @@ silently failed.
    `publish-wasm.yml`, `cli-binaries.yml`, and `c-api-binaries.yml` to
    completion, run the
    post-release verification commands, and only declare "shipped" when all
-   published artifacts (`bashkit`, `bashkit-scripted-tool` + `bashkit-cli` on crates.io, `bashkit`
+   published artifacts (all six crates on crates.io: `bashkit-cpython-wasm`,
+   `bashkit-monty-types`, `bashkit-monty`, `bashkit`, `bashkit-scripted-tool`,
+   `bashkit-cli`; `bashkit`
    on PyPI, both npm packages, Homebrew, and the C ABI archives) report the new
    version. If one fails, open a hotfix PR rather than leaving the release
    half-shipped.
@@ -156,8 +158,9 @@ trust this repository, the publishing workflow filename, and the `release`
 environment. The workflow is [`publish.yml`](../../.github/workflows/publish.yml).
 The GitHub `release` environment must allow only the `main` branch and `v*`
 tags, preserving the existing main-based recovery path. The validated immutable
-release source and dependency order remain mandatory. Check all four crates:
-`bashkit-cpython-wasm`, `bashkit`, `bashkit-cli`, and `bashkit-scripted-tool`.
+release source and dependency order remain mandatory. Check all six crates:
+`bashkit-cpython-wasm`, `bashkit-monty-types`, `bashkit-monty`, `bashkit`,
+`bashkit-cli`, and `bashkit-scripted-tool`.
 
 A new crate needs its first version published by an owner with a suitably scoped
 API token before crates.io permits a trusted publisher. Complete that bootstrap
@@ -206,7 +209,7 @@ a Windows runner.
 Confirm each target (workflow → check):
 
 - GitHub Release (`release.yml`): `gh release view vX.Y.Z`
-- crates.io (`publish.yml`): `cargo search bashkit` / `cargo search bashkit-scripted-tool` / `cargo search bashkit-cli`
+- crates.io (`publish.yml`): `cargo search` for `bashkit-cpython-wasm`, `bashkit-monty-types`, `bashkit-monty`, `bashkit`, `bashkit-scripted-tool`, `bashkit-cli`
 - PyPI (`publish-python.yml`): `pip index versions bashkit`
 - npm Node (`publish-js.yml`): `npm view @everruns/bashkit version`;
   `npm dist-tags ls @everruns/bashkit` ("latest" points at it)
@@ -440,7 +443,7 @@ from `main`; build checkout remains pinned to the tag.
 ## Post-Release Verification
 
 ```bash
-cargo search bashkit; cargo search bashkit-cli
+for c in bashkit-cpython-wasm bashkit-monty-types bashkit-monty bashkit bashkit-cli bashkit-scripted-tool; do cargo search "$c" --limit 1; done
 npm view @everruns/bashkit version; npm dist-tags ls @everruns/bashkit
 npm view @everruns/bashkit-wasm version; npm dist-tags ls @everruns/bashkit-wasm
 pip index versions bashkit
