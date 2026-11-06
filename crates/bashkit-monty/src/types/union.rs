@@ -359,7 +359,7 @@ impl<'h> PyTrait<'h> for HeapObjectRead<'h, Union> {
         let count = args.get(vm.heap).as_slice().len();
         for index in 0..count {
             if index > 0 {
-                if repr_check_time(index, vm) {
+                if repr_check_time(index, vm)? {
                     f.write_str(" | ...[timeout]")?;
                     break;
                 }

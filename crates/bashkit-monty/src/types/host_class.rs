@@ -314,7 +314,8 @@ impl<'h> PyTrait<'h> for HeapObjectRead<'h, HostClass> {
 ///
 /// Each caller supplies its own field list via `field`, mapping an index to that
 /// field's name and a cloned value (dropped here). A cycle renders `...`, a
-/// `None` value `<?>`, and exhausting a time limit truncates `...[timeout]`.
+/// `None` value `<?>`, a memory limit truncates `...[timeout]`, and a time
+/// limit raises (see `repr_check_time`).
 ///
 /// `field` is resolved immediately before that field is written, never all up
 /// front, so a `__repr__` that mutates a later field is observed — matching the
@@ -337,7 +338,11 @@ pub(crate) fn write_dataclass_repr<'h>(
         if i > 0 {
             // Same between-item checkpoint as sequence repr, so a wide instance
             // cannot outrun its time limit.
-            if vm.heap.tracker.check_memory_time_every(i).is_err() {
+            // bashkit fork: through `repr_check_time`, so a time hit errors
+            // instead of truncating (a shared `D(d, d)` graph otherwise kept
+            // formatting: with the tracker-wide cadence only one call in 64
+            // sees the expired clock, so truncation never unwound the walk).
+            if super::list::repr_check_time(i, vm)? {
                 f.write_str(", ...[timeout]")?;
                 break;
             }

@@ -333,6 +333,11 @@ pub struct ResourceTracker {
     /// tighten the bound from Python code without escaping the
     /// host-configured ceiling. `None` means the configured limit applies.
     recursion_limit_override: Cell<Option<usize>>,
+    /// bashkit fork: one counter for every amortized `*_every` check, so many
+    /// short Rust loops still add up to a full check every
+    /// `LOOP_CHECK_INTERVAL` steps (see [`check_time_every`](Self::check_time_every)).
+    #[serde(skip)]
+    tick: Cell<usize>,
 }
 
 impl Default for ResourceTracker {
@@ -375,6 +380,7 @@ impl ResourceTracker {
             turn_execution_time: Cell::new(Duration::ZERO),
             running_since: Cell::new(None),
             recursion_limit_override: Cell::new(None),
+            tick: Cell::new(0),
         }
     }
 
@@ -569,22 +575,39 @@ impl ResourceTracker {
     /// increasing counter. Fires at the *end* of each block (`i % N == N-1`)
     /// so loops shorter than the interval pay no clock read at all — the VM
     /// dispatch checkpoint covers cadence between short calls.
+    ///
+    /// bashkit fork: `i` is ignored; the cadence comes from one tracker-wide
+    /// counter (`tick`). Keyed on a loop index, a recursion made of short
+    /// loops never reached a check: `x == y` or `repr(x)` over a shared graph
+    /// of two-item lists (`x = [x, x]` thirty times) ran for minutes past the
+    /// limit, synchronously, so the host could not interrupt it either.
     #[inline]
-    pub fn check_time_every(&self, i: usize) -> Result<(), ResourceError> {
-        if i % Self::LOOP_CHECK_INTERVAL == Self::LOOP_CHECK_INTERVAL - 1 {
+    pub fn check_time_every(&self, _i: usize) -> Result<(), ResourceError> {
+        if self.next_tick_is_check() {
             self.check_time()
         } else {
             Ok(())
         }
     }
 
+    /// bashkit fork: advances the shared amortization counter and reports
+    /// whether this step is due a full check.
+    #[inline]
+    fn next_tick_is_check(&self) -> bool {
+        let i = self.tick.get().wrapping_add(1);
+        self.tick.set(i);
+        i % Self::LOOP_CHECK_INTERVAL == 0
+    }
+
     /// Amortized per-item memory + time check; the memory-probing sibling of
     /// [`check_time_every`](Self::check_time_every), for loops that allocate
     /// per item. Between full checks the allocator's hard limit still bounds
     /// runaway growth.
+    ///
+    /// bashkit fork: `i` is ignored, as in [`check_time_every`](Self::check_time_every).
     #[inline]
-    pub fn check_memory_time_every(&self, i: usize) -> Result<(), ResourceError> {
-        if i % Self::LOOP_CHECK_INTERVAL == Self::LOOP_CHECK_INTERVAL - 1 {
+    pub fn check_memory_time_every(&self, _i: usize) -> Result<(), ResourceError> {
+        if self.next_tick_is_check() {
             self.check_memory_time()
         } else {
             Ok(())
