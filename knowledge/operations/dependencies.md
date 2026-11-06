@@ -168,6 +168,21 @@ against a newer oxc, and then means bumping the pinned toolchain and porting
 the vendored parser in one deliberate change — not inside an aggregated
 `chore(deps)` PR.
 
+## Dependabot rules that keep its jobs runnable
+
+- No prerelease requirement over a stable lock: `turso_core = "0.8.0-pre.1"`
+  with 0.8.3 locked made Dependabot treat 0.9.0-pre.2 as in range and fail the
+  whole "/" job. Require the stable version; bump to a prerelease by hand.
+- Directories that path-depend on `crates/bashkit` (hyperlight guest, the two
+  random-fs fixtures) see bashkit's workspace deps as their own. Their entry
+  `allow`s only the crates their manifests declare, with
+  `versioning-strategy: increase` because the fixtures commit no lockfile.
+- Crates only the Monty forks declare are ignored in the "/" entry: the forks
+  keep Monty 1.4.0's versions until upstream source is re-copied. Shared deps
+  stay bumpable.
+
+`scripts/tests/test_dependabot_coverage.py` enforces all three.
+
 ## Measure size and audit surface separately
 
 The `idna_adapter` pin removes 21 crates but only **15 KB (0.16%)** from the

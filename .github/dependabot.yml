@@ -45,6 +45,39 @@ updates:
       - dependency-name: "monty-types"
       - dependency-name: "monty-macros"
 
+      # Crates only the two forks declare. The forks track Monty 1.4.0's own
+      # dependency versions and move only when upstream source is re-copied;
+      # a Dependabot bump edits the fork manifests directly (#2848 bumped
+      # ruff_python_* 0.0.14 -> 0.0.20 and unicode_names2 1 -> 4, and failed
+      # CI). Deps the forks share with bashkit's own crates (fancy-regex,
+      # chrono, sha2, ...) are not listed: bashkit must be able to move them,
+      # and CI shows whether the fork still builds.
+      # scripts/tests/test_dependabot_coverage.py keeps this list complete.
+      - dependency-name: "ahash"
+      - dependency-name: "hashbrown"
+      - dependency-name: "itertools"
+      - dependency-name: "itoa"
+      - dependency-name: "jiff"
+      - dependency-name: "jiter"
+      - dependency-name: "libm"
+      - dependency-name: "memchr"
+      - dependency-name: "minicbor-serde"
+      - dependency-name: "num-integer"
+      - dependency-name: "postcard"
+      - dependency-name: "ruff_python_ast"
+      - dependency-name: "ruff_python_codegen"
+      - dependency-name: "ruff_python_parser"
+      - dependency-name: "ruff_python_stdlib"
+      - dependency-name: "ruff_source_file"
+      - dependency-name: "ruff_text_size"
+      - dependency-name: "serde_bytes"
+      - dependency-name: "smallvec"
+      - dependency-name: "speedate"
+      - dependency-name: "strum"
+      - dependency-name: "unicode-general-category"
+      - dependency-name: "unicode-normalization"
+      - dependency-name: "unicode_names2"
+
       # wasmtime is pinned exactly (=48.0.6): the `cpython` feature embeds a
       # module precompiled by build.rs, and a precompiled module loads only
       # into the same wasmtime version. 49.x also needs a newer rustc than
@@ -149,6 +182,21 @@ updates:
   #
   # Grouped per directory: these are example and fixture builds, so a week of
   # bumps should arrive as one reviewable PR each.
+  #
+  # `allow` names only the crates these manifests declare themselves. Each one
+  # path-depends on `crates/bashkit`, and Dependabot follows that path into the
+  # root workspace and treats every `workspace = true` dep of bashkit as a
+  # direct dep of this directory. Those requirements live in the root manifest
+  # (the "/" entry owns them), and the optional ones (num-bigint, pyo3 via the
+  # python feature) are in no lockfile here, so the grouped update had nothing
+  # to change for them and aborted with InvalidUpdatedDependencies on every
+  # run since 2026-10-13. A new direct dep in one of these manifests must be
+  # added to `allow`, or it goes unwatched.
+  #
+  # `versioning-strategy: increase` because the two random-fs fixtures have no
+  # committed lockfile: an in-range bump there has no previous version and no
+  # requirement change, which Dependabot also rejects. Raising the requirement
+  # gives every update a visible change.
   - package-ecosystem: "cargo"
     directories:
       - "/examples/hyperlight"
@@ -159,15 +207,25 @@ updates:
       interval: "weekly"
     commit-message:
       prefix: "chore(deps)"
+    versioning-strategy: increase
+    allow:
+      - dependency-name: "wit-bindgen"
+      - dependency-name: "futures-util"
+      - dependency-name: "getrandom"
+      - dependency-name: "wasmtime"
+      - dependency-name: "napi"
+      - dependency-name: "napi-derive"
+      - dependency-name: "napi-build"
+      - dependency-name: "pyo3"
     groups:
       example-cargo:
         patterns:
           - "*"
     ignore:
       # `examples/hyperlight/host` pins wasmtime "48" and is built by required
-      # CI (the "WASM component (no JS, no WASI)" job) on the same pinned
-      # 1.95.0 toolchain, so a 49.x bump here fails resolution exactly as it
-      # did in #2708. Keep in step with the "/" entry; see the rationale there.
+      # CI (the "WASM component (no JS, no WASI)" job) on the pinned toolchain,
+      # so a 49.x bump here fails resolution exactly as it did in #2708. Keep
+      # in step with the "/" entry; see the rationale there.
       - dependency-name: "wasmtime"
 
   # npm / pnpm.
