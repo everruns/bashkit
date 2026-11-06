@@ -176,7 +176,8 @@ the vendored parser in one deliberate change — not inside an aggregated
 - Directories that path-depend on `crates/bashkit` (hyperlight guest, the two
   random-fs fixtures) see bashkit's workspace deps as their own. Their entry
   `allow`s only the crates their manifests declare, with
-  `versioning-strategy: increase` because the fixtures commit no lockfile.
+  committed lockfiles (cargo accepts only `auto`/`lockfile-only` as
+  `versioning-strategy`; `increase` made the whole config fail to parse).
 - Crates only the Monty forks declare are ignored in the "/" entry: the forks
   keep Monty 1.4.0's versions until upstream source is re-copied. Shared deps
   stay bumpable.

@@ -10,9 +10,9 @@ has no discovery to switch to, so the list is checked instead.
 It had already drifted when this test was written:
 `crates/bashkit-python/test-fixtures/random-fs` is an independent cargo
 workspace with a `pyo3` dependency and had no entry, while its napi twin
-`crates/bashkit-js/test-fixtures/random-fs` did. Both fixtures' lockfiles are
-gitignored and generated at test time, so the advisory scan does not see them
-in a fresh checkout either — Dependabot is their only coverage, and for one of
+`crates/bashkit-js/test-fixtures/random-fs` did. Both fixtures' lockfiles were
+gitignored then (committed since 2026-11-06), so the advisory scan did not see
+them in a fresh checkout either — Dependabot is their only coverage, and for one of
 them there was none.
 
 A missing entry is quiet by nature: nothing fails, no PR is opened, and the
@@ -102,7 +102,7 @@ class DependabotCoverageTests(unittest.TestCase):
 
     def test_the_two_random_fs_fixtures_are_both_covered(self):
         # The specific drift this test was written for. Both are independent
-        # workspaces with third-party dependencies and gitignored lockfiles, so
+        # workspaces with third-party dependencies (lockfiles committed since 2026-11-06), so
         # Dependabot is the only thing watching either one.
         covered = configured_dirs('cargo')
         for fixture in (
@@ -252,6 +252,54 @@ class DependabotCoverageTests(unittest.TestCase):
             fork_only - ignored,
             f'fork-only deps Dependabot may bump: {sorted(fork_only - ignored)}',
         )
+
+    def test_path_dep_workspaces_commit_their_lockfile(self):
+        # Without a lockfile Dependabot has no previous version for an in-range
+        # bump and aborts the whole grouped job; cargo has no
+        # `versioning-strategy` that works around it.
+        for d in (
+            'crates/bashkit-js/test-fixtures/random-fs',
+            'crates/bashkit-python/test-fixtures/random-fs',
+            'examples/hyperlight',
+            'examples/hyperlight/host',
+        ):
+            with self.subTest(directory=d):
+                self.assertTrue((ROOT / d / 'Cargo.lock').is_file(), d)
+
+    def test_path_dep_lockfiles_pin_the_workspace_bashkit_version(self):
+        # Builds are not `--locked`, so a lockfile left on the old version after
+        # a release bump is silently refreshed in CI while Dependabot and the
+        # advisory scan keep reading the stale one. Fail loudly instead; the
+        # refresh loop is in knowledge/operations/release-process.md.
+        version = tomllib.loads((ROOT / 'Cargo.toml').read_text())['workspace']['package']['version']
+        checked = 0
+        for d in (
+            'crates/bashkit/fuzz',
+            'crates/bashkit-js/test-fixtures/random-fs',
+            'crates/bashkit-python/test-fixtures/random-fs',
+            'examples/hyperlight',
+        ):
+            lock = tomllib.loads((ROOT / d / 'Cargo.lock').read_text())
+            pinned = [
+                p['version'] for p in lock['package']
+                if p['name'] == 'bashkit' and 'source' not in p
+            ]
+            with self.subTest(directory=d):
+                self.assertEqual(pinned, [version], f'{d}/Cargo.lock is stale; refresh it')
+                checked += 1
+        self.assertEqual(checked, 4)
+
+    def test_cargo_versioning_strategy_is_one_cargo_accepts(self):
+        # #2852 set `increase` on a cargo entry; Dependabot rejected the whole
+        # file ("did not match one of: lockfile-only, auto"), which stops every
+        # ecosystem's updates, not just that entry's.
+        config = yaml.safe_load(CONFIG.read_text())
+        for update in config['updates']:
+            if update['package-ecosystem'] != 'cargo':
+                continue
+            strategy = update.get('versioning-strategy', 'auto')
+            with self.subTest(scope=update.get('directory') or update.get('directories')):
+                self.assertIn(strategy, {'auto', 'lockfile-only'})
 
     def test_config_is_a_well_formed_dependabot_v2_file(self):
         config = yaml.safe_load(CONFIG.read_text())

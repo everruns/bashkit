@@ -54,10 +54,12 @@ silently failed.
    `crates/bashkit-wasm/package.json`, and `Cargo.lock`
    (`cargo update -p bashkit -p bashkit-cli -p bashkit-scripted-tool ...`).
    - Refresh the **auxiliary lockfiles** too. `crates/bashkit/fuzz`,
-     `examples/hyperlight`, and `examples/hyperlight/host` are separate
+     `examples/hyperlight`, `examples/hyperlight/host` and the two
+     `test-fixtures/random-fs` workspaces are separate
      workspaces whose lockfiles pin `bashkit` through a path dependency, so a
      workspace version bump leaves each one stale:
-     `for m in crates/bashkit/fuzz examples/hyperlight examples/hyperlight/host;
+     `for m in crates/bashkit/fuzz examples/hyperlight examples/hyperlight/host
+     crates/bashkit-js/test-fixtures/random-fs crates/bashkit-python/test-fixtures/random-fs;
      do cargo metadata --manifest-path "$m/Cargo.toml" --format-version 1
      >/dev/null; done`, then commit the result.
      Nothing fails when they rot. CI builds them without `--locked`
