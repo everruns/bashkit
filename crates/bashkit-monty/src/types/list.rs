@@ -1109,7 +1109,8 @@ pub(crate) fn repr_items_fmt(
 
 /// Polls the time/memory soft limits every 64th item rather than every item,
 /// keeping per-item overhead to one branch while still truncating huge reprs
-/// promptly with `", ...[timeout]"` (tested in `resource_limits.rs`).
+/// promptly with `", ...[timeout]"`. Pinned by bashkit's
+/// `python_security_tests::whitebox_resource_limits::shared_graph_walks_respect_time_limit`.
 ///
 /// bashkit fork: two changes, both for reprs of shared graphs (`x = [x, x]`
 /// thirty times is 2^30 nested two-item lists).
@@ -1120,7 +1121,9 @@ pub(crate) fn repr_items_fmt(
 /// - A time-limit hit is returned as an error instead of truncating. The
 ///   time budget never recovers within a run, and truncating only ends the
 ///   current container while every enclosing one keeps formatting its next
-///   item. A memory hit still truncates, as upstream does.
+///   item, and with the tracker-wide cadence only one call in 64 sees the
+///   expired clock, so the others would keep formatting. A memory hit still
+///   truncates, as upstream does. Every repr checkpoint goes through here.
 pub(crate) fn repr_check_time(_i: usize, vm: &VM<'_>) -> RunResult<bool> {
     match vm.heap.tracker.check_memory_time_every(0) {
         Ok(()) => Ok(false),

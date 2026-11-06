@@ -337,7 +337,11 @@ pub(crate) fn write_dataclass_repr<'h>(
         if i > 0 {
             // Same between-item checkpoint as sequence repr, so a wide instance
             // cannot outrun its time limit.
-            if vm.heap.tracker.check_memory_time_every(i).is_err() {
+            // bashkit fork: through `repr_check_time`, so a time hit errors
+            // instead of truncating (a shared `D(d, d)` graph otherwise kept
+            // formatting: with the tracker-wide cadence only one call in 64
+            // sees the expired clock, so truncation never unwound the walk).
+            if super::list::repr_check_time(i, vm)? {
                 f.write_str(", ...[timeout]")?;
                 break;
             }

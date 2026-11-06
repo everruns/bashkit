@@ -289,7 +289,7 @@ mod whitebox_resource_limits {
     use super::*;
 
     /// Regression: walking a shared graph (`x = [x, x]` thirty times is
-    /// 2^30 nested two-item lists) in repr, `==`, `<` or `in` never read the
+    /// 2^30 nested two-item lists, or two-field dataclasses) in repr, `==`, `<` or `in` never read the
     /// clock, because the fork polled time by the index within one list. It ran for minutes past
     /// a 2 s limit, synchronously, so the host's exec timeout could not stop
     /// it either. Each path must now hit the time limit (exit 124) promptly.
@@ -316,6 +316,10 @@ mod whitebox_resource_limits {
                 "y = [1]\nfor _ in range(30):\n    y = [y, y]\nb = x in [y]",
             ),
             ("json", "import json\ns = json.dumps(x)"),
+            (
+                "dataclass",
+                "from dataclasses import dataclass\n@dataclass\nclass D:\n    a: object\n    b: object\nd = D(1, 1)\nfor _ in range(30):\n    d = D(d, d)\ns = repr(d)",
+            ),
         ] {
             let mut bash = bash_python_limits(
                 PythonLimits::default().max_duration(std::time::Duration::from_millis(500)),
