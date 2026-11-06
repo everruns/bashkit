@@ -526,7 +526,7 @@ echoes the same text, and the named internal (the arithmetic tokenizer's `Tok`
 enum, say) is never formatted. Two independent defenses handle this, and a
 fuzz target that inlines raw bytes needs one of them: either its diagnostic
 matches a template `strip_real_shell_error_lines` recognizes, or the target
-pre-filters with `input_echo_would_trip` as `glob_fuzz`, `cpython_fuzz` and
+pre-filters with `input_echo_would_trip` as `glob_fuzz`, `cpython_fuzz`, `python_fuzz` and
 `arithmetic_fuzz` do. Arithmetic diagnostics are not one of those templates,
 so `arithmetic_fuzz` went red in run 271 on `:A>>=::TTA:::Tok::::` until it
 pre-filtered. Adding a builtin whose errors quote user text means choosing one
@@ -2007,7 +2007,7 @@ yield `OsCall` events that Bashkit intercepts and dispatches to the VFS.
 | TM-PY-010 | Error text leaks into pipeline data | Medium | Pipeline consumers receive stdout only; tracebacks stay on stderr | `threat_python_pipeline_error_handling` |
 | TM-PY-011 | Command substitution captures stderr diagnostics | Medium | `$(python ...)` captures stdout only | `threat_python_subst_captures_stdout` |
 | TM-PY-012 | Shell escape via Python `eval`/`exec` | Critical | Monty has no `os.system`/`subprocess`; `exec`/`eval` (Monty 1.x) run inside the same VM, limits and OS-call bridge | `threat_python_no_shell_exec` |
-| TM-PY-032 | Cross-tenant memory accounting / process abort | Critical | Upstream Monty 1.x reads a process-wide allocator counter and `monty-alloc` aborts the process. Forked `monty_types::set_memory_probe` reads a per-VM `VmMeter` fed by `bashkit::MeteredAllocator` (thread-local, exact sync VM windows); allocator never aborts; `python3` fails closed when the allocator is not installed | `python_tenant_isolation_tests::*` |
+| TM-PY-032 | Cross-tenant memory accounting / process abort | Critical | Upstream Monty 1.x reads a process-wide allocator counter and `monty-alloc` aborts the process. Forked `monty_types::set_memory_probe` reads a per-VM `VmMeter` fed by `bashkit::MeteredAllocator` (thread-local, exact sync VM windows); allocator never aborts; `python3` fails closed when the allocator is not installed | `python_tenant_isolation_tests::*`, `fuzz/fuzz_targets/python_fuzz.rs` (nightly, metered allocator, 32 MiB cap under libFuzzer RSS limit) |
 | TM-PY-033 | ReDoS via `re` | High | `re` enabled since 2026-11-05: plain patterns run on the linear-time `regex` engine, backreference/lookaround patterns on `fancy-regex` with a backtrack cap (`re.PatternError`), match loops stopped by the time limit | `python_security_tests::regex_redos_patterns_are_bounded`, `regex_loop_is_stopped_by_time_limit`, `regex_huge_pattern_is_rejected_or_bounded` |
 | TM-PY-034 | Uninterruptible VM loop ignores cancellation / shared budget | High | Forked `monty_types::set_checkpoint_hook` runs the request `ExecutionBudget` check at every VM time checkpoint; `Err` stops the run uncatchably | `python_security_tests::whitebox_resource_limits::*`, budget tests in `builtins::python` |
 | TM-PY-035 | Shared object graph expands exponentially in host conversion | High | Monty 1.x `MontyObject` graphs can share children; every host converter (runtime values, scripted-tool JSON, Python binding) walks with a node cap (100k / 1M) | `runtime_value` and `tool_registry` unit tests |
