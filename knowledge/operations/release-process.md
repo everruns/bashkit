@@ -90,8 +90,8 @@ silently failed.
      `target/package/` before the size check; measuring the old publish output
      path stopped 0.19.0 before any Rust crate upload. Regression coverage
      exercises both sides of the 10 MiB boundary without registry credentials.
-   - Verify all four exact release packages together with the pinned Cargo:
-     `cargo publish --dry-run -p bashkit-cpython-wasm -p bashkit -p bashkit-cli -p bashkit-scripted-tool`
+   - Verify all six exact release packages together with the pinned Cargo:
+     `cargo publish --dry-run -p bashkit-cpython-wasm -p bashkit-monty-types -p bashkit-monty -p bashkit -p bashkit-cli -p bashkit-scripted-tool`
      (`--allow-dirty` during preparation). Cargo stages selected workspace
      packages in a temporary registry and builds the packaged dependency graph,
      including new internal crates that do not exist on crates.io yet. A lone
@@ -207,7 +207,7 @@ a Windows runner.
 Confirm each target (workflow → check):
 
 - GitHub Release (`release.yml`): `gh release view vX.Y.Z`
-- crates.io (`publish.yml`): `cargo search bashkit` / `cargo search bashkit-scripted-tool` / `cargo search bashkit-cli`
+- crates.io (`publish.yml`): `cargo search` for `bashkit-cpython-wasm`, `bashkit-monty-types`, `bashkit-monty`, `bashkit`, `bashkit-scripted-tool`, `bashkit-cli`
 - PyPI (`publish-python.yml`): `pip index versions bashkit`
 - npm Node (`publish-js.yml`): `npm view @everruns/bashkit version`;
   `npm dist-tags ls @everruns/bashkit` ("latest" points at it)
@@ -441,7 +441,7 @@ from `main`; build checkout remains pinned to the tag.
 ## Post-Release Verification
 
 ```bash
-cargo search bashkit; cargo search bashkit-cli
+for c in bashkit-cpython-wasm bashkit-monty-types bashkit-monty bashkit bashkit-cli bashkit-scripted-tool; do cargo search "$c" --limit 1; done
 npm view @everruns/bashkit version; npm dist-tags ls @everruns/bashkit
 npm view @everruns/bashkit-wasm version; npm dist-tags ls @everruns/bashkit-wasm
 pip index versions bashkit
