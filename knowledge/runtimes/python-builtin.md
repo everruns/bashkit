@@ -303,3 +303,9 @@ is where inherited interpreter bugs show up.
 ```bash
 cargo +nightly-2026-10-30 fuzz run --features python python_fuzz -- -max_total_time=300
 ```
+
+Stress: `tests/integration/python_tenant_stress_tests.rs` runs 20 tenants on 4
+worker threads per round, mixing memory bombs, runaway loops, unbounded
+recursion and well-behaved scripts; it also drops calls mid-run and then checks
+that the worker threads still meter correctly, and reuses one session's budget
+across many calls. 3 rounds per PR; `BASHKIT_STRESS_ROUNDS=N` for a soak.
