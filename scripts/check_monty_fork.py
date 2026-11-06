@@ -30,7 +30,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 MARKER = 'bashkit fork:'
-# Lines above a changed region that may hold its marker comment.
+# Plain lines above a changed region that may hold its marker comment. The
+# comment/attribute block attached to the changed item is searched in full on
+# top of this, however long it is, see `marker_window`.
 MARKER_WINDOW = 3
 VERSION = '1.4.0'
 UPSTREAM = {
@@ -73,6 +75,28 @@ def fetch(name: str, sha256: str, dest: Path) -> Path:
     return dest / f'{name}-{VERSION}'
 
 
+def is_attached_comment(line: str) -> bool:
+    """A comment or attribute line, which in Rust binds to the item below it."""
+    stripped = line.lstrip()
+    return stripped.startswith('//') or stripped.startswith('#[') or stripped.startswith('#![')
+
+
+def marker_window(fork: list[str], j1: int, j2: int) -> list[str]:
+    """Fork lines that may carry the marker for the changed region `j1:j2`.
+
+    Decision: the contiguous comment/attribute block above the region is
+    searched in full, not just `MARKER_WINDOW` lines. A fork note here is
+    usually several lines of rationale and the marker sits on its first line,
+    so a fixed window reads the tail of the note and misses the marker. The
+    block stops at the first line of code, so one item's note cannot mark the
+    next item's drift.
+    """
+    start = j1
+    while start > 0 and is_attached_comment(fork[start - 1]):
+        start -= 1
+    return fork[min(start, max(0, j1 - MARKER_WINDOW)) : j2]
+
+
 def unmarked_hunks(upstream: list[str], fork: list[str]) -> list[int]:
     """1-based fork line numbers of changed regions with no marker nearby."""
     bad = []
@@ -80,8 +104,7 @@ def unmarked_hunks(upstream: list[str], fork: list[str]) -> list[int]:
     for tag, _i1, _i2, j1, j2 in matcher.get_opcodes():
         if tag == 'equal':
             continue
-        window = fork[max(0, j1 - MARKER_WINDOW) : j2]
-        if not any(MARKER in line for line in window):
+        if not any(MARKER in line for line in marker_window(fork, j1, j2)):
             bad.append(j1 + 1)
     return bad
 
