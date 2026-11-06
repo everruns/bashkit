@@ -51,7 +51,7 @@ Create a new Bash interpreter.
 - **`max_commands`** — Limit total commands executed.
 - **`max_loop_iterations`** — Limit iterations per loop.
 - **`max_memory`** — Memory limit in bytes for the VFS.
-- **`timeout_seconds`** — Abort execution after this duration.
+- **`timeout_seconds`** — Abort execution after this duration. Also the time limit of each embedded ``python3`` run (profile default: 30 s, Hardened 10 s).
 - **`python`** — Enable embedded Python (``python3`` builtin).
 - **`sqlite`** — Enable embedded SQLite (``sqlite``/``sqlite3`` builtin). Defaults to ``False``. When ``True``, the Turso-backed engine is registered and ``BASHKIT_ALLOW_INPROCESS_SQLITE=1`` is injected automatically. Default ``SqliteLimits`` apply: 4 MiB script cap, 256 MiB DB cap, 30 s wall-clock budget, resource-affecting PRAGMAs (`cache_size`, `mmap_size`, …) rejected, ``ATTACH``/``DETACH`` rejected.
 - **`external_functions`** — Function names callable from Python code.
@@ -614,7 +614,7 @@ Create a new BashTool.
 - **`max_commands`** — Limit total commands executed.
 - **`max_loop_iterations`** — Limit iterations per loop.
 - **`max_memory`** — Memory limit in bytes for the VFS.
-- **`timeout_seconds`** — Abort execution after this duration.
+- **`timeout_seconds`** — Abort execution after this duration. Also the time limit of each embedded ``python3``/``ts`` run (profile default: 30 s, Hardened 10 s).
 - **`files`** — Dict mapping VFS paths to file contents or lazy callables.
 - **`mounts`** — List of real host directory mount configs.
 - **`allowed_mount_paths`** — Host path prefixes allowed for real filesystem mounts. Required when mounting sensitive host locations such as paths under a user home directory.
