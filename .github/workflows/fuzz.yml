@@ -34,7 +34,7 @@ jobs:
           persist-credentials: false
 
       - name: Install Rust nightly
-        uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2 # nightly
+        uses: dtolnay/rust-toolchain@d86e0fa8f147d6539442c26a61ebba8becc19489 # nightly
         with:
           # Pinned: nightly 2026-10-31 (rustc f9ceb4a4d) fails to compile bashkit
           # (E0391 async-drop cycle on parser::ast::CommandList). Unpin once a
