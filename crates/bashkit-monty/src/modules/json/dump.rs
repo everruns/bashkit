@@ -668,6 +668,12 @@ impl<'h> Encoder<'_, 'h> {
                 // bashkit fork: preflighted separator/indent write (see `push_checked`).
                 self.write_newline_indent(depth + 1)?;
             }
+            // bashkit fork: str keys are preflighted like str values.
+            let key_len = match key.py_value(self.vm) {
+                PyValue::Str(key) => key.as_str(self.vm).len(),
+                _ => 0,
+            };
+            self.check_output_growth(key_len)?;
             write_json_key(key, self.out, self.config, self.vm)?;
             // bashkit fork: preflighted separator/indent write (see `push_checked`).
             self.push_checked(&config.key_separator)?;
