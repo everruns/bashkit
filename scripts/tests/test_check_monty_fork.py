@@ -318,6 +318,28 @@ class CheckMontyForkTests(unittest.TestCase):
             '`serde` comes from',
         )
 
+    def test_a_patch_table_fails(self):
+        # `[patch]` redirects a crate's source without touching the
+        # `[dependencies]` line the per-dep source check reads, so it would
+        # otherwise slip past. Upstream Monty 1.4 has none.
+        self.assert_manifest_error(
+            FORK_TOML + '\n[patch.crates-io]\nserde = { git = "https://e.example/s" }\n',
+            '[patch] redirects',
+        )
+
+    def test_a_replace_table_fails(self):
+        self.assert_manifest_error(
+            FORK_TOML + '\n[replace]\n"serde:1.0.0" = { git = "https://e.example/s" }\n',
+            '[replace] redirects',
+        )
+
+    def test_a_marker_does_not_excuse_a_patch_table(self):
+        self.assert_manifest_error(
+            FORK_TOML
+            + '\n# bashkit fork: why\n[patch.crates-io]\nserde = { git = "https://e.example/s" }\n',
+            '[patch] redirects',
+        )
+
     def test_repackaging_a_dependency_fails(self):
         # `package = ...` swaps which crate is built while the version and
         # features still read as upstream's; only the declared renames may.

@@ -58,6 +58,12 @@ UPSTREAM_DROPPED = ('tests/', 'test_cases/', 'Cargo.lock', 'Cargo.toml.orig', '.
 # Dependency tables compared between the fork and upstream manifests.
 # dev-dependencies are skipped with the tests that use them.
 DEP_TABLES = ('dependencies', 'build-dependencies')
+# Tables that redirect a crate's source without touching the dependency line,
+# so the per-dependency source check never sees them. Upstream has neither, and
+# a fork has no reason to: rejected outright rather than compared, and no
+# marker covers them. `[patch]` in a non-root manifest is inert today, but the
+# forks are published crates and a consumer may build one as its own root.
+SOURCE_REDIRECT_TABLES = ('patch', 'replace')
 # Dependencies the forks rename on purpose: upstream name -> fork package.
 # Their version follows the fork, so only features/optionality are compared.
 RENAMED_DEPS = {'monty-types': 'bashkit-monty-types'}
@@ -281,6 +287,12 @@ def manifest_errors(fork_dir: Path, upstream_dir: Path) -> list[str]:
                         f'{where}: [{table}] `{name}` matches upstream but has a '
                         f'`{MARKER}` marker; drop the marker'
                     )
+    for table in SOURCE_REDIRECT_TABLES:
+        if table in fork:
+            errors.append(
+                f'{where}: [{table}] redirects dependency sources and upstream has '
+                f'none; remove it (no `{MARKER}` marker covers a source redirect)'
+            )
     if fork.get('features', {}) != upstream.get('features', {}):
         errors.append(f'{where}: [features] differ from upstream {upstream.get("features", {})!r}')
     return errors

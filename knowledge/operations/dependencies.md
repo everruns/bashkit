@@ -113,6 +113,11 @@ the end of the line. What a marker does **not** cover:
 - **The same crate in another table.** A marker is scoped to the table it sits
   in, so a note on `[dependencies] serde` does not silence a
   `[build-dependencies] serde` drift — the second runs at compile time.
+- **A `[patch]` or `[replace]` table.** These redirect a source without
+  touching the dependency line the per-dependency check reads, so they are
+  rejected on sight rather than compared; upstream has neither. `[patch]` in a
+  non-root manifest is inert today, but the forks are published crates and a
+  consumer may build one as its own workspace root.
 
 A marker on a dependency that matches upstream is itself an error, so a note
 left behind by a re-sync cannot silently excuse the next bump. Unlike source
