@@ -19,6 +19,12 @@
 //! - **Limits only go down.** `--max-*`/`--timeout` flags may lower markkit's
 //!   default limits but never raise them (`Host::limits`), so one tenant's
 //!   script cannot buy a larger CPU/memory budget from a shared process.
+//! - **Deadline (TM-DOS-143).** Extraction is synchronous CPU work. Inline
+//!   it held the tenant's async worker (starving co-tenants scheduled there)
+//!   and the `exec` timeout could not interrupt it. The run now happens on
+//!   tokio's blocking pool, so the caller's future stays cancellable and the
+//!   worker stays free, and markkit's cooperative `timeout` is capped at the
+//!   remaining `exec` deadline so abandoned work stops soon after.
 //! - **Refused in the sandbox:** `--ocr` (runs a host Tesseract binary, reads
 //!   host model files) and the `mcp` subcommand (long-running stdio server).
 //!   Both still parse and show in `--help`; they fail with exit 1.
@@ -51,9 +57,15 @@ impl Builtin for Markkit {
             cwd: ctx.cwd.clone(),
             #[cfg(feature = "http_client")]
             http: ctx.http_client.cloned(),
+            deadline: ctx
+                .remaining_deadline()
+                .map(|left| crate::time_compat::Instant::now() + left),
         };
-        let args = std::iter::once("markkit".to_string()).chain(ctx.args.iter().cloned());
-        let exit_code = markkit_cli::run(args, &host).await;
+        let args: Vec<String> = std::iter::once("markkit".to_string())
+            .chain(ctx.args.iter().cloned())
+            .collect();
+        let host = Arc::new(host);
+        let exit_code = run_off_worker(args, host.clone()).await;
         Ok(ExecResult {
             stdout: host.take_stdout().into(),
             stderr: host.take_stderr().into(),
@@ -71,6 +83,18 @@ impl Builtin for Markkit {
     }
 }
 
+/// Runs the CLI on tokio's blocking pool (TM-DOS-143). `Handle::block_on`
+/// drives the host's async VFS/HTTP calls there; on a current-thread runtime
+/// the caller, parked awaiting the join handle, keeps driving IO and timers.
+async fn run_off_worker(args: Vec<String>, host: Arc<Host>) -> i32 {
+    let Ok(handle) = tokio::runtime::Handle::try_current() else {
+        return markkit_cli::run(args, &*host).await;
+    };
+    let job = tokio::task::spawn_blocking(move || handle.block_on(markkit_cli::run(args, &*host)));
+    // A markkit panic that unwinds reports as a plain failure.
+    job.await.unwrap_or(1)
+}
+
 /// [`CliHost`] over one builtin invocation.
 struct Host {
     stdout: Mutex<String>,
@@ -80,6 +104,9 @@ struct Host {
     cwd: PathBuf,
     #[cfg(feature = "http_client")]
     http: Option<Arc<crate::network::HttpClient>>,
+    /// End of the `exec` wall-clock budget, if limited. An instant, not a
+    /// duration, so time queued behind a busy blocking pool still counts.
+    deadline: Option<crate::time_compat::Instant>,
 }
 
 impl Host {
@@ -148,7 +175,11 @@ impl CliHost for Host {
     }
 
     fn limits(&self, requested: Limits) -> Limits {
-        clamp_limits(requested, &Limits::default())
+        let left = self.deadline.map(|end| {
+            end.checked_duration_since(crate::time_compat::Instant::now())
+                .unwrap_or_default()
+        });
+        clamp_limits(requested, &deadline_cap(left))
     }
 
     /// Fail closed: every host-only feature (today `--ocr`) is refused.
@@ -170,6 +201,15 @@ fn to_io_error(err: Error) -> io::Error {
         Error::Io(e) => e,
         other => io::Error::other(other.to_string()),
     }
+}
+
+/// markkit's defaults, with `timeout` capped at the remaining `exec` budget.
+fn deadline_cap(deadline: Option<std::time::Duration>) -> Limits {
+    let mut cap = Limits::default();
+    if let Some(remaining) = deadline {
+        cap.timeout = cap.timeout.min(remaining);
+    }
+    cap
 }
 
 /// Each limit is the smaller of what the flags asked for and the cap.
@@ -296,6 +336,16 @@ mod tests {
         huge.max_redirects = 1_000;
         let got = clamp_limits(huge, &cap);
         assert_eq!(got, cap);
+    }
+
+    #[test]
+    fn timeout_capped_at_remaining_deadline() {
+        let remaining = std::time::Duration::from_millis(1500);
+        let got = clamp_limits(Limits::default(), &deadline_cap(Some(remaining)));
+        assert_eq!(got.timeout, remaining);
+        // No deadline: markkit's default stands.
+        let got = clamp_limits(Limits::default(), &deadline_cap(None));
+        assert_eq!(got.timeout, Limits::default().timeout);
     }
 
     #[test]

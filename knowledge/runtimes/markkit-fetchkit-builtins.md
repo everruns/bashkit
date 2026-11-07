@@ -48,7 +48,8 @@ The `CliHost` trait is the only boundary:
 | file reads (`--file`, `--rules`) | VFS, resolved against `cwd` | n/a |
 | env | n/a | shell env (`ctx.env`), never host env |
 | URL egress | `HttpClient` per hop, redirects followed here | fetchkit `HttpTransport` over `HttpClient` |
-| limits | `--max-*`/`--timeout` may lower, never raise, markkit defaults | bashkit `HttpLimits` cap every body |
+| limits | `--max-*`/`--timeout` may lower, never raise, markkit defaults; `timeout` also capped at the remaining `exec` deadline | bashkit `HttpLimits` cap every body; each request's timeout capped at the remaining `exec` deadline |
+| scheduling | runs on tokio's blocking pool (`Handle::block_on`), so the `exec` timeout cancels the caller and co-tenants keep the async worker (TM-DOS-143) | same |
 | `mcp` subcommand | refused | refused |
 
 ### Network

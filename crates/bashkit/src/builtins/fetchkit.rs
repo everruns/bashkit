@@ -20,6 +20,10 @@
 //!   (bashkit signs in `HttpClient`; a key in argv would double-sign and land in
 //!   history), `--allow-remote-conversion` (uploads documents to a third
 //!   party), and the `mcp` subcommand. All still parse and show in `--help`.
+//! - **Off the async worker (TM-DOS-143).** HTML-to-Markdown conversion is
+//!   synchronous CPU work; the run happens on tokio's blocking pool so the
+//!   `exec` timeout can cancel the caller and co-tenants keep the worker. Per
+//!   request, the transport timeout is capped at the remaining `exec` budget.
 //! - **Stateless.** No globals; every run builds its own fetchkit `Tool`.
 
 use std::io;
@@ -48,9 +52,15 @@ impl Builtin for Fetchkit {
             stderr: Mutex::new(String::new()),
             env: ctx.env.clone(),
             http: ctx.http_client.cloned(),
+            deadline: ctx
+                .remaining_deadline()
+                .map(|left| crate::time_compat::Instant::now() + left),
         };
-        let args = std::iter::once("fetchkit".to_string()).chain(ctx.args.iter().cloned());
-        let exit_code = fetchkit_cli::run(args, &host).await;
+        let args: Vec<String> = std::iter::once("fetchkit".to_string())
+            .chain(ctx.args.iter().cloned())
+            .collect();
+        let host = Arc::new(host);
+        let exit_code = run_off_worker(args, host.clone()).await;
         Ok(ExecResult {
             stdout: take(&host.stdout).into(),
             stderr: take(&host.stderr).into(),
@@ -78,6 +88,19 @@ struct Host {
     stderr: Mutex<String>,
     env: std::collections::HashMap<String, String>,
     http: Option<Arc<HttpClient>>,
+    /// End of the `exec` wall-clock budget, if limited.
+    deadline: Option<crate::time_compat::Instant>,
+}
+
+/// Runs the CLI on tokio's blocking pool (TM-DOS-143). `Handle::block_on`
+/// drives the transport there; on a current-thread runtime the caller, parked
+/// awaiting the join handle, keeps driving IO and timers.
+async fn run_off_worker(args: Vec<String>, host: Arc<Host>) -> i32 {
+    let Ok(handle) = tokio::runtime::Handle::try_current() else {
+        return fetchkit_cli::run(args, &*host).await;
+    };
+    let job = tokio::task::spawn_blocking(move || handle.block_on(fetchkit_cli::run(args, &*host)));
+    job.await.unwrap_or(1)
 }
 
 #[async_trait]
@@ -106,6 +129,7 @@ impl CliHost for Host {
         builder
             .transport(Arc::new(SandboxTransport {
                 http: self.http.clone(),
+                deadline: self.deadline,
             }))
             .block_private_ips(false)
             .use_env_proxy(false)
@@ -121,6 +145,7 @@ impl CliHost for Host {
 /// fetchkit follows redirects itself, so every hop is re-checked here.
 struct SandboxTransport {
     http: Option<Arc<HttpClient>>,
+    deadline: Option<crate::time_compat::Instant>,
 }
 
 #[async_trait]
@@ -139,7 +164,15 @@ impl HttpTransport for SandboxTransport {
             TransportMethod::Head => Method::Head,
         };
         // bashkit clamps the deadline to its own bounds; round sub-second up.
-        let timeout_secs = req.timeout.map(|t| t.as_secs().max(1));
+        let left = self.deadline.map(|end| {
+            end.checked_duration_since(crate::time_compat::Instant::now())
+                .unwrap_or_default()
+        });
+        let timeout = match (req.timeout, left) {
+            (Some(t), Some(left)) => Some(t.min(left)),
+            (t, left) => t.or(left),
+        };
+        let timeout_secs = timeout.map(|t| t.as_secs().max(1));
         let response = http
             .request_with_timeout(method, req.url.as_str(), None, &req.headers, timeout_secs)
             .await
