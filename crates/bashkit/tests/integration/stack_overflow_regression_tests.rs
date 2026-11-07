@@ -138,8 +138,25 @@ async fn recursive_compgen_command_is_bounded() {
     let r = bash
         .exec("x='compgen -C \"$x\" a'; compgen -C \"$x\" a; echo after")
         .await;
-    if let Ok(r) = r {
-        assert!(r.stdout.contains("after"), "stdout: {}", r.stdout);
+    assert_bounded(r, "after");
+}
+
+/// The outcome of a capped recursion: the script either continues past it
+/// (`marker` in stdout) or `exec` fails with the depth error. Never an abort,
+/// and never some other error.
+fn assert_bounded(r: bashkit::Result<bashkit::ExecResult>, marker: &str) {
+    match r {
+        Ok(r) => assert!(
+            r.stdout.contains(marker),
+            "stdout: {} stderr: {}",
+            r.stdout,
+            r.stderr
+        ),
+        Err(e) => assert!(
+            e.to_string().contains("maximum nesting depth exceeded")
+                || e.to_string().contains("function depth"),
+            "error: {e}"
+        ),
     }
 }
 
@@ -200,15 +217,9 @@ async fn nested_compounds_inside_recursion_do_not_overflow() {
     let script = format!(
         "g(){{ {braces_open} if (( d < 30 )); then d=$((d+1)); echo $(g); else echo leaf; fi; {braces_close} }}; d=0; g; echo after"
     );
-    let r = bash.exec(&script).await;
-    if let Ok(r) = r {
-        assert!(r.stdout.contains("after"), "stdout: {}", r.stdout);
-    }
+    assert_bounded(bash.exec(&script).await, "after");
 
-    let r = bash.exec("f(){ eval f; }; f; echo rc=$?").await;
-    if let Ok(r) = r {
-        assert!(r.stdout.contains("rc="), "stdout: {}", r.stdout);
-    }
+    assert_bounded(bash.exec("f(){ eval f; }; f; echo rc=$?").await, "rc=");
 
     let r = bash
         .exec("cd /tmp; printf 'eval ./m.sh\\n' > m.sh; chmod +x m.sh; ./m.sh; echo rc=$?")
