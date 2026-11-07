@@ -60,6 +60,12 @@ class AdvisoryTests(unittest.TestCase):
         self.assertEqual([v['id'] for v in found], ['GHSA-xxxx-yyyy-zzzz', 'GHSA-2'])
 
 
+    def test_malformed_records_stay_readable(self):
+        page = {'vulns': [{'aliases': None, 'summary': None}, {'id': 'GHSA-3', 'withdrawn': '2026-01-01T00:00:00Z'}]}
+        self.assertEqual(cmu.open_advisories([page], {}), [{'id': 'unknown-id', 'summary': '', 'aliases': []}])
+        self.assertEqual(cmu.open_advisories([{'vulns': None}], {}), [])
+
+
 class ConfigTests(unittest.TestCase):
     def test_watches_both_crates_and_pypi(self):
         self.assertEqual(set(cmu.CRATES), {'monty', 'monty-types'})

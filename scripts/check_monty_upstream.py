@@ -69,15 +69,16 @@ def open_advisories(osv_pages: list[dict], acknowledged: dict[str, str]) -> list
     """Unacknowledged vulns from OSV query pages, as {id, summary, aliases}."""
     found = []
     for page in osv_pages:
-        for vuln in page.get('vulns', []):
-            ids = {vuln['id'], *vuln.get('aliases', [])}
-            if ids & acknowledged.keys():
+        for vuln in page.get('vulns') or []:
+            # OSV excludes withdrawn records from /v1/query; skip them anyway.
+            if not isinstance(vuln, dict) or vuln.get('withdrawn'):
                 continue
-            found.append({
-                'id': vuln['id'],
-                'summary': vuln.get('summary', '').strip(),
-                'aliases': sorted(vuln.get('aliases', [])),
-            })
+            # A record without an id still fails the watch, readably.
+            vid = str(vuln.get('id') or 'unknown-id')
+            aliases = sorted(str(a) for a in vuln.get('aliases') or [])
+            if {vid, *aliases} & acknowledged.keys():
+                continue
+            found.append({'id': vid, 'summary': str(vuln.get('summary') or '').strip(), 'aliases': aliases})
     return found
 
 
