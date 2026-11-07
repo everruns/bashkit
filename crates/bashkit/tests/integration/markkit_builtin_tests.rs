@@ -276,5 +276,10 @@ async fn extraction_stops_at_exec_deadline() {
     assert!(
         elapsed < Duration::from_secs(3),
         "markkit ran {elapsed:?} past a 300 ms exec timeout ({r:?})" // debug-ok: test diagnostics
-    );
+    );    // The timeout itself must have fired, not a fast success.
+    let timed_out = match &r {
+        Ok(r) => r.exit_code == 124,
+        Err(e) => e.to_string().contains("timed out") || e.to_string().contains("timeout"),
+    };
+    assert!(timed_out, "exec did not time out: {r:?}"); // debug-ok: test diagnostics
 }

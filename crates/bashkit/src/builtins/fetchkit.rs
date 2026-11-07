@@ -54,7 +54,7 @@ impl Builtin for Fetchkit {
             http: ctx.http_client.cloned(),
             deadline: ctx
                 .remaining_deadline()
-                .map(|left| std::time::Instant::now() + left),
+                .map(|left| crate::time_compat::Instant::now() + left),
         };
         let args: Vec<String> = std::iter::once("fetchkit".to_string())
             .chain(ctx.args.iter().cloned())
@@ -89,7 +89,7 @@ struct Host {
     env: std::collections::HashMap<String, String>,
     http: Option<Arc<HttpClient>>,
     /// End of the `exec` wall-clock budget, if limited.
-    deadline: Option<std::time::Instant>,
+    deadline: Option<crate::time_compat::Instant>,
 }
 
 /// Runs the CLI on tokio's blocking pool (TM-DOS-143). `Handle::block_on`
@@ -145,7 +145,7 @@ impl CliHost for Host {
 /// fetchkit follows redirects itself, so every hop is re-checked here.
 struct SandboxTransport {
     http: Option<Arc<HttpClient>>,
-    deadline: Option<std::time::Instant>,
+    deadline: Option<crate::time_compat::Instant>,
 }
 
 #[async_trait]
@@ -164,9 +164,10 @@ impl HttpTransport for SandboxTransport {
             TransportMethod::Head => Method::Head,
         };
         // bashkit clamps the deadline to its own bounds; round sub-second up.
-        let left = self
-            .deadline
-            .map(|end| end.saturating_duration_since(std::time::Instant::now()));
+        let left = self.deadline.map(|end| {
+            end.checked_duration_since(crate::time_compat::Instant::now())
+                .unwrap_or_default()
+        });
         let timeout = match (req.timeout, left) {
             (Some(t), Some(left)) => Some(t.min(left)),
             (t, left) => t.or(left),

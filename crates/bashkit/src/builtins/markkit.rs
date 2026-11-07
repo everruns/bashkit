@@ -57,7 +57,9 @@ impl Builtin for Markkit {
             cwd: ctx.cwd.clone(),
             #[cfg(feature = "http_client")]
             http: ctx.http_client.cloned(),
-            deadline: ctx.remaining_deadline(),
+            deadline: ctx
+                .remaining_deadline()
+                .map(|left| crate::time_compat::Instant::now() + left),
         };
         let args: Vec<String> = std::iter::once("markkit".to_string())
             .chain(ctx.args.iter().cloned())
@@ -102,8 +104,9 @@ struct Host {
     cwd: PathBuf,
     #[cfg(feature = "http_client")]
     http: Option<Arc<crate::network::HttpClient>>,
-    /// Remaining `exec` wall-clock budget when this invocation started.
-    deadline: Option<std::time::Duration>,
+    /// End of the `exec` wall-clock budget, if limited. An instant, not a
+    /// duration, so time queued behind a busy blocking pool still counts.
+    deadline: Option<crate::time_compat::Instant>,
 }
 
 impl Host {
@@ -172,7 +175,11 @@ impl CliHost for Host {
     }
 
     fn limits(&self, requested: Limits) -> Limits {
-        clamp_limits(requested, &deadline_cap(self.deadline))
+        let left = self.deadline.map(|end| {
+            end.checked_duration_since(crate::time_compat::Instant::now())
+                .unwrap_or_default()
+        });
+        clamp_limits(requested, &deadline_cap(left))
     }
 
     /// Fail closed: every host-only feature (today `--ocr`) is refused.
