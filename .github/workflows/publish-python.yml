@@ -151,13 +151,14 @@ jobs:
       # nightly satisfies our deps' MSRV (monty needs 1.96) + edition 2024;
       # its LLVM matches Emscripten 4.0.9's binaryen. pyodide-build manages its
       # own matching emsdk via the cross-build env (no setup-emsdk needed).
+      - name: Install Rust stable (default toolchain)
+        uses: dtolnay/rust-toolchain@d86e0fa8f147d6539442c26a61ebba8becc19489 # 1.96.0
+
+      # The action no longer accepts a `toolchain:` input (it installs
+      # the rust-toolchain.toml toolchain), so install the pinned nightly
+      # explicitly below.
       - name: Install nightly Rust with the Emscripten target
-        # @nightly matches the repo's other nightly jobs; the exact nightly is
-        # pinned via the toolchain: input below.
-        uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2 # nightly
-        with:
-          toolchain: ${{ env.RUST_NIGHTLY }}
-          targets: wasm32-unknown-emscripten
+        run: rustup toolchain install ${{ env.RUST_NIGHTLY }} --profile minimal --target wasm32-unknown-emscripten
 
       - name: Install pyodide-build
         run: pip install "pyodide-build==${PYODIDE_BUILD_VERSION}"

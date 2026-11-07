@@ -263,6 +263,34 @@ the vendored parser in one deliberate change — not inside an aggregated
 
 `scripts/tests/test_dependabot_coverage.py` enforces all three.
 
+## A source-built CI tool rides the toolchain of the step that installs it
+
+`taiki-e/cache-cargo-install-action` and a bare `cargo install` both build from
+source, so the tool version they can resolve is bounded by the toolchain active
+*in that step*. On the pinned toolchain an unpinned tool resolves to the newest
+release, and an upstream MSRV bump then breaks a tree that has not changed:
+cargo-geiger 0.14.0 shipped requiring rustc 1.97 and nightly run 259 went red
+the next morning with the unsafe-code audit skipped.
+
+Two ways out, and the choice is per step: pin the version (`tool: name@version`
+where the action reads it, or `--version`), or build on a nightly, which
+outruns any released MSRV.
+
+Which toolchain a step gets changed with the `dtolnay/rust-toolchain` schema.
+The action dropped its `toolchain:` input and now always installs the
+`rust-toolchain.toml` toolchain, so a job wanting nightly installs it
+*alongside* the stable default (`rustup toolchain install nightly-<date>`) and
+selects it per command (`cargo +nightly-<date> fuzz build`). A `cargo install`
+in such a job therefore gets **stable**, not nightly, unless it says otherwise
+— via `RUSTUP_TOOLCHAIN` on the step or `cargo +nightly-<date>` in its `run`.
+Both cargo-fuzz installs needed that opt-in when the jobs migrated; reading the
+exemption per job instead of per step would have reopened the geiger hole.
+
+`scripts/tests/test_pinned_ci_tools.py` enforces this, and also rejects an
+input the action silently drops — a pin that looks right and does nothing is
+worse than no pin, because the job keeps reporting the failure it was meant to
+fix.
+
 ## Measure size and audit surface separately
 
 The `idna_adapter` pin removes 21 crates but only **15 KB (0.16%)** from the
