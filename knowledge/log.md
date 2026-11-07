@@ -3,6 +3,7 @@
 ## 2026-11-07
 
 * **Monty upstream watch**: the forks are renamed crates, so cargo audit/deny and Dependabot never see upstream `monty` releases or advisories. `scripts/check_monty_upstream.py` (daily `monty-upstream.yml`) fails when crates.io has a newer stable `monty`/`monty-types` than the fork base or OSV lists an advisory for `monty`, `monty-types` or PyPI `pydantic-monty` at that version. First run: 1.5.0 is out, base is 1.4.0. See [Dependencies](operations/dependencies.md#monty-forks).
+* **Monty vs CPython differential fuzz**: `python_diff_fuzz` runs grammar-generated programs through both embedded runtimes and fails on any stdout difference. First runs (~9k programs) found one class: Monty evaluates method-call arguments before the method lookup (error type differs from CPython). Writing it showed `python_fuzz` (#2853) never set `BASHKIT_ALLOW_INPROCESS_PYTHON`, so its runs only hit the opt-in refusal; both targets now opt in and assert `python3` really runs. See [Python Builtin](runtimes/python-builtin.md).
 
 ## 2026-11-06
 
