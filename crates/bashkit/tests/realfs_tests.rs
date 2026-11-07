@@ -1337,18 +1337,61 @@ async fn realfs_chmod_drops_special_bits() {
     assert_eq!(mode & 0o7777, 0o777, "mode {mode:o}");
 }
 
-// THREAT[TM-DOS-144]: a root real mount keeps the configured FsLimits on
-// the writable overlay instead of falling back to the defaults.
+// THREAT[TM-ESC-010]: copying a setuid file inside a read-write mount
+// must not produce a setuid copy on the host.
+#[cfg(unix)]
+#[tokio::test]
+async fn realfs_copy_drops_special_bits() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("tool");
+    std::fs::write(&src, b"#!/bin/sh\n").unwrap();
+    std::fs::set_permissions(&src, std::fs::Permissions::from_mode(0o4755)).unwrap();
+    let mut bash = Bash::builder()
+        .mount_real_readwrite_at(dir.path(), "/mnt/host")
+        .build();
+    let r = bash.exec("cp /mnt/host/tool /mnt/host/copy").await.unwrap();
+    assert_eq!(r.exit_code, 0, "stderr: {}", r.stderr);
+    let mode = std::fs::metadata(dir.path().join("copy"))
+        .unwrap()
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o7777, 0o755, "mode {mode:o}");
+}
+
+// THREAT[TM-DOS-144]: a root real mount (read-only or read-write) keeps the
+// configured FsLimits on the writable overlay instead of the defaults.
 #[tokio::test]
 async fn root_real_mount_keeps_filesystem_limits() {
-    let dir = tempfile::tempdir().unwrap();
-    let mut bash = Bash::builder()
-        .filesystem_limits(bashkit::FsLimits::new().max_file_size(1024))
-        .mount_real_readonly(dir.path())
+    for readwrite in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let limits = bashkit::FsLimits::new().max_file_size(1024);
+        let builder = Bash::builder().filesystem_limits(limits);
+        let mut bash = if readwrite {
+            builder.mount_real_readwrite(dir.path())
+        } else {
+            builder.mount_real_readonly(dir.path())
+        }
         .build();
-    let r = bash
-        .exec("head -c 4096 /dev/zero > /big; echo $?")
-        .await
-        .unwrap();
-    assert_ne!(r.stdout.trim(), "0", "write over max_file_size succeeded");
+        let r = bash
+            .exec("head -c 4096 /dev/zero > /big; echo rc=$?; wc -c < /big 2>/dev/null || echo size=none")
+            .await
+            .unwrap();
+        assert!(
+            !r.stdout.contains("rc=0"),
+            "readwrite={readwrite}: write over max_file_size succeeded: {}",
+            r.stdout
+        );
+        let size = r
+            .stdout
+            .lines()
+            .nth(1)
+            .and_then(|l| l.trim().parse::<u64>().ok())
+            .unwrap_or(0);
+        assert!(size <= 1024, "readwrite={readwrite}: /big is {size} bytes");
+        assert!(
+            !dir.path().join("big").exists()
+                || std::fs::metadata(dir.path().join("big")).unwrap().len() <= 1024
+        );
+    }
 }
