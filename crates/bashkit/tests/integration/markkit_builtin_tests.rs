@@ -251,3 +251,30 @@ mod network {
         assert_eq!(site.calls.lock().unwrap().len(), 6);
     }
 }
+
+// THREAT[TM-DOS-143]: extraction runs synchronously where the exec timeout
+// cannot cancel it, so markkit's own timeout is capped at the remaining
+// exec budget. Without the cap this ran to markkit's 60 s default.
+#[tokio::test]
+async fn extraction_stops_at_exec_deadline() {
+    use bashkit::ExecutionLimits;
+    use std::time::{Duration, Instant};
+
+    let mut bash = Bash::builder()
+        .limits(ExecutionLimits::new().timeout(Duration::from_millis(300)))
+        .build();
+    let page = "<div><p>word <b>bold</b> <a href=\"/x\">link</a></p></div>".repeat(170_000);
+    bash.fs()
+        .write_file(std::path::Path::new("/big.html"), page.as_bytes())
+        .await
+        .unwrap();
+    let started = Instant::now();
+    let r = bash
+        .exec("markkit extract --file /big.html > /dev/null")
+        .await;
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed < Duration::from_secs(3),
+        "markkit ran {elapsed:?} past a 300 ms exec timeout ({r:?})" // debug-ok: test diagnostics
+    );
+}
