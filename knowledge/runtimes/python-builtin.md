@@ -333,8 +333,8 @@ subset (ints, floats, str, list, tuple, dict, operators, builtins, str/list
 methods, slicing, f-strings, comprehensions), runs each through Monty and the
 CPython wasm runtime, and fails when stdout differs. Every statement is wrapped
 in `try/except` printing the exception type, so exception types are compared
-too. Runs that hit a limit (non-zero exit, MemoryError, OverflowError,
-RecursionError, stdout cap) are skipped, since the two runtimes enforce limits
+too. Runs that hit a limit (non-zero exit, MemoryError, RecursionError,
+stdout cap) are skipped; OverflowError is language semantics and is compared, since the two runtimes enforce limits
 differently. Known divergence, excluded from the grammar: Monty evaluates
 `obj.method(arg)` arguments before looking up `obj.method`, so the error type
 differs when both fail (CPython: AttributeError, Monty: TypeError).

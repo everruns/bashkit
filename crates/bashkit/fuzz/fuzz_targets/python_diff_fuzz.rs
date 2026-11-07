@@ -24,7 +24,8 @@
 //!   method-call arguments are bound to a temporary first
 //! - sets and set ordering, `hash()`, `id()`: implementation-defined
 //! - big repetition (`'a' * 10**20`): the two runtimes have different memory
-//!   limits; MemoryError/OverflowError runs are skipped below
+//!   limits; MemoryError runs are skipped below (OverflowError is language
+//!   semantics, e.g. float `**` overflow, and is compared)
 //!
 //! Comparison is skipped when either side does not exit 0 (time or memory
 //! limit, which the two runtimes enforce differently) or its output hit the
@@ -322,7 +323,6 @@ async fn run(mut bash: bashkit::Bash, program: &str) -> Option<String> {
     if r.exit_code != 0
         || out.len() >= MAX_STDOUT
         || out.contains("MemoryError")
-        || out.contains("OverflowError")
         || out.contains("RecursionError")
     {
         return None;
