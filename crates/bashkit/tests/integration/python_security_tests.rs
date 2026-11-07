@@ -1002,6 +1002,21 @@ mod blackbox_dos {
     // step-capped, and Monty checks its time limit between matches. These
     // tests are the guard: each classic catastrophic pattern must finish (or
     // be stopped) well inside the Python time limit.
+    // A wall-clock assertion in these tests is a hang detector, not a
+    // performance budget. The VM's own `max_duration` is the thing under test,
+    // so the wall clock has to sit *above* that limit: a run the limit permits
+    // must not fail here. Two of them had it inverted -- `elapsed < 4s` against
+    // a 5s limit -- so any run finishing between 4s and 5s failed while
+    // `exit_code` correctly showed no timeout. Coverage runs under tarpaulin are
+    // several times slower than a normal build (the whole integration suite
+    // takes ~240s there against ~0.8s for all seven cases here), which put the
+    // `lookbehind` case at 4.02s and turned main red on a bound its own limit
+    // allowed. `regex_loop_is_stopped_by_time_limit` already used the right
+    // shape (6s over a 2s limit); this makes it the rule.
+    fn hang_bound(limit: Duration) -> Duration {
+        limit * 3
+    }
+
     const REDOS_CASES: &[(&str, &str)] = &[
         (
             "nested quantifier",
@@ -1026,8 +1041,9 @@ mod blackbox_dos {
 
     #[tokio::test]
     async fn regex_redos_patterns_are_bounded() {
+        let limit = Duration::from_secs(5);
         for (name, call) in REDOS_CASES {
-            let limits = PythonLimits::default().max_duration(Duration::from_secs(5));
+            let limits = PythonLimits::default().max_duration(limit);
             let mut bash = bash_python_limits(limits);
             let script = format!("python3 - <<'EOF'\nimport re\nr = {call}\nprint('done')\nEOF");
             let started = std::time::Instant::now();
@@ -1037,8 +1053,9 @@ mod blackbox_dos {
             // a timeout (124) would mean one match ran past the VM's checks.
             assert_ne!(r.exit_code, 124, "{name}: hit the time limit: {}", r.stderr);
             assert!(
-                elapsed < Duration::from_secs(4),
-                "{name}: took {elapsed:?}: {}",
+                elapsed < hang_bound(limit),
+                "{name}: took {elapsed:?}, over the {:?} hang bound: {}",
+                hang_bound(limit),
                 r.stderr
             );
         }
@@ -1048,7 +1065,8 @@ mod blackbox_dos {
     async fn regex_loop_is_stopped_by_time_limit() {
         // Many cheap-but-slow matches in a loop: the per-match cap alone does
         // not bound the script, Monty's between-match time check must.
-        let limits = PythonLimits::default().max_duration(Duration::from_secs(2));
+        let limit = Duration::from_secs(2);
+        let limits = PythonLimits::default().max_duration(limit);
         let mut bash = bash_python_limits(limits);
         let started = std::time::Instant::now();
         let r = bash
@@ -1058,13 +1076,14 @@ mod blackbox_dos {
             .await
             .unwrap();
         assert_eq!(r.exit_code, 124, "{}", r.stderr);
-        assert!(started.elapsed() < Duration::from_secs(6));
+        assert!(started.elapsed() < hang_bound(limit), "{}", r.stderr);
     }
 
     #[tokio::test]
     async fn regex_huge_pattern_is_rejected_or_bounded() {
         // Compile-time blowup: a large counted repetition.
-        let limits = PythonLimits::default().max_duration(Duration::from_secs(5));
+        let limit = Duration::from_secs(5);
+        let limits = PythonLimits::default().max_duration(limit);
         let mut bash = bash_python_limits(limits);
         let started = std::time::Instant::now();
         let r = bash
@@ -1072,7 +1091,7 @@ mod blackbox_dos {
             .await
             .unwrap();
         assert_ne!(r.exit_code, 124, "{}", r.stderr);
-        assert!(started.elapsed() < Duration::from_secs(4));
+        assert!(started.elapsed() < hang_bound(limit), "{}", r.stderr);
     }
 
     #[tokio::test]
