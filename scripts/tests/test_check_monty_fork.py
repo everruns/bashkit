@@ -195,6 +195,81 @@ class CheckMontyForkTests(unittest.TestCase):
         (self.up / 'Cargo.toml').write_text(UPSTREAM_TOML + '\n[target.\'cfg(unix)\'.dependencies.libc]\nversion = "0.2"\n')
         self.assert_manifest_error(FORK_TOML, 'drops upstream `libc`')
 
+    # A dependency the fork shares with bashkit's own crates has to be able to
+    # move ahead of upstream: the two declarations are separate, so holding the
+    # fork at upstream's version puts two majors of the same crate in the
+    # graph. Marked divergence is how that is recorded, the same way a source
+    # edit is.
+    def test_marked_dependency_version_divergence_passes(self):
+        fork = FORK_TOML.replace(
+            'serde = { version = "1.0", features = ["derive"] }',
+            '# bashkit fork: shared with bashkit, moved ahead of upstream\n'
+            'serde = { version = "1.1", features = ["derive"] }',
+        )
+        (self.fork / 'Cargo.toml').write_text(fork)
+        self.assertEqual(cmf.check_crate(self.fork, self.up), [])
+
+    def test_marker_on_the_dependency_line_passes(self):
+        fork = FORK_TOML.replace(
+            'serde = { version = "1.0", features = ["derive"] }',
+            'serde = { version = "1.1", features = ["derive"] }  '
+            '# bashkit fork: moved ahead of upstream',
+        )
+        (self.fork / 'Cargo.toml').write_text(fork)
+        self.assertEqual(cmf.check_crate(self.fork, self.up), [])
+
+    def test_marker_does_not_excuse_adding_or_dropping_a_dependency(self):
+        # Divergence in a *version* is reviewable; a dependency upstream does
+        # not have is a different crate in the graph, and re-sync cannot
+        # reconcile it. The marker must not reach those.
+        added = FORK_TOML.replace(
+            '[features]',
+            '# bashkit fork: why\nevil = "1"\n\n[features]',
+        )
+        self.assert_manifest_error(added, 'adds `evil`')
+        dropped = FORK_TOML.replace(
+            'serde = { version = "1.0", features = ["derive"] }\n',
+            '# bashkit fork: why\n',
+        )
+        self.assert_manifest_error(dropped, 'drops upstream `serde`')
+
+    def test_marker_for_a_dependency_that_matches_upstream_is_stale(self):
+        # After a re-sync the fork's version catches up and the note is dead
+        # weight; left in place it would silently excuse the next bump.
+        fork = FORK_TOML.replace(
+            'serde = { version = "1.0", features = ["derive"] }',
+            '# bashkit fork: stale note\nserde = { version = "1.0", features = ["derive"] }',
+        )
+        self.assert_manifest_error(fork, '`serde` matches upstream')
+
+    def test_a_comment_block_marks_only_the_dependency_below_it(self):
+        # One dep's note must not excuse the next dep's drift.
+        fork = FORK_TOML.replace(
+            'monty-types = { package = "bashkit-monty-types", path = "../t", version = "0.20.3" }\n'
+            'serde = { version = "1.0", features = ["derive"] }',
+            '# bashkit fork: note for monty-types\n'
+            'monty-types = { package = "bashkit-monty-types", path = "../t", version = "0.20.3" }\n'
+            'serde = { version = "1.1", features = ["derive"] }',
+        )
+        (self.fork / 'Cargo.toml').write_text(fork)
+        errors = cmf.check_crate(self.fork, self.up)
+        self.assertTrue(any('`serde` differs' in e for e in errors), errors)
+
+    def test_marker_in_a_features_table_does_not_mark_a_dependency(self):
+        # `[features]` entries look like `name = ...` too; only dependency
+        # tables may carry a dependency marker.
+        fork = FORK_TOML.replace(
+            'serde = { version = "1.0", features = ["derive"] }',
+            'serde = { version = "1.1", features = ["derive"] }',
+        ).replace(
+            'hooks = ["monty-types/hooks"]\n',
+            '# bashkit fork: not a dependency marker\nserde = ["monty-types/hooks"]\n',
+            1,
+        )
+        (self.fork / 'Cargo.toml').write_text(fork)
+        errors = cmf.check_crate(self.fork, self.up)
+        self.assertTrue(any('`serde` differs' in e for e in errors), errors)
+
     def test_pins_cover_both_forks(self):
         self.assertEqual(set(cmf.UPSTREAM), {'bashkit-monty', 'bashkit-monty-types'})
         for name, sha in cmf.UPSTREAM.values():

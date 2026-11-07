@@ -95,6 +95,40 @@ crates only the forks declare, so upstream security fixes arrive by re-sync:
 3. Run `python_fuzz` and the tenant stress soak (`BASHKIT_STRESS_ROUNDS=300`,
    as nightly runs it) before shipping, as the fork's own regression net.
 
+### A fork dependency may be marked ahead of upstream
+
+A dependency's *version* may diverge when the fork's `Cargo.toml` line carries
+a `bashkit fork: <why>` marker, in the comment block directly above it or at
+the end of the line. Adding or dropping a dependency is never markable: re-sync
+cannot reconcile a crate upstream does not have. A marker on a dependency that
+matches upstream is itself an error, so a note left behind by a re-sync cannot
+silently excuse the next bump. Unlike source edits there is no few-plain-lines
+fallback: a dependency table is one entry per line, so the comment block is the
+whole window, and one note cannot cover the entries around it.
+
+This exists for the nine crates the forks share with bashkit's own crates
+(`chrono`, `fancy-regex`, `getrandom`, `indexmap`, `num-bigint`, `num-traits`,
+`serde`, `sha1`, `sha2`). They are declared twice, once in a fork and once in
+the workspace, and Dependabot deliberately does not ignore them — bashkit has
+to be able to move them and to receive their advisories. But a proposal for one
+edits the fork manifest as well, so a strict fork-equals-upstream rule made
+every such bump unmergeable: #2860 (fancy-regex 0.17 -> 0.20, getrandom
+0.3 -> 0.4) is the shape, and it would have come back every week. Holding the
+fork at upstream's version instead put two majors of fancy-regex in the graph.
+
+`fancy-regex` and `getrandom` are marked today. Taking a shared bump therefore
+means moving the fork line too, marking it, and re-applying whatever source
+adaptation the new major needs — fancy-regex 0.20 made `Captures` generic over
+the haystack type, so `re_match.rs` and `re_pattern.rs` carry marked
+`Captures<'_, str>` edits. Because the `re` module is reachable from untrusted
+Python, a major there can move Python-visible behavior:
+`python_integration_tests::regex_semantics` pins the cases 0.20 changed
+(`\xHH` above 0x7F matching the codepoint, word-boundary alternation) against
+what CPython prints. fancy-regex's subroutine calls, whose compile-time
+inlining 0.20's `max_prog_size` exists to bound, are not enabled by the fork's
+default feature set, so no new compile-time blowup is reachable (TM-PY-033
+still covers runtime backtracking).
+
 Moving off 0.0.19 dropped the `jiter` Git patch (Monty 1.4 uses published
 jiter 0.17 with pyo3 0.29), the `get-size2 =0.10.1` hold (Monty's ruff AST
 moved to `compact_str` 0.10), and the `ruff_python_*` direct dependencies (the
