@@ -270,6 +270,94 @@ class CheckMontyForkTests(unittest.TestCase):
         errors = cmf.check_crate(self.fork, self.up)
         self.assertTrue(any('`serde` differs' in e for e in errors), errors)
 
+    def test_a_marker_does_not_reach_the_same_crate_in_another_table(self):
+        # A marker is scoped to the table it sits in. `[dependencies] serde`
+        # and `[build-dependencies] serde` are different positions in the
+        # build -- the second runs at compile time -- so a note on one must
+        # not silence drift in the other.
+        (self.up / 'Cargo.toml').write_text(
+            UPSTREAM_TOML + '\n[build-dependencies.serde]\nversion = "1.0"\n'
+        )
+        (self.fork / 'Cargo.toml').write_text(
+            FORK_TOML.replace(
+                'serde = { version = "1.0", features = ["derive"] }',
+                '# bashkit fork: runtime serde moved ahead of upstream\n'
+                'serde = { version = "1.1", features = ["derive"] }',
+            )
+            + '\n[build-dependencies]\nserde = { version = "1.2" }\n'
+        )
+        errors = cmf.check_crate(self.fork, self.up)
+        self.assertTrue(
+            any('[build-dependencies]' in e and '`serde` differs' in e for e in errors),
+            errors,
+        )
+        self.assertFalse(
+            [e for e in errors if e.startswith('fork/Cargo.toml: [dependencies] `serde`')],
+            errors,
+        )
+
+    # Where a dependency comes from is not a version, so a marker cannot excuse
+    # it: re-sync cannot reconcile a different source, and an identical version
+    # says nothing about what was actually built.
+    def test_source_substitution_fails_even_with_identical_version(self):
+        self.assert_manifest_error(
+            FORK_TOML.replace(
+                'serde = { version = "1.0", features = ["derive"] }',
+                'serde = { version = "1.0", features = ["derive"], path = "../evil" }',
+            ),
+            '`serde` comes from',
+        )
+
+    def test_a_marker_does_not_excuse_a_source_substitution(self):
+        self.assert_manifest_error(
+            FORK_TOML.replace(
+                'serde = { version = "1.0", features = ["derive"] }',
+                '# bashkit fork: why\n'
+                'serde = { version = "1.0", features = ["derive"], git = "https://e.example/s" }',
+            ),
+            '`serde` comes from',
+        )
+
+    def test_repackaging_a_dependency_fails(self):
+        # `package = ...` swaps which crate is built while the version and
+        # features still read as upstream's; only the declared renames may.
+        self.assert_manifest_error(
+            FORK_TOML.replace(
+                'serde = { version = "1.0", features = ["derive"] }',
+                'serde = { package = "evil-serde", version = "1.0", features = ["derive"] }',
+            ),
+            '`serde` comes from',
+        )
+
+    def test_a_target_table_marker_is_keyed_like_dep_tables(self):
+        # `marked_deps` reads the raw header text while `manifest_errors` keys
+        # tables from parsed TOML; a quoted cfg must normalize to the same key
+        # in both, or a marker in a target table would never match.
+        cfg = "cfg(all(target_arch = \"wasm32\", target_os = \"unknown\"))"
+        (self.up / 'Cargo.toml').write_text(
+            UPSTREAM_TOML + f"\n[target.'{cfg}'.dependencies.web-time]\nversion = \"1.0\"\n"
+        )
+        marked = FORK_TOML + (
+            f"\n[target.'{cfg}'.dependencies]\n"
+            '# bashkit fork: moved ahead of upstream\n'
+            'web-time = { version = "1.1" }\n'
+        )
+        (self.fork / 'Cargo.toml').write_text(marked)
+        self.assertEqual(cmf.check_crate(self.fork, self.up), [])
+
+        # And without the marker the same drift is still reported.
+        (self.fork / 'Cargo.toml').write_text(
+            FORK_TOML
+            + f"\n[target.'{cfg}'.dependencies]\nweb-time = {{ version = \"1.1\" }}\n"
+        )
+        errors = cmf.check_crate(self.fork, self.up)
+        self.assertTrue(any('`web-time` differs' in e for e in errors), errors)
+
+    def test_the_declared_rename_keeps_its_path_and_package(self):
+        # monty-types legitimately points at the sibling fork by path, which
+        # the source check must not flag.
+        self.assertEqual(cmf.check_crate(self.fork, self.up), [])
+
     def test_pins_cover_both_forks(self):
         self.assertEqual(set(cmf.UPSTREAM), {'bashkit-monty', 'bashkit-monty-types'})
         for name, sha in cmf.UPSTREAM.values():

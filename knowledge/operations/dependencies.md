@@ -99,12 +99,26 @@ crates only the forks declare, so upstream security fixes arrive by re-sync:
 
 A dependency's *version* may diverge when the fork's `Cargo.toml` line carries
 a `bashkit fork: <why>` marker, in the comment block directly above it or at
-the end of the line. Adding or dropping a dependency is never markable: re-sync
-cannot reconcile a crate upstream does not have. A marker on a dependency that
-matches upstream is itself an error, so a note left behind by a re-sync cannot
-silently excuse the next bump. Unlike source edits there is no few-plain-lines
-fallback: a dependency table is one entry per line, so the comment block is the
-whole window, and one note cannot cover the entries around it.
+the end of the line. What a marker does **not** cover:
+
+- **Adding or dropping** a dependency. Re-sync cannot reconcile a crate
+  upstream does not have.
+- **Where the crate comes from** — `package`, `path`, `git`, `branch`, `rev`,
+  `tag`, `registry`. These decide *which* crate is built rather than which
+  version of it, so they are compared separately and are never markable. An
+  edit keeping version and features identical while adding `path = "../evil"`
+  or swapping `package` would otherwise read as upstream's dependency; only the
+  declared renames (`monty-types`) carry `package` and `path`, and the rename
+  check validates those on their own.
+- **The same crate in another table.** A marker is scoped to the table it sits
+  in, so a note on `[dependencies] serde` does not silence a
+  `[build-dependencies] serde` drift — the second runs at compile time.
+
+A marker on a dependency that matches upstream is itself an error, so a note
+left behind by a re-sync cannot silently excuse the next bump. Unlike source
+edits there is no few-plain-lines fallback: a dependency table is one entry per
+line, so the comment block is the whole window, and one note cannot cover the
+entries around it.
 
 This exists for the nine crates the forks share with bashkit's own crates
 (`chrono`, `fancy-regex`, `getrandom`, `indexmap`, `num-bigint`, `num-traits`,
