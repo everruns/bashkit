@@ -183,3 +183,11 @@ required-features = ["python"]
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "python_diff_fuzz"
+path = "fuzz_targets/python_diff_fuzz.rs"
+required-features = ["python", "cpython"]
+test = false
+doc = false
+bench = false

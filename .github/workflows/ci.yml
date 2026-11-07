@@ -676,6 +676,7 @@ jobs:
           cargo +nightly-2026-10-30 fuzz build --features cpython cpython_fuzz
           cargo +nightly-2026-10-30 fuzz build --features cpython cpython_http_fuzz
           cargo +nightly-2026-10-30 fuzz build --features python python_fuzz
+          cargo +nightly-2026-10-30 fuzz build --features python,cpython python_diff_fuzz
 
   # Gate job for branch protection — name must stay "Check"
   check:
