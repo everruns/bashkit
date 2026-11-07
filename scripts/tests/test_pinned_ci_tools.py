@@ -15,7 +15,8 @@ it alongside a stable default (`rustup toolchain install nightly-...`) and
 selects it per command (`cargo +nightly-... fuzz build`). A `cargo install` in
 such a job gets the *stable* default unless it opts in, so merely containing a
 nightly install no longer exempts a step: it must name the nightly itself, via
-`RUSTUP_TOOLCHAIN` on the step or `cargo +nightly-...` in its `run`. Exempting
+`RUSTUP_TOOLCHAIN` on the step or `cargo +nightly-...` in its `run`, either
+of which may name the nightly through `${{ env.X }}`. Exempting
 per job here would have silently reopened the geiger hole for `cargo-fuzz`.
 
 The first attempt at pinning geiger passed `version: 0.13.0`. That action has
@@ -80,15 +81,44 @@ RUSTUP_NIGHTLY_INSTALL = re.compile(r'rustup\s+toolchain\s+install\s+\S*nightly'
 
 # `cargo +nightly-2026-10-30 install ...` — the per-command toolchain selector.
 CARGO_PLUS_NIGHTLY = re.compile(r'cargo\s+\+\S*nightly')
+# `${{ env.RUST_NIGHTLY }}` — a job naming its nightly through a variable.
+ENV_EXPR = re.compile(r'\$\{\{\s*env\.([A-Za-z_][A-Za-z0-9_]*)\s*\}\}')
 
 
-def _is_nightly(name):
-    return 'nightly' in (name or '')
+def env_scopes(spec, job, step=None):
+    """`env` mappings that apply to a step, innermost first."""
+    return [
+        (step or {}).get('env') or {},
+        job.get('env') or {},
+        spec.get('env') or {},
+    ]
 
 
-def job_installs_nightly_via_rustup(job):
+def resolve_env(value, scopes):
+    """`value` with `${{ env.NAME }}` replaced from the first scope defining NAME.
+
+    An unresolved reference is left as written, which keeps `_is_nightly`
+    false rather than matching the variable's own name: `RUST_NIGHTLY` is not
+    evidence that what it holds is a nightly.
+    """
+    def sub(match):
+        name = match.group(1)
+        for scope in scopes:
+            if name in scope:
+                return str(scope[name])
+        return match.group(0)
+
+    return ENV_EXPR.sub(sub, value or '')
+
+
+def _is_nightly(value, scopes=()):
+    return 'nightly' in resolve_env(value, scopes)
+
+
+def job_installs_nightly_via_rustup(spec, job):
     for step in job.get('steps') or []:
-        if RUSTUP_NIGHTLY_INSTALL.search(step.get('run') or ''):
+        run = resolve_env(step.get('run') or '', env_scopes(spec, job, step))
+        if RUSTUP_NIGHTLY_INSTALL.search(run):
             return True
     return False
 
@@ -109,22 +139,25 @@ def job_default_is_nightly(job, nightly_shas):
     return False
 
 
-def job_has_nightly(job, nightly_shas):
+def job_has_nightly(spec, job, nightly_shas):
     """True when the job sets up a nightly at all, in either spelling."""
     return job_default_is_nightly(job, nightly_shas) or (
-        job_installs_nightly_via_rustup(job)
+        job_installs_nightly_via_rustup(spec, job)
     )
 
 
-def step_runs_on_nightly(job, step, nightly_shas):
+def step_runs_on_nightly(spec, job, step, nightly_shas):
     """True when this step's `cargo` resolves to a nightly toolchain."""
     if job_default_is_nightly(job, nightly_shas):
         return True
-    # Opt-in, in the two spellings that actually redirect cargo.
+    # Opt-in, in the two spellings that actually redirect cargo. Both may name
+    # the nightly through `${{ env.X }}`, which is how the Pyodide jobs do it.
+    scopes = env_scopes(spec, job, step)
     env = {**(job.get('env') or {}), **(step.get('env') or {})}
-    if _is_nightly(env.get('RUSTUP_TOOLCHAIN')):
+    if _is_nightly(env.get('RUSTUP_TOOLCHAIN'), scopes):
         return True
-    return bool(CARGO_PLUS_NIGHTLY.search(step.get('run') or ''))
+    run = resolve_env(step.get('run') or '', scopes)
+    return bool(CARGO_PLUS_NIGHTLY.search(run))
 
 
 def nightly_job_ids():
@@ -134,7 +167,7 @@ def nightly_job_ids():
     for path in sorted(WORKFLOWS.glob('*.yml')):
         spec = yaml.safe_load(path.read_text())
         for job_name, job in (spec.get('jobs') or {}).items():
-            if job_has_nightly(job, shas):
+            if job_has_nightly(spec, job, shas):
                 ids.add(f'{path.name}:{job_name}')
     return ids
 
@@ -151,7 +184,7 @@ def source_build_steps():
                         path.name,
                         job_name,
                         step,
-                        step_runs_on_nightly(job, step, nightly_shas),
+                        step_runs_on_nightly(spec, job, step, nightly_shas),
                     )
 
 
@@ -182,7 +215,7 @@ def cargo_install_run_steps():
                         job_name,
                         tool,
                         pinned,
-                        step_runs_on_nightly(job, step, nightly_shas),
+                        step_runs_on_nightly(spec, job, step, nightly_shas),
                     )
 
 
@@ -229,6 +262,41 @@ class PinnedCiToolTests(unittest.TestCase):
                     'so an upstream MSRV bump cannot break a tree that has '
                     'not changed',
                 )
+
+    def test_the_detector_follows_an_env_indirection(self):
+        # A job can name its nightly through a variable: the Pyodide jobs run
+        # `rustup toolchain install ${{ env.RUST_NIGHTLY }}` and set
+        # `RUSTUP_TOOLCHAIN` to the same expression — the very route this
+        # file treats as an opt-in. Matching only a literal `nightly` token
+        # called those jobs non-nightly, so a source build added there would
+        # be asked to pin a tool that is already on a nightly. Every job that
+        # installs a toolchain through rustup must be discovered.
+        shas = nightly_toolchain_shas()
+        checked = 0
+        for path in sorted(WORKFLOWS.glob('*.yml')):
+            spec = yaml.safe_load(path.read_text())
+            for job_name, job in (spec.get('jobs') or {}).items():
+                installs = [
+                    step for step in job.get('steps') or []
+                    if 'rustup toolchain install' in (step.get('run') or '')
+                ]
+                if not installs:
+                    continue
+                checked += 1
+                with self.subTest(workflow=path.name, job=job_name):
+                    self.assertTrue(
+                        job_has_nightly(spec, job, shas),
+                        f'{path.name}:{job_name} installs a toolchain via rustup '
+                        'but the detector does not see a nightly',
+                    )
+                    for step in installs:
+                        self.assertTrue(
+                            step_runs_on_nightly(spec, job, step, shas)
+                            or not (step.get('env') or {}).get('RUSTUP_TOOLCHAIN'),
+                            'a step pinning RUSTUP_TOOLCHAIN to this job\'s nightly '
+                            'must count as running on it',
+                        )
+        self.assertGreaterEqual(checked, 4, 'rustup install jobs not found')
 
     def test_tools_on_the_pinned_toolchain_pin_a_version(self):
         for workflow, job, step, on_nightly in source_build_steps():
