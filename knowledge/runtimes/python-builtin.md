@@ -343,4 +343,10 @@ Stress: `tests/integration/python_tenant_stress_tests.rs` runs 20 tenants on 4
 worker threads per round, mixing memory bombs, runaway loops, unbounded
 recursion and well-behaved scripts; it also drops calls mid-run and then checks
 that the worker threads still meter correctly, and reuses one session's budget
-across many calls. 3 rounds per PR; `BASHKIT_STRESS_ROUNDS=N` for a soak.
+across many calls. 3 rounds per PR; `BASHKIT_STRESS_ROUNDS=N` for a soak. The
+nightly `python-stress-soak` job runs 300 rounds in release mode (about 2 min).
+
+ASan: the nightly `asan` job runs default features, which leave python out, so
+it has a second step with `--features python` filtered to `python` tests
+(includes the stress suite). The fork's unsafe (metered allocator, VM) gets the
+same use-after-free and overflow checks as the rest of bashkit.
