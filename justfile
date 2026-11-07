@@ -70,14 +70,18 @@ regen-capability-parity:
 check-workflow-parity:
     python3 scripts/check_workflow_parity.py
 
-# The site rewrites doc links by basename, so a cross-tree link written as a
-# bare `jq.md` renders fine on bashkit.sh while 404-ing on GitHub. This checks
-# the source-relative form the site rewriter also accepts.
-# Validate relative markdown links in docs/ and crates/bashkit/docs/
 # Monty forks differ from upstream 1.4.0 only at `bashkit fork:` markers
 check-monty-fork:
     python3 scripts/check_monty_fork.py
 
+# Upstream Monty releases + OSV advisories vs the fork base (network)
+check-monty-upstream:
+    python3 scripts/check_monty_upstream.py
+
+# The site rewrites doc links by basename, so a cross-tree link written as a
+# bare `jq.md` renders fine on bashkit.sh while 404-ing on GitHub. This checks
+# the source-relative form the site rewriter also accepts.
+# Validate relative markdown links in docs/ and crates/bashkit/docs/
 check-doc-links:
     python3 scripts/check_doc_links.py
 

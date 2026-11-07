@@ -78,8 +78,15 @@ the fork (upstream tests excepted), and on any dependency or feature in a fork
 `Cargo.toml` that differs from upstream's (the `monty-types` rename aside). Dependabot does not bump
 crates only the forks declare, so upstream security fixes arrive by re-sync:
 
-1. Watch pydantic/monty releases and security advisories, and `cargo deny`
-   advisories against the fork's dependency versions (the Audit job).
+1. `scripts/check_monty_upstream.py` (daily `monty-upstream.yml`,
+   `just check-monty-upstream`) goes red when crates.io has a newer stable
+   `monty`/`monty-types` than the fork base, or when OSV (RustSec + GitHub
+   advisories) lists a vulnerability for crates.io `monty`/`monty-types` or
+   PyPI `pydantic-monty` at the base version. Name-matching tools (cargo
+   audit/deny, Dependabot) miss both because the fork crates are renamed.
+   A triaged advisory that does not affect bashkit goes in the script's
+   `ACKNOWLEDGED` with its reason. `cargo deny` still covers advisories
+   against the fork's own dependency versions (the Audit job).
 2. For a fix: re-copy the new upstream release into both forks, re-apply every
    `bashkit fork:` edit (the drift check lists what moved), bump `VERSION` and
    the two hashes in `check_monty_fork.py`, and copy upstream's new
