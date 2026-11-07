@@ -414,6 +414,8 @@ Network access is disabled by default. When enabled, strict controls apply.
 | Repeated curl data bypasses body cap (TM-NET-028) | Many data/file parts plus encoding expansion exceed 10 MB in aggregate | Checked aggregate appends; file metadata checked against remaining capacity before reads | MITIGATED |
 | Private IP behind NAT64/6to4 or reserved range (TM-NET-029) | AAAA `64:ff9b::a9fe:a9fe` / `2002:7f00:1::`, or A in `0.0.0.0/8`, `198.18.0.0/15`, multicast | `is_private_ip` checks the embedded IPv4 of NAT64/6to4 and blocks all non-global special-purpose ranges | MITIGATED |
 | Embedded CLI egress bypass (TM-NET-030) | `fetchkit fetch`/`markkit extract URL` follow a redirect off the allowlist or read host proxy env | Both builtins send every hop through the sandbox HTTP client (allowlist re-checked per hop); no own TLS stack; `--allow-env-proxy` refused | MITIGATED |
+| Host header steers credentials (TM-NET-031) | `curl -H 'Host: other'` to an approved IP | Caller Host/framing/proxy headers are dropped before credential injection | MITIGATED |
+| Encoded slash escapes path rule (TM-NET-032) | `/v1/..%2Fadmin` against a `/v1/` rule | Path-scoped rules refuse `%2F`/`%5C` | MITIGATED |
 
 **Credential Injection (TM-NET-024–027):**
 
