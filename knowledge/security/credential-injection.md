@@ -118,6 +118,8 @@ Properties:
 |--------|-----------|
 | Script reads env var to get real secret | Injection mode: no env var. Placeholder mode: env var contains random placeholder, not real secret |
 | Script exfiltrates placeholder to unapproved host | Allowlist blocks unapproved hosts. Placeholder only replaced for matching patterns |
+| Script sets `Host:` to reach another virtual host on the approved IP with injected credentials | `HttpClient` drops caller `Host`, framing and proxy headers before hooks run (TM-NET-031) |
+| Script escapes a path-scoped rule with `%2F`/`%5C` (`/v1/..%2Fadmin`) | Path-scoped patterns refuse encoded separators (TM-NET-032) |
 | Script sets competing Authorization header | Overwrite semantics: injected header replaces script's header |
 | Credential appears in error messages | Injected values redacted in all error paths (extend TM-INF-015) |
 | Credential appears in traces | Trace output shows `[CREDENTIAL]` instead of real values |

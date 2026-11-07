@@ -589,6 +589,17 @@ impl HttpClient {
         // Check allowlist + private IP policy BEFORE making any network request.
         self.enforce_url_security(url).await?;
 
+        // THREAT[TM-NET-031]: drop caller-set Host/framing/proxy headers
+        // before hooks run, so injected credentials only ever travel to the
+        // allowlisted host the URL names. Hooks (host-trusted) may still add
+        // headers.
+        let caller_headers: Vec<(String, String)> = headers
+            .iter()
+            .filter(|(name, _)| !super::is_host_owned_header(name))
+            .cloned()
+            .collect();
+        let headers: &[(String, String)] = &caller_headers;
+
         // Fire before_http hooks — may modify URL/headers or cancel the request
         let (url, headers) = if !self.before_http.is_empty() {
             let event = crate::hooks::HttpRequestEvent {
@@ -1266,6 +1277,42 @@ mod tests {
         );
         assert_eq!(seen[0].url, "http://93.184.216.34/data");
         assert_eq!(seen[0].method, Method::Get);
+    }
+
+    // THREAT[TM-NET-031]: caller Host/framing/proxy headers never reach the
+    // transport, so injected credentials go only to the URL's host.
+    #[tokio::test]
+    async fn test_caller_host_owned_headers_are_dropped() {
+        let transport = Arc::new(CapturingTransport::default());
+        let mut client = HttpClient::new(NetworkAllowlist::allow_all());
+        client.set_transport(transport.clone());
+
+        let headers: Vec<(String, String)> = [
+            ("Host", "internal.example.com"),
+            (" host", "x"),
+            ("Proxy-Authorization", "Basic eA=="),
+            ("Transfer-Encoding", "chunked"),
+            ("Content-Length", "0"),
+            ("X-Keep", "1"),
+        ]
+        .iter()
+        .map(|(n, v)| (n.to_string(), v.to_string()))
+        .collect();
+        client
+            .request_with_timeouts(
+                Method::Get,
+                "http://93.184.216.34/",
+                None,
+                &headers,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+
+        let seen = transport.seen.lock().unwrap();
+        let names: Vec<&str> = seen[0].headers.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(names, ["X-Keep"]);
     }
 
     #[tokio::test]
