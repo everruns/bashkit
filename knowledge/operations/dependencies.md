@@ -85,8 +85,8 @@ crates only the forks declare, so upstream security fixes arrive by re-sync:
    the two hashes in `check_monty_fork.py`, and copy upstream's new
    dependencies and features into each fork `Cargo.toml` (the check compares
    them with upstream's normalized manifest).
-3. Run `python_fuzz` and the tenant stress soak (`BASHKIT_STRESS_ROUNDS=20`)
-   before shipping, as the fork's own regression net.
+3. Run `python_fuzz` and the tenant stress soak (`BASHKIT_STRESS_ROUNDS=300`,
+   as nightly runs it) before shipping, as the fork's own regression net.
 
 Moving off 0.0.19 dropped the `jiter` Git patch (Monty 1.4 uses published
 jiter 0.17 with pyo3 0.29), the `get-size2 =0.10.1` hold (Monty's ruff AST

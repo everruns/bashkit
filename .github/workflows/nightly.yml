@@ -175,3 +175,42 @@ jobs:
         run: |
           cargo +nightly-2026-10-30 test -Z build-std --target x86_64-unknown-linux-gnu --lib --tests \
             -- --test-threads=1
+
+      # The default-feature run above leaves out embedded python3. The Monty
+      # forks (crates/bashkit-monty*) are our code now, with unsafe in the
+      # metered allocator and VM, so their tests get their own ASan pass.
+      # The `python` filter also picks up python_tenant_stress_tests.
+      - name: Run python3 (Monty) tests with AddressSanitizer
+        env:
+          RUSTFLAGS: "-Z sanitizer=address"
+          ASAN_OPTIONS: "detect_stack_use_after_return=1:detect_leaks=0"
+        run: |
+          cargo +nightly-2026-10-30 test -Z build-std --target x86_64-unknown-linux-gnu \
+            -p bashkit --features python --lib --test integration -- --test-threads=1 python
+
+  python-stress-soak:
+    name: Python multi-tenant stress soak
+    # PR CI runs python_tenant_stress_tests at 3 rounds. The soak repeats
+    # them many times in release mode so rare cross-tenant leaks (meter
+    # left on a worker thread, budget not returned after an abandoned call)
+    # show up. Re-sync checklist in knowledge/operations/dependencies.md.
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@d86e0fa8f147d6539442c26a61ebba8becc19489 # 1.96.0
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          cache-on-failure: true
+
+      - name: Run stress soak
+        env:
+          BASHKIT_STRESS_ROUNDS: "300"
+        run: |
+          cargo test --release -p bashkit --features python --test integration \
+            -- python_tenant_stress

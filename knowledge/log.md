@@ -1,5 +1,9 @@
 # Bashkit Knowledge Update Log
 
+## 2026-11-07
+
+* **Monty in nightly ASan and soak**: the nightly ASan job ran default features, so the Monty forks (unsafe in the metered allocator and VM) were never sanitized. It now has a `--features python` step (307 integration + 66 lib python tests passed locally under ASan, 81 s), and a new `python-stress-soak` job runs the tenant stress suite 300 rounds in release. See [Python Builtin](runtimes/python-builtin.md).
+
 ## 2026-11-06
 
 * **`json.dumps` indent preflight**: a security audit found `json.dumps([1], indent=10**12)` (and huge string indents or separators on deep or long data) allocated past the Python memory limit unchecked; the metered allocator cannot refuse, so one tenant aborted the process. The Monty fork now preflights the indent repeat and every separator/indent write, raising `MemoryError`. See [Threat Model](security/threat-model.md), TM-PY-038.
