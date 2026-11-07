@@ -15,6 +15,8 @@ use crate::{
     exception_private::{ExcType, ExcTypeExt, RunError, RunResult},
     heap::{ContainsHeap, DropGuard, DropWithContext, Heap, HeapData, HeapId, HeapRead},
     py_value::PyValue,
+    // bashkit fork: preflight helper for the indent string.
+    resource_checks::check_repeat_size,
     sorting::{apply_permutation, sort_indices},
     types::{Dict, PyTrait, Type, str::allocate_string},
     value::Value,
@@ -339,23 +341,31 @@ fn apply_bool_flag(flags: u8, bit: u8, value: &Value, vm: &mut VM<'_>) -> RunRes
 fn parse_indent_value(value: &Value, vm: &mut VM<'_>) -> RunResult<Option<String>> {
     match value.py_value(vm) {
         PyValue::None => Ok(None),
-        PyValue::Bool(value) => spaces_from_indent_count(i64::from(value)),
+        // bashkit fork: preflight the indent size (see `spaces_from_indent_count`).
+        PyValue::Bool(value) => spaces_from_indent_count(i64::from(value), vm),
         PyValue::Int(integer) => {
-            spaces_from_indent_count(integer.to_i64(vm).ok_or_else(ExcType::overflow_index_sized_int)?)
+            // bashkit fork: preflight the indent size (see `spaces_from_indent_count`).
+            let count = integer.to_i64(vm).ok_or_else(ExcType::overflow_index_sized_int)?;
+            spaces_from_indent_count(count, vm)
         }
         PyValue::Str(value) => Ok(Some(value.as_str(vm).to_owned())),
         _ => Err(ExcType::type_error_sequence_repeat(value.py_type_name(vm))),
     }
 }
 
+/// bashkit fork: takes the VM to preflight the repeat size.
 /// Builds the `' ' * count` indent string.
-fn spaces_from_indent_count(count: i64) -> RunResult<Option<String>> {
+fn spaces_from_indent_count(count: i64, vm: &VM<'_>) -> RunResult<Option<String>> {
     // CPython repeats a negative count to the empty string.
     let count = if count < 0 {
         0
     } else {
         usize::try_from(count).map_err(|_| ExcType::overflow_index_sized_int())?
     };
+    // bashkit fork: preflight the repeat like `' ' * n`. Upstream allocated
+    // `indent=10**12` unchecked, and the metered allocator cannot refuse an
+    // allocation, so one tenant aborted the shared process.
+    check_repeat_size(1, count, &vm.heap.tracker)?;
     Ok(Some(" ".repeat(count)))
 }
 
@@ -579,7 +589,9 @@ impl<'h> Encoder<'_, 'h> {
         mut write_next: impl FnMut(&mut Self, usize) -> RunResult<bool>,
     ) -> RunResult<()> {
         self.out.push('[');
-        let pretty = self.config.indent.is_some();
+        // bashkit fork: preflighted separator/indent write (see `push_checked`).
+        let config = self.config;
+        let pretty = config.indent.is_some();
         let mut wrote_any = false;
         loop {
             // Write the separator + indent BEFORE we know whether the next
@@ -587,11 +599,12 @@ impl<'h> Encoder<'_, 'h> {
             // cursor back.
             let prefix_start = self.out.len();
             if wrote_any {
-                self.out.push_str(&self.config.item_separator);
+                // bashkit fork: preflighted separator/indent write (see `push_checked`).
+                self.push_checked(&config.item_separator)?;
             }
             if pretty {
-                self.out.push('\n');
-                write_indent(self.out, self.config, depth + 1);
+                // bashkit fork: preflighted separator/indent write (see `push_checked`).
+                self.write_newline_indent(depth + 1)?;
             }
             let body_start = self.out.len();
             if !write_next(self, depth + 1)? {
@@ -605,8 +618,8 @@ impl<'h> Encoder<'_, 'h> {
             wrote_any = true;
         }
         if pretty && wrote_any {
-            self.out.push('\n');
-            write_indent(self.out, self.config, depth);
+            // bashkit fork: preflighted separator/indent write (see `push_checked`).
+            self.write_newline_indent(depth)?;
         }
         self.out.push(']');
         Ok(())
@@ -643,24 +656,60 @@ impl<'h> Encoder<'_, 'h> {
 
         self.out.push('{');
 
-        let pretty = self.config.indent.is_some();
+        // bashkit fork: preflighted separator/indent write (see `push_checked`).
+        let config = self.config;
+        let pretty = config.indent.is_some();
         for (index, (key, value)) in entries.iter().enumerate() {
             if index != 0 {
-                self.out.push_str(&self.config.item_separator);
+                // bashkit fork: preflighted separator/indent write (see `push_checked`).
+                self.push_checked(&config.item_separator)?;
             }
             if pretty {
-                self.out.push('\n');
-                write_indent(self.out, self.config, depth + 1);
+                // bashkit fork: preflighted separator/indent write (see `push_checked`).
+                self.write_newline_indent(depth + 1)?;
             }
+            // bashkit fork: str keys are preflighted like str values.
+            let key_len = match key.py_value(self.vm) {
+                PyValue::Str(key) => key.as_str(self.vm).len(),
+                _ => 0,
+            };
+            self.check_output_growth(key_len)?;
             write_json_key(key, self.out, self.config, self.vm)?;
-            self.out.push_str(&self.config.key_separator);
+            // bashkit fork: preflighted separator/indent write (see `push_checked`).
+            self.push_checked(&config.key_separator)?;
             self.serialize_value(value, depth + 1)?;
         }
         if pretty && !entries.is_empty() {
-            self.out.push('\n');
-            write_indent(self.out, self.config, depth);
+            // bashkit fork: preflighted separator/indent write (see `push_checked`).
+            self.write_newline_indent(depth)?;
         }
         self.out.push('}');
+        Ok(())
+    }
+
+    /// bashkit fork: separators and indentation are user strings written once
+    /// per item (and indentation once per depth level), so each write is
+    /// preflighted like a value. Upstream pushed them unchecked, which let
+    /// `json.dumps([[...]], indent=big)` grow the output past the memory
+    /// limit; the metered allocator cannot refuse, so the process aborted.
+    fn push_checked(&mut self, text: &str) -> RunResult<()> {
+        self.check_output_growth(text.len())?;
+        self.out.push_str(text);
+        Ok(())
+    }
+
+    /// bashkit fork: writes a newline plus `depth` copies of the indent
+    /// string, preflighted as one block (see [`Self::push_checked`]).
+    fn write_newline_indent(&mut self, depth: usize) -> RunResult<()> {
+        let config = self.config;
+        let Some(indent) = &config.indent else {
+            return Ok(());
+        };
+        self.check_output_growth(indent.len().saturating_mul(depth).saturating_add(1))?;
+        self.out.push('\n');
+        for _ in 0..depth {
+            self.out.push_str(indent);
+        }
         Ok(())
     }
 
@@ -877,17 +926,8 @@ fn write_json_float_text(value: f64, out: &mut String) {
     }
 }
 
-/// Writes indentation for pretty-printed JSON output.
-///
-/// The `indent` string is repeated once for each nesting level, matching
-/// CPython's behavior for both numeric and string indentation.
-fn write_indent(out: &mut String, config: &JsonDumpsConfig, depth: usize) {
-    if let Some(indent) = &config.indent {
-        for _ in 0..depth {
-            out.push_str(indent);
-        }
-    }
-}
+// bashkit fork: upstream `write_indent` lives on as the preflighted
+// `Encoder::write_newline_indent`.
 
 /// Writes a Rust string as a JSON string token.
 ///

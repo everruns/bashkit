@@ -745,6 +745,7 @@ Python `pathlib.Path` and `open()` operations are bridged to Bashkit's virtual f
 | Shared-graph expansion in host conversion (TM-PY-035) | `x = [x, x]` repeated, then returned to the host | Every converter walks Monty values with a node cap | MITIGATED |
 | Host-call loop outruns the time limit (TM-PY-036) | `while True:` around a cheap file write; Monty's clock pauses on host calls and the VM never yields the thread | Wall-clock deadline and an executor yield at every host call | MITIGATED |
 | Shared-graph walk outlives time limit (TM-PY-037) | `x = [x, x]` repeated, then `repr` or `==` inside Python | Forked tracker counts every amortized check on one tick, so recursive walks still check time | MITIGATED |
+| Huge `json.dumps` indent (TM-PY-038) | `json.dumps(x, indent=10**12)` or a huge separator inside Python | Indent size and every separator/indent write are checked against the memory limit (`MemoryError`) | MITIGATED |
 
 **Architecture:**
 
