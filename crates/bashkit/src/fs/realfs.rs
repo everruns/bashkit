@@ -741,7 +741,10 @@ impl FsBackend for RealFs {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let perms = std::fs::Permissions::from_mode(mode);
+            // THREAT[TM-ESC-010]: only rwx bits reach the host. A script
+            // must not set setuid/setgid/sticky on a host file through a
+            // read-write mount (a setuid binary there runs as its owner).
+            let perms = std::fs::Permissions::from_mode(mode & 0o777);
             tokio::fs::set_permissions(&real, perms).await?;
         }
         #[cfg(not(unix))]

@@ -3883,8 +3883,12 @@ impl BashBuilder {
             match &m.vfs_mount {
                 None => {
                     // Overlay at root: real fs becomes the lower layer,
-                    // existing VFS content overlaid on top
-                    current_fs = Arc::new(OverlayFs::new(real_fs));
+                    // existing VFS content overlaid on top.
+                    // THREAT[TM-DOS-144]: keep the configured FsLimits on
+                    // the writable upper layer; `OverlayFs::new` used the
+                    // defaults, so a root mount silently raised the quota.
+                    let limits = current_fs.limits();
+                    current_fs = Arc::new(OverlayFs::with_limits(real_fs, limits));
                     host_mounts.mounts.push(HostMount {
                         host_path: canonical_host,
                         vfs_path: PathBuf::from("/"),

@@ -35,6 +35,7 @@ through configurable limits.
 | Pagination amplification (TM-DOS-137) | Long `pr -h` headers repeated on many short pages | Check the 16 MiB cap before every append; lease input, rows and output capacity before growth; borrow cells/page slices and retain date timestamps; charge input/work and poll cancellation/deadlines, including skipped pages | MITIGATED |
 | Embedded CLI limit escalation (TM-DOS-139) | `markkit extract x --max-input-size 99999999999` | `markkit` limits can only be lowered below their defaults; `fetchkit` bodies capped by HTTP limits; `--ocr` refused | MITIGATED |
 | Tree-walk memory (TM-DOS-140) | `find`, `du` or `rg` over a tree with millions of files | `FileSystem::walk` answers are bounded batches (10k entries) refilled as `find`/`du` descend; `rg` searches each file as it reads it without holding the text, charges it to the aggregate-input budget, stops at the first refusal and streams its walk; `ls -R` stops at the stdout limit | MITIGATED |
+| Root real mount drops limits (TM-DOS-144) | Writing past `filesystem_limits` with a host dir mounted at `/` | The root overlay keeps the configured `FsLimits` | MITIGATED |
 | Variable explosion (TM-DOS-003) | `x=$(cat /dev/urandom)` | /dev/urandom returns bounded 8KB | MITIGATED |
 | Array growth (TM-DOS-004) | `arr+=(element)` in loop | Command limit | MITIGATED |
 
@@ -248,7 +249,7 @@ Scripts may attempt to break out of the sandbox to access the host system.
 | Threat | Attack Example | Mitigation | Status |
 |--------|---------------|------------|--------|
 | sudo/su (TM-ESC-009) | `sudo rm -rf /` | Not implemented | MITIGATED |
-| setuid (TM-ESC-010) | Permission changes | Virtual FS, no real perms | MITIGATED |
+| setuid (TM-ESC-010) | Permission changes | Virtual FS, no real perms; real mounts get only rwx bits | MITIGATED |
 | Capability abuse (TM-ESC-011) | Linux capabilities | Runs in-process | MITIGATED |
 | Mount-rw exposure to untrusted automation (TM-ESC-030) | Running untrusted scripts with `--mount-rw /` | CLI docs mark `--mount-rw` sandbox-breaking; recommend `--mount-ro` when host access is needed | MITIGATED |
 | Permission gate built on static analysis (TM-ESC-032) | `c=rm; $c -rf /data` passes an allowlist check that only reads `analysis.commands` | `analyze()` reports unresolved names as `null` and sets `is_opaque()`; pair it with the `before_tool` hook, which sees the resolved name, see the [script analysis guide](./script-analysis.md) | MITIGATED (advisory API) |

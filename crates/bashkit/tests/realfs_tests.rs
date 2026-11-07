@@ -1313,3 +1313,42 @@ mod sensitive_mount_paths {
         assert!(is_sensitive_mount_path(Path::new("/srv/deploy/.ssh")));
     }
 }
+
+// THREAT[TM-ESC-010]: chmod through a read-write mount sets only rwx bits
+// on the host file, never setuid/setgid/sticky.
+#[cfg(unix)]
+#[tokio::test]
+async fn realfs_chmod_drops_special_bits() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("tool"), b"#!/bin/sh\n").unwrap();
+    let mut bash = Bash::builder()
+        .mount_real_readwrite_at(dir.path(), "/mnt/host")
+        .build();
+    let r = bash
+        .exec("chmod 4755 /mnt/host/tool; chmod 6777 /mnt/host/tool")
+        .await
+        .unwrap();
+    assert_eq!(r.exit_code, 0, "stderr: {}", r.stderr);
+    let mode = std::fs::metadata(dir.path().join("tool"))
+        .unwrap()
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o7777, 0o777, "mode {mode:o}");
+}
+
+// THREAT[TM-DOS-144]: a root real mount keeps the configured FsLimits on
+// the writable overlay instead of falling back to the defaults.
+#[tokio::test]
+async fn root_real_mount_keeps_filesystem_limits() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut bash = Bash::builder()
+        .filesystem_limits(bashkit::FsLimits::new().max_file_size(1024))
+        .mount_real_readonly(dir.path())
+        .build();
+    let r = bash
+        .exec("head -c 4096 /dev/zero > /big; echo $?")
+        .await
+        .unwrap();
+    assert_ne!(r.stdout.trim(), "0", "write over max_file_size succeeded");
+}
