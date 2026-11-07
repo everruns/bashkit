@@ -49,6 +49,7 @@ check:
     just check-doc-links
     just check-workflow-parity
     just check-changelog
+    just check-monty-fork
 
 # Validate the CHANGELOG release-section convention (Highlights + What's Changed).
 check-changelog:
@@ -68,6 +69,14 @@ regen-capability-parity:
 # Validate release workflows against their CI counterparts
 check-workflow-parity:
     python3 scripts/check_workflow_parity.py
+
+# Monty forks differ from upstream 1.4.0 only at `bashkit fork:` markers
+check-monty-fork:
+    python3 scripts/check_monty_fork.py
+
+# Upstream Monty releases + OSV advisories vs the fork base (network)
+check-monty-upstream:
+    python3 scripts/check_monty_upstream.py
 
 # The site rewrites doc links by basename, so a cross-tree link written as a
 # bare `jq.md` renders fine on bashkit.sh while 404-ing on GitHub. This checks

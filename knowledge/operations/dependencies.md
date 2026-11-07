@@ -69,6 +69,32 @@ and a checkpoint hook. They are published with each release before `bashkit`.
 Upgrade by re-copying upstream source and re-applying the `bashkit fork:`
 edits. See [Python Builtin](../runtimes/python-builtin.md#monty-14-embedding-forks-per-vm-metering-checkpoint-hook).
 
+`scripts/check_monty_fork.py` (CI lint job, `just check-monty-fork`) diffs both
+forks against the SHA-256-pinned upstream 1.4.0 `.crate` files and fails on any
+changed region without a `bashkit fork:` marker in it, in the comment or
+attribute block attached to it (however long), or up to three lines above it,
+on fork-only files without a marker header, on upstream files missing from
+the fork (upstream tests excepted), and on any dependency or feature in a fork
+`Cargo.toml` that differs from upstream's (the `monty-types` rename aside). Dependabot does not bump
+crates only the forks declare, so upstream security fixes arrive by re-sync:
+
+1. `scripts/check_monty_upstream.py` (daily `monty-upstream.yml`,
+   `just check-monty-upstream`) goes red when crates.io has a newer stable
+   `monty`/`monty-types` than the fork base, or when OSV (RustSec + GitHub
+   advisories) lists a vulnerability for crates.io `monty`/`monty-types` or
+   PyPI `pydantic-monty` at the base version. Name-matching tools (cargo
+   audit/deny, Dependabot) miss both because the fork crates are renamed.
+   A triaged advisory that does not affect bashkit goes in the script's
+   `ACKNOWLEDGED` with its reason. `cargo deny` still covers advisories
+   against the fork's own dependency versions (the Audit job).
+2. For a fix: re-copy the new upstream release into both forks, re-apply every
+   `bashkit fork:` edit (the drift check lists what moved), bump `VERSION` and
+   the two hashes in `check_monty_fork.py`, and copy upstream's new
+   dependencies and features into each fork `Cargo.toml` (the check compares
+   them with upstream's normalized manifest).
+3. Run `python_fuzz` and the tenant stress soak (`BASHKIT_STRESS_ROUNDS=300`,
+   as nightly runs it) before shipping, as the fork's own regression net.
+
 Moving off 0.0.19 dropped the `jiter` Git patch (Monty 1.4 uses published
 jiter 0.17 with pyo3 0.29), the `get-size2 =0.10.1` hold (Monty's ruff AST
 moved to `compact_str` 0.10), and the `ruff_python_*` direct dependencies (the
@@ -167,6 +193,22 @@ is no version to bump to. Lifting it waits on a `zapcode-core` release built
 against a newer oxc, and then means bumping the pinned toolchain and porting
 the vendored parser in one deliberate change — not inside an aggregated
 `chore(deps)` PR.
+
+## Dependabot rules that keep its jobs runnable
+
+- No prerelease requirement over a stable lock: `turso_core = "0.8.0-pre.1"`
+  with 0.8.3 locked made Dependabot treat 0.9.0-pre.2 as in range and fail the
+  whole "/" job. Require the stable version; bump to a prerelease by hand.
+- Directories that path-depend on `crates/bashkit` (hyperlight guest, the two
+  random-fs fixtures) see bashkit's workspace deps as their own. Their entry
+  `allow`s only the crates their manifests declare, with
+  committed lockfiles (cargo accepts only `auto`/`lockfile-only` as
+  `versioning-strategy`; `increase` made the whole config fail to parse).
+- Crates only the Monty forks declare are ignored in the "/" entry: the forks
+  keep Monty 1.4.0's versions until upstream source is re-copied. Shared deps
+  stay bumpable.
+
+`scripts/tests/test_dependabot_coverage.py` enforces all three.
 
 ## Measure size and audit surface separately
 

@@ -52,6 +52,8 @@ openai.js.map
 
 # Lockfile managed by CI
 Cargo.lock
+# Committed: Dependabot needs it to see current versions (dependabot.yml).
+!test-fixtures/random-fs/Cargo.lock
 
 # IDE
 .vscode-test

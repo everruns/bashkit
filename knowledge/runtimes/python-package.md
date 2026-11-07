@@ -178,6 +178,16 @@ captures this grant at construction, so an agent's `export` cannot enable it.
 Do not infer permission from untrusted script contents. See
 [Python Builtin](python-builtin.md) and [ZapCode Runtime](zapcode-runtime.md).
 
+`timeout_seconds` on `Bash` and `BashTool` also sets the embedded runtimes'
+`max_duration` (the limit of each `python3`/`ts` run, profile default 30 s,
+Hardened 10 s), as `Bash` does for SQLite. Each run stays clamped to the
+remaining execution deadline. `ts` VM time also draws on the execution work
+budget at one unit per microsecond, so a `ts` run past about 100 s (Hardened
+25 s) still fails on `max_work_units`.
+A CPU-bound run yields its worker thread only at host calls, so raising
+`timeout_seconds` also raises the longest time one tenant can hold a shared
+worker thread (TM-PY-039 in the [Threat Model](../security/threat-model.md)).
+
 LangChain's `BashkitTool` / `create_bash_tool`, deepagents' `BashkitMiddleware` /
 `create_bash_middleware`, and `BashkitBackend` forward `python`, `typescript`,
 and `env` to their native tool. Backend-created middleware shares the configured
@@ -192,7 +202,8 @@ reset retain the host's runtime selection.
 Regression evidence: `crates/bashkit-python/tests/test_tool_runtimes.py` covers
 defaults, independent runtime selection, metadata, sync/async execution, shared
 VFS, reset, keyed/unkeyed snapshot factories, framework forwarding, invalid
-programs, and rejection of script-only Python opt-in.
+programs, rejection of script-only Python opt-in, and `timeout_seconds` raising
+the runtime time limit.
 
 ### Embedded runtime host functions
 

@@ -411,32 +411,36 @@ async fn rg_stops_at_the_input_budget_on_a_huge_tree() {
     assert!(r.is_err(), "expected the input budget to stop rg");
     // ~25 B per file: the 1 MiB budget covers ~40k files of the tree.
     assert!((reads as usize) < fs.files() / 2, "read {reads} files");
-    // rg keeps every file it read until the budget trips, so the bound
-    // scales with reads: ~290 B per read locally, ~360 B under tarpaulin's
-    // instrumented build. Before the walk streamed, the whole-tree candidate
-    // list pushed this past 1.5 KB per read (~70 MB at 200k files).
-    let per_read = peak.saturating_sub(BOUNDED_PEAK) / (reads as usize).max(1);
-    assert!(
-        peak < BOUNDED_PEAK + 512 * reads as usize,
-        "peak {peak} B for {reads} reads ({per_read} B/read over the fixed bound)"
-    );
+    // Each file is searched and dropped as it is read, so nothing scales
+    // with reads: ~5 MiB here. Holding the read text took ~13.7 MB (17 MB
+    // under tarpaulin); the old whole-tree candidate list ~70 MB.
+    assert!(peak < 2 * BOUNDED_PEAK, "peak {peak} B for {reads} reads");
 }
 
-/// rg within budget over the whole tree: memory scales with the text it
-/// searches (rg holds every searched file until output is built), at
-/// ~180 B per file here. TODO(TM-DOS-140): search each file as it is read
-/// so non-matching files are dropped; until then the aggregate-input budget
-/// is the bound.
+/// rg within budget over the whole tree: each file is searched as it is
+/// read and dropped, so memory stays bounded however many files it searches
+/// (it held ~160 B per file, ~300 MB at 2M files, before searching moved
+/// into the walk). Several roots stream one after another the same way.
 #[tokio::test(flavor = "current_thread")]
-async fn rg_within_budget_holds_only_file_text() {
+async fn rg_within_budget_holds_bounded_memory() {
     let _serial = SERIAL.lock().await;
     let (fs, mut bash) = setup().await;
+    // The first rg in the process builds one-time state (4 MiB locally, more
+    // on CI, where it pushed this past BOUNDED_PEAK). It is not per-file
+    // memory, so pay it on a small subtree first and measure only the walk.
+    bash.exec("rg -l nomatch /big/d0 > /dev/null")
+        .await
+        .unwrap();
+    for cmd in [
+        "rg -l nomatch /big",
+        "rg -c nomatch /big/d1 /big/d0",
+        "rg nomatch /big",
+    ] {
+        let r = measure(&fs, &mut bash, cmd).await;
+        assert_eq!(r.exit_code, 1, "{cmd}");
+        assert!(r.peak < BOUNDED_PEAK, "{cmd}: peak {} B", r.peak);
+    }
     let r = measure(&fs, &mut bash, "rg -l nomatch /big").await;
-    assert_eq!(r.exit_code, 1);
     // Every file, plus any ignore file the listing shows.
     assert!(r.read_file as usize >= fs.files());
-    // Per searched file: its ~25 B text plus its display path and bookkeeping.
-    let per_file = r.peak / fs.files();
-    eprintln!("rg: {per_file} B per searched file");
-    assert!(per_file < 250, "rg holds {per_file} B per file");
 }

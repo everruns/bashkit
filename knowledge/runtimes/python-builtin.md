@@ -86,6 +86,14 @@ metering" below), so it is stricter than the 0.0.19 estimate: a dict of
 ~500k short strings reaches the 64 MiB default. It also caps the host-side
 buffer that collects `print` output. There is no allocation-count knob.
 
+`max_duration` bounds wall-clock time. Monty 1.x pauses its own clock while
+the VM waits on the host (VFS calls, external functions), so Monty alone
+bounds VM time only: a loop of cheap file writes ran ~12x past the limit and
+never yielded the worker thread. Bashkit checks the wall-clock deadline at
+every host call (exit 124 like any time limit) and yields to the executor
+there, so a caller-side timeout can cancel the call and co-tenants on the
+same worker thread are scheduled (TM-PY-036).
+
 Each Python entry also consumes the request-scoped `ExecutionBudget`: source
 bytes are charged as aggregate input, Monty heap growth past the run's
 high-water mark is charged as work (one unit per 64 bytes), and every 64 VM
@@ -169,9 +177,20 @@ limit, a greedy tenant beside small ones, many small objects, `str.join` bomb)
 and the `whitebox_resource_limits` / `threat_python_pow_exhaustion` regression
 tests that failed on every earlier bump attempt.
 
-Known upstream gaps in 1.4.0: `repr` of nested 2-item lists only checks time
-every 64 items, and `str.join` can overshoot `max_memory` before the next
-check (bounded by the meter, not by Monty).
+Amortized checks (fork edit, TM-PY-037): upstream `check_time_every(i)` and
+`check_memory_time_every(i)` fire when the caller's loop index hits a multiple
+of 64, so a recursive walk over many short loops never checked. `x = [x, x]`
+thirty times (or a two-field dataclass `D(d, d)`), then
+`repr`/`print`/f-string/`==`/`<`/`in`, ran for minutes past
+a 2 s limit, synchronously, so the shell timeout could not stop it either. The
+fork counts every `*_every` call on one tracker-wide tick instead, and the
+`repr` walks (sequences, dicts, dataclasses, host classes) return a
+time-limit error (exit 124) where upstream truncated to
+`...[timeout]`; a memory hit still truncates. Pinned by
+`whitebox_resource_limits::shared_graph_walks_respect_time_limit`.
+
+Known upstream gap in 1.4.0: `str.join` can overshoot `max_memory` before the
+next check (bounded by the meter, not by Monty).
 
 ### Python Feature Support
 
@@ -291,3 +310,43 @@ cargo test --features python --lib -- python
 cargo test --features python --test spec_tests -- python
 cargo test --features python --test threat_model_tests -- python
 ```
+
+Fuzzing: `crates/bashkit/fuzz/fuzz_targets/python_fuzz.rs` runs nightly (`fuzz.yml`)
+and is build-checked on every PR (`fuzz-check`). It installs `MeteredAllocator`
+like the shipped bindings, caps each run at 32 MiB / 500 ms, and runs input as a
+file, stdin, `-c` and CLI arguments. A memory-limit bypass trips libFuzzer's RSS
+limit, a time-limit bypass the 5 s per-exec assertion, and stderr goes through
+`fuzz_exec`'s leak checks. The fork is upstream code we now own, so this target
+is where inherited interpreter bugs show up.
+
+```bash
+cargo +nightly-2026-10-30 fuzz run --features python python_fuzz -- -max_total_time=300
+```
+
+Both Monty fuzz targets set `BASHKIT_ALLOW_INPROCESS_PYTHON=1` and fail if
+`python3` refuses to run: until 2026-11-07 `python_fuzz` lacked the opt-in and
+fuzzed only the refusal message.
+
+Differential fuzzing: `python_diff_fuzz` (features `python,cpython`, nightly
+in `fuzz.yml`) builds small programs from a grammar of the Monty-supported
+subset (ints, floats, str, list, tuple, dict, operators, builtins, str/list
+methods, slicing, f-strings, comprehensions), runs each through Monty and the
+CPython wasm runtime, and fails when stdout differs. Every statement is wrapped
+in `try/except` printing the exception type, so exception types are compared
+too. Runs that hit a limit (non-zero exit, MemoryError, RecursionError,
+stdout cap) are skipped; OverflowError is language semantics and is compared, since the two runtimes enforce limits
+differently. Known divergence, excluded from the grammar: Monty evaluates
+`obj.method(arg)` arguments before looking up `obj.method`, so the error type
+differs when both fail (CPython: AttributeError, Monty: TypeError).
+
+Stress: `tests/integration/python_tenant_stress_tests.rs` runs 20 tenants on 4
+worker threads per round, mixing memory bombs, runaway loops, unbounded
+recursion and well-behaved scripts; it also drops calls mid-run and then checks
+that the worker threads still meter correctly, and reuses one session's budget
+across many calls. 3 rounds per PR; `BASHKIT_STRESS_ROUNDS=N` for a soak. The
+nightly `python-stress-soak` job runs 300 rounds in release mode (about 2 min).
+
+ASan: the nightly `asan` job runs default features, which leave python out, so
+it has a second step with `--features python` filtered to `python` tests
+(includes the stress suite). The fork's unsafe (metered allocator, VM) gets the
+same use-after-free and overflow checks as the rest of bashkit.

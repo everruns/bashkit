@@ -142,6 +142,7 @@ pub mod proptest_differential;
 pub mod python_integration_tests;
 pub mod python_security_tests;
 pub mod python_tenant_isolation_tests;
+pub mod python_tenant_stress_tests;
 pub mod redirect_error_tests;
 pub mod regex_limit_tests;
 pub mod release_profile_tests;

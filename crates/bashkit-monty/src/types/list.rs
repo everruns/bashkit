@@ -1,5 +1,6 @@
 use std::{cmp::Ordering, fmt::Write, mem};
 
+use monty_types::ResourceError; // bashkit fork: a repr time hit returns this error
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 
@@ -1067,7 +1068,8 @@ pub(crate) fn repr_sequence_fmt<'h>(
         let Some(item) = get_item(vm.heap, i) else { break };
         defer_drop!(item, vm);
         if i > 0 {
-            if repr_check_time(i, vm) {
+            // bashkit fork: `?` so a time hit errors instead of truncating (see `repr_check_time`).
+            if repr_check_time(i, vm)? {
                 f.write_str(", ...[timeout]")?;
                 break;
             }
@@ -1095,7 +1097,8 @@ pub(crate) fn repr_items_fmt(
 ) -> RunResult<()> {
     for (i, item) in items.iter().enumerate() {
         if i > 0 {
-            if repr_check_time(i, vm) {
+            // bashkit fork: `?` so a time hit errors instead of truncating (see `repr_check_time`).
+            if repr_check_time(i, vm)? {
                 f.write_str(", ...[timeout]")?;
                 break;
             }
@@ -1108,9 +1111,27 @@ pub(crate) fn repr_items_fmt(
 
 /// Polls the time/memory soft limits every 64th item rather than every item,
 /// keeping per-item overhead to one branch while still truncating huge reprs
-/// promptly with `", ...[timeout]"` (tested in `resource_limits.rs`).
-pub(crate) fn repr_check_time(i: usize, vm: &VM<'_>) -> bool {
-    vm.heap.tracker.check_memory_time_every(i).is_err()
+/// promptly with `", ...[timeout]"`. Pinned by bashkit's
+/// `python_security_tests::whitebox_resource_limits::shared_graph_walks_respect_time_limit`.
+///
+/// bashkit fork: two changes, both for reprs of shared graphs (`x = [x, x]`
+/// thirty times is 2^30 nested two-item lists).
+/// - The poll cadence is tracker-wide (see `check_time_every`), not the
+///   index `i` within one container: a two-item list never reached index 63,
+///   so the clock was never read and the repr ran for minutes past the limit
+///   on a thread the host cannot interrupt.
+/// - A time-limit hit is returned as an error instead of truncating. The
+///   time budget never recovers within a run, and truncating only ends the
+///   current container while every enclosing one keeps formatting its next
+///   item, and with the tracker-wide cadence only one call in 64 sees the
+///   expired clock, so the others would keep formatting. A memory hit still
+///   truncates, as upstream does. Every repr checkpoint goes through here.
+pub(crate) fn repr_check_time(_i: usize, vm: &VM<'_>) -> RunResult<bool> {
+    match vm.heap.tracker.check_memory_time_every(0) {
+        Ok(()) => Ok(false),
+        Err(err @ ResourceError::Time { .. }) => Err(err.into()),
+        Err(_) => Ok(true),
+    }
 }
 
 /// Iterates over a list while observing changes to its current contents.

@@ -371,7 +371,8 @@ impl<'h> PyTrait<'h> for HeapObjectRead<'h, Partial> {
         let mut item = 0;
         'items: {
             for index in 0..self.get(vm.heap).args.len() {
-                if repr_check_time(item, vm) {
+                // bashkit fork: `?` so a time hit errors instead of truncating (see `repr_check_time`).
+                if repr_check_time(item, vm)? {
                     f.write_str(", ...[timeout]")?;
                     break 'items;
                 }
@@ -383,7 +384,8 @@ impl<'h> PyTrait<'h> for HeapObjectRead<'h, Partial> {
             }
 
             for index in 0..self.get(vm.heap).keywords.len() {
-                if repr_check_time(item, vm) {
+                // bashkit fork: `?` so a time hit errors instead of truncating (see `repr_check_time`).
+                if repr_check_time(item, vm)? {
                     f.write_str(", ...[timeout]")?;
                     break 'items;
                 }

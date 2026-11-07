@@ -10,9 +10,9 @@ has no discovery to switch to, so the list is checked instead.
 It had already drifted when this test was written:
 `crates/bashkit-python/test-fixtures/random-fs` is an independent cargo
 workspace with a `pyo3` dependency and had no entry, while its napi twin
-`crates/bashkit-js/test-fixtures/random-fs` did. Both fixtures' lockfiles are
-gitignored and generated at test time, so the advisory scan does not see them
-in a fresh checkout either — Dependabot is their only coverage, and for one of
+`crates/bashkit-js/test-fixtures/random-fs` did. Both fixtures' lockfiles were
+gitignored then (committed since 2026-11-06), so the advisory scan did not see
+them in a fresh checkout either — Dependabot is their only coverage, and for one of
 them there was none.
 
 A missing entry is quiet by nature: nothing fails, no PR is opened, and the
@@ -21,6 +21,7 @@ loud failure.
 """
 
 from pathlib import Path
+import tomllib
 import unittest
 
 import yaml
@@ -101,7 +102,7 @@ class DependabotCoverageTests(unittest.TestCase):
 
     def test_the_two_random_fs_fixtures_are_both_covered(self):
         # The specific drift this test was written for. Both are independent
-        # workspaces with third-party dependencies and gitignored lockfiles, so
+        # workspaces with third-party dependencies (lockfiles committed since 2026-11-06), so
         # Dependabot is the only thing watching either one.
         covered = configured_dirs('cargo')
         for fixture in (
@@ -151,6 +152,154 @@ class DependabotCoverageTests(unittest.TestCase):
                     'it is pinned to =48.0.6 by MSRV and by precompiled-module '
                     'compatibility, so every cargo entry must ignore it',
                 )
+
+    def test_entries_that_path_depend_on_bashkit_allow_only_own_deps(self):
+        # A manifest that path-depends on crates/bashkit makes Dependabot walk
+        # into the root workspace and treat every `workspace = true` dep of
+        # bashkit as this directory's own. It cannot change those (the root
+        # manifest holds them) and the optional ones are in no lockfile here,
+        # so the grouped job aborted with InvalidUpdatedDependencies every week
+        # (2026-10-13 .. 2026-11-06). The fix is an `allow` list; this keeps it
+        # complete, since a dep missing from it is silently never updated.
+        config = yaml.safe_load(CONFIG.read_text())
+        checked = 0
+        for entry in config['updates']:
+            if entry['package-ecosystem'] != 'cargo':
+                continue
+            dirs = entry.get('directories') or [entry.get('directory')]
+            for d in dirs:
+                manifest = ROOT / d.lstrip('/') / 'Cargo.toml'
+                data = tomllib.loads(manifest.read_text())
+                deps = {}
+                for table in ('dependencies', 'build-dependencies', 'dev-dependencies'):
+                    deps.update(data.get(table) or {})
+                if not any(
+                    isinstance(v, dict) and 'path' in v and 'bashkit' in v['path']
+                    for v in deps.values()
+                ):
+                    continue
+                checked += 1
+                allowed = {a.get('dependency-name') for a in entry.get('allow') or []}
+                own = {
+                    name for name, v in deps.items()
+                    if not (isinstance(v, dict) and 'path' in v)
+                }
+                with self.subTest(directory=d):
+                    self.assertTrue(allowed, f'{d} path-depends on bashkit but its entry has no allow list')
+                    self.assertFalse(own - allowed, f'{d}: direct deps missing from allow: {sorted(own - allowed)}')
+        # hyperlight guest + the two random-fs fixtures (the fuzz crate uses
+        # `path = ".."` and its job is green, so it is not matched).
+        self.assertGreaterEqual(checked, 3)
+
+    def test_root_requirements_are_not_prereleases_over_a_stable_lock(self):
+        # `turso_core = "0.8.0-pre.1"` with 0.8.3 locked made Dependabot think
+        # 0.9.0-pre.2 was in range; its lockfile-only update then failed in
+        # cargo (`^0.8.0-pre.1` stops below 0.9) and reddened the weekly "/"
+        # job from 2026-10-19 on. Require the stable version once one is locked.
+        workspace = tomllib.loads((ROOT / 'Cargo.toml').read_text())['workspace']
+        lock = tomllib.loads((ROOT / 'Cargo.lock').read_text())
+        locked = {}
+        for pkg in lock['package']:
+            locked.setdefault(pkg['name'], []).append(pkg['version'])
+        for name, spec in workspace['dependencies'].items():
+            req = spec if isinstance(spec, str) else spec.get('version')
+            if not req or '-' not in req:
+                continue
+            versions = locked.get(spec.get('package', name) if isinstance(spec, dict) else name, [])
+            with self.subTest(dependency=name):
+                self.assertFalse(
+                    any('-' not in v for v in versions),
+                    f'{name} requires prerelease {req!r} but the lock holds {versions}; '
+                    'use the stable version so Dependabot does not offer out-of-range prereleases',
+                )
+
+    def test_fork_only_deps_are_ignored_by_the_root_entry(self):
+        # crates/bashkit-monty(-types) are forks of Monty 1.4.0 and keep its
+        # dependency versions until upstream source is re-copied. Crates only
+        # they declare must not be bumped by Dependabot (#2848 did, and broke
+        # the fork build). Shared ones stay bumpable for bashkit's sake.
+        def direct(manifest):
+            data = tomllib.loads(manifest.read_text())
+            names = set()
+            for table in ('dependencies', 'build-dependencies', 'dev-dependencies'):
+                for name, spec in (data.get(table) or {}).items():
+                    if isinstance(spec, dict) and 'path' in spec:
+                        continue
+                    if isinstance(spec, dict):
+                        name = spec.get('package', name)
+                    names.add(name)
+            return names
+
+        forks = ('bashkit-monty', 'bashkit-monty-types')
+        fork_deps = set().union(*(direct(ROOT / 'crates' / f / 'Cargo.toml') for f in forks))
+        other = set()
+        for manifest in (ROOT / 'crates').glob('*/Cargo.toml'):
+            if manifest.parent.name not in forks:
+                other |= direct(manifest)
+        fork_only = fork_deps - other
+        self.assertGreaterEqual(len(fork_only), 10, fork_only)
+
+        config = yaml.safe_load(CONFIG.read_text())
+        root = next(
+            u for u in config['updates']
+            if u['package-ecosystem'] == 'cargo' and u.get('directory') == '/'
+        )
+        ignored = {
+            i.get('dependency-name') for i in root.get('ignore') or []
+            if not i.get('update-types')
+        }
+        self.assertFalse(
+            fork_only - ignored,
+            f'fork-only deps Dependabot may bump: {sorted(fork_only - ignored)}',
+        )
+
+    def test_path_dep_workspaces_commit_their_lockfile(self):
+        # Without a lockfile Dependabot has no previous version for an in-range
+        # bump and aborts the whole grouped job; cargo has no
+        # `versioning-strategy` that works around it.
+        for d in (
+            'crates/bashkit-js/test-fixtures/random-fs',
+            'crates/bashkit-python/test-fixtures/random-fs',
+            'examples/hyperlight',
+            'examples/hyperlight/host',
+        ):
+            with self.subTest(directory=d):
+                self.assertTrue((ROOT / d / 'Cargo.lock').is_file(), d)
+
+    def test_path_dep_lockfiles_pin_the_workspace_bashkit_version(self):
+        # Builds are not `--locked`, so a lockfile left on the old version after
+        # a release bump is silently refreshed in CI while Dependabot and the
+        # advisory scan keep reading the stale one. Fail loudly instead; the
+        # refresh loop is in knowledge/operations/release-process.md.
+        version = tomllib.loads((ROOT / 'Cargo.toml').read_text())['workspace']['package']['version']
+        checked = 0
+        for d in (
+            'crates/bashkit/fuzz',
+            'crates/bashkit-js/test-fixtures/random-fs',
+            'crates/bashkit-python/test-fixtures/random-fs',
+            'examples/hyperlight',
+        ):
+            lock = tomllib.loads((ROOT / d / 'Cargo.lock').read_text())
+            pinned = [
+                p['version'] for p in lock['package']
+                if p['name'] == 'bashkit' and 'source' not in p
+            ]
+            with self.subTest(directory=d):
+                self.assertEqual(pinned, [version], f'{d}/Cargo.lock is stale; refresh it')
+                checked += 1
+        self.assertEqual(checked, 4)
+
+    def test_cargo_versioning_strategy_is_one_cargo_accepts(self):
+        # #2852 set `increase` on a cargo entry; Dependabot rejected the whole
+        # file ("did not match one of: lockfile-only, auto"), which stops every
+        # ecosystem's updates, not just that entry's.
+        config = yaml.safe_load(CONFIG.read_text())
+        for update in config['updates']:
+            if update['package-ecosystem'] != 'cargo':
+                continue
+            strategy = update.get('versioning-strategy', 'auto')
+            with self.subTest(scope=update.get('directory') or update.get('directories')):
+                self.assertIn(strategy, {'auto', 'lockfile-only'})
 
     def test_config_is_a_well_formed_dependabot_v2_file(self):
         config = yaml.safe_load(CONFIG.read_text())

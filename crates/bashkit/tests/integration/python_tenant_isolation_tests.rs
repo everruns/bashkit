@@ -89,3 +89,55 @@ async fn str_join_respects_memory_limit() {
         .unwrap();
     assert_ne!(r.exit_code, 0, "stdout: {}", r.stdout);
 }
+
+/// Runs `script` as a `python3` file under a 32 MiB limit.
+async fn run_py(script: &str) -> bashkit::ExecResult {
+    let mut bash = tenant(32);
+    bash.fs()
+        .write_file(std::path::Path::new("/t.py"), script.as_bytes())
+        .await
+        .unwrap();
+    bash.exec("python3 /t.py").await.unwrap()
+}
+
+// THREAT[TM-PY-038]: `json.dumps` indent and separators are preflighted.
+// Upstream Monty built `' ' * indent` and wrote separators unchecked; the
+// metered allocator cannot refuse, so these aborted the whole process.
+#[tokio::test]
+async fn json_dumps_huge_indent_is_memory_error() {
+    let r = run_py("import json\njson.dumps([1], indent=10**12)\n").await;
+    assert_ne!(r.exit_code, 0, "stdout: {}", r.stdout);
+    assert!(r.stderr.contains("MemoryError"), "stderr: {}", r.stderr);
+}
+
+#[tokio::test]
+async fn json_dumps_deep_string_indent_is_memory_error() {
+    // 1 MB indent written depth times per line, 40 levels deep: ~1.6 GB.
+    let r = run_py(
+        "import json\nx = 1\nfor _ in range(40):\n    x = [x]\njson.dumps(x, indent='x' * 1000000)\n",
+    )
+    .await;
+    assert_ne!(r.exit_code, 0, "stdout: {}", r.stdout);
+    assert!(r.stderr.contains("MemoryError"), "stderr: {}", r.stderr);
+}
+
+#[tokio::test]
+async fn json_dumps_huge_separator_is_memory_error() {
+    // 10 KB separator between 100k items: ~1 GB.
+    let r = run_py("import json\njson.dumps([0] * 100000, separators=('x' * 10000, ':'))\n").await;
+    assert_ne!(r.exit_code, 0, "stdout: {}", r.stdout);
+    assert!(r.stderr.contains("MemoryError"), "stderr: {}", r.stderr);
+}
+
+#[tokio::test]
+async fn json_dumps_pretty_output_unchanged() {
+    let r = run_py(
+        "import json\nprint(json.dumps({'a': [1, 2], 'b': {}}, indent=2))\nprint(json.dumps([1, {'k': 'v'}], indent='\\t', separators=(';', '=')))\n",
+    )
+    .await;
+    assert_eq!(r.exit_code, 0, "stderr: {}", r.stderr);
+    assert_eq!(
+        r.stdout,
+        "{\n  \"a\": [\n    1,\n    2\n  ],\n  \"b\": {}\n}\n[\n\t1;\n\t{\n\t\t\"k\"=\"v\"\n\t}\n]\n"
+    );
+}

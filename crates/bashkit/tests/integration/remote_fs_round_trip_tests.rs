@@ -651,3 +651,30 @@ async fn nested_mount_below_search_root_disables_the_index() {
     );
     assert_eq!(c.search, 0, "{c}");
 }
+
+/// rg searches each file as it reads it: `-q` stops the walk at the first
+/// match instead of reading the whole tree first.
+#[tokio::test]
+async fn rg_quiet_stops_reading_at_the_first_match() {
+    let (fs, mut bash) = setup(CountingFs::new()).await;
+    let (c, _) = run(&fs, &mut bash, "rg -q needle tree").await;
+    // The first needle is file 0; ignore-file probes aside, a few reads.
+    assert!(c.read_file < 10, "{c}");
+    let (_, out) = run(&fs, &mut bash, "rg -q needle tree; echo $?").await;
+    assert_eq!(out, "0\n");
+}
+
+/// Several roots stream one after another in path order, with the same
+/// output as one globally sorted walk; nested roots keep that order too.
+#[tokio::test]
+async fn rg_several_roots_keep_path_order() {
+    let (fs, mut bash) = setup(CountingFs::new()).await;
+    let (_, all) = run(&fs, &mut bash, "rg -l needle tree | grep -E '^tree/d[01]/'").await;
+    let (_, split) = run(&fs, &mut bash, "rg -l needle tree/d1 tree/d0").await;
+    assert_eq!(split, all);
+    assert!(!split.is_empty());
+    let (_, nested) = run(&fs, &mut bash, "rg -l needle tree/d0/s1 tree/d0").await;
+    let mut sorted: Vec<&str> = nested.lines().collect();
+    sorted.sort();
+    assert_eq!(nested.lines().collect::<Vec<_>>(), sorted);
+}
