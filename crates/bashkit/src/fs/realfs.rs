@@ -411,6 +411,18 @@ impl RealFs {
         drop(file);
         let result = async {
             tokio::fs::copy(from, &temporary).await?;
+            // THREAT[TM-ESC-010]: `fs::copy` carries the source mode over,
+            // including setuid/setgid/sticky. Keep only the rwx bits, as
+            // chmod does, so a copy cannot mint a setuid file on the host.
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let mode = tokio::fs::metadata(&temporary).await?.permissions().mode();
+                if mode & 0o7000 != 0 {
+                    let perms = std::fs::Permissions::from_mode(mode & 0o777);
+                    tokio::fs::set_permissions(&temporary, perms).await?;
+                }
+            }
             let file = tokio::fs::OpenOptions::new()
                 .write(true)
                 .open(&temporary)
@@ -741,7 +753,10 @@ impl FsBackend for RealFs {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let perms = std::fs::Permissions::from_mode(mode);
+            // THREAT[TM-ESC-010]: only rwx bits reach the host. A script
+            // must not set setuid/setgid/sticky on a host file through a
+            // read-write mount (a setuid binary there runs as its owner).
+            let perms = std::fs::Permissions::from_mode(mode & 0o777);
             tokio::fs::set_permissions(&real, perms).await?;
         }
         #[cfg(not(unix))]

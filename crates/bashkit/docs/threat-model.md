@@ -35,6 +35,7 @@ through configurable limits.
 | Pagination amplification (TM-DOS-137) | Long `pr -h` headers repeated on many short pages | Check the 16 MiB cap before every append; lease input, rows and output capacity before growth; borrow cells/page slices and retain date timestamps; charge input/work and poll cancellation/deadlines, including skipped pages | MITIGATED |
 | Embedded CLI limit escalation (TM-DOS-139) | `markkit extract x --max-input-size 99999999999` | `markkit` limits can only be lowered below their defaults; `fetchkit` bodies capped by HTTP limits; `--ocr` refused | MITIGATED |
 | Tree-walk memory (TM-DOS-140) | `find`, `du` or `rg` over a tree with millions of files | `FileSystem::walk` answers are bounded batches (10k entries) refilled as `find`/`du` descend; `rg` searches each file as it reads it without holding the text, charges it to the aggregate-input budget, stops at the first refusal and streams its walk; `ls -R` stops at the stdout limit | MITIGATED |
+| Root real mount drops limits (TM-DOS-144) | Writing past `filesystem_limits` with a host dir mounted at `/` | The root overlay keeps the configured `FsLimits` | MITIGATED |
 | Variable explosion (TM-DOS-003) | `x=$(cat /dev/urandom)` | /dev/urandom returns bounded 8KB | MITIGATED |
 | Array growth (TM-DOS-004) | `arr+=(element)` in loop | Command limit | MITIGATED |
 
@@ -135,7 +136,9 @@ stdout capture limit remains downstream of pipelines and redirects.
 | Concurrent pipeline amplification (TM-DOS-124) | An endless loop piped into `head`, a producer whose reader quit, or recursive pipelines `f() { f \| f; }` | 4 KiB pipes with backpressure; a writer whose reader is gone ends with 141 (SIGPIPE); streaming nesting counts toward `max_subshell_depth` and falls back to sequential stages past 4 levels; stages share the session budget, timeout and cancellation; producers atomically claim the shared job cap before construction, borrow the AST and lease owned fork storage/future layouts before allocation | MITIGATED |
 | make amplification (TM-DOS-126) | Exponential recursive variables, self-including makefiles, deep `$(MAKE)` recursion, huge graphs | Expansion depth 200 and 4 MiB per expansion; substitution checks its exact size before construction, with shared capacity leases retained by expanded values and work/deadline checkpoints while matching and copying; include depth 16; target, query and glob caps per run; `$(MAKE)` stops at level 4; recipes run under the session budget and timeout | MITIGATED |
 | Random generator amplification (TM-DOS-123) | `openssl rand` asked for gigabytes | Requests capped at 1 MiB; fixed-size `uuidgen`/`$SRANDOM` | MITIGATED |
-| Child-shell recursion (TM-DOS-125) | Script that re-runs itself via `sh` | Child shells count against function depth, max 8 nested | MITIGATED |
+| Child-shell recursion (TM-DOS-125) | Script that re-runs itself via `sh` or `./s.sh` | Child shells count against function depth, max 8 nested | MITIGATED |
+| Re-entry recursion (TM-DOS-141) | `f(){ eval f; }`, `compgen -C`, `fc`, PROMPT_COMMAND re-entering the interpreter | Each re-entry counts against function depth, max 8 nested | MITIGATED |
+| Stack exhaustion from combined nesting (TM-DOS-142) | Nested compounds inside recursion inside `eval` overflow a 2 MiB worker stack | Command polls grow the stack on the heap when it runs low (`stacker`); depth caps bound the total | MITIGATED |
 | Pattern substitution (TM-DOS-127) | `${x//*a*/b}` over a long value | Globs run as a size-capped linear-time regex; extglob search capped at 10,000 attempts | MITIGATED |
 | Unbounded builtin output (TM-DOS-058) | `seq 1 1000000` produces 1M lines | Add `max_stdout_bytes` limit | **MITIGATED** |
 | Silent truncation at builtin caps (TM-DOS-109) | `seq 200000`, an awk loop past its cap, or an oversized `sprintf` expression returns incomplete output with exit 0 | Caps report `<cmd>: <what> limit (<N>) exceeded` on stderr and exit non-zero; awk caps and formatting errors are fatal | **MITIGATED** |
@@ -248,7 +251,7 @@ Scripts may attempt to break out of the sandbox to access the host system.
 | Threat | Attack Example | Mitigation | Status |
 |--------|---------------|------------|--------|
 | sudo/su (TM-ESC-009) | `sudo rm -rf /` | Not implemented | MITIGATED |
-| setuid (TM-ESC-010) | Permission changes | Virtual FS, no real perms | MITIGATED |
+| setuid (TM-ESC-010) | Permission changes | Virtual FS, no real perms; real mounts get only rwx bits | MITIGATED |
 | Capability abuse (TM-ESC-011) | Linux capabilities | Runs in-process | MITIGATED |
 | Mount-rw exposure to untrusted automation (TM-ESC-030) | Running untrusted scripts with `--mount-rw /` | CLI docs mark `--mount-rw` sandbox-breaking; recommend `--mount-ro` when host access is needed | MITIGATED |
 | Permission gate built on static analysis (TM-ESC-032) | `c=rm; $c -rf /data` passes an allowlist check that only reads `analysis.commands` | `analyze()` reports unresolved names as `null` and sets `is_opaque()`; pair it with the `before_tool` hook, which sees the resolved name, see the [script analysis guide](./script-analysis.md) | MITIGATED (advisory API) |
