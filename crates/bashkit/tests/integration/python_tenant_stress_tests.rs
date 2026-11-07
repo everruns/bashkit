@@ -10,8 +10,13 @@
 
 #![cfg(feature = "python")]
 
-use bashkit::{Bash, PythonLimits};
+use bashkit::{Bash, PythonLimits, SessionLimits};
 use std::time::Duration;
+
+/// Largest `BASHKIT_STRESS_ROUNDS` accepted, and the basis for the session
+/// exec() headroom in `tenant`. Keep the two together: they drifted apart once
+/// (see `tenant`) and the soak failed on the cap rather than on its subject.
+const MAX_ROUNDS: usize = 1000;
 
 fn rounds() -> usize {
     std::env::var("BASHKIT_STRESS_ROUNDS")
@@ -19,8 +24,10 @@ fn rounds() -> usize {
         .map(|v| {
             v.parse::<usize>()
                 .ok()
-                .filter(|n| (1..=1000).contains(n))
-                .unwrap_or_else(|| panic!("BASHKIT_STRESS_ROUNDS must be 1..=1000, got {v:?}"))
+                .filter(|n| (1..=MAX_ROUNDS).contains(n))
+                .unwrap_or_else(|| {
+                    panic!("BASHKIT_STRESS_ROUNDS must be 1..={MAX_ROUNDS}, got {v:?}")
+                })
         })
         .unwrap_or(3)
 }
@@ -33,6 +40,13 @@ fn tenant(limit_mib: usize, max_ms: u64) -> Bash {
                 .max_duration(Duration::from_millis(max_ms))
                 .max_recursion(200),
         )
+        // The session exec() cap (1,000 by default) is not what these tests
+        // measure, and the soak multiplies their call counts straight through
+        // it: at BASHKIT_STRESS_ROUNDS=300 the budget-reuse test makes 3,000
+        // calls and died on the cap at call 1,000 with "session exec() call
+        // limit exceeded", never reaching what it asserts. Sized off
+        // MAX_ROUNDS so the largest soak this file can ask for still fits.
+        .session_limits(SessionLimits::default().max_exec_calls(20 * MAX_ROUNDS as u64))
         .env("BASHKIT_ALLOW_INPROCESS_PYTHON", "1")
         .build()
 }
