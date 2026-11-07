@@ -31,9 +31,9 @@ jobs:
       # The action no longer accepts a `toolchain:` input (it installs
       # the rust-toolchain.toml toolchain), so install the pinned nightly
       # explicitly below.
-          # Pinned: nightly 2026-10-31 (rustc f9ceb4a4d) fails to compile bashkit
-          # (E0391 async-drop cycle on parser::ast::CommandList). Unpin once a
-          # later nightly builds `cargo +nightly check -p bashkit --lib`.
+      # Pinned: nightly 2026-10-31 (rustc f9ceb4a4d) fails to compile bashkit
+      # (E0391 async-drop cycle on parser::ast::CommandList). Unpin once a
+      # later nightly builds `cargo +nightly check -p bashkit --lib`.
       - name: Install Rust nightly with Miri
         run: rustup toolchain install nightly-2026-10-30 --profile minimal --component miri
 
@@ -156,9 +156,9 @@ jobs:
       # The action no longer accepts a `toolchain:` input (it installs
       # the rust-toolchain.toml toolchain), so install the pinned nightly
       # explicitly below.
-          # Pinned: nightly 2026-10-31 (rustc f9ceb4a4d) fails to compile bashkit
-          # (E0391 async-drop cycle on parser::ast::CommandList). Unpin once a
-          # later nightly builds `cargo +nightly check -p bashkit --lib`.
+      # Pinned: nightly 2026-10-31 (rustc f9ceb4a4d) fails to compile bashkit
+      # (E0391 async-drop cycle on parser::ast::CommandList). Unpin once a
+      # later nightly builds `cargo +nightly check -p bashkit --lib`.
       - name: Install Rust nightly with rust-src for build-std
         run: rustup toolchain install nightly-2026-10-30 --profile minimal --component rust-src
 

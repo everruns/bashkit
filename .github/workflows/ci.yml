@@ -661,14 +661,21 @@ jobs:
       # The action no longer accepts a `toolchain:` input (it installs
       # the rust-toolchain.toml toolchain), so install the pinned nightly
       # explicitly below.
-          # Pinned: nightly 2026-10-31 (rustc f9ceb4a4d) fails to compile bashkit
-          # (E0391 async-drop cycle on parser::ast::CommandList). Unpin once a
-          # later nightly builds `cargo +nightly check -p bashkit --lib`.
+      # Pinned: nightly 2026-10-31 (rustc f9ceb4a4d) fails to compile bashkit
+      # (E0391 async-drop cycle on parser::ast::CommandList). Unpin once a
+      # later nightly builds `cargo +nightly check -p bashkit --lib`.
       - name: Install Rust nightly
         run: rustup toolchain install nightly-2026-10-30 --profile minimal
 
+      # Builds from source on the job's default toolchain, which is now the
+      # pinned stable; without this the unpinned tool would resolve to the
+      # newest release and an upstream MSRV bump would break an unchanged
+      # tree (the cargo-geiger 0.14.0 failure). Nightly outruns any released
+      # MSRV, so build it there, as the `toolchain:` input used to.
       - name: Install cargo-fuzz
         uses: taiki-e/cache-cargo-install-action@9ee83daaa7b96a6fab930949ecf1122bba04a389 # v3
+        env:
+          RUSTUP_TOOLCHAIN: nightly-2026-10-30
         with:
           tool: cargo-fuzz
           locked: true
