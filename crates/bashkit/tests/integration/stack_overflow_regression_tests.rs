@@ -100,3 +100,130 @@ async fn recursive_child_shell_is_bounded() {
         .unwrap();
     assert!(r.stdout.contains("done"), "stdout: {}", r.stdout);
 }
+
+/// THREAT[TM-DOS-141]: `eval` re-enters the interpreter on the native stack.
+/// A self-referencing eval used to recurse until the stack overflowed and
+/// the whole process aborted. It now counts against the function depth.
+#[tokio::test]
+async fn recursive_eval_is_bounded() {
+    let mut bash = Bash::new();
+    let r = bash.exec("x='eval \"$x\"'; eval \"$x\"; echo rc=$?").await;
+    // Either a clean execution error or a non-zero status: never an abort.
+    match r {
+        Ok(r) => assert!(
+            r.stderr.contains("maximum nesting depth exceeded"),
+            "stderr: {}",
+            r.stderr
+        ),
+        Err(e) => assert!(
+            e.to_string().contains("maximum nesting depth exceeded"),
+            "error: {e}"
+        ),
+    }
+
+    // Ordinary nested eval keeps working.
+    let r = bash
+        .exec("eval 'eval \"eval \\\"echo deep\\\"\"'")
+        .await
+        .unwrap();
+    assert_eq!(r.stdout, "deep\n");
+}
+
+/// THREAT[TM-DOS-141]: `compgen -C` runs its command text in the current
+/// shell; a command that calls itself through `compgen -C` overflowed the
+/// stack like recursive eval.
+#[tokio::test]
+async fn recursive_compgen_command_is_bounded() {
+    let mut bash = Bash::new();
+    let r = bash
+        .exec("x='compgen -C \"$x\" a'; compgen -C \"$x\" a; echo after")
+        .await;
+    assert_bounded(r, "after");
+}
+
+/// The outcome of a capped recursion: the script either continues past it
+/// (`marker` in stdout) or `exec` fails with the depth error. Never an abort,
+/// and never some other error.
+fn assert_bounded(r: bashkit::Result<bashkit::ExecResult>, marker: &str) {
+    match r {
+        Ok(r) => assert!(
+            r.stdout.contains(marker),
+            "stdout: {} stderr: {}",
+            r.stdout,
+            r.stderr
+        ),
+        Err(e) => assert!(
+            e.to_string().contains("maximum nesting depth exceeded")
+                || e.to_string().contains("function depth"),
+            "error: {e}"
+        ),
+    }
+}
+
+/// THREAT[TM-DOS-125]: a script that runs itself by path (`./s.sh` or via
+/// `$PATH`) is a child shell and gets the same cap as `sh s.sh`; it used to
+/// overflow the stack and abort the process.
+#[tokio::test]
+async fn recursive_path_script_is_bounded() {
+    let mut bash = Bash::new();
+    let r = bash
+        .exec("cd /tmp; printf './s.sh\\n' > s.sh; chmod +x s.sh; ./s.sh; echo rc=$?")
+        .await
+        .unwrap();
+    assert!(r.stdout.contains("rc="), "stdout: {}", r.stdout);
+    assert!(
+        r.stderr.contains("maximum nesting depth exceeded"),
+        "stderr: {}",
+        r.stderr
+    );
+
+    let r = bash
+        .exec(
+            "mkdir -p /tmp/bin; printf 'p.sh\\n' > /tmp/bin/p.sh; chmod +x /tmp/bin/p.sh; \
+             PATH=/tmp/bin:$PATH; p.sh; echo rc=$?",
+        )
+        .await
+        .unwrap();
+    assert!(r.stdout.contains("rc="), "stdout: {}", r.stdout);
+
+    // A short legitimate chain of path-invoked scripts still runs.
+    let r = bash
+        .exec(
+            "cd /tmp; printf 'echo leaf\\n' > c.sh; printf './c.sh\\n' > b.sh; \
+             printf './b.sh\\n' > a.sh; chmod +x a.sh b.sh c.sh; ./a.sh",
+        )
+        .await
+        .unwrap();
+    assert_eq!(r.stdout, "leaf\n");
+}
+
+/// THREAT[TM-DOS-142]: per-kind depth caps bound how many levels exist, but
+/// their product (nested compounds inside a recursing function, eval inside
+/// functions, a path script that evals itself) used to exhaust a 2 MiB stack
+/// and abort the process. Interpreter polls now grow the stack on demand.
+#[tokio::test]
+async fn nested_compounds_inside_recursion_do_not_overflow() {
+    let ifs_open = "if true; then ".repeat(10);
+    let ifs_close = "fi; ".repeat(10);
+    let script = format!(
+        "f(){{ {ifs_open} if (( d < 15 )); then d=$((d+1)); f; fi; {ifs_close} }}; d=0; f; echo d=$d"
+    );
+    let mut bash = Bash::new();
+    let r = bash.exec(&script).await.unwrap();
+    assert!(r.stdout.contains("d=15"), "stdout: {}", r.stdout);
+
+    let braces_open = "{ ".repeat(10);
+    let braces_close = "} ".repeat(10);
+    let script = format!(
+        "g(){{ {braces_open} if (( d < 30 )); then d=$((d+1)); echo $(g); else echo leaf; fi; {braces_close} }}; d=0; g; echo after"
+    );
+    assert_bounded(bash.exec(&script).await, "after");
+
+    assert_bounded(bash.exec("f(){ eval f; }; f; echo rc=$?").await, "rc=");
+
+    let r = bash
+        .exec("cd /tmp; printf 'eval ./m.sh\\n' > m.sh; chmod +x m.sh; ./m.sh; echo rc=$?")
+        .await
+        .unwrap();
+    assert!(r.stdout.contains("rc="), "stdout: {}", r.stdout);
+}

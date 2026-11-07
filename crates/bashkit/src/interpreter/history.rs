@@ -296,7 +296,7 @@ impl Interpreter {
         let emit_before = self.output_emit_count;
         let result = match self.parse_embedded_script(&cmd).await {
             Ok(script) => self
-                .execute_command_sequence(&script.commands)
+                .execute_reentered_commands("PROMPT_COMMAND", &script.commands)
                 .await
                 .unwrap_or_else(|e| ExecResult::err(self.diag(format!("{e}\n")), 1)),
             Err(e) => ExecResult::err(self.diag(format!("{e}\n")), 2),
@@ -849,7 +849,10 @@ impl Interpreter {
         self.maybe_emit_output(&crate::StreamData::new(), &echo, emit_before)
             .await?;
         let mut result = match self.parse_embedded_script(&command).await {
-            Ok(script) => self.execute_command_sequence(&script.commands).await?,
+            Ok(script) => {
+                self.execute_reentered_commands("fc", &script.commands)
+                    .await?
+            }
             Err(e) => ExecResult::err(self.diag(format!("{e}\n")), 2),
         };
         let mut stderr = echo;
