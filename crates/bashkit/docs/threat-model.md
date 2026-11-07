@@ -747,6 +747,7 @@ Python `pathlib.Path` and `open()` operations are bridged to Bashkit's virtual f
 | Host-call loop outruns the time limit (TM-PY-036) | `while True:` around a cheap file write; Monty's clock pauses on host calls and the VM never yields the thread | Wall-clock deadline and an executor yield at every host call | MITIGATED |
 | Shared-graph walk outlives time limit (TM-PY-037) | `x = [x, x]` repeated, then `repr` or `==` inside Python | Forked tracker counts every amortized check on one tick, so recursive walks still check time | MITIGATED |
 | Huge `json.dumps` indent (TM-PY-038) | `json.dumps(x, indent=10**12)` or a huge separator inside Python | Indent size and every separator/indent write are checked against the memory limit (`MemoryError`) | MITIGATED |
+| CPU-bound run holds a shared worker thread (TM-PY-039) | `while True: pass` or `for (;;) {}` with no host calls; the run yields only at host calls | Per-run cap (profile 30 s, Hardened 10 s; Python bindings: `timeout_seconds`) plus the execution deadline. Hosts that raise `timeout_seconds` accept a longer hold | ACCEPTED |
 
 **Architecture:**
 
