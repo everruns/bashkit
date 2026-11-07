@@ -1365,6 +1365,7 @@ async fn realfs_copy_drops_special_bits() {
 async fn root_real_mount_keeps_filesystem_limits() {
     for readwrite in [false, true] {
         let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("marker"), b"mounted\n").unwrap();
         let limits = bashkit::FsLimits::new().max_file_size(1024);
         let builder = Bash::builder().filesystem_limits(limits);
         let mut bash = if readwrite {
@@ -1373,6 +1374,11 @@ async fn root_real_mount_keeps_filesystem_limits() {
             builder.mount_real_readonly(dir.path())
         }
         .build();
+        let r = bash.exec("cat /marker").await.unwrap();
+        assert_eq!(
+            r.stdout, "mounted\n",
+            "readwrite={readwrite}: mount not active"
+        );
         let r = bash
             .exec("head -c 4096 /dev/zero > /big; echo rc=$?; wc -c < /big 2>/dev/null || echo size=none")
             .await
