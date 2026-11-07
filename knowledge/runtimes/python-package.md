@@ -184,6 +184,9 @@ Hardened 10 s), as `Bash` does for SQLite. Each run stays clamped to the
 remaining execution deadline. `ts` VM time also draws on the execution work
 budget at one unit per microsecond, so a `ts` run past about 100 s (Hardened
 25 s) still fails on `max_work_units`.
+A CPU-bound run yields its worker thread only at host calls, so raising
+`timeout_seconds` also raises the longest time one tenant can hold a shared
+worker thread (TM-PY-039 in the [Threat Model](../security/threat-model.md)).
 
 LangChain's `BashkitTool` / `create_bash_tool`, deepagents' `BashkitMiddleware` /
 `create_bash_middleware`, and `BashkitBackend` forward `python`, `typescript`,

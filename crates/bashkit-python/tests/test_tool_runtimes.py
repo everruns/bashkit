@@ -139,5 +139,8 @@ def test_timeout_seconds_raises_runtime_time_limit(cls, runtime, script):
     tool = cls(profile=ExecutionProfile.Hardened, timeout_seconds=11, env=PYTHON_ENV, **{runtime: True})
     start = time.monotonic()
     result = tool.execute_sync(script)
-    assert result.exit_code != 0
-    assert time.monotonic() - start > 10.5
+    elapsed = time.monotonic() - start
+    assert result.exit_code == 124, result.stderr
+    assert "timed out" in result.stderr
+    # Past the Hardened 10 s cap, but still stopped by the 11 s deadline.
+    assert 10.5 < elapsed < 20
