@@ -199,6 +199,7 @@ dependencies = [
  "serde_norway",
  "sha1",
  "sha2 0.11.1",
+ "stacker",
  "thiserror",
  "tokio",
  "tower",

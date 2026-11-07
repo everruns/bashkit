@@ -21,6 +21,7 @@ import argparse
 import difflib
 import hashlib
 import io
+import re
 import sys
 import tarfile
 import tempfile
@@ -30,7 +31,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 MARKER = 'bashkit fork:'
-# Lines above a changed region that may hold its marker comment.
+# Plain lines above a changed region that may hold its marker comment. The
+# comment/attribute block attached to the changed item is searched in full on
+# top of this, however long it is, see `marker_window`.
 MARKER_WINDOW = 3
 VERSION = '1.4.0'
 UPSTREAM = {
@@ -55,9 +58,21 @@ UPSTREAM_DROPPED = ('tests/', 'test_cases/', 'Cargo.lock', 'Cargo.toml.orig', '.
 # Dependency tables compared between the fork and upstream manifests.
 # dev-dependencies are skipped with the tests that use them.
 DEP_TABLES = ('dependencies', 'build-dependencies')
+# Tables that redirect a crate's source without touching the dependency line,
+# so the per-dependency source check never sees them. Upstream has neither, and
+# a fork has no reason to: rejected outright rather than compared, and no
+# marker covers them. `[patch]` in a non-root manifest is inert today, but the
+# forks are published crates and a consumer may build one as its own root.
+SOURCE_REDIRECT_TABLES = ('patch', 'replace')
 # Dependencies the forks rename on purpose: upstream name -> fork package.
 # Their version follows the fork, so only features/optionality are compared.
 RENAMED_DEPS = {'monty-types': 'bashkit-monty-types'}
+# Keys that decide *which* crate is built rather than which version of it.
+# Compared separately from the version and never markable: a marker records a
+# reviewed version move, and re-sync cannot reconcile a different source. An
+# edit that keeps version and features identical while adding `path` or `git`,
+# or swapping `package`, would otherwise read as upstream's dependency.
+SOURCE_KEYS = ('package', 'path', 'git', 'branch', 'rev', 'tag', 'registry', 'registry-index')
 
 
 def fetch(name: str, sha256: str, dest: Path) -> Path:
@@ -73,6 +88,112 @@ def fetch(name: str, sha256: str, dest: Path) -> Path:
     return dest / f'{name}-{VERSION}'
 
 
+def is_attached_comment(line: str) -> bool:
+    """A comment or attribute line, which in Rust binds to the item below it."""
+    stripped = line.lstrip()
+    return stripped.startswith('//') or stripped.startswith('#[') or stripped.startswith('#![')
+
+
+def marker_window(fork: list[str], j1: int, j2: int) -> list[str]:
+    """Fork lines that may carry the marker for the changed region `j1:j2`.
+
+    Decision: the contiguous comment/attribute block above the region is
+    searched in full, not just `MARKER_WINDOW` lines. A fork note here is
+    usually several lines of rationale and the marker sits on its first line,
+    so a fixed window reads the tail of the note and misses the marker. The
+    block stops at the first line of code, so one item's note cannot mark the
+    next item's drift.
+    """
+    start = j1
+    while start > 0 and is_attached_comment(fork[start - 1]):
+        start -= 1
+    return fork[min(start, max(0, j1 - MARKER_WINDOW)) : j2]
+
+
+# `name = ...` at the start of a line: a dependency entry in a `[dependencies]`
+# style table. Quoted keys are accepted because TOML allows them.
+TOML_ENTRY = re.compile(r'^\s*(?:"(?P<quoted>[^"]+)"|(?P<bare>[A-Za-z0-9_.+-]+))\s*=')
+TOML_TABLE = re.compile(r'^\s*\[\s*([^\]]+?)\s*\]\s*$')
+
+
+def is_toml_comment(line: str) -> bool:
+    """A comment line, which in TOML binds to the entry below it."""
+    return line.lstrip().startswith('#')
+
+
+def toml_marker_window(lines: list[str], j: int) -> list[str]:
+    """Lines that may carry the marker for the entry declared at line `j`.
+
+    The contiguous comment block directly above the entry, in full, plus the
+    entry's own line (a short note often sits at the end of it).
+
+    Decision: no `MARKER_WINDOW` fallback here, unlike source. A dependency
+    table is one entry per line, so "a few plain lines above" would reach over
+    the preceding dependencies and let one note excuse several bumps. The
+    comment block stops at the first non-comment line instead.
+    """
+    start = j
+    while start > 0 and is_toml_comment(lines[start - 1]):
+        start -= 1
+    return lines[start : j + 1]
+
+
+def normalize_table(raw: str) -> str:
+    """A raw TOML table header as `dep_tables` keys it (quotes stripped).
+
+    `[target.'cfg(unix)'.dependencies]` parses to the key
+    `target.cfg(unix).dependencies`. Splitting on `.` assumes no cfg
+    expression contains a literal dot, which none does; the real-fork run and
+    `test_a_target_table_marker_is_keyed_like_dep_tables` keep the two in step.
+    """
+    return '.'.join(seg.strip().strip('\'"') for seg in raw.split('.'))
+
+
+def marked_deps(fork_dir: Path) -> set[tuple[str, str]]:
+    """`(table, dependency)` pairs in the fork manifest carrying a marker.
+
+    Decision: a *version* divergence may be marked, the way a source edit is.
+    A dependency the fork shares with bashkit's own crates is declared twice,
+    once here and once in the workspace, so pinning this one to upstream puts
+    two majors of the same crate in the graph; the alternative, telling
+    Dependabot to leave the name alone, would freeze it for bashkit too
+    (`serde`, `chrono`, `sha2` among them). Adding or dropping a dependency
+    stays unmarkable: re-sync cannot reconcile a crate upstream does not have,
+    and so does a change of source (see `SOURCE_KEYS`).
+
+    Decision: the marker is scoped to its table, not to the crate name. The
+    same crate in `[dependencies]` and in `[build-dependencies]` sits at
+    different points in the build -- the second runs at compile time -- so a
+    note on one must not silence drift in the other.
+    """
+    marked = set()
+    lines = (fork_dir / 'Cargo.toml').read_text(encoding='utf-8').splitlines()
+    table = None
+    for j, line in enumerate(lines):
+        header = TOML_TABLE.match(line)
+        if header:
+            table = header.group(1)
+            # `[dependencies.serde]` marks that one dependency.
+            parts = normalize_table(table).split('.')
+            if len(parts) >= 2 and parts[-2] in DEP_TABLES:
+                if any(MARKER in w for w in toml_marker_window(lines, j)):
+                    marked.add(('.'.join(parts[:-1]), parts[-1]))
+            continue
+        if table is None:
+            continue
+        # Only a dependency table's entries; `[features]` entries look the same.
+        key = normalize_table(table)
+        if key.split('.')[-1] not in DEP_TABLES:
+            continue
+        entry = TOML_ENTRY.match(line)
+        if not entry:
+            continue
+        name = entry.group('quoted') or entry.group('bare')
+        if any(MARKER in w for w in toml_marker_window(lines, j)):
+            marked.add((key, name))
+    return marked
+
+
 def unmarked_hunks(upstream: list[str], fork: list[str]) -> list[int]:
     """1-based fork line numbers of changed regions with no marker nearby."""
     bad = []
@@ -80,8 +201,7 @@ def unmarked_hunks(upstream: list[str], fork: list[str]) -> list[int]:
     for tag, _i1, _i2, j1, j2 in matcher.get_opcodes():
         if tag == 'equal':
             continue
-        window = fork[max(0, j1 - MARKER_WINDOW) : j2]
-        if not any(MARKER in line for line in window):
+        if not any(MARKER in line for line in marker_window(fork, j1, j2)):
             bad.append(j1 + 1)
     return bad
 
@@ -103,6 +223,17 @@ def dep_tables(manifest: dict) -> dict[str, dict]:
     return {name: deps for name, deps in tables.items() if deps}
 
 
+def dep_source(name: str, spec: dict | str) -> dict:
+    """The keys saying where a dependency comes from, for a non-renamed dep.
+
+    The declared renames legitimately carry `package` and `path` (each fork
+    points at its sibling), and `manifest_errors` checks those on their own.
+    """
+    if name in RENAMED_DEPS or not isinstance(spec, dict):
+        return {}
+    return {k: spec[k] for k in SOURCE_KEYS if k in spec}
+
+
 def dep_spec(name: str, spec: dict | str) -> tuple:
     if isinstance(spec, str):
         spec = {'version': spec}
@@ -121,6 +252,7 @@ def manifest_errors(fork_dir: Path, upstream_dir: Path) -> list[str]:
     upstream = tomllib.loads((upstream_dir / 'Cargo.toml').read_text(encoding='utf-8'))
     where = f'{fork_dir.name}/Cargo.toml'
     errors = []
+    marked = marked_deps(fork_dir)
     fork_tables, up_tables = dep_tables(fork), dep_tables(upstream)
     for table in sorted(set(fork_tables) | set(up_tables)):
         fork_deps, up_deps = fork_tables.get(table, {}), up_tables.get(table, {})
@@ -134,8 +266,33 @@ def manifest_errors(fork_dir: Path, upstream_dir: Path) -> list[str]:
                 renamed = RENAMED_DEPS.get(name)
                 if renamed and (not isinstance(fork_spec, dict) or fork_spec.get('package') != renamed):
                     errors.append(f'{where}: [{table}] `{name}` must be package `{renamed}`')
-                if dep_spec(name, fork_spec) != dep_spec(name, up_spec):
+                fork_source = dep_source(name, fork_spec)
+                source_differs = fork_source != dep_source(name, up_spec)
+                if source_differs:
+                    errors.append(
+                        f'{where}: [{table}] `{name}` comes from somewhere other than '
+                        f'upstream {fork_source!r}; a `{MARKER}` marker does not cover '
+                        'a change of source'
+                    )
+                is_marked = (table, name) in marked
+                differs = dep_spec(name, fork_spec) != dep_spec(name, up_spec)
+                if differs and not is_marked:
                     errors.append(f'{where}: [{table}] `{name}` differs from upstream {up_spec!r}')
+                elif not differs and is_marked and name not in RENAMED_DEPS and not source_differs:
+                    # A note left behind by a re-sync would silently excuse the
+                    # next bump of this crate. Not reported when the source
+                    # already differs: the marker is not stale there, it just
+                    # does not cover what was changed, which is said above.
+                    errors.append(
+                        f'{where}: [{table}] `{name}` matches upstream but has a '
+                        f'`{MARKER}` marker; drop the marker'
+                    )
+    for table in SOURCE_REDIRECT_TABLES:
+        if table in fork:
+            errors.append(
+                f'{where}: [{table}] redirects dependency sources and upstream has '
+                f'none; remove it (no `{MARKER}` marker covers a source redirect)'
+            )
     if fork.get('features', {}) != upstream.get('features', {}):
         errors.append(f'{where}: [features] differ from upstream {upstream.get("features", {})!r}')
     return errors

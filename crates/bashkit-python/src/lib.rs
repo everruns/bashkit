@@ -4744,6 +4744,30 @@ fn prepare_runtime_external_handler(
         .map(Some)
 }
 
+/// Embedded Python limits from the profile, with `timeout` as each run's cap.
+///
+/// Decision: `timeout_seconds` also sets the runtimes' own time limit, see
+/// knowledge/runtimes/python-package.md#embedded-tool-runtimes.
+fn python_limits(profile: &bashkit::ExecutionProfile, timeout: Option<Duration>) -> PythonLimits {
+    let limits = profile.python_limits().clone();
+    match timeout {
+        Some(timeout) => limits.max_duration(timeout),
+        None => limits,
+    }
+}
+
+/// Embedded TypeScript limits; see [`python_limits`].
+fn typescript_limits(
+    profile: &bashkit::ExecutionProfile,
+    timeout: Option<Duration>,
+) -> bashkit::TypeScriptLimits {
+    let limits = profile.typescript_limits().clone();
+    match timeout {
+        Some(timeout) => limits.max_duration(timeout),
+        None => limits,
+    }
+}
+
 /// Apply python/external_handler configuration to a `BashBuilder`.
 ///
 /// Centralises the logic shared between `new()` and `reset()`.
@@ -4952,6 +4976,10 @@ impl PyBash {
             }
         }
 
+        let timeout = self
+            .timeout_seconds
+            .map(parse_timeout_seconds)
+            .transpose()?;
         let mut limits = profile.execution_limits().clone();
         if let Some(max_commands) = self.max_commands {
             limits = limits.max_commands(usize::try_from(max_commands).unwrap_or(usize::MAX));
@@ -4960,8 +4988,8 @@ impl PyBash {
             limits = limits
                 .max_loop_iterations(usize::try_from(max_loop_iterations).unwrap_or(usize::MAX));
         }
-        if let Some(timeout_seconds) = self.timeout_seconds {
-            limits = limits.timeout(parse_timeout_seconds(timeout_seconds)?);
+        if let Some(timeout) = timeout {
+            limits = limits.timeout(timeout);
         }
         builder = builder.limits(limits);
 
@@ -4973,7 +5001,7 @@ impl PyBash {
         builder = apply_python_config(
             builder,
             self.python,
-            profile.python_limits().clone(),
+            python_limits(&profile, timeout),
             self.external_functions.clone(),
             handler_clone,
         );
@@ -5069,6 +5097,7 @@ impl PyBash {
             }
         }
 
+        let timeout = timeout_seconds.map(parse_timeout_seconds).transpose()?;
         let mut limits = core_profile.execution_limits().clone();
         if let Some(mc) = max_commands {
             limits = limits.max_commands(usize::try_from(mc).unwrap_or(usize::MAX));
@@ -5076,8 +5105,8 @@ impl PyBash {
         if let Some(mli) = max_loop_iterations {
             limits = limits.max_loop_iterations(usize::try_from(mli).unwrap_or(usize::MAX));
         }
-        if let Some(ts) = timeout_seconds {
-            limits = limits.timeout(parse_timeout_seconds(ts)?);
+        if let Some(timeout) = timeout {
+            limits = limits.timeout(timeout);
         }
         builder = builder.limits(limits);
 
@@ -5104,7 +5133,7 @@ impl PyBash {
         builder = apply_python_config(
             builder,
             python,
-            core_profile.python_limits().clone(),
+            python_limits(&core_profile, timeout),
             fn_names,
             handler_for_build,
         );
@@ -6108,26 +6137,32 @@ impl BashTool {
     fn build_live_builder(&self, py: Python<'_>) -> PyResult<bashkit::BashBuilder> {
         let profile = self.profile.core();
         let mut builder = Bash::builder().profile(profile.clone());
+        let timeout = self
+            .timeout_seconds
+            .map(parse_timeout_seconds)
+            .transpose()?;
         if self.python {
+            let limits = python_limits(&profile, timeout);
             if let Some(handler) = &self.external_handler {
                 builder = builder.python_with_external_handler(
-                    profile.python_limits().clone(),
+                    limits,
                     self.external_functions.clone(),
                     make_external_handler_native(py, handler),
                 );
             } else {
-                builder = builder.python();
+                builder = builder.python_with_limits(limits);
             }
         }
         if self.typescript {
+            let limits = typescript_limits(&profile, timeout);
             if let Some(handler) = &self.typescript_external_handler {
                 builder = builder.typescript_with_external_handler(
-                    profile.typescript_limits().clone(),
+                    limits,
                     self.typescript_external_functions.clone(),
                     make_typescript_external_handler_native(py, handler),
                 );
             } else {
-                builder = builder.typescript();
+                builder = builder.typescript_with_limits(limits);
             }
         }
 
@@ -6154,8 +6189,8 @@ impl BashTool {
             limits = limits
                 .max_loop_iterations(usize::try_from(max_loop_iterations).unwrap_or(usize::MAX));
         }
-        if let Some(timeout_seconds) = self.timeout_seconds {
-            limits = limits.timeout(parse_timeout_seconds(timeout_seconds)?);
+        if let Some(timeout) = timeout {
+            limits = limits.timeout(timeout);
         }
         builder = builder.limits(limits);
 
@@ -6290,6 +6325,7 @@ impl BashTool {
     ) -> PyResult<Self> {
         let core_profile = profile.core();
         let mut builder = Bash::builder().profile(core_profile.clone());
+        let timeout = timeout_seconds.map(parse_timeout_seconds).transpose()?;
         let fn_names = external_functions.unwrap_or_default();
         let external_handler_reentry_guard = ExternalHandlerReentryGuard::new(
             py,
@@ -6303,14 +6339,15 @@ impl BashTool {
             &external_handler_reentry_guard,
         )?;
         if python {
+            let limits = python_limits(&core_profile, timeout);
             if let Some(handler) = &external_handler {
                 builder = builder.python_with_external_handler(
-                    core_profile.python_limits().clone(),
+                    limits,
                     fn_names.clone(),
                     make_external_handler_native(py, handler),
                 );
             } else {
-                builder = builder.python();
+                builder = builder.python_with_limits(limits);
             }
         }
         let ts_fn_names = typescript_external_functions.unwrap_or_default();
@@ -6324,14 +6361,15 @@ impl BashTool {
             "typescript_external",
         )?;
         if typescript {
+            let limits = typescript_limits(&core_profile, timeout);
             if let Some(handler) = &typescript_external_handler {
                 builder = builder.typescript_with_external_handler(
-                    core_profile.typescript_limits().clone(),
+                    limits,
                     ts_fn_names.clone(),
                     make_typescript_external_handler_native(py, handler),
                 );
             } else {
-                builder = builder.typescript();
+                builder = builder.typescript_with_limits(limits);
             }
         }
 
@@ -6357,8 +6395,8 @@ impl BashTool {
         if let Some(mli) = max_loop_iterations {
             limits = limits.max_loop_iterations(usize::try_from(mli).unwrap_or(usize::MAX));
         }
-        if let Some(ts) = timeout_seconds {
-            limits = limits.timeout(parse_timeout_seconds(ts)?);
+        if let Some(timeout) = timeout {
+            limits = limits.timeout(timeout);
         }
         builder = builder.limits(limits);
 

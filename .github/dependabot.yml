@@ -52,6 +52,11 @@ updates:
       # CI). Deps the forks share with bashkit's own crates (fancy-regex,
       # chrono, sha2, ...) are not listed: bashkit must be able to move them,
       # and CI shows whether the fork still builds.
+      # A shared dep's proposal edits the fork manifest too (it is declared
+      # there as well as in the workspace), which check_monty_fork.py rejects
+      # unless the fork's line carries a `bashkit fork:` marker. So taking one
+      # of those bumps means moving the fork line and marking it, not just the
+      # workspace line; fancy-regex and getrandom are marked that way today.
       # scripts/tests/test_dependabot_coverage.py keeps this list complete.
       - dependency-name: "ahash"
       - dependency-name: "hashbrown"

@@ -43,6 +43,8 @@ fuzz_target!(|data: &[u8]| {
     rt.block_on(async {
         bashkit::testing::fuzz_init();
         let mut bash = bashkit::Bash::builder()
+            // Monty is opt-in per shell; without this every run hits the refusal path.
+            .env("BASHKIT_ALLOW_INPROCESS_PYTHON", "1")
             .python_with_limits(
                 bashkit::PythonLimits::default()
                     .max_duration(Duration::from_millis(500))
@@ -74,6 +76,19 @@ fuzz_target!(|data: &[u8]| {
             // Input as a command line (CLI option parsing).
             format!("python3 '{quoted}' -c 'print(1)'"),
         ];
+        // Once per process: prove python3 really runs, so the target cannot
+        // silently fuzz only the opt-in refusal path again.
+        static CANARY: std::sync::Once = std::sync::Once::new();
+        let mut canary_ok = true;
+        if !CANARY.is_completed() {
+            let r = bash.exec("python3 -c 'print(6*7)'").await.unwrap();
+            canary_ok = r.stdout.to_string() == "42\n";
+            CANARY.call_once(|| {});
+        }
+        assert!(
+            canary_ok,
+            "[python_fuzz] python3 does not run; check the opt-in env"
+        );
         for script in &scripts {
             let start = Instant::now();
             bashkit::testing::fuzz_exec(&mut bash, script, "python_fuzz", &[]).await;

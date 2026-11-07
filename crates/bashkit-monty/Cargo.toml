@@ -39,8 +39,16 @@ doctest = false
 monty-types = { package = "bashkit-monty-types", path = "../bashkit-monty-types", version = "0.20.3" }
 ahash = { version = "0.8.0", features = ["serde"] }
 chrono = { version = "0.4", features = ["serde"] }
-fancy-regex = { version = "0.17.0" }
-getrandom = { version = "0.3" }
+# bashkit fork: declared by bashkit's own crates too (workspace: 0.20), so
+# upstream's 0.17 here put two majors of fancy-regex in the graph. Also what
+# Dependabot keeps proposing: it does not ignore shared deps, and the proposal
+# edits this manifest. Drop the marker when upstream Monty reaches 0.20.
+fancy-regex = { version = "0.20.0" }
+# bashkit fork: same, aligned with the workspace's 0.4. This does not drop
+# 0.3 from the graph (ahash, fastbloom and rand_core still pull it); it stops
+# Dependabot re-proposing a fork edit the drift check would reject. Drop the
+# marker when upstream Monty reaches 0.4.
+getrandom = { version = "0.4" }
 hashbrown = { version = "0.16" }
 indexmap = { version = "2" }
 itertools = { version = "0.14.0" }

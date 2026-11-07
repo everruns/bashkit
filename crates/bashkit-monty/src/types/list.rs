@@ -1,6 +1,6 @@
 use std::{cmp::Ordering, fmt::Write, mem};
 
-use monty_types::ResourceError;
+use monty_types::ResourceError; // bashkit fork: a repr time hit returns this error
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 
@@ -1068,6 +1068,7 @@ pub(crate) fn repr_sequence_fmt<'h>(
         let Some(item) = get_item(vm.heap, i) else { break };
         defer_drop!(item, vm);
         if i > 0 {
+            // bashkit fork: `?` so a time hit errors instead of truncating (see `repr_check_time`).
             if repr_check_time(i, vm)? {
                 f.write_str(", ...[timeout]")?;
                 break;
@@ -1096,6 +1097,7 @@ pub(crate) fn repr_items_fmt(
 ) -> RunResult<()> {
     for (i, item) in items.iter().enumerate() {
         if i > 0 {
+            // bashkit fork: `?` so a time hit errors instead of truncating (see `repr_check_time`).
             if repr_check_time(i, vm)? {
                 f.write_str(", ...[timeout]")?;
                 break;

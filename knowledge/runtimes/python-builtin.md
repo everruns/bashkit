@@ -323,8 +323,30 @@ is where inherited interpreter bugs show up.
 cargo +nightly-2026-10-30 fuzz run --features python python_fuzz -- -max_total_time=300
 ```
 
+Both Monty fuzz targets set `BASHKIT_ALLOW_INPROCESS_PYTHON=1` and fail if
+`python3` refuses to run: until 2026-11-07 `python_fuzz` lacked the opt-in and
+fuzzed only the refusal message.
+
+Differential fuzzing: `python_diff_fuzz` (features `python,cpython`, nightly
+in `fuzz.yml`) builds small programs from a grammar of the Monty-supported
+subset (ints, floats, str, list, tuple, dict, operators, builtins, str/list
+methods, slicing, f-strings, comprehensions), runs each through Monty and the
+CPython wasm runtime, and fails when stdout differs. Every statement is wrapped
+in `try/except` printing the exception type, so exception types are compared
+too. Runs that hit a limit (non-zero exit, MemoryError, RecursionError,
+stdout cap) are skipped; OverflowError is language semantics and is compared, since the two runtimes enforce limits
+differently. Known divergence, excluded from the grammar: Monty evaluates
+`obj.method(arg)` arguments before looking up `obj.method`, so the error type
+differs when both fail (CPython: AttributeError, Monty: TypeError).
+
 Stress: `tests/integration/python_tenant_stress_tests.rs` runs 20 tenants on 4
 worker threads per round, mixing memory bombs, runaway loops, unbounded
 recursion and well-behaved scripts; it also drops calls mid-run and then checks
 that the worker threads still meter correctly, and reuses one session's budget
-across many calls. 3 rounds per PR; `BASHKIT_STRESS_ROUNDS=N` for a soak.
+across many calls. 3 rounds per PR; `BASHKIT_STRESS_ROUNDS=N` for a soak. The
+nightly `python-stress-soak` job runs 300 rounds in release mode (about 2 min).
+
+ASan: the nightly `asan` job runs default features, which leave python out, so
+it has a second step with `--features python` filtered to `python` tests
+(includes the stress suite). The fork's unsafe (metered allocator, VM) gets the
+same use-after-free and overflow checks as the rest of bashkit.

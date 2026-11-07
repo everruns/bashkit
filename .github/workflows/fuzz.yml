@@ -26,7 +26,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [parser_fuzz, lexer_fuzz, analyze_fuzz, arithmetic_fuzz, glob_fuzz, cpython_fuzz, cpython_http_fuzz, python_fuzz]
+        target: [parser_fuzz, lexer_fuzz, analyze_fuzz, arithmetic_fuzz, glob_fuzz, cpython_fuzz, cpython_http_fuzz, python_fuzz, python_diff_fuzz]
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -67,6 +67,7 @@ jobs:
           fi
           features=()
           case "${{ matrix.target }}" in
+            python_diff_fuzz) features=(--features python,cpython) ;;
             cpython_*) features=(--features cpython) ;;
             python_*) features=(--features python) ;;
           esac

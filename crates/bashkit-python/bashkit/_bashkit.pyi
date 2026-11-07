@@ -540,7 +540,10 @@ class Bash:
             max_commands: Limit total commands executed.
             max_loop_iterations: Limit iterations per loop.
             max_memory: Memory limit in bytes for the VFS.
-            timeout_seconds: Abort execution after this duration.
+            timeout_seconds: Abort execution after this duration. Also the time
+                limit of each embedded ``python3`` run (profile default: 30 s,
+                Hardened 10 s). A CPU-bound run holds its worker thread up to
+                this limit, so keep it short when tenants share threads.
             python: Enable embedded Python (``python3`` builtin).
             sqlite: Enable embedded SQLite (``sqlite``/``sqlite3`` builtin).
                 Defaults to ``False``. When ``True``, the Turso-backed engine
@@ -1204,7 +1207,10 @@ class BashTool:
             max_commands: Limit total commands executed.
             max_loop_iterations: Limit iterations per loop.
             max_memory: Memory limit in bytes for the VFS.
-            timeout_seconds: Abort execution after this duration.
+            timeout_seconds: Abort execution after this duration. Also the time
+                limit of each embedded ``python3``/``ts`` run (profile default:
+                30 s, Hardened 10 s). A CPU-bound run holds its worker thread up
+                to this limit, so keep it short when tenants share threads.
             files: Dict mapping VFS paths to file contents or lazy callables.
             mounts: List of real host directory mount configs.
             allowed_mount_paths: Host path prefixes allowed for real filesystem
