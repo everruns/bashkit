@@ -1627,7 +1627,7 @@ fn policy_from_py(policy: &str) -> PyResult<RustCheckoutPolicy> {
 }
 
 /// A commit plus the objects a host needs to persist.
-#[pyclass(name = "PackedCommit", module = "bashkit", skip_from_py_object)]
+#[pyclass(name = "PackedCommit", module = "bashkit")]
 #[derive(Clone)]
 pub struct PyPackedCommit {
     id: String,
@@ -1694,7 +1694,7 @@ impl PyPackedCommit {
 }
 
 /// What changed between two commits.
-#[pyclass(name = "SnapshotDiff", module = "bashkit", skip_from_py_object)]
+#[pyclass(name = "SnapshotDiff", module = "bashkit")]
 #[derive(Clone)]
 pub struct PySnapshotDiff {
     #[pyo3(get)]
@@ -1729,11 +1729,7 @@ impl PySnapshotDiff {
 }
 
 /// The environment that produced a commit.
-#[pyclass(
-    name = "CapabilityFingerprint",
-    module = "bashkit",
-    skip_from_py_object
-)]
+#[pyclass(name = "CapabilityFingerprint", module = "bashkit")]
 #[derive(Clone)]
 pub struct PyCapabilityFingerprint {
     #[pyo3(get)]
@@ -2395,7 +2391,7 @@ impl PyFileSystem {
 /// Transient fields like `last_exit_code` and `traps` reflect the captured
 /// snapshot, but the core interpreter clears them before each top-level
 /// `execute()` or `execute_sync()` call.
-#[pyclass(skip_from_py_object)]
+#[pyclass]
 pub struct ShellState {
     env: HashMap<String, String>,
     variables: HashMap<String, String>,
@@ -2985,7 +2981,7 @@ fn prepare_output_handler(
 /// `name`, `argv`, `stdin`, `env`, and `cwd` are snapshots of the shell state at
 /// invocation time; `fs` is a live handle to the interpreter's virtual
 /// filesystem.
-#[pyclass(name = "BuiltinContext", skip_from_py_object)]
+#[pyclass(name = "BuiltinContext")]
 struct PyBuiltinContext {
     #[pyo3(get)]
     name: String,

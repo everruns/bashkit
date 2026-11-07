@@ -20,7 +20,7 @@ impl PyCommandStatus {
     }
 }
 
-#[pyclass(name = "CommandInput", module = "bashkit", skip_from_py_object)]
+#[pyclass(name = "CommandInput", module = "bashkit")]
 pub(crate) struct PyCommandInput {
     input: CommandInput,
 }
@@ -59,7 +59,7 @@ impl PyCommandInput {
     }
 }
 
-#[pyclass(name = "CommandOutput", module = "bashkit", skip_from_py_object)]
+#[pyclass(name = "CommandOutput", module = "bashkit")]
 pub(crate) struct PyCommandOutput {
     output: CommandOutput,
 }
@@ -80,12 +80,7 @@ impl PyCommandOutput {
     }
 }
 
-#[pyclass(
-    name = "CommandContext",
-    module = "bashkit",
-    get_all,
-    skip_from_py_object
-)]
+#[pyclass(name = "CommandContext", module = "bashkit", get_all)]
 pub(crate) struct PyCommandContext {
     name: String,
     argv: Vec<String>,
