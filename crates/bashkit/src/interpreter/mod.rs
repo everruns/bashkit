@@ -48,6 +48,7 @@ mod coproc;
 mod declare;
 mod expansion;
 mod glob;
+mod grow_stack;
 mod history;
 mod jobs;
 pub(crate) mod pipe;
@@ -560,6 +561,12 @@ impl ShellInvocation {
 /// Nested `bash`/`sh` cap (TM-DOS-125). Sized so the deepest nesting fits a
 /// 2 MiB debug-build stack with room for functions inside each level.
 const MAX_CHILD_SHELL_DEPTH: usize = 8;
+
+/// Nested in-shell re-entry cap (`eval`, `compgen -C`, `fc -s`,
+/// `PROMPT_COMMAND`; TM-DOS-141). A level costs several function calls of
+/// stack, so the full function depth (16) of nested evals overflowed a 2 MiB
+/// debug-build stack; 8 leaves room for functions inside each level.
+const MAX_REENTRY_DEPTH: usize = 8;
 
 const SPECIAL_BUILTIN_NAMES: &[&str] = &[
     ".", "bash", "builtin", "command", "declare", "eval", "exec", "export", "getopts", "let",
@@ -2031,6 +2038,9 @@ pub struct Interpreter {
     script_depth: usize,
     /// Nested `bash`/`sh` child shells (TM-DOS-125).
     child_shell_depth: usize,
+    /// Nested in-shell re-entries: `eval`, `compgen -C`, `fc -s`,
+    /// `PROMPT_COMMAND` (TM-DOS-141).
+    reentry_depth: usize,
     /// Enclosing `for`/`while`/`until`/`select` loops in the current
     /// function (bash `loop_level`). A function call starts at 0, so
     /// `break`/`continue` never leave the caller's loop.
@@ -2644,6 +2654,7 @@ impl Interpreter {
             concurrent_jobs: true,
             script_depth: 0,
             child_shell_depth: 0,
+            reentry_depth: 0,
             loop_depth: 0,
             tilde_user: Arc::from(username_val.as_str()),
             operand_tilde: false,
@@ -2869,6 +2880,7 @@ impl Interpreter {
             script_depth: 1,
             // Forks are polled on this task's stack, so they inherit its depth.
             child_shell_depth: self.child_shell_depth,
+            reentry_depth: self.reentry_depth,
             loop_depth: self.loop_depth,
             tilde_user: self.tilde_user.clone(),
             operand_tilde: false,
@@ -4711,7 +4723,9 @@ impl Interpreter {
         &'a mut self,
         command: &'a Command,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ExecResult>> + Send + 'a>> {
-        Box::pin(async move {
+        // THREAT[TM-DOS-142]: every nesting level passes through here, so
+        // each poll gets enough native stack (see grow_stack.rs).
+        Box::pin(grow_stack::GrowStack::new(async move {
             // Whether ERR may fire after this command: bash decides before
             // running it, so a trap the command itself sets (`f` setting
             // ERR inside) does not fire for that same command.
@@ -4857,7 +4871,7 @@ impl Interpreter {
                 Box::pin(self.run_err_trap_after(r, emit_before)).await;
             }
             result
-        })
+        }))
     }
 
     /// Queue stderr written inside `$(...)` for the command that expanded it
@@ -7661,6 +7675,35 @@ impl Interpreter {
     /// Execute a sequence of commands (with errexit checking)
     async fn execute_command_sequence(&mut self, commands: &[Command]) -> Result<ExecResult> {
         self.execute_command_sequence_impl(commands, true).await
+    }
+
+    /// Run text the shell re-entered itself with (`compgen -C`, `fc -s`,
+    /// `PROMPT_COMMAND`) in the current shell.
+    ///
+    /// THREAT[TM-DOS-141]: each re-entry adds native stack frames, so it
+    /// counts against the function depth like `eval` and `source`; a
+    /// self-referencing `compgen -C` used to overflow the stack and abort
+    /// the process.
+    pub(super) async fn execute_reentered_commands(
+        &mut self,
+        who: &str,
+        commands: &[Command],
+    ) -> Result<ExecResult> {
+        let too_deep = ExecResult::err(format!("{who}: maximum nesting depth exceeded\n"), 2);
+        if self.reentry_depth >= MAX_REENTRY_DEPTH {
+            return Ok(too_deep);
+        }
+        if let Err(depth_error) = self.counters.push_function(&self.limits) {
+            if self.in_trap {
+                self.note_trap_depth_error(depth_error);
+            }
+            return Ok(too_deep);
+        }
+        self.reentry_depth += 1;
+        let result = Box::pin(self.execute_command_sequence(commands)).await;
+        self.counters.pop_function();
+        self.reentry_depth -= 1;
+        result
     }
 
     /// Execute a sequence of commands used as a condition (no errexit checking)
@@ -10966,6 +11009,19 @@ impl Interpreter {
             }
         };
 
+        // THREAT[TM-DOS-125]: a script run by path (`./s.sh`, `$PATH` lookup)
+        // is a child shell like `sh s.sh` and gets the same cap; a script that
+        // ran itself by path used to overflow the stack and abort the process.
+        if self.child_shell_depth >= MAX_CHILD_SHELL_DEPTH
+            || self.counters.push_function(&self.limits).is_err()
+        {
+            return Ok(ExecResult::err(
+                format!("{name}: maximum nesting depth exceeded\n"),
+                2,
+            ));
+        }
+        self.child_shell_depth += 1;
+
         // Subprocess isolation: path-based script execution only inherits
         // exported variables (env), not the full parent shell state.
         // This matches real bash behavior where ./script.sh spawns a subprocess.
@@ -11053,6 +11109,8 @@ impl Interpreter {
         // as for `bash -c` and functions.
         let region = self.enter_output_region(redirects);
         let result = self.execute_script_body(&script, true, false).await;
+        self.child_shell_depth -= 1;
+        self.counters.pop_function();
         self.leave_output_region(region);
         self.interactive = saved_interactive;
         self.current_line = saved_line;
@@ -11377,6 +11435,25 @@ impl Interpreter {
             Err(e) => return Err(e),
         };
 
+        // THREAT[TM-DOS-141]: eval re-enters the interpreter on the native
+        // stack; `x='eval "$x"'; eval "$x"` recursed until the stack overflowed
+        // and the process aborted (every tenant in it). Charge it to the
+        // function depth like `source` (TM-DOS-056).
+        if self.reentry_depth >= MAX_REENTRY_DEPTH {
+            return Err(crate::error::Error::Execution(
+                "eval: maximum nesting depth exceeded".to_string(),
+            ));
+        }
+        if let Err(depth_error) = self.counters.push_function(&self.limits) {
+            if self.in_trap {
+                self.note_trap_depth_error(depth_error);
+            }
+            return Err(crate::error::Error::Execution(
+                "eval: maximum nesting depth exceeded".to_string(),
+            ));
+        }
+        self.reentry_depth += 1;
+
         // Set up pipeline stdin if provided
         let prev_pipeline_stdin = self.pipeline_stdin.take();
         if stdin.is_some() {
@@ -11397,7 +11474,10 @@ impl Interpreter {
         let tempenv_pushed = self.push_pending_tempenv(false);
         self.xtrace_depth += 1;
         let region = self.enter_output_region(redirects);
-        let result = self.execute_script_body(&script, false, true).await;
+        // Boxed so each eval level keeps a small frame on the polling stack.
+        let result = Box::pin(self.execute_script_body(&script, false, true)).await;
+        self.counters.pop_function();
+        self.reentry_depth -= 1;
         if tempenv_pushed {
             self.tempenv_frames.pop();
         }

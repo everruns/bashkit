@@ -443,7 +443,8 @@ impl Interpreter {
     /// Run shell text in the current shell (completion functions, `-C`).
     async fn run_completion_text(&mut self, text: &str) -> Result<ExecResult> {
         let script = self.parse_embedded_script(text).await?;
-        self.execute_command_sequence(&script.commands).await
+        self.execute_reentered_commands("compgen", &script.commands)
+            .await
     }
 
     /// The `complete` builtin.
@@ -746,7 +747,7 @@ impl Interpreter {
             let warn = self.diag("compgen: warning: -C option may not work as you expect\n");
             let text = format!("{cmd} compgen {} ''", shell_quote(&word));
             let saved_cb = self.output_callback.take();
-            let r = self.run_completion_text(&text).await;
+            let r = Box::pin(self.run_completion_text(&text)).await;
             self.output_callback = saved_cb;
             let r = r?;
             stderr.push_str(&warn);
