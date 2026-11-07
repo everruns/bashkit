@@ -102,6 +102,15 @@ fn is_private_ipv4(v4: &std::net::Ipv4Addr) -> bool {
 
 /// Redact credentials from a URL for safe inclusion in error messages.
 /// Replaces `user:pass@` in the authority with `***@`.
+/// Whether `path` holds a percent-encoded `/` (`%2F`) or `\\` (`%5C`).
+fn has_encoded_separator(path: &str) -> bool {
+    path.as_bytes().windows(3).any(|w| {
+        w[0] == b'%'
+            && (w[1] == b'2' && w[2].eq_ignore_ascii_case(&b'f')
+                || w[1] == b'5' && w[2].eq_ignore_ascii_case(&b'c'))
+    })
+}
+
 fn redact_url(url: &str) -> String {
     match Url::parse(url) {
         Ok(mut parsed) => {
@@ -337,6 +346,15 @@ impl NetworkAllowlist {
             return false;
         }
 
+        // THREAT[TM-NET-032]: an encoded `/` or `\` lets the URL climb out of
+        // the allowed prefix on servers that decode before routing
+        // (`/assets/..%2Fadmin` -> `/admin`). `url` already resolves literal
+        // and `%2e` dot segments, so only these encodings remain. Refused
+        // only for path-scoped patterns; a host-wide pattern allows any path.
+        if has_encoded_separator(url_path) {
+            return false;
+        }
+
         // If pattern path doesn't end with /, ensure we're at a path boundary
         // Use byte indexing consistently since url_path.len() and pattern_path.len()
         // are both byte counts, and starts_with already confirmed the prefix matches.
@@ -549,6 +567,24 @@ mod tests {
             }
             _ => panic!("expected Blocked"),
         }
+    }
+
+    #[test]
+    fn test_path_prefix_refuses_encoded_separators() {
+        let allowlist = NetworkAllowlist::new().allow("https://cdn.example.com/assets/");
+        for url in [
+            "https://cdn.example.com/assets/..%2Fadmin",
+            "https://cdn.example.com/assets/..%2fadmin",
+            "https://cdn.example.com/assets/..%5Cadmin",
+            "https://cdn.example.com/assets/%2e%2e/admin",
+            "https://cdn.example.com/assets/../admin",
+        ] {
+            assert!(!allowlist.is_allowed(url), "{url}");
+        }
+        assert!(allowlist.is_allowed("https://cdn.example.com/assets/a%20b.png"));
+        // Host-wide patterns keep allowing any path.
+        let host_wide = NetworkAllowlist::new().allow("https://cdn.example.com");
+        assert!(host_wide.is_allowed("https://cdn.example.com/a%2Fb"));
     }
 
     #[test]

@@ -100,3 +100,32 @@ pub use client::{HttpClient, HttpLimits, Method, Response};
 
 #[cfg(feature = "http_client")]
 pub use transport::{HttpTransport, HttpTransportError, HttpTransportRequest};
+
+/// Headers the host (or reqwest) owns; caller-supplied values are dropped
+/// before hooks, credential injection and transport dispatch.
+///
+/// THREAT[TM-NET-031]: a script-chosen `Host` sent to an allowlisted IP
+/// reaches whichever virtual host it names, carrying credentials injected
+/// for the allowlisted name. Framing and proxy headers would let a script
+/// smuggle requests or authenticate to an egress proxy.
+#[cfg(any(feature = "http_client", feature = "cpython"))]
+pub(crate) const HOST_OWNED_HEADERS: &[&str] = &[
+    "host",
+    "content-length",
+    "transfer-encoding",
+    "connection",
+    "keep-alive",
+    "upgrade",
+    "te",
+    "trailer",
+    "proxy-connection",
+    "proxy-authorization",
+];
+
+/// Whether `name` (any case) is in [`HOST_OWNED_HEADERS`].
+#[cfg(any(feature = "http_client", feature = "cpython"))]
+pub(crate) fn is_host_owned_header(name: &str) -> bool {
+    HOST_OWNED_HEADERS
+        .iter()
+        .any(|owned| owned.eq_ignore_ascii_case(name.trim()))
+}
