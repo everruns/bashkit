@@ -321,7 +321,7 @@ class CheckMontyForkTests(unittest.TestCase):
     def test_a_patch_table_fails(self):
         # `[patch]` redirects a crate's source without touching the
         # `[dependencies]` line the per-dep source check reads, so it would
-        # otherwise slip past. Upstream Monty 1.4 has none.
+        # otherwise slip past. Upstream Monty 1.5 has none.
         self.assert_manifest_error(
             FORK_TOML + '\n[patch.crates-io]\nserde = { git = "https://e.example/s" }\n',
             '[patch] redirects',

@@ -45,7 +45,7 @@ updates:
       - dependency-name: "monty-types"
       - dependency-name: "monty-macros"
 
-      # Crates only the two forks declare. The forks track Monty 1.4.0's own
+      # Crates only the two forks declare. The forks track Monty 1.5.0's own
       # dependency versions and move only when upstream source is re-copied;
       # a Dependabot bump edits the fork manifests directly (#2848 bumped
       # ruff_python_* 0.0.14 -> 0.0.20 and unicode_names2 1 -> 4, and failed
@@ -56,7 +56,7 @@ updates:
       # there as well as in the workspace), which check_monty_fork.py rejects
       # unless the fork's line carries a `bashkit fork:` marker. So taking one
       # of those bumps means moving the fork line and marking it, not just the
-      # workspace line; fancy-regex and getrandom are marked that way today.
+      # workspace line; getrandom and jiter are marked that way today.
       # scripts/tests/test_dependabot_coverage.py keeps this list complete.
       - dependency-name: "ahash"
       - dependency-name: "hashbrown"
