@@ -224,8 +224,15 @@ async fn huge_single_allocations_are_refused_up_front() {
             let mut bash = tenant(64, 10_000);
             let r = bash.exec(&format!("python3 -c \"{code}\"")).await.unwrap();
             assert_ne!(r.exit_code, 0, "{code}: stdout {}", r.stdout);
+            // Both errors are the refusal this test is about, raised before
+            // anything is allocated. `MemoryError` is the requested size
+            // measured against the tenant's limit; `OverflowError` is a length
+            // that is not representable at all, which Monty 1.5 rejects
+            // earlier still (`'ab' * (2**62)` would be 2**63 bytes). CPython
+            // raises `OverflowError` there too. Anything else -- a crash, a
+            // different exception, or success -- is a failure.
             assert!(
-                r.stderr.contains("MemoryError"),
+                r.stderr.contains("MemoryError") || r.stderr.contains("OverflowError"),
                 "{code}: stderr {}",
                 r.stderr
             );

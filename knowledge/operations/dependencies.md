@@ -63,14 +63,14 @@ lives there, next to the pin, so it cannot drift away from what it explains.
 Monty is not taken from crates.io. Upstream 1.x replaced the custom tracker
 trait with a concrete tracker and per-VM memory accounting with a process-global
 allocator probe, which breaks bashkit's in-process multi-tenant contract. Bashkit
-embeds Monty 1.4.0 as two workspace forks, `bashkit-monty` and
+embeds Monty 1.5.0 as two workspace forks, `bashkit-monty` and
 `bashkit-monty-types` (lib names `monty`/`monty_types`), that add a memory probe
 and a checkpoint hook. They are published with each release before `bashkit`.
 Upgrade by re-copying upstream source and re-applying the `bashkit fork:`
-edits. See [Python Builtin](../runtimes/python-builtin.md#monty-14-embedding-forks-per-vm-metering-checkpoint-hook).
+edits. See [Python Builtin](../runtimes/python-builtin.md#monty-15-embedding-forks-per-vm-metering-checkpoint-hook).
 
 `scripts/check_monty_fork.py` (CI lint job, `just check-monty-fork`) diffs both
-forks against the SHA-256-pinned upstream 1.4.0 `.crate` files and fails on any
+forks against the SHA-256-pinned upstream 1.5.0 `.crate` files and fails on any
 changed region without a `bashkit fork:` marker in it, in the comment or
 attribute block attached to it (however long), or up to three lines above it,
 on fork-only files without a marker header, on upstream files missing from
@@ -94,6 +94,39 @@ crates only the forks declare, so upstream security fixes arrive by re-sync:
    them with upstream's normalized manifest).
 3. Run `python_fuzz` and the tenant stress soak (`BASHKIT_STRESS_ROUNDS=300`,
    as nightly runs it) before shipping, as the fork's own regression net.
+
+What the 1.4.0 -> 1.5.0 re-sync (the first one) took, beyond that list:
+
+- **Re-apply the edits with a 3-way merge, not by hand.** Upstream moved ~9k
+  lines and touched every one of the 14 fork-edited files. Committing upstream
+  1.4.0, the fork, and upstream 1.5.0 as three trees and merging left only 9
+  conflicts, all in the repr helpers and the `fancy-regex` plumbing.
+- **Prefer upstream's spelling for a renamed item.** 1.5.0 renamed the repr
+  helper to `repr_should_truncate`; keeping that name let every *call site* go
+  back to upstream verbatim, so the fork's semantics now live in the one
+  helper body instead of in a marker at each call. Fewer markers is less to
+  re-apply next time.
+- **A changed region needs its own marker.** The marker window is the comment
+  block attached to the item, so a second changed region lower in the same
+  function (there, the two inverted `match` arms) needs a marker of its own.
+- **Features and added dependencies are not markable**, so the fork has to
+  take them: 1.5.0 put upstream's Linux thread-CPU clock behind `cpu-clock`,
+  which `monty` enables on `monty-types`, pulling in `nix` (already exempt in
+  `supply-chain/config.toml`). Update the `monty-macros` exemption too -- it is
+  pinned `=<version>` by upstream and keyed per exact version.
+- **Vendor the test files `src/` includes.** `#[cfg(test)]` modules inside
+  `src/` `#[path]`-include files under `tests/`, and CI's
+  `cargo test --workspace --lib` builds the fork lib test target even though
+  `[lib] test = false` excludes it by default. 1.5.0 added two such modules and
+  an `include_str!` fixture; missing files fail the build, and the `#[cfg(test)]`
+  code may also need a dev-dependency (`serde_json`).
+- **Expect Python-visible behavior to move.** 1.5.0 refuses
+  `'ab' * (2**62)` with `OverflowError` (CPython's own error for a length that
+  is not representable) rather than letting it reach the memory meter, so
+  `huge_single_allocations_are_refused_up_front` accepts either that or
+  `MemoryError`. 1.5.0 also passes an `ImportArgs` (module plus search path)
+  where the host import callback took a bare name; bashkit offers host modules
+  only and answers `NotFound` on the name, which keeps file imports out.
 
 ### A fork dependency may be marked ahead of upstream
 
@@ -135,11 +168,14 @@ every such bump unmergeable: #2860 (fancy-regex 0.17 -> 0.20, getrandom
 0.3 -> 0.4) is the shape, and it would have come back every week. Holding the
 fork at upstream's version instead put two majors of fancy-regex in the graph.
 
-`fancy-regex` and `getrandom` are marked today. Taking a shared bump therefore
+`getrandom` and `jiter` are marked today. Taking a shared bump therefore
 means moving the fork line too, marking it, and re-applying whatever source
-adaptation the new major needs — fancy-regex 0.20 made `Captures` generic over
-the haystack type, so `re_match.rs` and `re_pattern.rs` carry marked
-`Captures<'_, str>` edits. Because the `re` module is reachable from untrusted
+adaptation the new major needs. `fancy-regex` was marked until the 1.5.0
+re-sync: upstream Monty moved to 0.20 itself, so the fork no longer leads it
+and the marker had to go -- a marker on a dependency that matches upstream is
+itself an error. Upstream also replaced the `Captures` plumbing in
+`re_match.rs`/`re_pattern.rs` with span buffers, which retired the marked
+`Captures<'_, str>` adaptation those two files carried. Because the `re` module is reachable from untrusted
 Python, a major there can move Python-visible behavior:
 `python_integration_tests::regex_semantics` pins the cases 0.20 changed
 (`\xHH` above 0x7F matching the codepoint, word-boundary alternation) against
@@ -258,7 +294,7 @@ the vendored parser in one deliberate change — not inside an aggregated
   committed lockfiles (cargo accepts only `auto`/`lockfile-only` as
   `versioning-strategy`; `increase` made the whole config fail to parse).
 - Crates only the Monty forks declare are ignored in the "/" entry: the forks
-  keep Monty 1.4.0's versions until upstream source is re-copied. Shared deps
+  keep Monty 1.5.0's versions until upstream source is re-copied. Shared deps
   stay bumpable.
 
 `scripts/tests/test_dependabot_coverage.py` enforces all three.

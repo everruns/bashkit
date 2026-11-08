@@ -360,7 +360,7 @@ See [knowledge/integrations/git-support.md](knowledge/integrations/git-support.m
 ## Experimental: Python Support
 
 Enable the `python` feature to embed the [Monty](https://github.com/pydantic/monty) Python interpreter (pure Rust, Python 3.12).
-Bashkit uses a slightly patched Monty 1.4, published as `bashkit-monty` and `bashkit-monty-types`: the patch adds a per-run memory probe and a VM checkpoint hook, so concurrent runs in one process get separate memory limits and honour cancellation. The upstream proposal is [pydantic/monty#740](https://github.com/pydantic/monty/pull/740); the forks go away once upstream has the hooks.
+Bashkit uses a slightly patched Monty 1.5, published as `bashkit-monty` and `bashkit-monty-types`: the patch adds a per-run memory probe and a VM checkpoint hook, so concurrent runs in one process get separate memory limits and honour cancellation. The upstream proposal is [pydantic/monty#740](https://github.com/pydantic/monty/pull/740); the forks go away once upstream has the hooks.
 Python code runs in-memory with configurable resource limits and VFS bridging, files created
 by bash are readable from Python and vice versa.
 

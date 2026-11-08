@@ -70,7 +70,7 @@ regen-capability-parity:
 check-workflow-parity:
     python3 scripts/check_workflow_parity.py
 
-# Monty forks differ from upstream 1.4.0 only at `bashkit fork:` markers
+# Monty forks differ from upstream 1.5.0 only at `bashkit fork:` markers
 check-monty-fork:
     python3 scripts/check_monty_fork.py
 

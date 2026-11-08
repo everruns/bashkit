@@ -29,12 +29,12 @@ criteria = "safe-to-deploy"
 [policy.bashkit-monty]
 audit-as-crates-io = false
 criteria = "safe-to-deploy"
-notes = "In-workspace fork of pydantic/monty 1.4.0; local edits are marked `bashkit fork:`."
+notes = "In-workspace fork of pydantic/monty 1.5.0; local edits are marked `bashkit fork:`."
 
 [policy.bashkit-monty-types]
 audit-as-crates-io = false
 criteria = "safe-to-deploy"
-notes = "In-workspace fork of pydantic/monty-types 1.4.0 plus the memory-probe and checkpoint hooks; local edits are marked `bashkit fork:`."
+notes = "In-workspace fork of pydantic/monty-types 1.5.0 plus the memory-probe and checkpoint hooks; local edits are marked `bashkit fork:`."
 
 [policy.bashkit-python]
 audit-as-crates-io = false
@@ -1315,7 +1315,7 @@ version = "0.2.3"
 criteria = "safe-to-deploy"
 
 [[exemptions.monty-macros]]
-version = "1.4.0"
+version = "1.5.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.multiversion_no_op]]

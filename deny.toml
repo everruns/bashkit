@@ -26,7 +26,7 @@ confidence-threshold = 0.8
 # Allow specific exceptions
 exceptions = [
     # Blue Oak Model License 1.0.0: permissive (MIT-style, with an explicit
-    # patent grant), OSI approved. Scoped to the crates Monty 1.4 needs for
+    # patent grant), OSI approved. Scoped to the crates Monty 1.5 needs for
     # snapshot serialization (via bashkit-monty) rather than allowed globally.
     { allow = ["BlueOak-1.0.0"], crate = "minicbor" },
     { allow = ["BlueOak-1.0.0"], crate = "minicbor-serde" },

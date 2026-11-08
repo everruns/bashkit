@@ -22,7 +22,7 @@ use crate::{
     object_bridge::{CallArgsExt, GraphExporter},
     parse::ParseError,
     types::{Dict, dict::DictIntoIter},
-    value::Value,
+    value::{EitherStr, Value},
 };
 
 /// Type for method call arguments.
@@ -227,8 +227,10 @@ impl ArgValues {
     }
 
     /// Exports the arguments into one arena for delivery to an external
-    /// function, so an object passed twice crosses once.
-    pub fn into_call_args(self, vm: &mut VM<'_>) -> CallArgs {
+    /// function, so an object passed twice crosses once. Fails only with a
+    /// resource limit hit during export, where a user `__repr__` can run;
+    /// callers outside the run loop wrap it in [`VM::export_on_clock`].
+    pub fn into_call_args(self, vm: &mut VM<'_>) -> RunResult<CallArgs> {
         let mut exporter = GraphExporter::new();
         let mut call = CallArgs::new();
         match self {
@@ -246,8 +248,8 @@ impl ArgValues {
                 kwargs.export_into(&mut call, &mut exporter, vm);
             }
         }
-        *unstable::call_args_parts_mut(&mut call).0 = exporter.finish(vm);
-        call
+        *unstable::call_args_parts_mut(&mut call).0 = exporter.finish(vm)?;
+        Ok(call)
     }
 
     /// The first positional argument, if any, without consuming the arguments.
@@ -430,7 +432,9 @@ impl KwargsValues {
     pub fn first_key(&self, heap: &Heap, interns: &Interns) -> RunResult<Option<String>> {
         let key = match self {
             Self::Empty => return Ok(None),
-            Self::Inline(kvs) => return Ok(kvs.first().map(|(id, _)| interns.get_str(*id).to_owned())),
+            Self::Inline(kvs) => {
+                return Ok(kvs.first().map(|(id, _)| EitherStr::Interned(*id).into_string(interns)));
+            }
             Self::Pairs(kvs) => kvs.first().map(|(key, _)| key),
             Self::Dict(dict) => dict.iter().next().map(|(key, _)| key),
         };
@@ -438,7 +442,7 @@ impl KwargsValues {
             None => Ok(None),
             Some(key) => key
                 .as_either_str(heap)
-                .map(|key| Some(key.as_str(interns).to_owned()))
+                .map(|key| Some(key.into_string(interns)))
                 .ok_or_else(ExcType::type_error_kwargs_nonstring_key),
         }
     }

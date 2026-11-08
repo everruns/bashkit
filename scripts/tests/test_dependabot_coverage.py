@@ -214,7 +214,7 @@ class DependabotCoverageTests(unittest.TestCase):
                 )
 
     def test_fork_only_deps_are_ignored_by_the_root_entry(self):
-        # crates/bashkit-monty(-types) are forks of Monty 1.4.0 and keep its
+        # crates/bashkit-monty(-types) are forks of Monty 1.5.0 and keep its
         # dependency versions until upstream source is re-copied. Crates only
         # they declare must not be bumped by Dependabot (#2848 did, and broke
         # the fork build). Shared ones stay bumpable for bashkit's sake.

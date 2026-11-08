@@ -1,11 +1,11 @@
-# Fork of pydantic/monty monty-1.4.0 (MIT) for bashkit's in-process Python.
+# Fork of pydantic/monty monty-1.5.0 (MIT) for bashkit's in-process Python.
 #
 # Important decision (security): bashkit runs many tenants' Python in one
 # process. Upstream Monty enforces `max_memory` through a process-wide
 # allocator counter and has no in-VM host checkpoint, so bashkit carries a
 # small patch in `bashkit-monty-types` (`set_memory_probe`, pydantic/monty#740,
 # and `set_checkpoint_hook`) and republishes `monty` against it. Source is
-# upstream monty-1.4.0 unchanged except marked edits; the library names stay `monty` /
+# upstream monty-1.5.0 unchanged except marked edits; the library names stay `monty` /
 # `monty_types` so code reads as upstream. Drop both crates once upstream ships
 # the hooks. See knowledge/runtimes/python-builtin.md.
 #
@@ -22,7 +22,7 @@ rust-version = "1.96"
 authors = ["Samuel Colvin <samuel@pydantic.dev>", "Everruns"]
 license = "MIT"
 repository.workspace = true
-description = "Fork of pydantic/monty 1.4.0 (secure, snapshotable Python sandbox) built against bashkit-monty-types, for bashkit's python3"
+description = "Fork of pydantic/monty 1.5.0 (secure, snapshotable Python sandbox) built against bashkit-monty-types, for bashkit's python3"
 keywords = ["python", "interpreter", "sandbox", "bashkit"]
 categories = ["compilers", "emulators"]
 readme = "README.md"
@@ -36,13 +36,9 @@ test = false
 doctest = false
 
 [dependencies]
-monty-types = { package = "bashkit-monty-types", path = "../bashkit-monty-types", version = "0.20.3" }
+monty-types = { package = "bashkit-monty-types", path = "../bashkit-monty-types", version = "0.20.3", features = ["cpu-clock"] }
 ahash = { version = "0.8.0", features = ["serde"] }
 chrono = { version = "0.4", features = ["serde"] }
-# bashkit fork: declared by bashkit's own crates too (workspace: 0.20), so
-# upstream's 0.17 here put two majors of fancy-regex in the graph. Also what
-# Dependabot keeps proposing: it does not ignore shared deps, and the proposal
-# edits this manifest. Drop the marker when upstream Monty reaches 0.20.
 fancy-regex = { version = "0.20.0" }
 # bashkit fork: same, aligned with the workspace's 0.4. This does not drop
 # 0.3 from the graph (ahash, fastbloom and rand_core still pull it); it stops
@@ -63,7 +59,7 @@ jiter = { version = "0.18.0", features = ["num-bigint"] }
 libm = { version = "0.2" }
 memchr = { version = "2.7" }
 minicbor-serde = { version = "0.7", features = ["alloc"], default-features = false }
-monty-macros = { version = "1.4.0" }
+monty-macros = { version = "=1.5.0" }
 num-bigint = { version = "0.4", features = ["serde"] }
 num-integer = { version = "0.1" }
 num-traits = { version = "0.2" }
@@ -84,6 +80,12 @@ strum = { version = "0.27", features = ["derive", "phf"] }
 unicode-general-category = { version = "1" }
 unicode-normalization = { version = "0.1" }
 unicode_names2 = { version = "1" }
+
+# Upstream's `#[cfg(test)]` modules inside src/ need this; the drift check
+# deliberately skips dev-dependencies, and CI's `--workspace --lib` builds the
+# lib test target even though `[lib] test = false` excludes it by default.
+[dev-dependencies]
+serde_json = { version = "1.0" }
 
 [features]
 memory-model-checks = []

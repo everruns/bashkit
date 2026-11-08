@@ -107,14 +107,19 @@ capped a default script at ~95 `python3` calls even for `pass`.
 The parser enforces a nesting-depth limit (200 release / 35 debug) against
 stack overflow from deeply nested expressions.
 
-### Monty 1.4 embedding: forks, per-VM metering, checkpoint hook
+### Monty 1.5 embedding: forks, per-VM metering, checkpoint hook
 
-Bashkit embeds Monty 1.4.0 through two forks in this workspace, published to
+Bashkit embeds Monty 1.5.0 through two forks in this workspace, published to
 crates.io as `bashkit-monty` and `bashkit-monty-types` with each bashkit
 release (like `bashkit-cpython-wasm`). Their library names stay `monty` and
-`monty_types`. Source is upstream 1.4.0 with every local edit marked
+`monty_types`. Source is upstream 1.5.0 with every local edit marked
 `bashkit fork:`; rustfmt and lints are off for them, and upstream tests are not
-vendored. Two panic/assert messages in `heap/` also drop the formatted id
+vendored -- except the few files a `#[cfg(test)]` module inside `src/`
+`#[path]`-includes, which must exist for the lib test target to compile
+(`tests/heap_reader/borrowed.rs`, `tests/unit/format_template.rs`,
+`tests/fixtures/builtin_type_serialization.txt`, and monty-types'
+`tests/unit/execution_clock.rs`). `serde_json` is a fork dev-dependency for
+the same reason. Two panic/assert messages in `heap/` also drop the formatted id
 or uuid, so CodeQL's cleartext-logging rule (a false positive there) stays
 quiet. Drop the forks once upstream ships equivalent hooks.
 
@@ -189,7 +194,7 @@ time-limit error (exit 124) where upstream truncated to
 `...[timeout]`; a memory hit still truncates. Pinned by
 `whitebox_resource_limits::shared_graph_walks_respect_time_limit`.
 
-Known upstream gap in 1.4.0: `str.join` can overshoot `max_memory` before the
+Known upstream gap in 1.5.0: `str.join` can overshoot `max_memory` before the
 next check (bounded by the meter, not by Monty).
 
 ### Python Feature Support

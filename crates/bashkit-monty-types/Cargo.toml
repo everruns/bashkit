@@ -1,11 +1,11 @@
-# Fork of pydantic/monty monty-types-1.4.0 (MIT) for bashkit's in-process Python.
+# Fork of pydantic/monty monty-types-1.5.0 (MIT) for bashkit's in-process Python.
 #
 # Important decision (security): bashkit runs many tenants' Python in one
 # process. Upstream Monty enforces `max_memory` through a process-wide
 # allocator counter and has no in-VM host checkpoint, so bashkit carries a
 # small patch in `bashkit-monty-types` (`set_memory_probe`, pydantic/monty#740,
 # and `set_checkpoint_hook`) and republishes `monty` against it. Source is
-# upstream monty-types-1.4.0 unchanged except marked edits; the library names stay `monty` /
+# upstream monty-types-1.5.0 unchanged except marked edits; the library names stay `monty` /
 # `monty_types` so code reads as upstream. Drop both crates once upstream ships
 # the hooks. See knowledge/runtimes/python-builtin.md.
 #
@@ -22,7 +22,7 @@ rust-version = "1.96"
 authors = ["Samuel Colvin <samuel@pydantic.dev>", "Everruns"]
 license = "MIT"
 repository.workspace = true
-description = "Fork of pydantic/monty's monty-types 1.4.0 with an embedder memory probe and checkpoint hook, for bashkit's python3"
+description = "Fork of pydantic/monty's monty-types 1.5.0 with an embedder memory probe and checkpoint hook, for bashkit's python3"
 keywords = ["python", "interpreter", "sandbox", "bashkit"]
 categories = ["compilers", "emulators"]
 readme = "README.md"
@@ -38,7 +38,7 @@ doctest = false
 [dependencies]
 chrono = { version = "0.4", features = ["serde"] }
 jiff = { version = "0.2", features = ["std", "serde"], default-features = false }
-monty-macros = { version = "1.4.0" }
+monty-macros = { version = "=1.5.0" }
 num-bigint = { version = "0.4", features = ["serde"] }
 num-traits = { version = "0.2" }
 ruff_python_stdlib = { version = "0.0.14" }
@@ -50,7 +50,11 @@ unicode-general-category = { version = "1" }
 [target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
 web-time = { version = "1.1" }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+nix = { version = "0.31", features = ["fs", "time"], optional = true }
+
 [features]
+cpu-clock = ["dep:nix"]
 test-hooks = []
 tzdb = ["jiff/tzdb-zoneinfo", "tzdb-bundled"]
 tzdb-bundled = ["jiff/tzdb-bundle-always"]

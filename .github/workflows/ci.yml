@@ -70,7 +70,7 @@ jobs:
       - name: Test repo scripts
         run: python3 -m unittest discover -s scripts/tests -p 'test_*.py'
 
-      # The Monty forks must match the pinned upstream 1.4.0 crates except
+      # The Monty forks must match the pinned upstream 1.5.0 crates except
       # where a `bashkit fork:` comment marks a local edit.
       - name: Check Monty fork drift
         run: python3 scripts/check_monty_fork.py
