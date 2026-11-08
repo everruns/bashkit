@@ -215,6 +215,16 @@ jobs:
           cat bashkit.rb
 
       - name: Install Doppler CLI
+        id: doppler_cli
+        continue-on-error: true
+        uses: dopplerhq/cli-action@4819d808ab99e5cde19a0637a16536a4038fad73 # v4
+
+      # The action downloads the CLI under a hard 30s spawnSync budget, so a slow
+      # cli.doppler.com reply fails the step with `spawnSync /bin/sh ETIMEDOUT`
+      # and takes the branch red. Retried once rather than hand-rolling
+      # `curl | sh`, which would drop the action's signature verification.
+      - name: Install Doppler CLI (retry)
+        if: steps.doppler_cli.outcome == 'failure'
         uses: dopplerhq/cli-action@4819d808ab99e5cde19a0637a16536a4038fad73 # v4
 
       - name: Push formula to homebrew-tap
