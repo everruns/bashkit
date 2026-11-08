@@ -215,7 +215,17 @@ jobs:
         run: echo "available=${{ secrets.DOPPLER_TOKEN != '' }}" >> "$GITHUB_OUTPUT"
 
       - name: Install Doppler CLI
+        id: doppler_cli
         if: steps.doppler.outputs.available == 'true'
+        continue-on-error: true
+        uses: dopplerhq/cli-action@4819d808ab99e5cde19a0637a16536a4038fad73 # v4
+
+      # The action downloads the CLI under a hard 30s spawnSync budget, so a slow
+      # cli.doppler.com reply fails the step with `spawnSync /bin/sh ETIMEDOUT`
+      # and takes the branch red. Retried once rather than hand-rolling
+      # `curl | sh`, which would drop the action's signature verification.
+      - name: Install Doppler CLI (retry)
+        if: (steps.doppler.outputs.available == 'true') && steps.doppler_cli.outcome == 'failure'
         uses: dopplerhq/cli-action@4819d808ab99e5cde19a0637a16536a4038fad73 # v4
 
       # Resolve only the required key; this token-bearing process exits before
