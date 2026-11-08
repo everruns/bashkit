@@ -1,5 +1,9 @@
 # Bashkit Knowledge Update Log
 
+## 2026-11-08
+
+* **Monty forks re-synced to 1.5.0**: the first re-sync since the forks were created, and what the daily upstream watch went red for. Upstream moved ~9k lines and touched all 14 fork-edited files, so the `bashkit fork:` edits were re-applied by 3-way merge (upstream 1.4.0 / fork / upstream 1.5.0) rather than by hand: 9 conflicts, all in the repr helpers and the `fancy-regex` plumbing. Net drift went *down*. Upstream reached fancy-regex 0.20, so that marked version divergence and the marked `Captures<'_, str>` adaptations in `re_match.rs`/`re_pattern.rs` are gone (1.5.0 replaced `Captures` with span buffers); keeping upstream's new `repr_should_truncate` name let every repr call site return to upstream verbatim, leaving the fork's semantics (a time hit raises, a memory hit truncates) in one helper body. The per-VM memory probe and checkpoint hook merged cleanly: upstream's new `ExecutionClock` work touches different parts of `resource.rs`. Behavior changes taken: `'ab' * (2**62)` now raises `OverflowError` up front instead of reaching the memory meter, and the host import callback receives an `ImportArgs` (module plus search path) where it took a bare name -- bashkit answers `NotFound` on the name, so upstream's new file imports stay out. `cpu-clock`/`nix` came along because features and added dependencies are not markable. See [Dependencies](operations/dependencies.md#monty-forks), [Python Builtin](runtimes/python-builtin.md).
+
 ## 2026-11-07
 
 * **Monty in nightly ASan and soak**: the nightly ASan job ran default features, so the Monty forks (unsafe in the metered allocator and VM) were never sanitized. It now has a `--features python` step (307 integration + 66 lib python tests passed locally under ASan, 81 s), and a new `python-stress-soak` job runs the tenant stress suite 300 rounds in release. See [Python Builtin](runtimes/python-builtin.md).

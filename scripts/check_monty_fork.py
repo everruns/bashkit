@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Check that the Monty forks differ from upstream only where marked.
 
-crates/bashkit-monty and crates/bashkit-monty-types are copies of Monty 1.4.0
+crates/bashkit-monty and crates/bashkit-monty-types are copies of Monty 1.5.0
 from crates.io with a few local edits, each marked with a `bashkit fork:`
 comment. This compares every file in the forks with the pinned upstream
 `.crate` and fails on any changed region that has no marker in or just above
@@ -35,16 +35,16 @@ MARKER = 'bashkit fork:'
 # comment/attribute block attached to the changed item is searched in full on
 # top of this, however long it is, see `marker_window`.
 MARKER_WINDOW = 3
-VERSION = '1.4.0'
+VERSION = '1.5.0'
 UPSTREAM = {
     # fork directory: (crates.io name, sha256 of the .crate)
     'bashkit-monty': (
         'monty',
-        'b7d354901f6d6655e6bc3826f31c035417025253d7c3f7b3ef1519f681dd3469',
+        'cd3e3404a0a11ea8669e30dab21b27462554536b29500b75824582ce850ebbbe',
     ),
     'bashkit-monty-types': (
         'monty-types',
-        '560e0f529ceb10575efb25dabc95d41e9de0f5036fbb46f02c2ac03d83dc89e3',
+        '7a6d36dbb6f4f754e5f12ad3040e5c1d0455aee431f46cd48d36cf309e58691a',
     ),
 }
 # Fork-only packaging files, not upstream source. Cargo.toml is not diffed as

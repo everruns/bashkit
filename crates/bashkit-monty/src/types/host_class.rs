@@ -7,7 +7,7 @@ use std::{
 
 use monty_types::{MontyUuid, unstable::ClassTypeNode};
 
-use super::{Dict, LazyHeapSet, PyTrait, attribute_name_value, str::allocate_string};
+use super::{Dict, LazyHeapSet, PyTrait, list::repr_should_truncate, str::allocate_string};
 use crate::{
     args::ArgValues,
     bytecode::{CallResult, VM},
@@ -150,7 +150,7 @@ impl<'h> PyTrait<'h> for HeapObjectRead<'h, HostClass> {
 
     fn py_set_attr(&mut self, name: &EitherStr, value: Value, vm: &mut VM<'h>) -> RunResult<()> {
         let mut value_guard = DropGuard::new(value, vm);
-        let name = attribute_name_value(name, value_guard.ctx());
+        let name = name.as_value(value_guard.ctx().heap);
         let (value, vm) = value_guard.into_parts();
         let old_value = self.set_attr(name, value, vm)?;
         old_value.drop_with(vm);
@@ -193,12 +193,12 @@ impl<'h> PyTrait<'h> for HeapObjectRead<'h, HostClass> {
             defer_drop!(key, vm);
             // Keys are strings in practice; render a non-string key (possible
             // in host-built attrs) via repr rather than fail.
-            let key_str = if let Ok(s) = key.to_str(vm) {
+            let key_str = if let Some(s) = key.as_str(vm) {
                 s.to_owned()
             } else {
                 let repr = key.py_repr(vm)?;
                 defer_drop!(repr, vm);
-                repr.to_str(vm)?.to_owned()
+                repr.as_str(vm).expect("py_repr returns str").to_owned()
             };
             // The value is cloned only after the fallible key formatting, so a
             // formatting error cannot strand an unguarded clone; re-reading at
@@ -314,8 +314,12 @@ impl<'h> PyTrait<'h> for HeapObjectRead<'h, HostClass> {
 ///
 /// Each caller supplies its own field list via `field`, mapping an index to that
 /// field's name and a cloned value (dropped here). A cycle renders `...`, a
-/// `None` value `<?>`, a memory limit truncates `...[timeout]`, and a time
-/// limit raises (bashkit fork: see `repr_check_time`).
+/// `None` value `<?>`, and exhausting a memory limit truncates `...[timeout]`.
+// bashkit fork: a time limit raises here rather than truncating, the inverse
+// of upstream; the call site is unchanged, the semantics live in
+// [`repr_should_truncate`]. A shared `D(d, d)` graph otherwise kept
+// formatting: with the tracker-wide cadence only one call in 64 sees the
+// expired clock, so truncation never unwound the walk.
 ///
 /// `field` is resolved immediately before that field is written, never all up
 /// front, so a `__repr__` that mutates a later field is observed — matching the
@@ -338,11 +342,7 @@ pub(crate) fn write_dataclass_repr<'h>(
         if i > 0 {
             // Same between-item checkpoint as sequence repr, so a wide instance
             // cannot outrun its time limit.
-            // bashkit fork: through `repr_check_time`, so a time hit errors
-            // instead of truncating (a shared `D(d, d)` graph otherwise kept
-            // formatting: with the tracker-wide cadence only one call in 64
-            // sees the expired clock, so truncation never unwound the walk).
-            if super::list::repr_check_time(i, vm)? {
+            if repr_should_truncate(i, vm)? {
                 f.write_str(", ...[timeout]")?;
                 break;
             }

@@ -895,8 +895,11 @@ async fn handle_os_call(
             ret(MontyObject::path(rp(&p).to_string_lossy().to_string()))
         }
         F::Scan(a) => handle_scan(&a, &rp(&a.path), fs).await,
-        // Unknown modules: no host modules are offered.
-        F::Import(name) => ExtFunctionResult::NotFound(name),
+        // Unknown modules: no host modules are offered. Monty 1.5 passes the
+        // import's `search_path` alongside the name for its file-import path;
+        // bashkit answers from host modules only, so the name is all that is
+        // needed and every import of an unoffered module still fails here.
+        F::Import(args) => ExtFunctionResult::NotFound(args.module),
         other => ExtFunctionResult::Error(MontyException::new(
             ExcType::OSError,
             Some(format!("{} not supported in virtual mode", other.name())),

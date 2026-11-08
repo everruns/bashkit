@@ -1,4 +1,4 @@
-use std::{borrow::Cow, cmp::Ordering, fmt::Write};
+use std::{borrow::Cow, cmp::Ordering, fmt::Write, str};
 
 use ahash::AHashSet;
 
@@ -481,11 +481,16 @@ pub(crate) trait PyTrait<'h>: PyObjectIdentity {
     ///
     /// # Returns
     ///
-    /// Returns `Ok(true)` if the operation was successful, `Ok(false)` if not supported
+    /// Returns `Ok(true)` if the operation was handled, `Ok(false)` if not supported
     /// (the VM then falls back to `py_add`), or `Err` if the operation raised — including
     /// types whose `+=` is `extend` (e.g. `deque`), which raise `TypeError` from the
     /// iterator protocol rather than a `ResourceError`.
     fn py_iadd_impl(&mut self, _other: &Value, _vm: &mut VM<'h>) -> RunResult<bool> {
+        Ok(false)
+    }
+
+    /// Mutates in place for `*=`, or returns false to use ordinary multiplication.
+    fn py_imul_impl(&mut self, _other: &Value, _vm: &mut VM<'h>) -> RunResult<bool> {
         Ok(false)
     }
 
@@ -502,6 +507,11 @@ pub(crate) trait PyTrait<'h>: PyObjectIdentity {
 
     /// Python in-place bitwise OR (`__ior__`), with [`py_iadd_impl`](Self::py_iadd_impl)'s contract.
     fn py_ior_impl(&mut self, _other: &Value, _vm: &mut VM<'h>) -> RunResult<bool> {
+        Ok(false)
+    }
+
+    /// Mutates in place for `^=`, or returns false to use binary XOR.
+    fn py_ixor_impl(&mut self, _other: &Value, _vm: &mut VM<'h>) -> RunResult<bool> {
         Ok(false)
     }
 
@@ -723,14 +733,6 @@ pub(crate) trait PyTrait<'h>: PyObjectIdentity {
     /// Public `next()` dispatches user methods separately so they can suspend.
     fn py_next(&mut self, vm: &mut VM<'h>) -> RunResult<Option<Value>> {
         Err(ExcType::type_error_not_iterator(&self.py_type_name(vm)))
-    }
-}
-
-/// Converts an attribute name into an owned dict key, preserving interned names.
-pub(crate) fn attribute_name_value(name: &EitherStr, vm: &VM<'_>) -> Value {
-    match name {
-        EitherStr::Interned(string_id) => Value::InternString(*string_id),
-        EitherStr::Heap(s) => allocate_string(s.as_str(), vm.heap),
     }
 }
 

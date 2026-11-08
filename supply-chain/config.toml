@@ -1315,7 +1315,7 @@ version = "0.2.3"
 criteria = "safe-to-deploy"
 
 [[exemptions.monty-macros]]
-version = "1.4.0"
+version = "1.5.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.multiversion_no_op]]
