@@ -34,7 +34,7 @@
     "@astrojs/check": "^0.9.12",
     "@types/node": "^26.6.6",
     "typescript": "^7.0.2",
-    "wrangler": "^4.157.0"
+    "wrangler": "^4.158.0"
   },
   "pnpm": {
     "overrides": {
