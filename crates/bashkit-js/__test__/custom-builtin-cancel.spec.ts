@@ -1,5 +1,5 @@
 import test from "ava";
-import { Bash } from "../wrapper.js";
+import { Bash, BashTool } from "../wrapper.js";
 
 test("BuiltinContext exposes AbortSignal and helpers", async (t) => {
   let seen: any = {};
@@ -118,4 +118,77 @@ test("Ctrl+C aborts a held server connection via ctx.fetch: exit 130", async (t)
   } finally {
     server.close();
   }
+});
+
+// The timeout-mirror coercion (graceful exit 0 -> 124) was open-coded in
+// `Bash.execute`'s no-caller-signal branch only. Three of the four async
+// `executeNative` call sites skipped it, so the same race reported 124 from
+// `Bash` without a signal and 0 from `BashTool`, or from `Bash` whenever the
+// caller also passed a signal. These pin the contract on every path: an
+// execution that exceeded its deadline is never reported as success.
+
+/** Ignores cancellation entirely; the native deadline enforces 124. */
+const holdForever = {
+  hold: async (ctx: any) => {
+    ctx.onCancel(() => {});
+    await new Promise((r) => setTimeout(r, 5000));
+    return "x";
+  },
+};
+
+/**
+ * Treats cancellation as a graceful finish. This is the shape that lets the
+ * JS-side mirror beat native enforcement: the abort resolves the builtin
+ * *successfully*, so the script can reach exit 0 before the native deadline
+ * lands, and only the coercion turns that back into 124.
+ */
+const gracefulOnCancel = {
+  hold: async (ctx: any) => {
+    await new Promise<void>((resolve) => ctx.onCancel(() => resolve()));
+    return "finished";
+  },
+};
+
+test("execution timeout reports 124 from BashTool, not just Bash", async (t) => {
+  const viaBash = await new Bash({
+    timeoutMs: 300,
+    customBuiltins: holdForever,
+  }).execute("hold");
+  const viaTool = await new BashTool({
+    timeoutMs: 300,
+    customBuiltins: holdForever,
+  }).execute("hold");
+  t.is(viaBash.exitCode, 124);
+  t.is(viaTool.exitCode, viaBash.exitCode);
+});
+
+test("a builtin resolving on abort cannot mask the deadline", async (t) => {
+  const viaBash = await new Bash({
+    timeoutMs: 200,
+    customBuiltins: gracefulOnCancel,
+  }).execute("hold");
+  const viaTool = await new BashTool({
+    timeoutMs: 200,
+    customBuiltins: gracefulOnCancel,
+  }).execute("hold");
+  t.not(viaBash.exitCode, 0);
+  t.not(viaTool.exitCode, 0);
+  t.is(viaBash.exitCode, 124);
+  t.is(viaTool.exitCode, 124);
+});
+
+test("a caller signal does not disable the timeout mirror", async (t) => {
+  // A signal that never aborts: its only effect is taking the caller-signal
+  // branch, which used to return executeNative() straight through.
+  const never = new AbortController();
+  const viaBash = await new Bash({
+    timeoutMs: 200,
+    customBuiltins: gracefulOnCancel,
+  }).execute("hold", { signal: never.signal });
+  const viaTool = await new BashTool({
+    timeoutMs: 200,
+    customBuiltins: gracefulOnCancel,
+  }).execute("hold", { signal: never.signal });
+  t.is(viaBash.exitCode, 124);
+  t.is(viaTool.exitCode, 124);
 });

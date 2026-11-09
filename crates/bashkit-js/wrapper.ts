@@ -847,6 +847,29 @@ const builtinConsumedControllers = new WeakSet<AbortController>();
  */
 const timeoutFiredControllers = new WeakSet<AbortController>();
 
+/**
+ * Coerce a graceful exit 0 to 124 when this execution's timeout mirror fired.
+ *
+ * Every `executeNative` call on the async paths goes through here. Open-coding
+ * it is what let the paths drift: only `Bash.execute`'s no-caller-signal branch
+ * had the check, so the same race reported 124 there and 0 from `BashTool`, and
+ * from `Bash` itself whenever the caller also passed a `signal`.
+ */
+function applyTimeoutMirror(
+  inFlight: AbortController | undefined,
+  result: ExecResult,
+): ExecResult {
+  if (
+    result.exitCode === 0 &&
+    inFlight &&
+    timeoutFiredControllers.has(inFlight)
+  ) {
+    timeoutFiredControllers.delete(inFlight);
+    return { ...result, exitCode: 124 };
+  }
+  return result;
+}
+
 function markBuiltinSignalUsed(native: object): AbortSignal {
   const controller = activeBuiltinControllers.get(native);
   if (controller) builtinConsumedControllers.add(controller);
@@ -1260,12 +1283,16 @@ export class Bash {
           this.native.cancel();
         };
         signal.addEventListener("abort", onAbort, { once: true });
+        const inFlight = activeBuiltinControllers.get(this.native);
         try {
-          return await executeNative(
-            this.native,
-            commands,
-            options,
-            runtimeSession,
+          return applyTimeoutMirror(
+            inFlight,
+            await executeNative(
+              this.native,
+              commands,
+              options,
+              runtimeSession,
+            ),
           );
         } finally {
           signal.removeEventListener("abort", onAbort);
@@ -1276,24 +1303,10 @@ export class Bash {
       }
       const inFlight = activeBuiltinControllers.get(this.native);
       try {
-        const result = await executeNative(
-          this.native,
-          commands,
-          options,
-          runtimeSession,
+        return applyTimeoutMirror(
+          inFlight,
+          await executeNative(this.native, commands, options, runtimeSession),
         );
-        // The timeout mirror can win the race against native enforcement
-        // while a builtin resolves gracefully right as it fires. The
-        // execution still exceeded its deadline: report exit 124.
-        if (
-          result.exitCode === 0 &&
-          inFlight &&
-          timeoutFiredControllers.has(inFlight)
-        ) {
-          timeoutFiredControllers.delete(inFlight);
-          return { ...result, exitCode: 124 };
-        }
-        return result;
       } finally {
         // `bash.cancel()` aborts the execution-scoped controller without a
         // caller signal. When a custom builtin consumed that cancellation,
@@ -1870,12 +1883,16 @@ export class BashTool {
           this.native.cancel();
         };
         signal.addEventListener("abort", onAbort, { once: true });
+        const inFlight = activeBuiltinControllers.get(this.native);
         try {
-          return await executeNative(
-            this.native,
-            commands,
-            options,
-            runtimeSession,
+          return applyTimeoutMirror(
+            inFlight,
+            await executeNative(
+              this.native,
+              commands,
+              options,
+              runtimeSession,
+            ),
           );
         } finally {
           signal.removeEventListener("abort", onAbort);
@@ -1884,12 +1901,11 @@ export class BashTool {
           }
         }
       }
+      const inFlight = activeBuiltinControllers.get(this.native);
       try {
-        return await executeNative(
-          this.native,
-          commands,
-          options,
-          runtimeSession,
+        return applyTimeoutMirror(
+          inFlight,
+          await executeNative(this.native, commands, options, runtimeSession),
         );
       } finally {
         // `bash.cancel()` aborts the execution-scoped controller without a
@@ -1897,7 +1913,6 @@ export class BashTool {
         // clear the native cancelled flag so the next command on this
         // instance runs normally; shell and VFS state is preserved.
         // Executions without custom builtins stay sticky until clearCancel().
-        const inFlight = activeBuiltinControllers.get(this.native);
         if (
           inFlight?.signal.aborted &&
           builtinConsumedControllers.has(inFlight)
