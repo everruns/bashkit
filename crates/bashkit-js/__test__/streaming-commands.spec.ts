@@ -120,7 +120,8 @@ for (const [label, create] of [
         await new Promise<void>(() => {});
       },
     });
-    t.is(result.exitCode, 1);
+    // Caller-initiated abort mid-execution is programmatic Ctrl+C: exit 130.
+    t.is(result.exitCode, 130);
     t.is(result.error, "execution cancelled");
     t.is(
       (await shell.execute("echo recovered", { capture: 64 })).stdout,

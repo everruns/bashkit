@@ -59,6 +59,10 @@ interface BuiltinContext {
   readonly stdin: string | null;               // piped input, null if no pipe
   readonly env: Record<string, string>;        // exported env vars
   readonly cwd: string;                        // current working directory
+  readonly signal: AbortSignal;                // execution-scoped cancellation
+  throwIfCancelled(): void;                    // throws AbortError if cancelled
+  onCancel(handler: () => void): () => void;   // run handler on cancel, returns unsubscribe
+  fetch(input: any, init?: any): Promise<Response>; // fetch with signal pre-wired
 }
 
 type BuiltinCallback = (ctx: BuiltinContext) => string | Promise<string>;
@@ -84,6 +88,31 @@ const bash = new Bash({
   },
 });
 ```
+
+## Cancellation
+
+Every invocation carries an execution-scoped `AbortSignal` that aborts on
+`bash.cancel()`, caller-signal abort, and execution timeout. Pass it (or use
+`ctx.fetch`, which pre-wires it) so hanging I/O aborts promptly instead of
+hanging the shell:
+
+```typescript
+const bash = new Bash({
+  customBuiltins: {
+    fetch: async (ctx) => {
+      const response = await ctx.fetch(ctx.argv[0]);
+      return await response.text();
+    },
+  },
+});
+```
+
+Result codes are standardized: cancellation while running reports exit
+130 (matching Ctrl+C), execution timeout reports exit 124, genuine callback
+failures report exit 1. A callback that fails *because* of interruption
+reports the interruption, not exit 1. Cancellation never discards shell or
+VFS state, and the next command runs normally. (A caller signal aborted
+*before* execution starts is refused outright with exit 1.)
 
 ## Sync vs async, and why you can't use `executeSync()`
 
