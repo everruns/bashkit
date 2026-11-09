@@ -1,0 +1,47 @@
+name: Monty Upstream Advisories
+
+# The embedded python3 runs on renamed forks of Monty (crates/bashkit-monty,
+# crates/bashkit-monty-types). cargo audit/deny and Dependabot match by crate
+# name, so an advisory filed against upstream `monty` can never reach the
+# forks through them. This job is the only automated thing that would, which
+# is why it stays on a daily schedule.
+#
+# Advisories only (`--no-release`). The same script also checks whether
+# upstream shipped a newer stable release than the fork base, and that half
+# deliberately does NOT run here: it goes red the moment upstream releases and
+# stays red until a large fork re-sync lands, so it carried no signal on a
+# schedule. It is a maintenance checklist item instead, run as
+# `just check-monty-upstream` (the full check, both halves).
+# See knowledge/operations/maintenance.md and
+# knowledge/operations/dependencies.md.
+#
+# The script is invoked directly rather than through the `just` recipe,
+# because that recipe takes no arguments and so cannot pass `--no-release`.
+#
+# A red run here means: triage the advisory, then either re-sync the forks or
+# record it in the script's ACKNOWLEDGED map with a reason.
+#
+# Not a PR check: it reads live OSV state, which changes without any
+# repository change, so it must not block unrelated PRs.
+
+on:
+  schedule:
+    # Daily 06:17 UTC: advisories should surface within a day.
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  watch:
+    name: Upstream advisories
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check upstream Monty advisories
+        run: python3 scripts/check_monty_upstream.py --no-release
