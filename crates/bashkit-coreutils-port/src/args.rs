@@ -13,6 +13,9 @@
 //!      (uutils wraps the Command in a localization-aware adapter that
 //!      pulls in Fluent; bashkit doesn't need it, so we replace the
 //!      call with its first argument)
+//!    - `[uucore::]<m>::<sub>::<item>` for a registered uucore
+//!      clap-helper module (see [`ClapHelperModule`]) — the referenced
+//!      item is inlined and the path flattened to a bare `<item>`
 //!    - `Arg::…env("FOO")…` — chain step elided AND harvested into a
 //!      sidecar `<UTIL>_ENV_DEFAULTS` table consumed by the bashkit-side
 //!      virtual-env shim (TM-INF-024).
@@ -27,10 +30,12 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
 use proc_macro2::TokenStream;
+use quote::ToTokens;
 use quote::quote;
 use syn::visit_mut::{self, VisitMut};
 use syn::{
-    Expr, ExprCall, ExprMacro, Item, ItemFn, ItemImpl, ItemMod, LitStr, Stmt, Type, parse_quote,
+    Expr, ExprCall, ExprMacro, Item, ItemFn, ItemImpl, ItemMod, LitStr, Stmt, Type, UseTree,
+    parse_quote,
 };
 
 use crate::ftl::parse_ftl;
@@ -138,6 +143,36 @@ pub fn run(uutils_dir: &Path, util: &str, rev: &str) -> Result<String> {
             "unresolved translate!() keys in inlined helpers: {:?}",
             rw.unresolved
         );
+    }
+
+    // uutils shares a few clap args between utilities through uucore
+    // (`uucore::quoting_style::parser::clap_quoting_argument` for
+    // `--quoting-style`). Inline each referenced item and flatten the
+    // paths that reach for it, so the generated parser stays standalone.
+    let uu_app_item = Item::Fn(uu_app.clone());
+    let mut scanned: Vec<&Item> = vec![&uu_app_item];
+    scanned.extend(helpers.iter());
+    let helper_refs = collect_clap_helper_refs(&scanned, options_mod.as_ref());
+    let resolved_helpers = resolve_clap_helpers(uutils_dir, &helper_refs)?;
+    let mut spliced_consts = std::collections::BTreeSet::new();
+    if let Some(m) = options_mod.as_mut() {
+        splice_clap_helper_imports(m, &resolved_helpers, &mut spliced_consts)?;
+    }
+    // Anything that did not land in `mod options` is emitted at file
+    // root, where `use options::*` and the clap preamble are in scope.
+    let mut clap_helper_items: Vec<Item> = resolved_helpers.root.clone();
+    for (name, item) in &resolved_helpers.consts {
+        if !spliced_consts.contains(name) {
+            let mut item = item.clone();
+            set_item_visibility(&mut item, syn::Visibility::Inherited);
+            clap_helper_items.push(item);
+        }
+    }
+    if !helper_refs.is_empty() {
+        ClapHelperPathFlattener.visit_item_fn_mut(&mut uu_app);
+        for item in &mut helpers {
+            ClapHelperPathFlattener.visit_item_mut(item);
+        }
     }
 
     validate_uu_app_body(&uu_app)?;
@@ -258,6 +293,9 @@ pub fn run(uutils_dir: &Path, util: &str, rev: &str) -> Result<String> {
         // verbatim from the source file with the same translate!()
         // rewriting applied so they compile without uucore.
         #(#helpers)*
+
+        // Inlined uucore clap-helper items (see `ClapHelperModule`).
+        #(#clap_helper_items)*
 
         #(#uu_app_attrs)*
         pub #uu_app_sig #uu_app_block
@@ -1116,6 +1154,515 @@ fn matches_shortcut_value_parser(segs: &[String]) -> bool {
     matches!(last_two.as_slice(), ["new", "ShortcutValueParser"])
 }
 
+/// A uucore module that exists only to share one clap `Arg` definition
+/// between utilities.
+///
+/// Upstream factors options that several utilities agree on into
+/// `uucore::<name>::<submodule>`; `--quoting-style` moved there in
+/// 6a7d199ed, taking `ls` with it. Nothing in those bodies is
+/// uucore-specific — they are plain clap builders plus `translate!()`
+/// help text — so they inline at port time under the same rewrite rules
+/// as `uu_app()` itself. Inlining (rather than vendoring the whole
+/// uucore module) keeps the generated parser standalone and leaves the
+/// emitted arg byte-for-byte comparable to the hand-rolled one it
+/// replaced upstream.
+///
+/// This is an allowlist on purpose (TM-INF-025): third-party uutils
+/// source must not be able to pull arbitrary uucore code into a
+/// generated parser just by naming it.
+struct ClapHelperModule {
+    /// Segment utilities refer to the module by: `uucore::<name>`.
+    name: &'static str,
+    /// Submodule holding the clap helpers.
+    submodule: &'static str,
+    /// Module source, relative to the uutils checkout root.
+    source: &'static str,
+    /// en-US message files covering `translate!()` keys in the helper
+    /// bodies. These live in uucore's locales, not the util's.
+    ftl_sources: &'static [&'static str],
+}
+
+const CLAP_HELPER_MODULES: &[ClapHelperModule] = &[ClapHelperModule {
+    name: "quoting_style",
+    submodule: "parser",
+    source: "src/uucore/src/lib/features/quoting_style/mod.rs",
+    ftl_sources: &["src/uucore/locales/en-US.ftl"],
+}];
+
+fn clap_helper_module(name: &str) -> Option<&'static ClapHelperModule> {
+    CLAP_HELPER_MODULES.iter().find(|m| m.name == name)
+}
+
+/// Items resolved out of uucore clap-helper modules for one utility.
+#[derive(Default)]
+struct ClapHelperItems {
+    /// `const`/`static` items keyed by name, spliced in where the
+    /// util's `mod options` re-exported them.
+    consts: HashMap<String, Item>,
+    /// Everything else (clap-builder functions), emitted at file root.
+    root: Vec<Item>,
+}
+
+/// Names referenced out of each helper module, keyed by module name.
+/// A module present with an empty set was brought into scope by a bare
+/// `use uucore::<name>;` without any item being named yet.
+type ClapHelperRefs = HashMap<String, std::collections::BTreeSet<String>>;
+
+/// Collect every uucore clap-helper item the util reaches for, from
+/// `uu_app()`/inlined-helper paths and from `mod options` re-exports.
+fn collect_clap_helper_refs(items: &[&Item], options_mod: Option<&ItemMod>) -> ClapHelperRefs {
+    use syn::visit::{self, Visit};
+
+    struct PathCollector(ClapHelperRefs);
+    impl<'ast> Visit<'ast> for PathCollector {
+        fn visit_path(&mut self, path: &'ast syn::Path) {
+            let segs = path_segments(path);
+            // `<name>::<sub>::<item>`, or the same under an explicit
+            // `uucore::` prefix.
+            let tail: &[String] = if path_starts_with(&segs, "uucore") {
+                &segs[1..]
+            } else {
+                &segs
+            };
+            if tail.len() >= 3
+                && let Some(module) = clap_helper_module(&tail[0])
+                && tail[1] == module.submodule
+            {
+                self.0
+                    .entry(module.name.to_string())
+                    .or_default()
+                    .insert(tail[2].clone());
+            }
+            visit::visit_path(self, path);
+        }
+    }
+
+    let mut collector = PathCollector(ClapHelperRefs::default());
+    for item in items {
+        collector.visit_item(item);
+    }
+    if let Some(m) = options_mod {
+        collect_clap_helper_use_refs(m, &mut collector.0);
+    }
+    collector.0
+}
+
+/// Walk a `mod options` tree (nested mods included) recording helper
+/// items its `use` / `pub use` items bring into scope.
+fn collect_clap_helper_use_refs(module: &ItemMod, out: &mut ClapHelperRefs) {
+    let Some((_, items)) = &module.content else {
+        return;
+    };
+    for item in items {
+        match item {
+            Item::Mod(inner) => collect_clap_helper_use_refs(inner, out),
+            Item::Use(use_item) => {
+                for leaf in use_tree_paths(&use_item.tree) {
+                    let tail: &[String] = if path_starts_with(&leaf.path, "uucore") {
+                        &leaf.path[1..]
+                    } else {
+                        &leaf.path
+                    };
+                    if tail.is_empty() {
+                        continue;
+                    }
+                    if let Some(module) = clap_helper_module(&tail[0]) {
+                        let entry = out.entry(module.name.to_string()).or_default();
+                        // `use uucore::quoting_style;` names no item; it
+                        // only puts the module in scope. A renamed or glob
+                        // import is not recorded here: it is refused in
+                        // `splice_clap_helper_imports`, which can name it.
+                        if tail.len() >= 3
+                            && tail[1] == module.submodule
+                            && leaf.binding == UseBinding::Plain
+                        {
+                            entry.insert(tail[2].clone());
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// One leaf of a `use` item: the path it names, plus how it binds.
+///
+/// The binding matters for clap-helper inlining. A renamed or glob
+/// import names the item under something other than its own ident, so
+/// splicing the definition in under its original name would leave call
+/// sites referring to a name nothing defines.
+struct UseLeaf {
+    path: Vec<String>,
+    binding: UseBinding,
+}
+
+#[derive(PartialEq)]
+enum UseBinding {
+    /// `use a::b::C;` — bound under its own ident.
+    Plain,
+    /// `use a::b::C as D;`
+    Renamed,
+    /// `use a::b::*;`
+    Glob,
+}
+
+/// Flatten a `UseTree` into one leaf per bound name.
+fn use_tree_paths(tree: &UseTree) -> Vec<UseLeaf> {
+    fn walk(tree: &UseTree, prefix: &mut Vec<String>, out: &mut Vec<UseLeaf>) {
+        match tree {
+            UseTree::Path(p) => {
+                prefix.push(p.ident.to_string());
+                walk(&p.tree, prefix, out);
+                prefix.pop();
+            }
+            UseTree::Name(n) => {
+                let mut path = prefix.clone();
+                path.push(n.ident.to_string());
+                out.push(UseLeaf {
+                    path,
+                    binding: UseBinding::Plain,
+                });
+            }
+            UseTree::Rename(r) => {
+                let mut path = prefix.clone();
+                path.push(r.ident.to_string());
+                out.push(UseLeaf {
+                    path,
+                    binding: UseBinding::Renamed,
+                });
+            }
+            UseTree::Glob(_) => {
+                let mut path = prefix.clone();
+                path.push("*".into());
+                out.push(UseLeaf {
+                    path,
+                    binding: UseBinding::Glob,
+                });
+            }
+            UseTree::Group(g) => {
+                for t in &g.items {
+                    walk(t, prefix, out);
+                }
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(tree, &mut Vec::new(), &mut out);
+    out
+}
+
+/// Read, rewrite and validate every referenced helper item.
+fn resolve_clap_helpers(uutils_dir: &Path, refs: &ClapHelperRefs) -> Result<ClapHelperItems> {
+    let mut resolved = ClapHelperItems::default();
+
+    for (name, wanted) in refs {
+        let module = clap_helper_module(name)
+            .ok_or_else(|| anyhow!("no clap-helper registry entry for '{name}'"))?;
+        if wanted.is_empty() {
+            // Module in scope but nothing used from it: the `use` item
+            // is dropped and there is nothing to inline.
+            continue;
+        }
+
+        let src_path = uutils_dir.join(module.source);
+        let src = std::fs::read_to_string(&src_path).with_context(|| {
+            format!(
+                "read uucore clap-helper module {} for 'uucore::{}'",
+                src_path.display(),
+                module.name
+            )
+        })?;
+        let parsed = syn::parse_file(&src)
+            .with_context(|| format!("parse {} as rust", src_path.display()))?;
+        let submodule = find_mod(&parsed, module.submodule).ok_or_else(|| {
+            anyhow!(
+                "could not find `mod {}` in {}",
+                module.submodule,
+                src_path.display()
+            )
+        })?;
+        let (_, sub_items) = submodule.content.as_ref().ok_or_else(|| {
+            anyhow!(
+                "`mod {}` in {} has no inline body",
+                module.submodule,
+                src_path.display()
+            )
+        })?;
+
+        // The helper's `translate!()` keys live in uucore's locales, so
+        // this needs its own table rather than the util's.
+        let mut translations = HashMap::new();
+        for rel in module.ftl_sources {
+            let ftl_path = uutils_dir.join(rel);
+            let ftl = std::fs::read_to_string(&ftl_path).with_context(|| {
+                format!(
+                    "read ftl source {} for 'uucore::{}'",
+                    ftl_path.display(),
+                    module.name
+                )
+            })?;
+            translations.extend(parse_ftl(&ftl));
+        }
+        let mut rw = Rewriter {
+            translations,
+            unresolved: vec![],
+        };
+
+        for want in wanted {
+            let mut item = find_named_item(sub_items, want).cloned().ok_or_else(|| {
+                anyhow!(
+                    "'uucore::{}::{}::{want}' is referenced but `mod {}` in {} does not define it",
+                    module.name,
+                    module.submodule,
+                    module.submodule,
+                    src_path.display()
+                )
+            })?;
+            validate_clap_helper_item(&item, module, want)?;
+            rw.visit_item_mut(&mut item);
+            if !rw.unresolved.is_empty() {
+                bail!(
+                    "unresolved translate!() keys in 'uucore::{}::{}::{want}': {:?}",
+                    module.name,
+                    module.submodule,
+                    rw.unresolved
+                );
+            }
+            match &item {
+                Item::Const(_) | Item::Static(_) => {
+                    resolved.consts.insert(want.clone(), item);
+                }
+                _ => resolved.root.push(item),
+            }
+        }
+    }
+
+    Ok(resolved)
+}
+
+fn find_named_item<'a>(items: &'a [Item], name: &str) -> Option<&'a Item> {
+    items.iter().find(|item| match item {
+        Item::Const(c) => c.ident == name,
+        Item::Static(s) => s.ident == name,
+        Item::Fn(f) => f.sig.ident == name,
+        // Matched so a path reaching *through* a nested module is
+        // rejected by `validate_clap_helper_item`, which names what it
+        // found, rather than reported as undefined.
+        Item::Mod(m) => m.ident == name,
+        _ => false,
+    })
+}
+
+/// Gate on the shapes the port understands. Anything else aborts the
+/// port rather than being copied into a generated parser blind
+/// (TM-INF-025).
+fn validate_clap_helper_item(item: &Item, module: &ClapHelperModule, name: &str) -> Result<()> {
+    let where_ = format!("uucore::{}::{}::{name}", module.name, module.submodule);
+
+    let attrs: &[syn::Attribute] = match item {
+        Item::Const(c) => &c.attrs,
+        Item::Static(s) => &s.attrs,
+        Item::Fn(f) => &f.attrs,
+        _ => bail!(
+            "'{where_}' is not a const, static or function; only those shapes inline into a \
+             generated parser"
+        ),
+    };
+    // A `#[cfg]` would need cargo feature resolution the port does not
+    // do, so taking the item unconditionally could silently port the
+    // wrong body.
+    if let Some(attr) = attrs.iter().find(|a| a.path().is_ident("cfg")) {
+        bail!(
+            "'{where_}' carries {} — cfg-gated helpers are not supported",
+            attr.to_token_stream()
+        );
+    }
+
+    match item {
+        Item::Const(c) => {
+            if !matches!(*c.expr, Expr::Lit(_)) {
+                bail!("'{where_}' is a const whose value is not a literal");
+            }
+        }
+        Item::Static(s) => {
+            if !matches!(*s.expr, Expr::Lit(_)) {
+                bail!("'{where_}' is a static whose value is not a literal");
+            }
+            if !matches!(s.mutability, syn::StaticMutability::None) {
+                bail!("'{where_}' is a mutable static");
+            }
+        }
+        Item::Fn(f) => {
+            if f.sig.asyncness.is_some() || !matches!(f.sig.safety, syn::Safety::Default) {
+                bail!("'{where_}' is an async fn or carries a safety qualifier");
+            }
+            if !f.sig.inputs.is_empty() {
+                bail!(
+                    "'{where_}' takes parameters; only nullary clap-builder helpers inline \
+                     (call-site arguments are not forwarded)"
+                );
+            }
+            if !f.sig.generics.params.is_empty() {
+                bail!("'{where_}' is generic");
+            }
+            let returns_arg = match &f.sig.output {
+                syn::ReturnType::Type(_, ty) => match ty.as_ref() {
+                    Type::Path(tp) => tp
+                        .path
+                        .segments
+                        .last()
+                        .is_some_and(|seg| seg.ident == "Arg" || seg.ident == "Command"),
+                    _ => false,
+                },
+                syn::ReturnType::Default => false,
+            };
+            if !returns_arg {
+                bail!("'{where_}' does not return a clap `Arg` or `Command`");
+            }
+            // Same rule as `uu_app()`: one tail expression, so no
+            // statement can ride along into the generated parser.
+            let only_tail_expr = matches!(f.block.stmts.as_slice(), [Stmt::Expr(_, None)]);
+            if !only_tail_expr {
+                bail!(
+                    "'{where_}' body is not a single tail expression; only a plain clap builder \
+                     chain inlines"
+                );
+            }
+        }
+        _ => unreachable!("item kind rejected above"),
+    }
+    Ok(())
+}
+
+/// Replace helper `use` items inside `mod options` with the definitions
+/// they imported, so `options::<NAME>` keeps resolving.
+fn splice_clap_helper_imports(
+    module: &mut ItemMod,
+    resolved: &ClapHelperItems,
+    consumed: &mut std::collections::BTreeSet<String>,
+) -> Result<()> {
+    let Some((_, items)) = &mut module.content else {
+        return Ok(());
+    };
+    let mut out: Vec<Item> = Vec::with_capacity(items.len());
+    for item in items.drain(..) {
+        match item {
+            Item::Mod(mut inner) => {
+                splice_clap_helper_imports(&mut inner, resolved, consumed)?;
+                out.push(Item::Mod(inner));
+            }
+            Item::Use(use_item) => {
+                let leaves = use_tree_paths(&use_item.tree);
+                let helper_leaves: Vec<&UseLeaf> = leaves
+                    .iter()
+                    .filter(|leaf| {
+                        let tail: &[String] = if path_starts_with(&leaf.path, "uucore") {
+                            &leaf.path[1..]
+                        } else {
+                            &leaf.path
+                        };
+                        tail.first()
+                            .is_some_and(|s| clap_helper_module(s).is_some())
+                    })
+                    .collect();
+                if helper_leaves.is_empty() {
+                    out.push(Item::Use(use_item));
+                    continue;
+                }
+                if helper_leaves.len() != leaves.len() {
+                    bail!(
+                        "`use` item in `mod options` mixes a uucore clap-helper path with other \
+                         imports; split it upstream-side before porting: {}",
+                        use_item.to_token_stream()
+                    );
+                }
+                for leaf in helper_leaves {
+                    let tail: &[String] = if path_starts_with(&leaf.path, "uucore") {
+                        &leaf.path[1..]
+                    } else {
+                        &leaf.path
+                    };
+                    // Inlining splices the definition in under its own
+                    // ident, so a binding that introduces a different name
+                    // would leave call sites pointing at nothing. Refuse
+                    // the port instead of emitting that.
+                    if leaf.binding != UseBinding::Plain {
+                        bail!(
+                            "`mod options` imports uucore clap helper '{}' with a {} binding; \
+                             only a plain `use path::ITEM;` inlines, because the definition is \
+                             spliced in under its own name",
+                            tail.join("::"),
+                            match leaf.binding {
+                                UseBinding::Renamed => "rename (`as`)",
+                                UseBinding::Glob => "glob (`*`)",
+                                UseBinding::Plain => unreachable!("plain handled above"),
+                            }
+                        );
+                    }
+                    // Bare `use uucore::<name>;`: the module itself goes
+                    // away once its items are inlined, so drop it.
+                    if tail.len() < 3 {
+                        continue;
+                    }
+                    let name = &tail[2];
+                    let Some(definition) = resolved.consts.get(name) else {
+                        bail!(
+                            "`mod options` imports 'uucore::{}' but it did not resolve to a \
+                             const or static, so it cannot be re-exported from `options`",
+                            tail.join("::")
+                        );
+                    };
+                    let mut definition = definition.clone();
+                    // Keep the re-export's visibility: uutils writes
+                    // `pub use`, and `uu_app()` reads `options::<NAME>`.
+                    set_item_visibility(&mut definition, use_item.vis.clone());
+                    consumed.insert(name.clone());
+                    out.push(definition);
+                }
+            }
+            other => out.push(other),
+        }
+    }
+    *items = out;
+    Ok(())
+}
+
+fn set_item_visibility(item: &mut Item, vis: syn::Visibility) {
+    match item {
+        Item::Const(c) => c.vis = vis,
+        Item::Static(s) => s.vis = vis,
+        Item::Fn(f) => f.vis = vis,
+        _ => {}
+    }
+}
+
+/// Rewrite `[uucore::]<name>::<submodule>::<item>` down to a bare
+/// `<item>`, matching where the inlined definitions land.
+struct ClapHelperPathFlattener;
+
+impl VisitMut for ClapHelperPathFlattener {
+    fn visit_path_mut(&mut self, path: &mut syn::Path) {
+        visit_mut::visit_path_mut(self, path);
+        let segs = path_segments(path);
+        let offset = usize::from(path_starts_with(&segs, "uucore"));
+        let tail = &segs[offset..];
+        // Exactly `<m>::<sub>::<item>`. A deeper path names something
+        // *inside* an inlinable item, which `resolve_clap_helpers`
+        // refuses; flattening it here would silently leave
+        // `<mid>::<item>`, a path nothing resolved.
+        if tail.len() == 3
+            && let Some(module) = clap_helper_module(&tail[0])
+            && tail[1] == module.submodule
+        {
+            let keep: Vec<syn::PathSegment> =
+                path.segments.iter().skip(offset + 2).cloned().collect();
+            path.leading_colon = None;
+            path.segments = keep.into_iter().collect();
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1131,6 +1678,313 @@ mod tests {
             fs::write(path, content).unwrap();
         }
         (tmp, uutils)
+    }
+
+    /// Upstream shares `--quoting-style` between utilities through
+    /// `uucore::quoting_style::parser`. Both halves have to inline: the
+    /// `Arg` builder referenced by path from `uu_app()`, and the option
+    /// key `mod options` re-exports.
+    #[test]
+    fn inlines_referenced_uucore_clap_helper() {
+        let (_tmp, uutils) = fixture(&[
+            (
+                "src/uu/ls/src/ls.rs",
+                r#"
+use uucore::quoting_style;
+
+pub mod options {
+    use uucore::quoting_style;
+
+    pub static ALL: &str = "all";
+    pub use quoting_style::parser::QUOTING_STYLE;
+}
+
+pub fn uu_app() -> clap::Command {
+    Command::new("ls")
+        .arg(Arg::new(options::ALL))
+        .arg(quoting_style::parser::clap_quoting_argument().overrides_with(QUOTING_STYLE))
+}
+"#,
+            ),
+            ("src/uu/ls/locales/en-US.ftl", ""),
+            (
+                "src/uucore/locales/en-US.ftl",
+                "help-set-quoting-style = Set quoting style\n",
+            ),
+            (
+                "src/uucore/src/lib/features/quoting_style/mod.rs",
+                r#"
+#[cfg(any(feature = "parser", feature = "parser-num"))]
+pub mod parser {
+    use clap::Arg;
+    use crate::translate;
+
+    pub const QUOTING_STYLE: &str = "quoting-style";
+
+    pub fn clap_quoting_argument() -> Arg {
+        Arg::new(QUOTING_STYLE)
+            .long(QUOTING_STYLE)
+            .help(translate!("help-set-quoting-style"))
+    }
+}
+"#,
+            ),
+        ]);
+
+        let body = run(&uutils, "ls", "poc").unwrap();
+        // No uucore reference survives, in any position.
+        assert!(!body.contains("uucore::quoting_style"), "got: {body}");
+        assert!(!body.contains("quoting_style::parser"), "got: {body}");
+        // The key keeps living in `options`, so `options::QUOTING_STYLE`
+        // and the `use options::*` glob both still resolve.
+        assert!(
+            body.contains("pub const QUOTING_STYLE: &str = \"quoting-style\";"),
+            "got: {body}"
+        );
+        // The builder is inlined and the call site flattened onto it,
+        // with the help text resolved from uucore's own message file.
+        assert!(
+            body.contains("pub fn clap_quoting_argument() -> Arg"),
+            "got: {body}"
+        );
+        assert!(
+            body.contains("::std::string::String::from(\"Set quoting style\")"),
+            "got: {body}"
+        );
+        assert!(
+            body.contains("clap_quoting_argument().overrides_with(QUOTING_STYLE)"),
+            "got: {body}"
+        );
+    }
+
+    /// Inlining splices a helper definition in under its own ident, so
+    /// an `as` rename would bind call sites to a name nothing defines.
+    /// That has to be a port error, not a compile error in generated
+    /// code.
+    #[test]
+    fn rejects_renamed_uucore_clap_helper_import() {
+        let (_tmp, uutils) = fixture(&[
+            (
+                "src/uu/ls/src/ls.rs",
+                r#"
+pub mod options {
+    use uucore::quoting_style;
+
+    pub static ALL: &str = "all";
+    pub use quoting_style::parser::QUOTING_STYLE as QS;
+}
+
+pub fn uu_app() -> clap::Command {
+    Command::new("ls").arg(Arg::new(options::ALL).overrides_with(QS))
+}
+"#,
+            ),
+            ("src/uu/ls/locales/en-US.ftl", ""),
+            ("src/uucore/locales/en-US.ftl", ""),
+            (
+                "src/uucore/src/lib/features/quoting_style/mod.rs",
+                r#"
+pub mod parser {
+    pub const QUOTING_STYLE: &str = "quoting-style";
+}
+"#,
+            ),
+        ]);
+
+        let err = run(&uutils, "ls", "poc").unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("rename (`as`)"), "got: {msg}");
+        assert!(msg.contains("QUOTING_STYLE"), "got: {msg}");
+    }
+
+    /// Same reasoning for a glob: it binds names the port never resolved.
+    #[test]
+    fn rejects_glob_uucore_clap_helper_import() {
+        let (_tmp, uutils) = fixture(&[
+            (
+                "src/uu/ls/src/ls.rs",
+                r#"
+pub mod options {
+    use uucore::quoting_style;
+
+    pub static ALL: &str = "all";
+    pub use quoting_style::parser::*;
+}
+
+pub fn uu_app() -> clap::Command {
+    Command::new("ls").arg(Arg::new(options::ALL))
+}
+"#,
+            ),
+            ("src/uu/ls/locales/en-US.ftl", ""),
+            ("src/uucore/locales/en-US.ftl", ""),
+            (
+                "src/uucore/src/lib/features/quoting_style/mod.rs",
+                r#"
+pub mod parser {
+    pub const QUOTING_STYLE: &str = "quoting-style";
+}
+"#,
+            ),
+        ]);
+
+        let err = run(&uutils, "ls", "poc").unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("glob (`*`)"), "got: {msg}");
+    }
+
+    /// A path reaching through a nested module inside the helper
+    /// submodule is refused by name. Flattening it would have left
+    /// `<mid>::<item>`, which nothing resolved.
+    #[test]
+    fn rejects_uucore_clap_helper_path_through_nested_module() {
+        let (_tmp, uutils) = fixture(&[
+            (
+                "src/uu/ls/src/ls.rs",
+                r#"
+mod options {
+    pub static ALL: &str = "all";
+}
+
+pub fn uu_app() -> clap::Command {
+    Command::new("ls")
+        .arg(uucore::quoting_style::parser::inner::clap_quoting_argument())
+}
+"#,
+            ),
+            ("src/uu/ls/locales/en-US.ftl", ""),
+            ("src/uucore/locales/en-US.ftl", ""),
+            (
+                "src/uucore/src/lib/features/quoting_style/mod.rs",
+                r#"
+pub mod parser {
+    pub mod inner {
+        pub fn clap_quoting_argument() -> clap::Arg {
+            clap::Arg::new("quoting-style")
+        }
+    }
+}
+"#,
+            ),
+        ]);
+
+        let err = run(&uutils, "ls", "poc").unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("not a const, static or function"),
+            "got: {msg}"
+        );
+        assert!(msg.contains("inner"), "got: {msg}");
+    }
+
+    /// TM-INF-025: the registry is an allowlist, so naming an
+    /// unregistered uucore module must not pull it in.
+    #[test]
+    fn unregistered_uucore_module_is_not_inlined() {
+        let (_tmp, uutils) = fixture(&[
+            (
+                "src/uu/cat/src/cat.rs",
+                r#"
+mod options {
+    pub static FILE: &str = "file";
+}
+
+pub fn uu_app() -> clap::Command {
+    Command::new("cat").arg(mischief::parser::evil_argument())
+}
+"#,
+            ),
+            ("src/uu/cat/locales/en-US.ftl", ""),
+            (
+                "src/uucore/src/lib/features/mischief/mod.rs",
+                "pub mod parser { pub fn evil_argument() -> clap::Arg { todo!() } }\n",
+            ),
+        ]);
+
+        let body = run(&uutils, "cat", "poc").unwrap();
+        // Left exactly as written — it surfaces as a compile error in
+        // bashkit rather than being vendored silently.
+        assert!(
+            body.contains("mischief::parser::evil_argument()"),
+            "got: {body}"
+        );
+        assert!(!body.contains("fn evil_argument"), "got: {body}");
+    }
+
+    /// A registered module is still only a doorway for the shapes the
+    /// port understands; a helper taking arguments would need call-site
+    /// forwarding that does not exist.
+    #[test]
+    fn rejects_uucore_clap_helper_with_parameters() {
+        let (_tmp, uutils) = fixture(&[
+            (
+                "src/uu/ls/src/ls.rs",
+                r#"
+mod options {
+    pub static ALL: &str = "all";
+}
+
+pub fn uu_app() -> clap::Command {
+    Command::new("ls")
+        .arg(uucore::quoting_style::parser::clap_quoting_argument("x"))
+}
+"#,
+            ),
+            ("src/uu/ls/locales/en-US.ftl", ""),
+            ("src/uucore/locales/en-US.ftl", ""),
+            (
+                "src/uucore/src/lib/features/quoting_style/mod.rs",
+                r#"
+pub mod parser {
+    pub fn clap_quoting_argument(name: &str) -> clap::Arg {
+        clap::Arg::new(name)
+    }
+}
+"#,
+            ),
+        ]);
+
+        let err = run(&uutils, "ls", "poc").unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("takes parameters"), "got: {msg}");
+    }
+
+    /// A helper whose body is more than a builder chain could smuggle
+    /// executable statements into the generated parser, same hazard the
+    /// `uu_app()` validator exists for.
+    #[test]
+    fn rejects_uucore_clap_helper_with_statements() {
+        let (_tmp, uutils) = fixture(&[
+            (
+                "src/uu/ls/src/ls.rs",
+                r#"
+mod options {
+    pub static ALL: &str = "all";
+}
+
+pub fn uu_app() -> clap::Command {
+    Command::new("ls").arg(uucore::quoting_style::parser::clap_quoting_argument())
+}
+"#,
+            ),
+            ("src/uu/ls/locales/en-US.ftl", ""),
+            ("src/uucore/locales/en-US.ftl", ""),
+            (
+                "src/uucore/src/lib/features/quoting_style/mod.rs",
+                r#"
+pub mod parser {
+    pub fn clap_quoting_argument() -> clap::Arg {
+        std::fs::write("coreutils-port-poc", b"owned").unwrap();
+        clap::Arg::new("quoting-style")
+    }
+}
+"#,
+            ),
+        ]);
+
+        let err = run(&uutils, "ls", "poc").unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("not a single tail expression"), "got: {msg}");
     }
 
     #[test]
