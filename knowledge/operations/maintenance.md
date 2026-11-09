@@ -53,6 +53,15 @@ documented safe-version pin; they must not justify weaker execution limits.
 - `cargo update` run after all version bumps to lock latest patch versions
 - No known CVEs in dependency tree
 - License and advisory checks pass (`deny.toml`)
+- Monty forks current with upstream: `just check-monty-upstream` (crates.io
+  `monty`/`monty-types` vs the fork base, OSV advisories for `monty`,
+  `monty-types`, PyPI `pydantic-monty`). cargo audit/deny and Dependabot miss
+  both because the fork crates are renamed. A newer release or an open
+  advisory means re-sync the forks per [Dependencies](dependencies.md#monty-forks),
+  or record a triaged advisory in the script's `ACKNOWLEDGED`. The release
+  half is why this is a maintenance item: the advisory half already runs
+  daily in `monty-upstream.yml`, so by the time a pass starts an open
+  advisory has normally surfaced on its own
 - Supply chain audit passes
 - Dependency tree analysis (`cargo tree --duplicates`, usage grep):
   - No unused/dead dependencies in workspace or crate Cargo.toml files

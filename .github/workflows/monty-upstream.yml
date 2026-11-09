@@ -1,15 +1,28 @@
-name: Monty Upstream Watch
+name: Monty Upstream Advisories
 
 # The embedded python3 runs on renamed forks of Monty (crates/bashkit-monty,
 # crates/bashkit-monty-types). cargo audit/deny and Dependabot match by crate
-# name, so upstream `monty` releases and advisories never reach the forks.
-# This job fails when upstream ships a newer stable release than the fork
-# base, or when OSV lists an advisory affecting it. A red run means: re-sync
-# the forks, or triage the advisory (ACKNOWLEDGED in the script).
-# See knowledge/operations/dependencies.md.
+# name, so an advisory filed against upstream `monty` can never reach the
+# forks through them. This job is the only automated thing that would, which
+# is why it stays on a daily schedule.
 #
-# Not a PR check: it reads live crates.io/OSV state, which changes without
-# any repository change, so it must not block unrelated PRs.
+# Advisories only (`--no-release`). The same script also checks whether
+# upstream shipped a newer stable release than the fork base, and that half
+# deliberately does NOT run here: it goes red the moment upstream releases and
+# stays red until a large fork re-sync lands, so it carried no signal on a
+# schedule. It is a maintenance checklist item instead, run as
+# `just check-monty-upstream` (the full check, both halves).
+# See knowledge/operations/maintenance.md and
+# knowledge/operations/dependencies.md.
+#
+# The script is invoked directly rather than through the `just` recipe,
+# because that recipe takes no arguments and so cannot pass `--no-release`.
+#
+# A red run here means: triage the advisory, then either re-sync the forks or
+# record it in the script's ACKNOWLEDGED map with a reason.
+#
+# Not a PR check: it reads live OSV state, which changes without any
+# repository change, so it must not block unrelated PRs.
 
 on:
   schedule:
@@ -22,7 +35,7 @@ permissions:
 
 jobs:
   watch:
-    name: Upstream releases and advisories
+    name: Upstream advisories
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -30,5 +43,5 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Check upstream Monty
-        run: python3 scripts/check_monty_upstream.py
+      - name: Check upstream Monty advisories
+        run: python3 scripts/check_monty_upstream.py --no-release

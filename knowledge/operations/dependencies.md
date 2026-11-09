@@ -78,8 +78,7 @@ the fork (upstream tests excepted), and on any dependency or feature in a fork
 `Cargo.toml` that differs from upstream's (the `monty-types` rename aside). Dependabot does not bump
 crates only the forks declare, so upstream security fixes arrive by re-sync:
 
-1. `scripts/check_monty_upstream.py` (daily `monty-upstream.yml`,
-   `just check-monty-upstream`) goes red when crates.io has a newer stable
+1. `scripts/check_monty_upstream.py` fails when crates.io has a newer stable
    `monty`/`monty-types` than the fork base, or when OSV (RustSec + GitHub
    advisories) lists a vulnerability for crates.io `monty`/`monty-types` or
    PyPI `pydantic-monty` at the base version. Name-matching tools (cargo
@@ -87,6 +86,20 @@ crates only the forks declare, so upstream security fixes arrive by re-sync:
    A triaged advisory that does not affect bashkit goes in the script's
    `ACKNOWLEDGED` with its reason. `cargo deny` still covers advisories
    against the fork's own dependency versions (the Audit job).
+
+   Its two halves run on different cadences, because they have opposite
+   noise profiles:
+
+   - **Advisories**, daily in `monty-upstream.yml` via `--no-release`. Green
+     by default, and nothing else in the toolchain can match an upstream
+     `monty` CVE by name, so a day is the right detection latency.
+   - **Release drift**, in every maintenance pass as the full
+     `just check-monty-upstream`. It goes red the moment upstream releases
+     and stays red until a re-sync lands (1.4.0 to 1.5.0 moved ~9k lines),
+     so on a schedule it reported a known state rather than news.
+
+   The workflow calls the script directly: the `just` recipe takes no
+   arguments and therefore cannot pass `--no-release`.
 2. For a fix: re-copy the new upstream release into both forks, re-apply every
    `bashkit fork:` edit (the drift check lists what moved), bump `VERSION` and
    the two hashes in `check_monty_fork.py`, and copy upstream's new
