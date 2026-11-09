@@ -84,6 +84,29 @@ security support. The npm `engines >=18` field is the native ABI compatibility
 floor, not a security-supported runtime list. Consumers supply Node themselves
 and must use a currently patched supported runtime. No Node executable is bundled.
 
+## Custom builtin cancellation
+
+Custom builtins (`customBuiltins`, `addBuiltin`) receive the same
+execution-scoped cancellation as host functions: `BuiltinContext.signal`
+aborts on `bash.cancel()`, on caller-`signal` abort, and on the instance
+execution timeout (mirrored onto the signal; a graceful return that lands
+as the mirror wins the race is coerced to exit 124). Helpers: `throwIfCancelled()`, `onCancel()`, and a
+signal-combining `ctx.fetch()`.
+On the Rust side the TSFN dispatch and promise await run under
+`ExecutionBudget`, so cancel/timeout aborts the wait instead of hanging.
+Result codes are standardized at the binding boundary: native
+`Cancelled` (programmatic Ctrl+C) reports exit 130, matching the
+interactive SIGINT contract; `Timeout`, wherever enforced (adapter-level
+budget or outer exec enforcement), reports exit 124. A callback that
+fails *because* of interruption reports the interruption, not exit 1;
+genuine callback failures stay exit 1. When a custom
+builtin consumed the cancellation, the wrapper clears the native cancelled
+flag so the next command runs normally; executions without custom builtins
+stay sticky until `clearCancel()` (tested contract in `basic.spec.ts`).
+Shell and VFS state is never discarded by cancellation. Sync
+`executeSync` does not wire a live signal yet (falls back to a
+never-aborted signal); use async `execute` for cancellable builtins.
+
 ## See also
 
 - [Python Package](python-package.md)

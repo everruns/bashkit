@@ -186,6 +186,25 @@ export interface BuiltinContext {
    * configuration.
    */
   readonly fs: FileSystem;
+  /**
+   * Execution-scoped cancellation signal.
+   *
+   * Aborted on `bash.cancel()`, caller `signal` abort, and execution timeout.
+   * Pass to `fetch` (or use `ctx.fetch`) so hanging I/O aborts promptly.
+   */
+  readonly signal: AbortSignal;
+  /** Throw an `AbortError` when `signal` is aborted. */
+  throwIfCancelled(): void;
+  /**
+   * Run `handler` on cancellation. Returns an unsubscribe function.
+   * The handler fires at most once per invocation.
+   */
+  onCancel(handler: () => void): () => void;
+  /**
+   * Cancellation-aware fetch: combines `signal` with `init.signal`
+   * so either source aborts the request.
+   */
+  fetch(input: any, init?: any): Promise<Response>;
 }
 
 /**
@@ -810,6 +829,73 @@ function registerCommands(
 }
 
 const liveSinkOwners = new WeakMap<object, Set<symbol>>();
+
+/** AbortControllers for in-flight executions, keyed by native handle. */
+const activeBuiltinControllers = new WeakMap<object, AbortController>();
+
+/** Never-aborted fallback for builtins invoked without an execution. */
+const NEVER_ABORTED_SIGNAL: AbortSignal = new AbortController().signal;
+
+/** Controllers for executions in which at least one custom builtin ran. */
+const builtinConsumedControllers = new WeakSet<AbortController>();
+
+/**
+ * Controllers whose execution-timeout mirror fired. The mirror observes the
+ * same deadline as the native timeout but can win the race; when it does and
+ * the builtin still resolved gracefully, the execution result is coerced to
+ * exit 124 below so the timeout is never masked as success.
+ */
+const timeoutFiredControllers = new WeakSet<AbortController>();
+
+/**
+ * Coerce a graceful exit 0 to 124 when this execution's timeout mirror fired.
+ *
+ * Every `executeNative` call on the async paths goes through here. Open-coding
+ * it is what let the paths drift: only `Bash.execute`'s no-caller-signal branch
+ * had the check, so the same race reported 124 there and 0 from `BashTool`, and
+ * from `Bash` itself whenever the caller also passed a `signal`.
+ */
+function applyTimeoutMirror(
+  inFlight: AbortController | undefined,
+  result: ExecResult,
+): ExecResult {
+  if (
+    result.exitCode === 0 &&
+    inFlight &&
+    timeoutFiredControllers.has(inFlight)
+  ) {
+    timeoutFiredControllers.delete(inFlight);
+    return { ...result, exitCode: 124 };
+  }
+  return result;
+}
+
+function markBuiltinSignalUsed(native: object): AbortSignal {
+  const controller = activeBuiltinControllers.get(native);
+  if (controller) builtinConsumedControllers.add(controller);
+  return controller?.signal ?? NEVER_ABORTED_SIGNAL;
+}
+
+function builtinCancelledError(): Error {
+  const error = new Error("Builtin execution cancelled");
+  error.name = "AbortError";
+  return error;
+}
+
+function combineWithBuiltinSignal(signal: AbortSignal, initSignal?: AbortSignal | null): AbortSignal {
+  if (!initSignal) return signal;
+  const anyCombine = (AbortSignal as unknown as { any?: (signals: AbortSignal[]) => AbortSignal }).any;
+  if (typeof anyCombine === "function") return anyCombine.call(AbortSignal, [signal, initSignal]);
+  if (signal.aborted) return signal;
+  if (initSignal.aborted) return initSignal;
+  const controller = new AbortController();
+  const onAbort = (): void => {
+    controller.abort();
+  };
+  signal.addEventListener("abort", onAbort, { once: true });
+  initSignal.addEventListener("abort", onAbort, { once: true });
+  return controller.signal;
+}
 function enterLiveOwner(owner: object): () => void {
   const active = liveSinkOwners.get(owner) ?? new Set<symbol>();
   const token = Symbol();
@@ -900,14 +986,38 @@ function executeNative(
  */
 function makeBuiltinDispatcher(
   callback: BuiltinCallback,
+  resolveSignal?: () => AbortSignal,
 ): (requestPair: [string, unknown]) => Promise<string> {
   return (requestPair: [string, unknown]) => {
     try {
       const [payload, fsHandle] = requestPair;
-      const parsed = JSON.parse(payload) as Omit<BuiltinContext, "fs">;
+      const parsed = JSON.parse(payload) as Omit<
+        BuiltinContext,
+        "fs" | "signal" | "throwIfCancelled" | "onCancel" | "fetch"
+      >;
+      const signal = resolveSignal?.() ?? NEVER_ABORTED_SIGNAL;
+      const throwIfCancelled = (): void => {
+        if (signal.aborted) throw builtinCancelledError();
+      };
+      const onCancel = (handler: () => void): (() => void) => {
+        if (signal.aborted) {
+          handler();
+          return () => {};
+        }
+        signal.addEventListener("abort", handler, { once: true });
+        return () => signal.removeEventListener("abort", handler);
+      };
       const ctx: BuiltinContext = {
         ...parsed,
         fs: FileSystem.fromNative(fsHandle),
+        signal,
+        throwIfCancelled,
+        onCancel,
+        fetch: (input: any, init?: any) =>
+          globalThis.fetch(input, {
+            ...init,
+            signal: combineWithBuiltinSignal(signal, init?.signal),
+          }),
       };
       return Promise.resolve(callback(ctx));
     } catch (e) {
@@ -931,7 +1041,48 @@ function registerCustomBuiltins(
 ): void {
   if (!builtins) return;
   for (const [name, cb] of Object.entries(builtins)) {
-    native.addBuiltin(name, makeBuiltinDispatcher(cb));
+    native.addBuiltin(
+      name,
+      makeBuiltinDispatcher(cb, () => markBuiltinSignalUsed(native)),
+    );
+  }
+}
+
+/**
+ * Run `fn` with an execution-scoped AbortController registered for `native`.
+ * Aborts on caller-signal abort; the controller is removed afterwards.
+ */
+async function withBuiltinCancellation<T>(
+  native: object,
+  callerSignal: AbortSignal | undefined,
+  timeoutMs: number | undefined,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const controller = new AbortController();
+  activeBuiltinControllers.set(native, controller);
+  const onCallerAbort = (): void => {
+    controller.abort();
+  };
+  if (callerSignal?.aborted) onCallerAbort();
+  else callerSignal?.addEventListener("abort", onCallerAbort, { once: true });
+  // Mirror the native execution timeout so hanging builtins using
+  // `ctx.signal`/`ctx.fetch` abort promptly. This never calls
+  // `native.cancel()`; the native timeout still produces exit 124.
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  if (timeoutMs !== undefined && timeoutMs > 0) {
+    timeout = setTimeout(() => {
+      timeoutFiredControllers.add(controller);
+      onCallerAbort();
+    }, timeoutMs);
+  }
+  try {
+    return await fn();
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
+    callerSignal?.removeEventListener("abort", onCallerAbort);
+    if (activeBuiltinControllers.get(native) === controller) {
+      activeBuiltinControllers.delete(native);
+    }
   }
 }
 
@@ -953,11 +1104,13 @@ function registerCustomBuiltins(
 export class Bash {
   private native: NativeBashType;
   private maxInputBytes: number;
+  private builtinTimeoutMs: number | undefined;
 
   constructor(options?: BashOptions) {
     const resolved = resolveFilesSync(options?.files);
     this.native = new NativeBash(toNativeOptions(options, resolved));
     this.maxInputBytes = options?.maxInputBytes ?? DEFAULT_MAX_INPUT_BYTES;
+    this.builtinTimeoutMs = options?.timeoutMs;
     this.native = configureRuntimeFunctions(this.native, options);
     registerCustomBuiltins(this.native, options?.customBuiltins);
     registerCommands(this.native, options?.commands);
@@ -982,6 +1135,7 @@ export class Bash {
     const instance = Object.create(Bash.prototype) as Bash;
     instance.native = new NativeBash(toNativeOptions(options, resolved));
     instance.maxInputBytes = options?.maxInputBytes ?? DEFAULT_MAX_INPUT_BYTES;
+    instance.builtinTimeoutMs = options?.timeoutMs;
     instance.native = configureRuntimeFunctions(instance.native, options);
     registerCustomBuiltins(instance.native, options?.customBuiltins);
     registerCommands(instance.native, options?.commands);
@@ -1008,7 +1162,11 @@ export class Bash {
    * Survives `reset()`.
    */
   addBuiltin(name: string, callback: BuiltinCallback): void {
-    this.native.addBuiltin(name, makeBuiltinDispatcher(callback));
+    const native = this.native;
+    native.addBuiltin(
+      name,
+      makeBuiltinDispatcher(callback, () => markBuiltinSignalUsed(native)),
+    );
   }
 
   /** Remove a previously registered custom builtin. */
@@ -1113,7 +1271,8 @@ export class Bash {
     if (inputLimitResult) {
       return inputLimitResult;
     }
-    return queueAsyncExecute(this, async () => {
+    return queueAsyncExecute(this, () =>
+      withBuiltinCancellation(this.native, signal, this.builtinTimeoutMs, async () => {
       if (signal?.aborted) {
         return cancelledExecResult();
       }
@@ -1124,12 +1283,16 @@ export class Bash {
           this.native.cancel();
         };
         signal.addEventListener("abort", onAbort, { once: true });
+        const inFlight = activeBuiltinControllers.get(this.native);
         try {
-          return await executeNative(
-            this.native,
-            commands,
-            options,
-            runtimeSession,
+          return applyTimeoutMirror(
+            inFlight,
+            await executeNative(
+              this.native,
+              commands,
+              options,
+              runtimeSession,
+            ),
           );
         } finally {
           signal.removeEventListener("abort", onAbort);
@@ -1138,8 +1301,32 @@ export class Bash {
           }
         }
       }
-      return executeNative(this.native, commands, options, runtimeSession);
-    }).finally(() => runtimeSession?.finish());
+      const inFlight = activeBuiltinControllers.get(this.native);
+      try {
+        return applyTimeoutMirror(
+          inFlight,
+          await executeNative(this.native, commands, options, runtimeSession),
+        );
+      } finally {
+        // `bash.cancel()` aborts the execution-scoped controller without a
+        // caller signal. When a custom builtin consumed that cancellation,
+        // clear the native cancelled flag so the next command on this
+        // instance runs normally; shell and VFS state is preserved.
+        // Executions without custom builtins stay sticky until clearCancel().
+        if (
+          inFlight?.signal.aborted &&
+          builtinConsumedControllers.has(inFlight)
+        ) {
+          builtinConsumedControllers.delete(inFlight);
+          try {
+            this.native.clearCancel();
+          } catch {
+            // Ignore: native may already be torn down.
+          }
+        }
+      }
+      }),
+    ).finally(() => runtimeSession?.finish());
   }
 
   /**
@@ -1197,6 +1384,11 @@ export class Bash {
    * Cancel the currently running execution.
    */
   cancel(): void {
+    try {
+      activeBuiltinControllers.get(this.native)?.abort();
+    } catch {
+      // Ignore: abort must never break cancel.
+    }
     this.native.cancel();
   }
 
@@ -1353,6 +1545,7 @@ export class Bash {
     instance.native = configureRuntimeFunctions(instance.native, options);
     registerCustomBuiltins(instance.native, options?.customBuiltins);
     instance.maxInputBytes = options?.maxInputBytes ?? DEFAULT_MAX_INPUT_BYTES;
+    instance.builtinTimeoutMs = options?.timeoutMs;
     return instance;
   }
 
@@ -1374,6 +1567,7 @@ export class Bash {
     instance.native = configureRuntimeFunctions(instance.native, options);
     registerCustomBuiltins(instance.native, options?.customBuiltins);
     instance.maxInputBytes = options?.maxInputBytes ?? DEFAULT_MAX_INPUT_BYTES;
+    instance.builtinTimeoutMs = options?.timeoutMs;
     return instance;
   }
 
@@ -1560,11 +1754,13 @@ export class Bash {
 export class BashTool {
   private native: NativeBashToolType;
   private maxInputBytes: number;
+  private builtinTimeoutMs: number | undefined;
 
   constructor(options?: BashOptions) {
     const resolved = resolveFilesSync(options?.files);
     this.native = new NativeBashTool(toNativeOptions(options, resolved));
     this.maxInputBytes = options?.maxInputBytes ?? DEFAULT_MAX_INPUT_BYTES;
+    this.builtinTimeoutMs = options?.timeoutMs;
     this.native = configureRuntimeFunctions(this.native, options);
     registerCustomBuiltins(this.native, options?.customBuiltins);
     registerCommands(this.native, options?.commands);
@@ -1578,6 +1774,7 @@ export class BashTool {
     const instance = Object.create(BashTool.prototype) as BashTool;
     instance.native = new NativeBashTool(toNativeOptions(options, resolved));
     instance.maxInputBytes = options?.maxInputBytes ?? DEFAULT_MAX_INPUT_BYTES;
+    instance.builtinTimeoutMs = options?.timeoutMs;
     instance.native = configureRuntimeFunctions(instance.native, options);
     registerCustomBuiltins(instance.native, options?.customBuiltins);
     registerCommands(instance.native, options?.commands);
@@ -1594,7 +1791,11 @@ export class BashTool {
 
   /** Register a JS callback as a custom builtin. See {@link Bash.addBuiltin}. */
   addBuiltin(name: string, callback: BuiltinCallback): void {
-    this.native.addBuiltin(name, makeBuiltinDispatcher(callback));
+    const native = this.native;
+    native.addBuiltin(
+      name,
+      makeBuiltinDispatcher(callback, () => markBuiltinSignalUsed(native)),
+    );
   }
 
   /** Remove a previously registered custom builtin. */
@@ -1670,7 +1871,8 @@ export class BashTool {
     if (inputLimitResult) {
       return inputLimitResult;
     }
-    return queueAsyncExecute(this, async () => {
+    return queueAsyncExecute(this, () =>
+      withBuiltinCancellation(this.native, signal, this.builtinTimeoutMs, async () => {
       if (signal?.aborted) {
         return cancelledExecResult();
       }
@@ -1681,12 +1883,16 @@ export class BashTool {
           this.native.cancel();
         };
         signal.addEventListener("abort", onAbort, { once: true });
+        const inFlight = activeBuiltinControllers.get(this.native);
         try {
-          return await executeNative(
-            this.native,
-            commands,
-            options,
-            runtimeSession,
+          return applyTimeoutMirror(
+            inFlight,
+            await executeNative(
+              this.native,
+              commands,
+              options,
+              runtimeSession,
+            ),
           );
         } finally {
           signal.removeEventListener("abort", onAbort);
@@ -1695,8 +1901,32 @@ export class BashTool {
           }
         }
       }
-      return executeNative(this.native, commands, options, runtimeSession);
-    }).finally(() => runtimeSession?.finish());
+      const inFlight = activeBuiltinControllers.get(this.native);
+      try {
+        return applyTimeoutMirror(
+          inFlight,
+          await executeNative(this.native, commands, options, runtimeSession),
+        );
+      } finally {
+        // `bash.cancel()` aborts the execution-scoped controller without a
+        // caller signal. When a custom builtin consumed that cancellation,
+        // clear the native cancelled flag so the next command on this
+        // instance runs normally; shell and VFS state is preserved.
+        // Executions without custom builtins stay sticky until clearCancel().
+        if (
+          inFlight?.signal.aborted &&
+          builtinConsumedControllers.has(inFlight)
+        ) {
+          builtinConsumedControllers.delete(inFlight);
+          try {
+            this.native.clearCancel();
+          } catch {
+            // Ignore: native may already be torn down.
+          }
+        }
+      }
+      }),
+    ).finally(() => runtimeSession?.finish());
   }
 
   /**
@@ -1754,6 +1984,11 @@ export class BashTool {
    * Cancel the currently running execution.
    */
   cancel(): void {
+    try {
+      activeBuiltinControllers.get(this.native)?.abort();
+    } catch {
+      // Ignore: abort must never break cancel.
+    }
     this.native.cancel();
   }
 
@@ -1840,6 +2075,7 @@ export class BashTool {
     registerCustomBuiltins(instance.native, options?.customBuiltins);
     registerCommands(instance.native, options?.commands);
     instance.maxInputBytes = options?.maxInputBytes ?? DEFAULT_MAX_INPUT_BYTES;
+    instance.builtinTimeoutMs = options?.timeoutMs;
     return instance;
   }
 
@@ -1862,6 +2098,7 @@ export class BashTool {
     registerCustomBuiltins(instance.native, options?.customBuiltins);
     registerCommands(instance.native, options?.commands);
     instance.maxInputBytes = options?.maxInputBytes ?? DEFAULT_MAX_INPUT_BYTES;
+    instance.builtinTimeoutMs = options?.timeoutMs;
     return instance;
   }
 

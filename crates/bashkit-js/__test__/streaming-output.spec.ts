@@ -181,7 +181,8 @@ for (const [label, create] of [
 
     shell.cancel();
     const result = shell.executeSync("echo after-error");
-    t.is(result.exitCode, 1);
+    // Explicit cancel observed by the next command: standard exit 130.
+    t.is(result.exitCode, 130);
     t.is(result.error, "execution cancelled");
     t.is(result.stdout, "");
   });
@@ -339,7 +340,8 @@ for (const [label, create] of [
 
     shell.cancel();
     const result = await shell.execute("echo after-error");
-    t.is(result.exitCode, 1);
+    // Explicit cancel observed by the next command: standard exit 130.
+    t.is(result.exitCode, 130);
     t.is(result.error, "execution cancelled");
     t.is(result.stdout, "");
   });
