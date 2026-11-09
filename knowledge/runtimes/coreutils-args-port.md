@@ -92,6 +92,9 @@ under the same rewrite rules as `uu_app()` itself:
   and the `use options::*` glob both keep resolving.
 - Clap-builder functions are emitted at file root and call sites are
   flattened from `[uucore::]<m>::<sub>::<item>` to bare `<item>`.
+  Flattening matches that shape **exactly**: a deeper path names
+  something inside an inlinable item, which resolution refuses, and
+  half-flattening it would leave a `<mid>::<item>` nothing resolved.
 - The bare `use uucore::<module>;` that brought the module into scope is
   dropped.
 - `translate!()` keys in helper bodies resolve against **uucore's**
@@ -117,8 +120,16 @@ these shapes inline, and anything else aborts the port:
 
 A `#[cfg]` on a candidate item also aborts: resolving it would need
 cargo feature evaluation the port does not do, so taking the body
-unconditionally could silently port the wrong one. Adding a module is
-one `CLAP_HELPER_MODULES` entry naming its source file and ftl sources.
+unconditionally could silently port the wrong one.
+
+Because a definition is spliced in under **its own** ident, only a plain
+`use path::ITEM;` can be inlined. A rename (`use path::ITEM as ALIAS;`)
+or a glob (`use path::*;`) binds call sites to a name the port never
+defines, so both abort rather than emit a generated parser that
+references an undefined ident.
+
+Adding a module is one `CLAP_HELPER_MODULES` entry naming its source
+file and ftl sources.
 
 ## Per-invocation cost: cache a *built* `Command`
 

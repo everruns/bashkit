@@ -1257,11 +1257,11 @@ fn collect_clap_helper_use_refs(module: &ItemMod, out: &mut ClapHelperRefs) {
         match item {
             Item::Mod(inner) => collect_clap_helper_use_refs(inner, out),
             Item::Use(use_item) => {
-                for path in use_tree_paths(&use_item.tree) {
-                    let tail: &[String] = if path_starts_with(&path, "uucore") {
-                        &path[1..]
+                for leaf in use_tree_paths(&use_item.tree) {
+                    let tail: &[String] = if path_starts_with(&leaf.path, "uucore") {
+                        &leaf.path[1..]
                     } else {
-                        &path
+                        &leaf.path
                     };
                     if tail.is_empty() {
                         continue;
@@ -1269,8 +1269,13 @@ fn collect_clap_helper_use_refs(module: &ItemMod, out: &mut ClapHelperRefs) {
                     if let Some(module) = clap_helper_module(&tail[0]) {
                         let entry = out.entry(module.name.to_string()).or_default();
                         // `use uucore::quoting_style;` names no item; it
-                        // only puts the module in scope.
-                        if tail.len() >= 3 && tail[1] == module.submodule {
+                        // only puts the module in scope. A renamed or glob
+                        // import is not recorded here: it is refused in
+                        // `splice_clap_helper_imports`, which can name it.
+                        if tail.len() >= 3
+                            && tail[1] == module.submodule
+                            && leaf.binding == UseBinding::Plain
+                        {
                             entry.insert(tail[2].clone());
                         }
                     }
@@ -1281,9 +1286,30 @@ fn collect_clap_helper_use_refs(module: &ItemMod, out: &mut ClapHelperRefs) {
     }
 }
 
-/// Flatten a `UseTree` into one path per leaf.
-fn use_tree_paths(tree: &UseTree) -> Vec<Vec<String>> {
-    fn walk(tree: &UseTree, prefix: &mut Vec<String>, out: &mut Vec<Vec<String>>) {
+/// One leaf of a `use` item: the path it names, plus how it binds.
+///
+/// The binding matters for clap-helper inlining. A renamed or glob
+/// import names the item under something other than its own ident, so
+/// splicing the definition in under its original name would leave call
+/// sites referring to a name nothing defines.
+struct UseLeaf {
+    path: Vec<String>,
+    binding: UseBinding,
+}
+
+#[derive(PartialEq)]
+enum UseBinding {
+    /// `use a::b::C;` — bound under its own ident.
+    Plain,
+    /// `use a::b::C as D;`
+    Renamed,
+    /// `use a::b::*;`
+    Glob,
+}
+
+/// Flatten a `UseTree` into one leaf per bound name.
+fn use_tree_paths(tree: &UseTree) -> Vec<UseLeaf> {
+    fn walk(tree: &UseTree, prefix: &mut Vec<String>, out: &mut Vec<UseLeaf>) {
         match tree {
             UseTree::Path(p) => {
                 prefix.push(p.ident.to_string());
@@ -1293,17 +1319,26 @@ fn use_tree_paths(tree: &UseTree) -> Vec<Vec<String>> {
             UseTree::Name(n) => {
                 let mut path = prefix.clone();
                 path.push(n.ident.to_string());
-                out.push(path);
+                out.push(UseLeaf {
+                    path,
+                    binding: UseBinding::Plain,
+                });
             }
             UseTree::Rename(r) => {
                 let mut path = prefix.clone();
                 path.push(r.ident.to_string());
-                out.push(path);
+                out.push(UseLeaf {
+                    path,
+                    binding: UseBinding::Renamed,
+                });
             }
             UseTree::Glob(_) => {
                 let mut path = prefix.clone();
                 path.push("*".into());
-                out.push(path);
+                out.push(UseLeaf {
+                    path,
+                    binding: UseBinding::Glob,
+                });
             }
             UseTree::Group(g) => {
                 for t in &g.items {
@@ -1411,6 +1446,10 @@ fn find_named_item<'a>(items: &'a [Item], name: &str) -> Option<&'a Item> {
         Item::Const(c) => c.ident == name,
         Item::Static(s) => s.ident == name,
         Item::Fn(f) => f.sig.ident == name,
+        // Matched so a path reaching *through* a nested module is
+        // rejected by `validate_clap_helper_item`, which names what it
+        // found, rather than reported as undefined.
+        Item::Mod(m) => m.ident == name,
         _ => false,
     })
 }
@@ -1514,36 +1553,53 @@ fn splice_clap_helper_imports(
                 out.push(Item::Mod(inner));
             }
             Item::Use(use_item) => {
-                let paths = use_tree_paths(&use_item.tree);
-                let helper_paths: Vec<&Vec<String>> = paths
+                let leaves = use_tree_paths(&use_item.tree);
+                let helper_leaves: Vec<&UseLeaf> = leaves
                     .iter()
-                    .filter(|p| {
-                        let tail: &[String] = if path_starts_with(p, "uucore") {
-                            &p[1..]
+                    .filter(|leaf| {
+                        let tail: &[String] = if path_starts_with(&leaf.path, "uucore") {
+                            &leaf.path[1..]
                         } else {
-                            p
+                            &leaf.path
                         };
                         tail.first()
                             .is_some_and(|s| clap_helper_module(s).is_some())
                     })
                     .collect();
-                if helper_paths.is_empty() {
+                if helper_leaves.is_empty() {
                     out.push(Item::Use(use_item));
                     continue;
                 }
-                if helper_paths.len() != paths.len() {
+                if helper_leaves.len() != leaves.len() {
                     bail!(
                         "`use` item in `mod options` mixes a uucore clap-helper path with other \
                          imports; split it upstream-side before porting: {}",
                         use_item.to_token_stream()
                     );
                 }
-                for path in helper_paths {
-                    let tail: &[String] = if path_starts_with(path, "uucore") {
-                        &path[1..]
+                for leaf in helper_leaves {
+                    let tail: &[String] = if path_starts_with(&leaf.path, "uucore") {
+                        &leaf.path[1..]
                     } else {
-                        path
+                        &leaf.path
                     };
+                    // Inlining splices the definition in under its own
+                    // ident, so a binding that introduces a different name
+                    // would leave call sites pointing at nothing. Refuse
+                    // the port instead of emitting that.
+                    if leaf.binding != UseBinding::Plain {
+                        bail!(
+                            "`mod options` imports uucore clap helper '{}' with a {} binding; \
+                             only a plain `use path::ITEM;` inlines, because the definition is \
+                             spliced in under its own name",
+                            tail.join("::"),
+                            match leaf.binding {
+                                UseBinding::Renamed => "rename (`as`)",
+                                UseBinding::Glob => "glob (`*`)",
+                                UseBinding::Plain => unreachable!("plain handled above"),
+                            }
+                        );
+                    }
                     // Bare `use uucore::<name>;`: the module itself goes
                     // away once its items are inlined, so drop it.
                     if tail.len() < 3 {
@@ -1591,7 +1647,11 @@ impl VisitMut for ClapHelperPathFlattener {
         let segs = path_segments(path);
         let offset = usize::from(path_starts_with(&segs, "uucore"));
         let tail = &segs[offset..];
-        if tail.len() >= 3
+        // Exactly `<m>::<sub>::<item>`. A deeper path names something
+        // *inside* an inlinable item, which `resolve_clap_helpers`
+        // refuses; flattening it here would silently leave
+        // `<mid>::<item>`, a path nothing resolved.
+        if tail.len() == 3
             && let Some(module) = clap_helper_module(&tail[0])
             && tail[1] == module.submodule
         {
@@ -1695,6 +1755,126 @@ pub mod parser {
             body.contains("clap_quoting_argument().overrides_with(QUOTING_STYLE)"),
             "got: {body}"
         );
+    }
+
+    /// Inlining splices a helper definition in under its own ident, so
+    /// an `as` rename would bind call sites to a name nothing defines.
+    /// That has to be a port error, not a compile error in generated
+    /// code.
+    #[test]
+    fn rejects_renamed_uucore_clap_helper_import() {
+        let (_tmp, uutils) = fixture(&[
+            (
+                "src/uu/ls/src/ls.rs",
+                r#"
+pub mod options {
+    use uucore::quoting_style;
+
+    pub static ALL: &str = "all";
+    pub use quoting_style::parser::QUOTING_STYLE as QS;
+}
+
+pub fn uu_app() -> clap::Command {
+    Command::new("ls").arg(Arg::new(options::ALL).overrides_with(QS))
+}
+"#,
+            ),
+            ("src/uu/ls/locales/en-US.ftl", ""),
+            ("src/uucore/locales/en-US.ftl", ""),
+            (
+                "src/uucore/src/lib/features/quoting_style/mod.rs",
+                r#"
+pub mod parser {
+    pub const QUOTING_STYLE: &str = "quoting-style";
+}
+"#,
+            ),
+        ]);
+
+        let err = run(&uutils, "ls", "poc").unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("rename (`as`)"), "got: {msg}");
+        assert!(msg.contains("QUOTING_STYLE"), "got: {msg}");
+    }
+
+    /// Same reasoning for a glob: it binds names the port never resolved.
+    #[test]
+    fn rejects_glob_uucore_clap_helper_import() {
+        let (_tmp, uutils) = fixture(&[
+            (
+                "src/uu/ls/src/ls.rs",
+                r#"
+pub mod options {
+    use uucore::quoting_style;
+
+    pub static ALL: &str = "all";
+    pub use quoting_style::parser::*;
+}
+
+pub fn uu_app() -> clap::Command {
+    Command::new("ls").arg(Arg::new(options::ALL))
+}
+"#,
+            ),
+            ("src/uu/ls/locales/en-US.ftl", ""),
+            ("src/uucore/locales/en-US.ftl", ""),
+            (
+                "src/uucore/src/lib/features/quoting_style/mod.rs",
+                r#"
+pub mod parser {
+    pub const QUOTING_STYLE: &str = "quoting-style";
+}
+"#,
+            ),
+        ]);
+
+        let err = run(&uutils, "ls", "poc").unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("glob (`*`)"), "got: {msg}");
+    }
+
+    /// A path reaching through a nested module inside the helper
+    /// submodule is refused by name. Flattening it would have left
+    /// `<mid>::<item>`, which nothing resolved.
+    #[test]
+    fn rejects_uucore_clap_helper_path_through_nested_module() {
+        let (_tmp, uutils) = fixture(&[
+            (
+                "src/uu/ls/src/ls.rs",
+                r#"
+mod options {
+    pub static ALL: &str = "all";
+}
+
+pub fn uu_app() -> clap::Command {
+    Command::new("ls")
+        .arg(uucore::quoting_style::parser::inner::clap_quoting_argument())
+}
+"#,
+            ),
+            ("src/uu/ls/locales/en-US.ftl", ""),
+            ("src/uucore/locales/en-US.ftl", ""),
+            (
+                "src/uucore/src/lib/features/quoting_style/mod.rs",
+                r#"
+pub mod parser {
+    pub mod inner {
+        pub fn clap_quoting_argument() -> clap::Arg {
+            clap::Arg::new("quoting-style")
+        }
+    }
+}
+"#,
+            ),
+        ]);
+
+        let err = run(&uutils, "ls", "poc").unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("not a const, static or function"),
+            "got: {msg}"
+        );
+        assert!(msg.contains("inner"), "got: {msg}");
     }
 
     /// TM-INF-025: the registry is an allowlist, so naming an
