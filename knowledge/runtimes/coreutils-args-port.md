@@ -26,6 +26,9 @@ codegen**, not by depending on `uu_*` crates at runtime.
 2. Reads `<uutils>/src/uu/<util>/locales/en-US.ftl` for help/about strings.
 3. Rewrites the `uu_app()` AST in place:
    - `translate!("k")` → `String::from("<value from ftl>")`
+   - `[uucore::]<m>::<sub>::<item>` for a registered uucore clap-helper
+     module → the item is inlined and the path flattened to bare
+     `<item>` (see "Shared uucore clap helpers" below)
    - `uucore::crate_version!()` → `env!("CARGO_PKG_VERSION")`
    - `uucore::format_usage(x)` → local `format_usage` shim
    - `.help_template(uucore::localized_help_template(...))` and
@@ -67,6 +70,55 @@ codegen**, not by depending on `uu_*` crates at runtime.
    (TM-INF-025).
 5. Emits `crates/bashkit/src/builtins/generated/<util>_args.rs` with a clean
    `pub fn <util>_command() -> clap::Command`.
+
+## Shared uucore clap helpers
+
+Upstream factors options that several utilities agree on into
+`uucore::<module>::<submodule>`. `--quoting-style` moved into
+`uucore::quoting_style::parser` in uutils 6a7d199ed, which took `ls`
+with it: `mod options` stopped defining `QUOTING_STYLE` and started
+re-exporting it (`pub use quoting_style::parser::QUOTING_STYLE;`), and
+the arg chain began calling
+`quoting_style::parser::clap_quoting_argument()`. Generated `ls_args.rs`
+then referenced `uucore`, which bashkit does not link, and the
+2026-11-09 drift run went red.
+
+Nothing in those helper bodies is uucore-specific — plain clap builders
+plus `translate!()` help text — so they are **inlined at port time**
+under the same rewrite rules as `uu_app()` itself:
+
+- `const`/`static` items are spliced in where `mod options` re-exported
+  them, keeping the re-export's visibility, so `options::QUOTING_STYLE`
+  and the `use options::*` glob both keep resolving.
+- Clap-builder functions are emitted at file root and call sites are
+  flattened from `[uucore::]<m>::<sub>::<item>` to bare `<item>`.
+- The bare `use uucore::<module>;` that brought the module into scope is
+  dropped.
+- `translate!()` keys in helper bodies resolve against **uucore's**
+  locales (`src/uucore/locales/en-US.ftl`), not the utility's.
+
+Inlining rather than vendoring the whole uucore module keeps the
+generated parser standalone and leaves the emitted arg equivalent to the
+hand-rolled one it replaced upstream. The only user-visible change from
+the `ls` move was the help text losing its trailing period, which is
+upstream's own wording.
+
+`CLAP_HELPER_MODULES` in `args.rs` is an **allowlist**, for the same
+reason `uu_app()` has a shape validator (TM-INF-025): third-party uutils
+source must not be able to pull arbitrary uucore code into a generated
+parser just by naming it. An unregistered path is left untouched and
+surfaces as a bashkit compile error. Within a registered module, only
+these shapes inline, and anything else aborts the port:
+
+- a `const`/`static` whose value is a literal, and not `static mut`;
+- a non-generic, nullary, non-`async` function with no safety qualifier,
+  returning clap `Arg` or `Command`, whose body is a single tail
+  expression.
+
+A `#[cfg]` on a candidate item also aborts: resolving it would need
+cargo feature evaluation the port does not do, so taking the body
+unconditionally could silently port the wrong one. Adding a module is
+one `CLAP_HELPER_MODULES` entry naming its source file and ftl sources.
 
 ## Per-invocation cost: cache a *built* `Command`
 
@@ -267,6 +319,25 @@ it); a non-literal key; and any construct whose rendering depends on
 runtime locale data, meaning selectors, plurals, and term references.
 The rewriter also rejects a `translate*!` invocation that no stanza opted
 in, so a fully-qualified call cannot side-step the import-level gate.
+
+Folding reaches **attribute token streams**, not only expressions.
+Upstream renders `uucore::format`'s `FormatError` through
+`#[derive(thiserror::Error)]` with the message in
+`#[error("{}", translate!("k"))]`, so an expression-only walk left every
+arm unfolded and the vendored module stopped compiling (the 2026-11-09
+drift run). Two consequences shape the implementation:
+
+- Attribute tokens are opaque to `syn`'s visitor, so the pass walks token
+  trees directly, recursing through delimited groups.
+- A macro argument there may use thiserror's `.0` field shorthand, which
+  tokenizes but is **not** valid expression syntax. Call arguments are
+  therefore carried as raw `TokenStream`, not `Expr`, and interpolated
+  verbatim so thiserror still binds them to the field. In expression
+  position the rendered tokens are parsed back to an `Expr`.
+
+Because only the macro's leaf ident is replaced, a *qualified*
+`uucore::translate!(…)` in attribute position is a hard error rather than
+an emitted `uucore :: "literal"`.
 
 `.ftl` parsing (flat `key = value` + indented continuations) and pattern
 splitting live in `crates/bashkit-coreutils-port/src/ftl.rs`, shared by

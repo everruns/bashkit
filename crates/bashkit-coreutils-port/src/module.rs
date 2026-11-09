@@ -29,7 +29,10 @@
 //!      next to the module's output dir and rewrite the use-path to
 //!      `crate::builtins::generated::<leaf>::…` so the vendored module
 //!      compiles from any nested depth.
-//! 5. Fold opted-in i18n macros (step 4's `fluent` action), then, if any
+//! 5. Fold opted-in i18n macros (step 4's `fluent` action), in
+//!    expression position and inside attribute token streams alike
+//!    (uutils renders `FormatError` through thiserror
+//!    `#[error("{}", translate!("k"))]` attributes), then, if any
 //!    `replace_with` / `inline` / `fluent` substitution is in scope, emit
 //!    the rewritten AST via `prettyplease::unparse` (use groups become
 //!    individual `use` items as a side effect). Otherwise the source is
@@ -43,10 +46,10 @@ use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
-use proc_macro2::Span;
-use quote::ToTokens;
+use proc_macro2::{Group, Span, TokenStream, TokenTree};
+use quote::{ToTokens, quote};
 use syn::visit_mut::{self, VisitMut};
-use syn::{Expr, ExprMacro, Ident, Item, ItemUse, LitStr, UseTree, parse_quote};
+use syn::{Expr, Ident, Item, ItemUse, LitStr, UseTree, parse_quote};
 
 use crate::ftl::{Segment, parse_ftl, parse_pattern};
 use crate::manifest::{Action, Manifest, Module, Substitution};
@@ -991,13 +994,16 @@ impl FluentResolver {
 }
 
 impl FluentPass<'_> {
-    /// Fold one macro invocation. Returns `None` for macros this
-    /// resolver does not own (left untouched), recording an error when a
-    /// known i18n macro is reached that no stanza opted in.
-    fn rewrite_macro(&mut self, m: &ExprMacro) -> Option<Expr> {
-        let leaf = m.mac.path.segments.last()?.ident.to_string();
-
-        if !self.resolver.macros.contains(&leaf) {
+    /// Fold one macro invocation, named by its leaf ident and argument
+    /// tokens. Returns `None` for macros this resolver does not own
+    /// (left untouched), recording an error when a known i18n macro is
+    /// reached that no stanza opted in.
+    ///
+    /// Yields raw tokens rather than an [`Expr`] because the same
+    /// folding serves attribute positions, where the rendered call can
+    /// carry thiserror's `.0` field shorthand (see [`Self::fold_tokens`]).
+    fn fold_invocation(&mut self, leaf: &str, tokens: TokenStream) -> Option<TokenStream> {
+        if !self.resolver.macros.contains(leaf) {
             // Catch fully-qualified `uucore::translate!(…)` calls that no
             // `use` item declared, so enforce_use_policy's import-level
             // gate cannot be side-stepped.
@@ -1010,7 +1016,7 @@ impl FluentPass<'_> {
             return None;
         }
 
-        let call: TranslateCall = match syn::parse2(m.mac.tokens.clone()) {
+        let call: TranslateCall = match syn::parse2(tokens) {
             Ok(c) => c,
             Err(e) => {
                 self.errors.push(format!(
@@ -1053,14 +1059,14 @@ impl FluentPass<'_> {
         key: &str,
         segments: &[Segment],
         call: &TranslateCall,
-    ) -> Result<Expr, String> {
+    ) -> Result<TokenStream, String> {
         // Two renderings of the same message: `plain` is the literal text
         // (correct for `String::from`), `fmt` escapes braces because
         // `format!` reads them as its own syntax. Escaping unconditionally
         // would turn a brace-bearing message with no slots into `{{`.
         let mut plain = String::new();
         let mut fmt = String::new();
-        let mut exprs: Vec<&Expr> = Vec::new();
+        let mut exprs: Vec<&TokenStream> = Vec::new();
         let mut used: BTreeSet<&str> = BTreeSet::new();
 
         for segment in segments {
@@ -1098,22 +1104,81 @@ impl FluentPass<'_> {
 
         if exprs.is_empty() {
             let lit = LitStr::new(&plain, Span::call_site());
-            Ok(parse_quote!(::std::string::String::from(#lit)))
+            Ok(quote!(::std::string::String::from(#lit)))
         } else {
             let lit = LitStr::new(&fmt, Span::call_site());
-            Ok(parse_quote!(::std::format!(#lit, #(#exprs),*)))
+            Ok(quote!(::std::format!(#lit, #(#exprs),*)))
         }
+    }
+
+    /// Fold every opted-in i18n macro invocation inside a raw token
+    /// stream, recursing through delimited groups.
+    ///
+    /// Attribute tokens are not expressions, so the [`VisitMut`] walk
+    /// never reaches them. uutils renders `FormatError` through
+    /// thiserror attributes (`#[error("{}", translate!("k"))]`), whose
+    /// arguments additionally use thiserror's `.0` field shorthand —
+    /// which tokenizes but is not valid expression syntax. Both reasons
+    /// rule out the expression path, so this walks token trees directly.
+    fn fold_tokens(&mut self, tokens: TokenStream) -> TokenStream {
+        let trees: Vec<TokenTree> = tokens.into_iter().collect();
+        let mut out = TokenStream::new();
+        let mut i = 0;
+        while i < trees.len() {
+            if let TokenTree::Ident(ident) = &trees[i]
+                && let Some(TokenTree::Punct(bang)) = trees.get(i + 1)
+                && bang.as_char() == '!'
+                && let Some(TokenTree::Group(group)) = trees.get(i + 2)
+            {
+                let leaf = ident.to_string();
+                if self.resolver.macros.contains(&leaf) || leaf.starts_with("translate") {
+                    // Replacing only the leaf of a qualified
+                    // `uucore::translate!(…)` would leave the `uucore ::`
+                    // prefix stranded in front of the folded literal, so
+                    // reject it instead of emitting broken code.
+                    let qualified =
+                        i > 0 && matches!(&trees[i - 1], TokenTree::Punct(p) if p.as_char() == ':');
+                    if qualified {
+                        self.errors.push(format!(
+                            "qualified '{leaf}!' invocation in attribute position is not \
+                             supported; import the macro and invoke it unqualified"
+                        ));
+                    } else if let Some(folded) = self.fold_invocation(&leaf, group.stream()) {
+                        out.extend(folded);
+                        i += 3;
+                        continue;
+                    }
+                }
+            }
+            match &trees[i] {
+                TokenTree::Group(group) => {
+                    let mut replacement =
+                        Group::new(group.delimiter(), self.fold_tokens(group.stream()));
+                    replacement.set_span(group.span());
+                    out.extend(std::iter::once(TokenTree::Group(replacement)));
+                }
+                other => out.extend(std::iter::once(other.clone())),
+            }
+            i += 1;
+        }
+        out
     }
 }
 
 /// `"key"` or `"key", "var" => expr, "var2" => expr2`.
+///
+/// Argument values are kept as raw tokens, not parsed as [`Expr`]:
+/// inside a thiserror `#[error(...)]` attribute uutils writes field
+/// shorthands such as `String::from_utf8_lossy(.0)`, which tokenize but
+/// are not valid expression syntax. Folding never inspects a value, it
+/// only interpolates it, so tokens are enough.
 struct TranslateCall {
     key: LitStr,
-    args: Vec<(String, Expr)>,
+    args: Vec<(String, TokenStream)>,
 }
 
 impl TranslateCall {
-    fn arg(&self, name: &str) -> Option<&Expr> {
+    fn arg(&self, name: &str) -> Option<&TokenStream> {
         self.args.iter().find(|(n, _)| n == name).map(|(_, e)| e)
     }
 }
@@ -1129,7 +1194,17 @@ impl syn::parse::Parse for TranslateCall {
             }
             let name: LitStr = input.parse()?;
             input.parse::<syn::Token![=>]>()?;
-            let value: Expr = input.parse()?;
+            // Take token trees up to the next top-level comma. A comma
+            // nested inside parentheses sits in a `Group`, so it is not
+            // seen here and cannot split an argument early.
+            let mut value = TokenStream::new();
+            while !input.is_empty() && !input.peek(syn::Token![,]) {
+                let tt: TokenTree = input.parse()?;
+                value.extend(std::iter::once(tt));
+            }
+            if value.is_empty() {
+                return Err(input.error("missing value after `=>`"));
+            }
             args.push((name.value(), value));
         }
         Ok(Self { key, args })
@@ -1142,9 +1217,26 @@ impl VisitMut for FluentPass<'_> {
         // a translate!) resolve before the outer one reads it.
         visit_mut::visit_expr_mut(self, node);
         if let Expr::Macro(m) = node
-            && let Some(replacement) = self.rewrite_macro(m)
+            && let Some(leaf) = m.mac.path.segments.last().map(|s| s.ident.to_string())
+            && let Some(folded) = self.fold_invocation(&leaf, m.mac.tokens.clone())
         {
-            *node = replacement;
+            match syn::parse2::<Expr>(folded.clone()) {
+                Ok(replacement) => *node = replacement,
+                // Only reachable if an argument used syntax that is
+                // valid in an attribute but not in an expression; the
+                // call site, not the renderer, is then at fault.
+                Err(e) => self.errors.push(format!(
+                    "'{leaf}!' in expression position folded to tokens that are not a valid \
+                     expression ({e}): {folded}"
+                )),
+            }
+        }
+    }
+
+    fn visit_attribute_mut(&mut self, node: &mut syn::Attribute) {
+        visit_mut::visit_attribute_mut(self, node);
+        if let syn::Meta::List(list) = &mut node.meta {
+            list.tokens = self.fold_tokens(list.tokens.clone());
         }
     }
 }
@@ -1326,6 +1418,149 @@ host_env = ["POSIXLY_CORRECT"]
         assert!(
             format!("{err:#}").contains("import it qualified"),
             "got: {err:#}"
+        );
+    }
+
+    /// Upstream renders `FormatError` through thiserror attributes, so
+    /// the i18n macros sit in attribute token streams rather than
+    /// expressions — including thiserror's `.0` field shorthand, which
+    /// tokenizes but is not valid expression syntax.
+    #[test]
+    fn fluent_folds_inside_thiserror_error_attributes() {
+        let (_tmp, uutils, manifest, out) = fixture(
+            r#"
+[[modules]]
+name = "demo"
+source = "lib/demo.rs"
+out = "demo.rs"
+
+[[modules.substitutions]]
+prefix = "crate::translate"
+action = "fluent"
+ftl_sources = ["locales/en-US.ftl"]
+
+[[modules.substitutions]]
+prefix = "crate::translate_text"
+action = "fluent"
+ftl_sources = ["locales/en-US.ftl"]
+"#,
+            &[
+                (
+                    "locales/en-US.ftl",
+                    "demo-plain = nothing left to read\ndemo-slot = bad spec { $spec } here\n",
+                ),
+                (
+                    "lib/demo.rs",
+                    r#"
+use crate::{translate, translate_text};
+
+#[derive(Debug, thiserror::Error)]
+pub enum DemoError {
+    #[error("{}", translate!("demo-plain"))]
+    Plain,
+    #[error("{}", translate_text!("demo-slot", "spec" => String::from_utf8_lossy(.0)))]
+    Slot(Vec<u8>),
+}
+"#,
+                ),
+            ],
+        );
+
+        let written = run(&uutils, "demo", "x", &manifest, &out).unwrap();
+        let body = fs::read_to_string(&written[0]).unwrap();
+        assert!(!body.contains("translate!"), "unfolded macro: {body}");
+        assert!(!body.contains("translate_text!"), "unfolded macro: {body}");
+        assert!(
+            body.contains(r#"::std::string::String::from("nothing left to read")"#),
+            "{body}"
+        );
+        // The `.0` shorthand has to survive verbatim for thiserror to
+        // bind it to the field.
+        assert!(
+            body.contains(r#"::std::format!("bad spec {} here", String::from_utf8_lossy(.0))"#),
+            "{body}"
+        );
+        // The import the stanza owns is still dropped.
+        assert!(!body.contains("use crate::translate"), "{body}");
+    }
+
+    /// Only the macro's leaf ident is replaced, so a qualified call in
+    /// attribute position would strand its `uucore ::` prefix in front
+    /// of the folded literal. Reject rather than emit broken code.
+    #[test]
+    fn qualified_fluent_macro_in_attribute_hard_errors() {
+        let (_tmp, uutils, manifest, out) = fixture(
+            r#"
+[[modules]]
+name = "demo"
+source = "lib/demo.rs"
+out = "demo.rs"
+
+[[modules.substitutions]]
+prefix = "crate::translate"
+action = "fluent"
+ftl_sources = ["locales/en-US.ftl"]
+"#,
+            &[
+                ("locales/en-US.ftl", "demo-plain = nope\n"),
+                (
+                    "lib/demo.rs",
+                    r#"
+#[derive(Debug, thiserror::Error)]
+pub enum DemoError {
+    #[error("{}", uucore::translate!("demo-plain"))]
+    Plain,
+}
+"#,
+                ),
+            ],
+        );
+
+        let err = run(&uutils, "demo", "x", &manifest, &out).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("qualified 'translate!' invocation in attribute position"),
+            "got: {msg}"
+        );
+    }
+
+    /// An i18n macro in attribute position that no stanza opted in has
+    /// to fail the port, exactly as in expression position — otherwise
+    /// the attribute path would be a hole in the Fluent boundary.
+    #[test]
+    fn unopted_fluent_macro_in_attribute_hard_errors() {
+        let (_tmp, uutils, manifest, out) = fixture(
+            r#"
+[[modules]]
+name = "demo"
+source = "lib/demo.rs"
+out = "demo.rs"
+
+[[modules.substitutions]]
+prefix = "crate::translate"
+action = "fluent"
+ftl_sources = ["locales/en-US.ftl"]
+"#,
+            &[
+                ("locales/en-US.ftl", "demo-plain = nope\n"),
+                (
+                    "lib/demo.rs",
+                    r#"
+#[derive(Debug, thiserror::Error)]
+pub enum DemoError {
+    #[error("{}", translate_text!("demo-plain", "x" => .0))]
+    Plain(String),
+}
+"#,
+                ),
+            ],
+        );
+
+        let err = run(&uutils, "demo", "x", &manifest, &out).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("translate_text!") && msg.contains("action 'fluent'"),
+            "got: {msg}"
         );
     }
 
