@@ -836,6 +836,20 @@ fn js_exec_result_from_error(err: impl ToString) -> ExecResult {
 fn js_exec_result_from_bash_result(result: bashkit::Result<RustExecResult>) -> ExecResult {
     match result {
         Ok(result) => js_exec_result_from_rust(result),
+        Err(bashkit::Error::Cancelled) => {
+            // Programmatic Ctrl+C (`bash.cancel()`): standard exit 130,
+            // matching the interactive SIGINT contract.
+            let mut result = js_exec_result_from_error(bashkit::Error::Cancelled);
+            result.exit_code = 130;
+            result
+        }
+        Err(err @ bashkit::Error::ResourceLimit(bashkit::LimitExceeded::Timeout(_))) => {
+            // Execution timeout, wherever enforced (adapter-level budget or
+            // outer exec enforcement): standard exit 124.
+            let mut result = js_exec_result_from_error(err);
+            result.exit_code = 124;
+            result
+        }
         Err(err) => js_exec_result_from_error(err),
     }
 }
@@ -3476,6 +3490,22 @@ type BuiltinTsfn = napi::threadsafe_function::ThreadsafeFunction<
 /// plus a native VFS handle (surfaced to user code as `ctx.fs`), and resolves
 /// with the stdout to emit. Exceptions/rejections surface as
 /// stderr + exit-code-1 (real-shell semantics).
+/// Map an [`ExecutionBudget`] interruption to a builtin result.
+///
+/// Timeouts surface as exit 124, matching the embedded runtimes and the
+/// documented `timeoutMs` contract. Cancellation propagates as an error so
+/// the native cancelled flag (and its sticky-until-`clearCancel` contract
+/// for executions without custom builtins) is preserved.
+fn map_budget_error(err: bashkit::Error) -> bashkit::Result<RustExecResult> {
+    match err {
+        bashkit::Error::Cancelled => Err(bashkit::Error::Cancelled),
+        other @ bashkit::Error::ResourceLimit(bashkit::LimitExceeded::Timeout(_)) => {
+            Ok(RustExecResult::err(format!("{}\n", other), 124))
+        }
+        other => Err(other),
+    }
+}
+
 struct JsCustomBuiltinAdapter {
     name: String,
     callback: Arc<BuiltinTsfn>,
@@ -3520,14 +3550,42 @@ impl Builtin for JsCustomBuiltinAdapter {
 
         // Two-step await: first call_async returns the `Promise<String>`
         // handle from JS, then awaiting the Promise resolves to its value.
-        let promise = match self.callback.call_async((request_str, fs_handle)).await {
-            Ok(p) => p,
-            Err(e) => return Ok(RustExecResult::err(format!("{}\n", e), 1)),
+        // Both steps run under the execution budget so `bash.cancel()` and
+        // execution timeouts abort the wait instead of hanging: timeouts
+        // surface as exit 124, cancellation propagates as an error.
+        let callback = self.callback.clone();
+        let dispatch = callback.call_async((request_str, fs_handle));
+        let promise = match ctx.run_budgeted(dispatch).await {
+            Ok(Ok(p)) => p,
+            Ok(Err(e)) => {
+                // A callback that fails *because* the execution was
+                // cancelled or timed out (the natural `onCancel` reject
+                // pattern) reports the interruption, not a builtin failure.
+                if let Err(budget_err) = ctx.run_budgeted(async {}).await {
+                    return map_budget_error(budget_err);
+                }
+                return Ok(RustExecResult::err(format!("{}\n", e), 1));
+            }
+            Err(e) => return map_budget_error(e),
         };
-        match promise.await {
-            Ok(stdout) => Ok(RustExecResult::ok(stdout)),
-            Err(e) => Ok(RustExecResult::err(format!("{}\n", e), 1)),
+        let output = match ctx.run_budgeted(promise).await {
+            Ok(Ok(stdout)) => RustExecResult::ok(stdout),
+            Ok(Err(e)) => {
+                // Same interruption check as the dispatch arm above; falls
+                // through to a builtin failure only when the budget is clear.
+                if let Err(budget_err) = ctx.run_budgeted(async {}).await {
+                    return map_budget_error(budget_err);
+                }
+                RustExecResult::err(format!("{}\n", e), 1)
+            }
+            Err(e) => return map_budget_error(e),
+        };
+        // Cancellation/timeout wins even when the JS callback resolves
+        // gracefully (e.g. it caught the AbortSignal and returned output).
+        if let Err(e) = ctx.run_budgeted(async {}).await {
+            return map_budget_error(e);
         }
+        Ok(output)
     }
 }
 

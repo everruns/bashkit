@@ -2893,7 +2893,37 @@ fn py_exec_result_from_error(err: impl ToString) -> ExecResult {
 fn py_exec_result_from_bash_result(result: bashkit::Result<RustExecResult>) -> ExecResult {
     match result {
         Ok(result) => py_exec_result_from_rust(result),
+        Err(bashkit::Error::Cancelled) => {
+            // Programmatic Ctrl+C (`Bash.cancel()`): standard exit 130,
+            // matching the interactive SIGINT contract.
+            let mut result = py_exec_result_from_error(bashkit::Error::Cancelled);
+            result.exit_code = 130;
+            result
+        }
+        Err(err @ bashkit::Error::ResourceLimit(bashkit::LimitExceeded::Timeout(_))) => {
+            // Execution timeout, wherever enforced (adapter-level budget or
+            // outer exec enforcement): standard exit 124.
+            let mut result = py_exec_result_from_error(err);
+            result.exit_code = 124;
+            result
+        }
         Err(err) => py_exec_result_from_error(err),
+    }
+}
+
+/// Map an execution-budget interruption from a custom-builtin callback.
+///
+/// Timeouts surface as exit 124, matching the embedded-runtime precedent.
+/// Cancellation propagates as an error so the native cancelled flag (and its
+/// sticky-until-`clear_cancel` contract) is preserved; the binding maps it to
+/// exit 130.
+fn map_py_budget_error(err: bashkit::Error) -> bashkit::Result<RustExecResult> {
+    match err {
+        bashkit::Error::Cancelled => Err(bashkit::Error::Cancelled),
+        other @ bashkit::Error::ResourceLimit(bashkit::LimitExceeded::Timeout(_)) => {
+            Ok(RustExecResult::err(format!("{}\n", other), 124))
+        }
+        other => Err(other),
     }
 }
 
@@ -2995,6 +3025,9 @@ struct PyBuiltinContext {
     cwd: String,
     #[pyo3(get)]
     fs: Py<PyFileSystem>,
+    /// Live handle on the surrounding execution budget for
+    /// [`is_cancelled`](#) / [`throw_if_cancelled`](#).
+    budget: Option<bashkit::ExecutionCapability<bashkit::ExecutionBudget>>,
 }
 
 #[pymethods]
@@ -3004,6 +3037,28 @@ impl PyBuiltinContext {
             "BuiltinContext(name={:?}, argv={:?}, stdin={:?}, cwd={:?})",
             self.name, self.argv, self.stdin, self.cwd
         )
+    }
+
+    /// Whether the surrounding execution has been cancelled or timed out.
+    ///
+    /// Poll this in long-running callbacks so `Bash.cancel()`, caller
+    /// cancellation, and execution timeouts abort promptly instead of
+    /// hanging the shell.
+    fn is_cancelled(&self) -> bool {
+        self.budget
+            .as_ref()
+            .and_then(|budget| budget.try_with(|budget| budget.check().is_err()).ok())
+            .unwrap_or(false)
+    }
+
+    /// Raise `asyncio.CancelledError` if the surrounding execution has been
+    /// cancelled or timed out.
+    fn throw_if_cancelled(&self, py: Python<'_>) -> PyResult<()> {
+        if self.is_cancelled() {
+            let cancelled = py.import("asyncio")?.call_method0("CancelledError")?;
+            return Err(pyo3::PyErr::from_value(cancelled));
+        }
+        Ok(())
     }
 }
 
@@ -3026,6 +3081,7 @@ fn make_py_builtin_context(
             env: ctx.env.clone(),
             cwd: ctx.cwd.to_string_lossy().into_owned(),
             fs,
+            budget: ctx.execution_budget(),
         },
     )
     .map_err(|e| e.to_string())
@@ -4111,33 +4167,45 @@ impl Builtin for PyCustomBuiltinAdapter {
         let callback_result = match builtin_arg {
             Ok(builtin_arg) if self.is_async => match session {
                 Some(session) => match session.try_with(Clone::clone) {
-                    Ok(callback_session) => session
-                        .run(call_python_callback_async(
+                    Ok(callback_session) => {
+                        let callback = session.run(call_python_callback_async(
                             callback_session,
                             &self.name,
                             &self.callback,
                             vec![builtin_arg],
-                        ))
-                        .await
-                        .unwrap_or_else(|error| Err(format!("{}: {error}", self.name))),
+                        ));
+                        match ctx.run_budgeted(callback).await {
+                            Ok(outcome) => outcome
+                                .unwrap_or_else(|error| Err(format!("{}: {error}", self.name))),
+                            Err(budget_err) => return map_py_budget_error(budget_err),
+                        }
+                    }
                     Err(error) => Err(format!("{}: {error}", self.name)),
                 },
                 None => Err(format!("{}: missing Python callback session", self.name)),
             },
             Ok(builtin_arg) => match session {
-                Some(session) => session
-                    .try_with(|session| {
-                        Python::attach(|py| {
-                            call_python_callback_sync(
-                                py,
-                                session.as_ref(),
-                                &self.name,
-                                &self.callback,
-                                vec![builtin_arg],
-                            )
-                        })
-                    })
-                    .unwrap_or_else(|error| Err(format!("{}: {error}", self.name))),
+                Some(session) => {
+                    let call = async {
+                        session
+                            .try_with(|session| {
+                                Python::attach(|py| {
+                                    call_python_callback_sync(
+                                        py,
+                                        session.as_ref(),
+                                        &self.name,
+                                        &self.callback,
+                                        vec![builtin_arg],
+                                    )
+                                })
+                            })
+                            .unwrap_or_else(|error| Err(format!("{}: {error}", self.name)))
+                    };
+                    match ctx.run_budgeted(call).await {
+                        Ok(result) => result,
+                        Err(budget_err) => return map_py_budget_error(budget_err),
+                    }
+                }
                 None => Err(format!("{}: missing Python callback session", self.name)),
             },
             Err(err) => Err(err),
@@ -4145,10 +4213,25 @@ impl Builtin for PyCustomBuiltinAdapter {
 
         Ok(match callback_result {
             Ok(result) => {
-                Python::attach(|py| extract_custom_builtin_callback_result(py, &self.name, &result))
-                    .unwrap_or_else(|msg| RustExecResult::err(msg, 1))
+                let output = Python::attach(|py| {
+                    extract_custom_builtin_callback_result(py, &self.name, &result)
+                })
+                .unwrap_or_else(|msg| RustExecResult::err(msg, 1));
+                // Cancellation/timeout wins even when the callback resolves
+                // gracefully after observing `is_cancelled()`.
+                if let Err(budget_err) = ctx.run_budgeted(async {}).await {
+                    return map_py_budget_error(budget_err);
+                }
+                output
             }
-            Err(msg) => RustExecResult::err(msg, 1),
+            Err(msg) => {
+                // A callback that fails *because* the execution was cancelled
+                // or timed out reports the interruption, not a builtin failure.
+                if let Err(budget_err) = ctx.run_budgeted(async {}).await {
+                    return map_py_budget_error(budget_err);
+                }
+                RustExecResult::err(msg, 1)
+            }
         })
     }
 }

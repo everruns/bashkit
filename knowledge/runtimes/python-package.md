@@ -442,6 +442,20 @@ genuine leak compounds across the churn iterations and still trips the check.
 `execute_sync()` are captured at call time and replayed inside each callback
 invocation regardless of mechanism.
 
+**Cancellation contract** (matches the JS `BuiltinContext.signal`):
+`BuiltinContext` also exposes `is_cancelled()` (live poll of the surrounding
+execution budget) and `throw_if_cancelled()` (raises
+`asyncio.CancelledError`). `Bash.cancel()`, caller cancellation, and the
+`timeout_seconds` deadline set the budget; cooperative callbacks observe it
+via polling. Both callback paths await under `ExecutionBudget`, so hangs
+abort instead of hanging the shell: timeouts report exit 124, a callback
+that fails *because* of interruption reports the interruption (not exit 1),
+and cancellation propagates as an error that the binding maps to exit 130
+while keeping the cancelled flag sticky until `clear_cancel()` — the next
+command after an explicit clear runs normally with shell/VFS state intact.
+Sync callbacks cannot be preempted mid-section (same as teardown); they must
+poll `is_cancelled()` to abort promptly.
+
 ## Optional Dependencies
 
 `bashkit[langchain]`, `bashkit[deepagents]`, `bashkit[pydantic-ai]`,
