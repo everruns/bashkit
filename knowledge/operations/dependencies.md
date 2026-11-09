@@ -78,8 +78,8 @@ the fork (upstream tests excepted), and on any dependency or feature in a fork
 `Cargo.toml` that differs from upstream's (the `monty-types` rename aside). Dependabot does not bump
 crates only the forks declare, so upstream security fixes arrive by re-sync:
 
-1. `scripts/check_monty_upstream.py` (daily `monty-upstream.yml`,
-   `just check-monty-upstream`) goes red when crates.io has a newer stable
+1. `scripts/check_monty_upstream.py` (`just check-monty-upstream`, run in
+   every maintenance pass, not CI) fails when crates.io has a newer stable
    `monty`/`monty-types` than the fork base, or when OSV (RustSec + GitHub
    advisories) lists a vulnerability for crates.io `monty`/`monty-types` or
    PyPI `pydantic-monty` at the base version. Name-matching tools (cargo
