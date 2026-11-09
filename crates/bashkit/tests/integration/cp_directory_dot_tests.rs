@@ -64,7 +64,34 @@ async fn cp_directory_dot_respects_no_clobber() {
 
 #[tokio::test]
 async fn cp_directory_dot_rejects_descendant_and_missing_source() {
-    check("mkdir -p source/inside destination; echo keep > source/item; cp -r source/. source/inside 2>/dev/null; echo $?; test ! -e source/inside/item && echo unchanged; cp -r missing/. destination 2>/dev/null; echo $?", "1\nunchanged\n1\n").await;
+    // Oracle-compared: the two refusal statuses only. Both hosts and bashkit
+    // agree a descendant copy and a missing source each exit 1.
+    check(
+        "mkdir -p source/inside destination; echo keep > source/item; \
+         cp -r source/. source/inside 2>/dev/null; echo $?; \
+         cp -r missing/. destination 2>/dev/null; echo $?",
+        "1\n1\n",
+    )
+    .await;
+
+    // bashkit refuses a descendant copy atomically: nothing under `source/`
+    // is copied in. Asserted against bashkit only, never the host, because
+    // what a host `cp` leaves behind after refusing is implementation-defined
+    // and not stable even for one version. GNU coreutils 9.4 copies no
+    // entries but does create `source/inside/inside`; CI produced a partial
+    // copy (`source/inside/item` present) for this very script on one runner
+    // and not on another, for the same commit, which is what made comparing
+    // this probe against the oracle flaky.
+    let refusal = Bash::new()
+        .exec(
+            "mkdir -p source/inside; echo keep > source/item; \
+             cp -r source/. source/inside 2>/dev/null; \
+             test ! -e source/inside/item && echo unchanged",
+        )
+        .await
+        .unwrap();
+    assert_eq!(refusal.exit_code, 0, "{}", refusal.stderr);
+    assert_eq!(refusal.stdout, "unchanged\n", "{}", refusal.stderr);
 
     // Host cp diagnostics vary (GNU/BSD); compare only status/layout above.
     let result = Bash::new()
