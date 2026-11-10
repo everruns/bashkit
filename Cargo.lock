@@ -2169,9 +2169,9 @@ checksum = "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223"
 
 [[package]]
 name = "fetchkit"
-version = "0.7.1"
+version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8256b05aa0fc9f4b989f17665578917c580103f36a2af81b20e4b9c2f195d281"
+checksum = "44dad6aca1684b78cd1c27e4d5d767b636a05ba0c7b113503db150c01f1ef970"
 dependencies = [
  "async-trait",
  "bytes",
@@ -2195,9 +2195,9 @@ dependencies = [
 
 [[package]]
 name = "fetchkit-cli"
-version = "0.7.1"
+version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5c4073e4fa53582027dd32b32f045e33508960fa3bb6b24d97de817ec560815b"
+checksum = "7825c9cf5fbf9e4fe0e0c645c573cb28ecdb4efb71ba0fc0068d9ff7f462b284"
 dependencies = [
  "async-trait",
  "clap",
