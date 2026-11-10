@@ -456,8 +456,6 @@ mod network;
 /// Parser module - exposed for fuzzing and testing
 pub mod parser;
 mod profile;
-#[cfg(feature = "python")]
-mod python_meter;
 #[cfg(any(feature = "python", feature = "typescript"))]
 mod runtime_call;
 #[cfg(any(feature = "python", feature = "typescript"))]
@@ -472,6 +470,10 @@ pub mod terminal;
 /// invariants enforced (TM-INF-013, TM-INF-016, TM-INF-022).
 #[doc(hidden)]
 pub mod testing;
+#[cfg(any(feature = "python", feature = "typescript"))]
+mod vm_meter;
+#[cfg(feature = "typescript")]
+mod zapcode_guard;
 /// Clock and timer that match the interpreter's target.
 ///
 /// Native targets use tokio's clock (it follows paused/advanced test time),
@@ -576,13 +578,13 @@ pub use builtins::ssh::{SshClient, SshHandler, SshOutput, SshTarget};
 
 #[cfg(feature = "python")]
 pub use builtins::{Python, PythonExternalFnHandler, PythonExternalFns, PythonLimits};
-#[cfg(feature = "python")]
-pub use python_meter::MeteredAllocator;
+#[cfg(any(feature = "python", feature = "typescript"))]
+pub use vm_meter::MeteredAllocator;
 
-// Monty python3 fails closed without the metered allocator.
-#[cfg(all(test, feature = "python"))]
+// Monty python3 and ZapCode ts fail closed without the metered allocator.
+#[cfg(all(test, any(feature = "python", feature = "typescript")))]
 #[global_allocator]
-static TEST_ALLOC: python_meter::MeteredAllocator = python_meter::MeteredAllocator;
+static TEST_ALLOC: vm_meter::MeteredAllocator = vm_meter::MeteredAllocator;
 
 // Shared resource-limit core for embedded language VMs (Python, TypeScript).
 #[cfg(any(feature = "python", feature = "typescript", feature = "cpython"))]

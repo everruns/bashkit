@@ -1,0 +1,57 @@
+[
+ {
+  "file": "vm/builtins.rs",
+  "insert": "                // bashkit fork: cap like `repeat`; unbounded take() aborted the host.\n                if target_len > 10_000_000 { return Err(ZapcodeError::AllocationLimitExceeded); }\n                crate::zapcode_guard::reserve(target_len)?;\n",
+  "count": 2
+ },
+ {
+  "file": "sandbox.rs",
+  "insert": "        // bashkit fork: per-VM heap limit; upstream never read memory_limit_bytes.\n        if crate::zapcode_guard::over_limit() { return Err(crate::zapcode_guard::limit_error()); }\n",
+  "count": 1
+ },
+ {
+  "file": "value.rs",
+  "insert": "                // bashkit fork: size shared-string arrays before building their text.\n                if !crate::zapcode_guard::fits_js_string(arr) { return String::new(); }\n                let _sizing = crate::zapcode_guard::SizingScope::enter();\n",
+  "count": 1
+ },
+ {
+  "file": "vm/builtins.rs",
+  "insert": "            // bashkit fork: size the JSON text before building it.\n            crate::zapcode_guard::reserve_json(val)?;\n",
+  "count": 1
+ },
+ {
+  "file": "vm/builtins.rs",
+  "insert": "            // bashkit fork: the 10 MB cap can exceed a tighter per-run limit.\n            crate::zapcode_guard::reserve(result_len)?;\n",
+  "count": 1
+ },
+ {
+  "file": "vm/builtins.rs",
+  "insert": "            // bashkit fork: one new value per part.\n            crate::zapcode_guard::reserve_values(if separator.is_empty() { s.len() } else { s.matches(&*separator).count() + 1 })?;\n",
+  "count": 1
+ },
+ {
+  "file": "vm/builtins.rs",
+  "insert": "            // bashkit fork: a large replacement multiplies per match.\n            crate::zapcode_guard::reserve_replace(s, &search, &replacement, false)?;\n",
+  "count": 1
+ },
+ {
+  "file": "vm/builtins.rs",
+  "insert": "            // bashkit fork: a large replacement multiplies per match.\n            crate::zapcode_guard::reserve_replace(s, &search, &replacement, true)?;\n",
+  "count": 1
+ },
+ {
+  "file": "vm/builtins.rs",
+  "insert": "            // bashkit fork: arguments may share one large string many times.\n            crate::zapcode_guard::reserve_join(args, \"\")?;\n",
+  "count": 1
+ },
+ {
+  "file": "vm/builtins.rs",
+  "insert": "            // bashkit fork: elements may share one large string; size before joining.\n            crate::zapcode_guard::reserve_join(arr, &sep)?;\n",
+  "count": 1
+ },
+ {
+  "file": "vm/builtins.rs",
+  "insert": "            // bashkit fork: spread arguments may share one large string.\n            crate::zapcode_guard::reserve_join(args, \" \")?;\n",
+  "count": 1
+ }
+]

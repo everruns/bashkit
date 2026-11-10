@@ -155,14 +155,15 @@ for the full threat analysis.
 - **Code injection via bash variable expansion**: variables expand before
   reaching the builtin, by-design consistent with all builtins. Use single
   quotes to prevent expansion.
-- **Resource exhaustion**: ZapCode enforces independent time/memory/stack caps
-  even if shell limits are generous.
+- **Resource exhaustion**: time, stack and allocation-count caps apply even if
+  shell limits are generous. Memory is enforced by Bashkit, not ZapCode (see
+  [Memory limit](#memory-limit)).
 - **Sandbox escape via filesystem**: no direct FS access; bridged functions go
   through the VFS (`/etc/passwd` reads VFS, not host).
 - **Sandbox escape via eval/import**: `eval()`, `Function()`, `import`,
   `require` blocked at the language level (not implemented).
-- **DoS via large output**: console.log output captured in memory; ZapCode
-  memory limit bounds it.
+- **DoS via large output**: console.log output captured in memory; the memory
+  limit bounds it.
 
 ### Error Handling
 
@@ -198,6 +199,54 @@ a hint to `help()` and `system_prompt()`:
 > File I/O via readFile()/writeFile() async functions. No npm/import/require.
 > No HTTP/network. No eval().
 
+### Memory limit
+
+Decision (2026-11-10, TM-TS-026): ZapCode 1.5.1 stores `memory_limit_bytes` but
+never reads it, and a failed Rust allocation aborts the process with every
+tenant. Bashkit enforces `max_memory` itself with the meter Monty uses
+(`crate::vm_meter`, charged by `MeteredAllocator`):
+
+- Each `ts` run gets its own `VmMeter`. Every ZapCode step (start, each resume
+  after an external call, formatting the result value) runs inside a
+  `VmWindow` for it, on the same thread, so only that run's allocations count.
+- Every instruction (`check_time`) stops the run with `memory limit exceeded`
+  once live heap passes the limit. That catches gradual growth: doubling a
+  string with `+` or a template literal, `concat`, spread, `push` loops.
+- Strings are shared `Arc<str>`, so `[s, s, s]` costs pointers but `join`,
+  array `toString`, `JSON.stringify`, `''.concat(...)` and `console.log(...)`
+  produce full copies. `src/zapcode_guard.rs` sizes those outputs before
+  allocating (the walk stops once past the remaining budget) and refuses.
+  `repeat`, `split`, `replace`/`replaceAll` and `padStart`/`padEnd` reserve
+  their computed size the same way. Refusal is sticky, so a caller that cannot
+  return an error (array `toString`) returns an empty string and the next
+  instruction stops the run.
+- Without `MeteredAllocator` as the global allocator the meter would read
+  zero, so native `ts` fails closed with an error naming the allocator. Every
+  bashkit binary, binding, example and test harness that enables
+  `typescript` installs it. On wasm32 the check is skipped (no probe), and
+  bashkit-wasm installs the allocator for its `typescript` feature.
+
+Not metered: memory allocated by the host between steps (VFS bridging, the
+external-function callbacks), which is bounded by Bashkit's own limits.
+
+### Wall-clock limit and stress
+
+Decision (2026-11-10, TM-TS-027): ZapCode restarts its time tracker at every
+resume, so `max_duration` alone bounded one VM step, not the run. The host-call
+loop in `typescript.rs` checks a wall-clock deadline (run start plus
+`max_duration`) before every host call, caps the call itself at the remaining
+time, and yields to the executor, so caller-side timeouts can cancel a run and
+co-tenants on the worker thread keep running. A single VM step can still run
+up to `max_duration`, so a run ends within about twice the limit.
+
+`tests/integration/ts_tenant_stress_tests.rs` mixes hostile `ts` tenants
+(memory doubling, shared-string amplification, spin, recursion, abandoned
+calls, huge single allocations) with good ones on shared worker threads; each
+must hit only its own limit. It runs 3 rounds on every PR;
+`BASHKIT_STRESS_ROUNDS` sets a longer soak. Each host call snapshots the VM
+heap, so a held 8 MiB string costs about 3x that during the call and counts
+against `max_memory`.
+
 ### Vendored source
 
 Decision (2026-11-10): every target builds the in-tree copy of ZapCode 1.5.1 in
@@ -206,9 +255,11 @@ longer a dependency. Two reasons:
 
 1. **Resource-limit fixes.** Upstream allocates unchecked in places, and an
    allocation failure aborts the whole process (all tenants). Bashkit carries
-   those fixes as `bashkit fork:` edits. Current: `padStart`/`padEnd` reject a
-   target length above 10,000,000 with `AllocationLimitExceeded`, the same cap
-   upstream applies to `repeat` (TM-TS-025, security audit run-1 F5).
+   those fixes as `bashkit fork:` edits, listed in `fork-edits.json`. Current:
+   `padStart`/`padEnd` reject a target length above 10,000,000 with
+   `AllocationLimitExceeded`, the same cap upstream applies to `repeat`
+   (TM-TS-025, security audit run-1 F5), and the memory-limit hooks in
+   [Memory limit](#memory-limit) (TM-TS-026).
 2. **Browser clocks.** ZapCode uses std Instant in its resource tracker and
    Instant/SystemTime in tracing, which panic on wasm32-unknown-unknown. The
    copy reads Bashkit's clock shim (`crate::time`), which is std::time on

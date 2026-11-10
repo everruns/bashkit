@@ -2206,7 +2206,7 @@ TypeScript execution requires two explicit opt-in steps, matching the Python bui
 | ID | Threat | Severity | Mitigation | Test |
 |----|--------|----------|------------|------|
 | TM-TS-001 | Infinite loop via `while (true) {}` | High | ZapCode time limit (default 30s) | `threat_ts_infinite_loop` |
-| TM-TS-002 | Memory exhaustion via large allocation | High | ZapCode max_memory (64MB) + max_allocations (1M) | `threat_ts_memory_exhaustion` |
+| TM-TS-002 | Memory exhaustion via large allocation | High | Bashkit-enforced max_memory (64MB, TM-TS-026) + ZapCode max_allocations (1M) | `threat_ts_memory_exhaustion` |
 | TM-TS-003 | Stack overflow via deep recursion | High | ZapCode max_stack_depth (512) | `threat_ts_stack_overflow` |
 | TM-TS-004 | Allocation bomb (many small objects) | High | ZapCode max_allocations (1M) | `threat_ts_allocation_bomb` |
 | TM-TS-005 | Real filesystem access via VFS | Critical | VFS bridge reads only from Bashkit VFS, not host | `threat_ts_vfs_no_real_fs` |
@@ -2230,6 +2230,8 @@ TypeScript execution requires two explicit opt-in steps, matching the Python bui
 | TM-TS-023 | Shebang line injection | Low | Shebang stripped safely | `threat_ts_shebang_stripped` |
 | TM-TS-024 | Deeply nested source overflows the native stack in ZapCode's parser/compiler and aborts the host process | Critical | Conservative nesting estimate rejects depth > 1000 before ZapCode; parse/compile run on a 128 MiB-stack thread (4x debug margin) | `deeply_nested_source_fails_cleanly`, `deep_nesting_at_the_limit_does_not_overflow`, `deep_nesting_past_the_limit_is_rejected` |
 | TM-TS-025 | `'a'.padStart(2**40)` / `padEnd` asks the allocator for ~1 TiB and aborts the host process (all tenants) | High | Vendored ZapCode `bashkit fork:` edit caps the target length at 10,000,000 (same cap as `repeat`) and fails the run with `AllocationLimitExceeded` | `threat_ts_pad_huge_length_fails_cleanly` |
+| TM-TS-026 | Script grows memory past `max_memory` (doubling strings/arrays, or joining/stringifying/printing an array that shares one big string many times) and the failed allocation aborts the host process (all tenants) | Critical | ZapCode 1.5.1 never read `memory_limit_bytes`. Each run gets a per-VM `vm_meter` (charged by `MeteredAllocator`); every instruction stops the run once live heap passes `max_memory`, and amplifying operations (`join`, array `toString`, `JSON.stringify`, `concat`, `console.log`, `repeat`, `split`, `replace`, `padStart`) size their output first and refuse. ts fails closed when `MeteredAllocator` is not the global allocator | `threat_ts_memory_doubling_fails_cleanly`, `threat_ts_shared_string_amplification_fails_cleanly`, `threat_ts_memory_limit_is_per_run`, `ts_tenant_stress_tests::*` |
+| TM-TS-027 | Host-call loop outruns the time limit / starves the worker thread | High | ZapCode restarts its clock at every resume, so `max_duration` bounded one VM step and `while (true) { await writeFile(...) }` ran until the shell timeout (30 s under a 500 ms limit). The host-call loop checks the wall-clock deadline at every call, caps each host callback at the remaining time, and yields to the executor there | `ts_tenant_stress_tests::ts_host_call_loops_stop_at_the_wall_clock_limit`, `ts_tenant_stress_tests::ts_abandoned_calls_do_not_poison_the_worker_threads` |
 
 ### Blocked Language Features
 

@@ -9,6 +9,10 @@
 
 use bashkit::Bash;
 
+// ts memory limits need the metered allocator (see bashkit::MeteredAllocator).
+#[global_allocator]
+static ALLOC: bashkit::MeteredAllocator = bashkit::MeteredAllocator;
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     println!("=== Bashkit TypeScript Integration ===\n");

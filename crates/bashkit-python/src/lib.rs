@@ -35,7 +35,7 @@ use bashkit::{
 };
 use bashkit_scripted_tool::{ScriptedTool as RustScriptedTool, ToolArgs, ToolDef};
 
-// Monty python3 charges each VM for its own allocations through this
+// Monty python3 and ZapCode ts charge each VM for its own allocations through this
 // allocator (see bashkit::MeteredAllocator). In a cdylib it only governs this
 // library's Rust allocations, never the host runtime's allocator.
 #[global_allocator]

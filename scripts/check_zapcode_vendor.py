@@ -4,8 +4,9 @@
 Allowed differences, each reversed before hashing:
 - namespace: `crate::` -> `crate::zapcode_vendor::`, lib.rs -> mod.rs
 - platform clock: sandbox.rs/trace.rs read `crate::time::` (Bashkit's shim)
-- `bashkit fork:` edits listed in FORK_EDITS (resource-limit fixes upstream
-  has not shipped). Every marker in the tree must be listed here.
+- `bashkit fork:` insertions listed in zapcode_vendor/fork-edits.json
+  (resource-limit fixes upstream has not shipped). Every marker in the tree
+  must be listed there.
 """
 import hashlib
 import json
@@ -13,12 +14,11 @@ from pathlib import Path
 
 root = Path(__file__).resolve().parents[1] / "crates/bashkit/src/zapcode_vendor"
 
-PAD_CAP = (
-    "                // bashkit fork: cap like `repeat`; unbounded take() aborted the host.\n"
-    "                if target_len > 10_000_000 { return Err(ZapcodeError::AllocationLimitExceeded); }\n"
-)
-# (file, inserted text, number of occurrences). TM-TS-025: padStart/padEnd.
-FORK_EDITS = [("vm/builtins.rs", PAD_CAP, 2)]
+# Each entry: file, inserted text (whole lines), occurrences. TM-TS-025/026.
+FORK_EDITS = [
+    (e["file"], e["insert"], e["count"])
+    for e in json.loads((root / "fork-edits.json").read_text())
+]
 
 expected = json.loads((root / "upstream-sha256.json").read_text())
 actual_paths = {str(p.relative_to(root)) for p in root.rglob("*.rs")}

@@ -908,7 +908,20 @@ async fn run_typescript(
         ));
     }
 
+    // Per-run heap meter (vm_meter.rs); ZapCode itself never enforces
+    // max_memory, so without the metered allocator `ts` fails closed.
+    #[cfg(not(target_arch = "wasm32"))]
+    if !crate::vm_meter::allocator_installed() {
+        return Ok(ExecResult::err(METER_MISSING_ERROR.to_string(), 1));
+    }
+    let meter = crate::vm_meter::VmMeter::with_limit(ts_limits.common.max_memory);
+
     let started = Instant::now();
+    // Important security decision (TM-TS-027): ZapCode's clock restarts at
+    // every resume, so `max_duration` alone bounds one VM step and a loop of
+    // cheap host calls ran until the shell timeout. The host-call loop checks
+    // this wall-clock deadline at every call.
+    let deadline = started.checked_add(time_limit);
     let runner = match ZapcodeRun::new(
         code.to_string(),
         Vec::new(),
@@ -922,7 +935,7 @@ async fn run_typescript(
         }
     };
 
-    let result = on_vm_stack(|| runner.run(Vec::new()));
+    let result = on_vm_stack(&meter, || runner.run(Vec::new()));
     charge_vm_time(execution_budget.as_ref(), started)?;
     let result = match result {
         Some(Ok(r)) => r,
@@ -938,6 +951,8 @@ async fn run_typescript(
         external_fns,
         execution_budget.as_ref(),
         time_limit,
+        deadline,
+        &meter,
     )
     .await
 }
@@ -945,18 +960,29 @@ async fn run_typescript(
 /// Message when no VM thread could be started (resource exhaustion).
 const VM_THREAD_ERROR: &str = "ts: cannot start execution thread\n";
 
-/// Run one synchronous ZapCode step (parse/compile/run, or a resume). Off
-/// wasm this runs on a dedicated thread with a [`TS_VM_STACK_BYTES`] stack;
-/// see that constant. `None` means no thread could be started: the caller
-/// fails the command rather than running accepted-depth source on a small
-/// stack.
+/// Message when `MeteredAllocator` is not the global allocator.
 #[cfg(not(target_arch = "wasm32"))]
-fn on_vm_stack<T: Send>(step: impl FnOnce() -> T + Send) -> Option<T> {
+const METER_MISSING_ERROR: &str =
+    "ts: TypeScript memory limits need bashkit::MeteredAllocator as the global allocator\n";
+
+/// Run one synchronous ZapCode step (parse/compile/run, or a resume) inside
+/// `meter`'s window. Off wasm this runs on a dedicated thread with a
+/// [`TS_VM_STACK_BYTES`] stack; see that constant. `None` means no thread
+/// could be started: the caller fails the command rather than running
+/// accepted-depth source on a small stack.
+#[cfg(not(target_arch = "wasm32"))]
+fn on_vm_stack<T: Send>(
+    meter: &crate::vm_meter::VmMeter,
+    step: impl FnOnce() -> T + Send,
+) -> Option<T> {
     std::thread::scope(|scope| {
         let handle = std::thread::Builder::new()
             .name("bashkit-ts".into())
             .stack_size(TS_VM_STACK_BYTES)
-            .spawn_scoped(scope, step)
+            .spawn_scoped(scope, move || {
+                let _window = crate::vm_meter::VmWindow::enter(meter);
+                step()
+            })
             .ok()?;
         match handle.join() {
             Ok(result) => Some(result),
@@ -968,7 +994,8 @@ fn on_vm_stack<T: Send>(step: impl FnOnce() -> T + Send) -> Option<T> {
 /// wasm32 has no threads: run on the current stack. The nesting cap still
 /// applies; see the zapcode-runtime knowledge page for the residual risk.
 #[cfg(target_arch = "wasm32")]
-fn on_vm_stack<T>(step: impl FnOnce() -> T) -> Option<T> {
+fn on_vm_stack<T>(meter: &crate::vm_meter::VmMeter, step: impl FnOnce() -> T) -> Option<T> {
+    let _window = crate::vm_meter::VmWindow::enter(meter);
     Some(step())
 }
 
@@ -990,6 +1017,8 @@ async fn process_vm_result(
     external_fns: Option<&TypeScriptExternalFns>,
     execution_budget: Option<&crate::limits::ExecutionBudget>,
     time_limit: std::time::Duration,
+    deadline: Option<Instant>,
+    meter: &crate::vm_meter::VmMeter,
 ) -> Result<ExecResult> {
     let stdout = result.stdout;
     let mut state = result.state;
@@ -1004,7 +1033,15 @@ async fn process_vm_result(
                 // If the result is not undefined and there was no print output,
                 // display the result (like Node REPL behavior for expressions)
                 if !matches!(value, Value::Undefined) && out.is_empty() {
-                    out = format!("{}\n", value.to_js_string());
+                    // Format inside the run's meter: a result array can share
+                    // one large string many times (zapcode_guard.rs).
+                    let _window = crate::vm_meter::VmWindow::enter(meter);
+                    let text = value.to_js_string();
+                    if crate::zapcode_guard::over_limit() {
+                        let error = crate::zapcode_guard::limit_error();
+                        return Ok(format_error_with_output(error, &out, time_limit));
+                    }
+                    out = format!("{text}\n");
                 }
                 return Ok(ExecResult::ok(out));
             }
@@ -1016,21 +1053,41 @@ async fn process_vm_result(
                 if let Some(budget) = execution_budget {
                     budget.consume_work(100)?;
                 }
-                let return_value = match handle_external_call(
-                    &function_name,
-                    &args,
-                    fs,
-                    cwd,
-                    external_fns,
-                )
-                .await
+                // Wall-clock bound (TM-TS-027), then yield: the VM never yields
+                // on its own, so without this a caller-side timeout cannot
+                // cancel the call and co-tenants on the worker thread starve.
+                if deadline.is_some_and(|d| Instant::now() >= d) {
+                    return Ok(format_error_with_output(
+                        zapcode_core::ZapcodeError::TimeLimitExceeded,
+                        &stdout,
+                        time_limit,
+                    ));
+                }
+                tokio::task::yield_now().await;
+                // Host callbacks share the same deadline, so a slow external
+                // function cannot pin the run between VM steps.
+                let call = handle_external_call(&function_name, &args, fs, cwd, external_fns);
+                let outcome = match deadline.and_then(|d| d.checked_duration_since(Instant::now()))
                 {
-                    Ok(value) => value,
-                    Err(error) => return Ok(ExecResult::err(format!("{error}\n"), 1)),
+                    Some(remaining) => crate::time_compat::timeout(remaining, call).await.ok(),
+                    // No representable deadline (huge max_duration): run uncapped.
+                    None if deadline.is_none() => Some(call.await),
+                    None => None,
+                };
+                let return_value = match outcome {
+                    Some(Ok(value)) => value,
+                    Some(Err(error)) => return Ok(ExecResult::err(format!("{error}\n"), 1)),
+                    None => {
+                        return Ok(format_error_with_output(
+                            zapcode_core::ZapcodeError::TimeLimitExceeded,
+                            &stdout,
+                            time_limit,
+                        ));
+                    }
                 };
 
                 let started = Instant::now();
-                let resumed = on_vm_stack(move || snapshot.resume(return_value));
+                let resumed = on_vm_stack(meter, move || snapshot.resume(return_value));
                 charge_vm_time(execution_budget, started)?;
                 state = match resumed {
                     Some(Ok(s)) => s,
@@ -1123,6 +1180,11 @@ async fn handle_write_file(args: &[Value], fs: &Arc<dyn FileSystem>, cwd: &Path)
     };
     let content = match args.get(1) {
         Some(Value::String(s)) => s.as_ref().as_bytes().to_vec(),
+        Some(Value::Array(a)) if !crate::zapcode_guard::fits_js_string(a) => {
+            return Value::String(Arc::from(
+                "Error: writeFile content exceeds the memory limit",
+            ));
+        }
         Some(v) => v.to_js_string().into_bytes(),
         None => {
             return Value::String(Arc::from("Error: writeFile requires a content argument"));

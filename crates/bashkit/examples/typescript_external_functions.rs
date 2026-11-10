@@ -7,6 +7,10 @@
 use bashkit::{Bash, TypeScriptExternalFnHandler, TypeScriptLimits, ZapcodeValue};
 use std::sync::Arc;
 
+// ts memory limits need the metered allocator (see bashkit::MeteredAllocator).
+#[global_allocator]
+static ALLOC: bashkit::MeteredAllocator = bashkit::MeteredAllocator;
+
 #[tokio::main]
 async fn main() -> bashkit::Result<()> {
     let handler: TypeScriptExternalFnHandler = Arc::new(|name, args| {
