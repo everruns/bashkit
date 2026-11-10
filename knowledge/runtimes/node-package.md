@@ -89,9 +89,27 @@ and must use a currently patched supported runtime. No Node executable is bundle
 Custom builtins (`customBuiltins`, `addBuiltin`) receive the same
 execution-scoped cancellation as host functions: `BuiltinContext.signal`
 aborts on `bash.cancel()`, on caller-`signal` abort, and on the instance
-execution timeout (mirrored onto the signal; a graceful return that lands
-as the mirror wins the race is coerced to exit 124). Helpers: `throwIfCancelled()`, `onCancel()`, and a
+execution timeout. Helpers: `throwIfCancelled()`, `onCancel()`, and a
 signal-combining `ctx.fetch()`.
+
+The timeout is enforced twice over the same duration — the native deadline
+and a JS `setTimeout` mirror that aborts the signal — so either side can
+observe it first, and both orders must end the same way. Whichever wins,
+the result is exit 124 and `ctx.signal` is aborted:
+
+- Mirror first: a builtin that still returned gracefully would report exit
+  0, so the result is coerced to 124 (`applyTimeoutMirror`).
+- Native first: `withBuiltinCancellation`'s cleanup would otherwise clear
+  the mirror timer unfired, stranding a builtin that outlived the deadline
+  with a signal that never aborts and a `ctx.fetch()` still hanging on. The
+  cleanup therefore fires the mirror itself when the deadline has already
+  elapsed. It keys off elapsed time rather than the exit code, so a script
+  that merely exits 124 on its own does not abort the signal.
+
+Both directions are covered in `__test__/custom-builtin-cancel.spec.ts`;
+the native-first test blocks the event loop past the deadline from inside
+the builtin to force that order.
+
 On the Rust side the TSFN dispatch and promise await run under
 `ExecutionBudget`, so cancel/timeout aborts the wait instead of hanging.
 Result codes are standardized at the binding boundary: native

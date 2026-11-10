@@ -1052,12 +1052,12 @@ function registerCustomBuiltins(
  * Run `fn` with an execution-scoped AbortController registered for `native`.
  * Aborts on caller-signal abort; the controller is removed afterwards.
  */
-async function withBuiltinCancellation<T>(
+async function withBuiltinCancellation(
   native: object,
   callerSignal: AbortSignal | undefined,
   timeoutMs: number | undefined,
-  fn: () => Promise<T>,
-): Promise<T> {
+  fn: () => Promise<ExecResult>,
+): Promise<ExecResult> {
   const controller = new AbortController();
   activeBuiltinControllers.set(native, controller);
   const onCallerAbort = (): void => {
@@ -1069,16 +1069,47 @@ async function withBuiltinCancellation<T>(
   // `ctx.signal`/`ctx.fetch` abort promptly. This never calls
   // `native.cancel()`; the native timeout still produces exit 124.
   let timeout: ReturnType<typeof setTimeout> | undefined;
+  // Monotonic: the mirror is a `setTimeout`, so compare against the same
+  // kind of clock rather than a wall clock a host time change could move.
+  const mirrorStart = performance.now();
   if (timeoutMs !== undefined && timeoutMs > 0) {
     timeout = setTimeout(() => {
       timeoutFiredControllers.add(controller);
       onCallerAbort();
     }, timeoutMs);
   }
+  let settled: ExecResult | undefined;
   try {
-    return await fn();
+    settled = await fn();
+    return settled;
   } finally {
-    if (timeout !== undefined) clearTimeout(timeout);
+    if (timeout !== undefined) {
+      clearTimeout(timeout);
+      // The mirror and the native deadline observe the same duration, so the
+      // native side can resolve this execution just before the JS timer gets
+      // to run. Clearing the timer then would strand a builtin that outlived
+      // the deadline: `ctx.signal` would never fire and its `ctx.fetch` would
+      // keep hanging on after `execute()` already returned 124. Fire the
+      // mirror here instead, so the builtin signal aborts whichever side
+      // observed the deadline first. `abort()` dispatches listeners
+      // synchronously, so `onCancel` handlers run before this function's
+      // promise resolves.
+      //
+      // Both conditions are needed, and neither alone is enough. Elapsed time
+      // alone would also fire on a graceful run that completed just under the
+      // deadline but reached this cleanup just over it, pairing exit 0 with an
+      // aborted signal. Exit 124 alone would fire on a script that merely ran
+      // `exit 124` well inside its budget. Together they describe only a run
+      // the deadline actually ended.
+      if (
+        timeoutMs !== undefined &&
+        !controller.signal.aborted &&
+        settled?.exitCode === 124 &&
+        performance.now() - mirrorStart >= timeoutMs
+      ) {
+        onCallerAbort();
+      }
+    }
     callerSignal?.removeEventListener("abort", onCallerAbort);
     if (activeBuiltinControllers.get(native) === controller) {
       activeBuiltinControllers.delete(native);
