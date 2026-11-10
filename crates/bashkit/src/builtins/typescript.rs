@@ -1065,6 +1065,15 @@ async fn process_vm_result(
                 if let Some(budget) = execution_budget {
                     budget.consume_work(100)?;
                 }
+                // A refused reservation is sticky; never hand a host call the
+                // placeholder it produced (TM-TS-026).
+                if meter.is_over_limit() {
+                    return Ok(format_error_with_output(
+                        crate::zapcode_guard::limit_error(),
+                        &stdout,
+                        time_limit,
+                    ));
+                }
                 // Wall-clock bound (TM-TS-027), then yield: the VM never yields
                 // on its own, so without this a caller-side timeout cannot
                 // cancel the call and co-tenants on the worker thread starve.

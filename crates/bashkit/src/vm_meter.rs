@@ -77,6 +77,13 @@ impl VmMeter {
     }
 
     /// Bytes this VM currently holds.
+    /// True when this meter holds more than its limit or refused a
+    /// [`reserve`]; usable between steps, outside any window.
+    #[cfg_attr(not(feature = "typescript"), allow(dead_code))]
+    pub(crate) fn is_over_limit(&self) -> bool {
+        self.limit > 0 && (self.exceeded.load(Ordering::Relaxed) || self.live() > self.limit)
+    }
+
     pub(crate) fn live(&self) -> usize {
         self.live.load(Ordering::Relaxed)
     }
@@ -260,9 +267,7 @@ pub(crate) fn allocator_installed() -> bool {
 #[cfg_attr(not(feature = "typescript"), allow(dead_code))]
 pub(crate) fn over_limit() -> bool {
     let mut over = false;
-    with_current(|m| {
-        over = m.limit > 0 && (m.exceeded.load(Ordering::Relaxed) || m.live() > m.limit);
-    });
+    with_current(|m| over = m.is_over_limit());
     over
 }
 
