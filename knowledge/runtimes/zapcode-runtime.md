@@ -223,8 +223,11 @@ tenant. Bashkit enforces `max_memory` itself with the meter Monty uses
 - Without `MeteredAllocator` as the global allocator the meter would read
   zero, so native `ts` fails closed with an error naming the allocator. Every
   bashkit binary, binding, example and test harness that enables
-  `typescript` installs it. On wasm32 the check is skipped (no probe), and
-  bashkit-wasm installs the allocator for its `typescript` feature.
+  `typescript` installs it. On wasm32 the check is skipped, and
+  bashkit-wasm installs the allocator for its `typescript` feature. Residual
+  risk: a third-party wasm32 embedder that enables `typescript` without the
+  allocator gets only the per-operation size checks, not the cumulative
+  limit (a tab or isolate OOM, not a shared host abort).
 
 Not metered: memory allocated by the host between steps (VFS bridging, the
 external-function callbacks), which is bounded by Bashkit's own limits.
