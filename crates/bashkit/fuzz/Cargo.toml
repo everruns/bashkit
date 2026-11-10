@@ -26,6 +26,9 @@ cpython = ["bashkit/cpython"]
 # Monty python3 target (bashkit-monty fork). Run with:
 # cargo +nightly fuzz run python_fuzz --features python
 python = ["bashkit/python"]
+# ZapCode ts target (vendored zapcode_vendor). Run with:
+# cargo +nightly fuzz run ts_fuzz --features typescript
+typescript = ["bashkit/typescript"]
 
 # Prevent this from interfering with workspaces
 [workspace]
@@ -188,6 +191,14 @@ bench = false
 name = "python_diff_fuzz"
 path = "fuzz_targets/python_diff_fuzz.rs"
 required-features = ["python", "cpython"]
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ts_fuzz"
+path = "fuzz_targets/ts_fuzz.rs"
+required-features = ["typescript"]
 test = false
 doc = false
 bench = false

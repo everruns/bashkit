@@ -247,6 +247,15 @@ must hit only its own limit. It runs 3 rounds on every PR;
 heap, so a held 8 MiB string costs about 3x that during the call and counts
 against `max_memory`.
 
+Nightly (`nightly.yml`): an ASan pass over the ts unit, threat-model, security
+and stress tests (`--features typescript`, filters `typescript threat_ts
+ts_tenant_stress zapcode`), and a `ts-stress-soak` job at 300 rounds in
+release. Fuzzing: `fuzz/fuzz_targets/ts_fuzz.rs` runs in the nightly
+`fuzz.yml` matrix under the metered allocator with a 32 MiB `max_memory`, so a
+memory-limit bypass trips libFuzzer's RSS limit; a canary run asserts `ts`
+really executes. Locally:
+`cargo +nightly-2026-10-30 fuzz run --features typescript ts_fuzz -- -max_total_time=300`.
+
 ### Vendored source
 
 Decision (2026-11-10): every target builds the in-tree copy of ZapCode 1.5.1 in
