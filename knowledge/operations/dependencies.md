@@ -274,26 +274,22 @@ Remove it when `branches` compiles on nightly without `std`.
 ## oxc is held at 0.117.x by the vendored ZapCode parser
 
 `bashkit` declares five oxc crates (`oxc_parser`, `oxc_ast`, `oxc_allocator`,
-`oxc_span`, `oxc_syntax`) for the `wasm32-unknown-unknown` TypeScript path,
-where `zapcode_browser/parser` walks the oxc AST directly rather than going
-through the published `zapcode-core`. The versions are chosen to match what
-upstream ZapCode vendors, so the two sides of the same parser pipeline agree.
+`oxc_span`, `oxc_syntax`) for the TypeScript builtin, where the vendored
+`zapcode_vendor/parser` (ZapCode 1.5.1, used on every target since the
+registry `zapcode-core` dependency was dropped) walks the oxc AST directly.
+The versions match what upstream ZapCode 1.5.1 was written against.
 
-`zapcode-core` 1.5.1 requires `oxc ^0.117`, so it does not move when bashkit's
-declaration does. #2758 bumped the declaration to 0.154.0 and Cargo resolved a
-**second** copy of all 13 oxc crates — `oxc_parser`, `oxc_ast` and the rest
-each appearing at both 0.117.0 and 0.154.0 — putting the vendored parser and
-`zapcode-core` 37 minor versions apart. Two further costs came with it: oxc
-0.154 requires rustc 1.97.0 against the 1.95.0 in `rust-toolchain.toml` (the
-`WASM web package` job failed at resolution, the same shape as the wasmtime
-49.x failure in #2708), and it added 19 unvetted crates, including
+History: while `zapcode-core` was still a native dependency it required
+`oxc ^0.117`, so #2758's bump to 0.154.0 resolved a **second** copy of all 13
+oxc crates, 37 minor versions apart, needed rustc 1.97.0 against the pinned
+toolchain (the `WASM web package` job failed at resolution, the same shape as
+the wasmtime 49.x failure in #2708), and added 19 unvetted crates, including
 `compact_str` 0.10, `phf` 0.14 and `oxc_index` 5.0.
 
-`oxc_*` is therefore in dependabot's `ignore` list outright, not by
-update-type: every release past 0.117.x splits the graph the same way, so there
-is no version to bump to. Lifting it waits on a `zapcode-core` release built
-against a newer oxc, and then means bumping the pinned toolchain and porting
-the vendored parser in one deliberate change — not inside an aggregated
+`oxc_*` stays in dependabot's `ignore` list outright: any oxc release past
+0.117.x changes the AST the vendored parser walks. Moving it means porting the
+vendored parser (or re-vendoring a newer ZapCode release) and bumping the
+pinned toolchain in one deliberate change, not inside an aggregated
 `chore(deps)` PR.
 
 ## Dependabot rules that keep its jobs runnable

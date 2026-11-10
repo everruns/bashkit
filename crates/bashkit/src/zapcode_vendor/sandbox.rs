@@ -33,26 +33,26 @@ impl ResourceTracker {
         self.start_time = Some(crate::time::Instant::now());
     }
 
-    pub fn check_time(&self, limits: &ResourceLimits) -> crate::zapcode_browser::error::Result<()> {
+    pub fn check_time(&self, limits: &ResourceLimits) -> crate::zapcode_vendor::error::Result<()> {
         if let Some(start) = self.start_time {
             if start.elapsed().as_millis() as u64 > limits.time_limit_ms {
-                return Err(crate::zapcode_browser::ZapcodeError::TimeLimitExceeded);
+                return Err(crate::zapcode_vendor::ZapcodeError::TimeLimitExceeded);
             }
         }
         Ok(())
     }
 
-    pub fn check_stack(&self, limits: &ResourceLimits) -> crate::zapcode_browser::error::Result<()> {
+    pub fn check_stack(&self, limits: &ResourceLimits) -> crate::zapcode_vendor::error::Result<()> {
         if self.current_stack_depth > limits.max_stack_depth {
-            return Err(crate::zapcode_browser::ZapcodeError::StackOverflow(self.current_stack_depth));
+            return Err(crate::zapcode_vendor::ZapcodeError::StackOverflow(self.current_stack_depth));
         }
         Ok(())
     }
 
-    pub fn track_allocation(&mut self, limits: &ResourceLimits) -> crate::zapcode_browser::error::Result<()> {
+    pub fn track_allocation(&mut self, limits: &ResourceLimits) -> crate::zapcode_vendor::error::Result<()> {
         self.allocations += 1;
         if self.allocations > limits.max_allocations {
-            return Err(crate::zapcode_browser::ZapcodeError::AllocationLimitExceeded);
+            return Err(crate::zapcode_vendor::ZapcodeError::AllocationLimitExceeded);
         }
         Ok(())
     }

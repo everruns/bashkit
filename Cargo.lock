@@ -512,7 +512,6 @@ dependencies = [
  "wasm-bindgen-futures",
  "wasmtime",
  "web-time",
- "zapcode-core",
  "zeroize",
 ]
 
@@ -7986,23 +7985,6 @@ dependencies = [
  "quote",
  "syn 2.0.119",
  "synstructure",
-]
-
-[[package]]
-name = "zapcode-core"
-version = "1.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "763b84cb268f5cf5212198eff31106006ac32aa7e472201cae9f994521abebe2"
-dependencies = [
- "indexmap",
- "oxc_allocator",
- "oxc_ast",
- "oxc_parser",
- "oxc_span",
- "oxc_syntax",
- "postcard",
- "serde",
- "thiserror",
 ]
 
 [[package]]

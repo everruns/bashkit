@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use indexmap::IndexMap;
 
-use crate::zapcode_browser::error::{Result, ZapcodeError};
-use crate::zapcode_browser::value::Value;
+use crate::zapcode_vendor::error::{Result, ZapcodeError};
+use crate::zapcode_vendor::value::Value;
 
 /// Register built-in global objects and functions.
 pub fn register_globals(globals: &mut HashMap<String, Value>) {
@@ -507,6 +507,8 @@ fn call_string_method(s: &Arc<str>, method: &str, args: &[Value]) -> Result<Opti
                 Value::String(s.clone())
             } else {
                 let pad_len = target_len - current_len;
+                // bashkit fork: cap like `repeat`; unbounded take() aborted the host.
+                if target_len > 10_000_000 { return Err(ZapcodeError::AllocationLimitExceeded); }
                 let padding: String = pad.chars().cycle().take(pad_len).collect();
                 Value::String(Arc::from(format!("{}{}", padding, s).as_str()))
             }
@@ -523,6 +525,8 @@ fn call_string_method(s: &Arc<str>, method: &str, args: &[Value]) -> Result<Opti
                 Value::String(s.clone())
             } else {
                 let pad_len = target_len - current_len;
+                // bashkit fork: cap like `repeat`; unbounded take() aborted the host.
+                if target_len > 10_000_000 { return Err(ZapcodeError::AllocationLimitExceeded); }
                 let padding: String = pad.chars().cycle().take(pad_len).collect();
                 Value::String(Arc::from(format!("{}{}", s, padding).as_str()))
             }

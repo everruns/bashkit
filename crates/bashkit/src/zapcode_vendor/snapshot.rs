@@ -2,11 +2,11 @@ use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
-use crate::zapcode_browser::compiler::CompiledProgram;
-use crate::zapcode_browser::error::{Result, ZapcodeError};
-use crate::zapcode_browser::sandbox::ResourceLimits;
-use crate::zapcode_browser::value::Value;
-use crate::zapcode_browser::vm::{CallFrame, Continuation, TryInfo, Vm, VmState};
+use crate::zapcode_vendor::compiler::CompiledProgram;
+use crate::zapcode_vendor::error::{Result, ZapcodeError};
+use crate::zapcode_vendor::sandbox::ResourceLimits;
+use crate::zapcode_vendor::value::Value;
+use crate::zapcode_vendor::vm::{CallFrame, Continuation, TryInfo, Vm, VmState};
 
 /// Internal serializable representation of VM state at a suspension point.
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -3,13 +3,13 @@ use std::sync::Arc;
 
 use indexmap::IndexMap;
 
-use crate::zapcode_browser::compiler::instruction::{Constant, Instruction};
-use crate::zapcode_browser::compiler::CompiledProgram;
-use crate::zapcode_browser::error::{Result, ZapcodeError};
-use crate::zapcode_browser::sandbox::{ResourceLimits, ResourceTracker};
-use crate::zapcode_browser::snapshot::ZapcodeSnapshot;
-use crate::zapcode_browser::trace::{ExecutionTrace, SpanBuilder, TraceStatus};
-use crate::zapcode_browser::value::{Closure, FunctionId, GeneratorObject, SuspendedFrame, Value};
+use crate::zapcode_vendor::compiler::instruction::{Constant, Instruction};
+use crate::zapcode_vendor::compiler::CompiledProgram;
+use crate::zapcode_vendor::error::{Result, ZapcodeError};
+use crate::zapcode_vendor::sandbox::{ResourceLimits, ResourceTracker};
+use crate::zapcode_vendor::snapshot::ZapcodeSnapshot;
+use crate::zapcode_vendor::trace::{ExecutionTrace, SpanBuilder, TraceStatus};
+use crate::zapcode_vendor::value::{Closure, FunctionId, GeneratorObject, SuspendedFrame, Value};
 
 mod builtins;
 
@@ -2402,7 +2402,7 @@ impl Vm {
 }
 
 // Re-export for the ParamPattern type used in function calls
-use crate::zapcode_browser::parser::ir::ParamPattern;
+use crate::zapcode_vendor::parser::ir::ParamPattern;
 
 fn is_array_method(name: &str) -> bool {
     matches!(
@@ -2505,7 +2505,7 @@ impl ZapcodeRun {
 
         // Parse
         let parse_span = SpanBuilder::new("parse");
-        let program = match crate::zapcode_browser::parser::parse(&self.source) {
+        let program = match crate::zapcode_vendor::parser::parse(&self.source) {
             Ok(p) => {
                 root_span.add_child(parse_span.finish_ok());
                 p
@@ -2522,7 +2522,7 @@ impl ZapcodeRun {
         // Compile
         let compile_span = SpanBuilder::new("compile");
         let ext_set: HashSet<String> = self.external_functions.iter().cloned().collect();
-        let compiled = match crate::zapcode_browser::compiler::compile_with_externals(&program, ext_set.clone()) {
+        let compiled = match crate::zapcode_vendor::compiler::compile_with_externals(&program, ext_set.clone()) {
             Ok(c) => {
                 root_span.add_child(compile_span.finish_ok());
                 c

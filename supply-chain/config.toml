@@ -2689,10 +2689,6 @@ criteria = "safe-to-deploy"
 version = "0.8.2"
 criteria = "safe-to-deploy"
 
-[[exemptions.zapcode-core]]
-version = "1.5.1"
-criteria = "safe-to-deploy"
-
 [[exemptions.zerocopy]]
 version = "0.8.56"
 criteria = "safe-to-deploy"

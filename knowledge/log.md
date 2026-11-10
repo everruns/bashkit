@@ -1,5 +1,9 @@
 # Bashkit Knowledge Update Log
 
+## 2026-11-10
+
+* **ZapCode vendored on every target; padStart/padEnd capped**: the pre-release check reproduced security audit F5 on main: `ts -c "'a'.padStart(2**40)"` makes zapcode-core 1.5.1 (latest on crates.io) reserve ~1 TiB, and the failed allocation aborts the process with every tenant. Native builds now use the in-tree ZapCode copy that wasm32-unknown-unknown already used (renamed `zapcode_browser` to `zapcode_vendor`), the registry `zapcode-core` dependency is gone, and the copy carries a `bashkit fork:` edit capping the pad target length at 10,000,000 like upstream `repeat`. `scripts/check_zapcode_vendor.py` now lists fork edits and fails on unlisted markers. A crates.io fork like `bashkit-monty` was not needed since the copy ships inside `bashkit`. See [ZapCode Runtime](runtimes/zapcode-runtime.md#vendored-source), [Threat Model](security/threat-model.md), TM-TS-025.
+
 ## 2026-11-09
 
 * **Monty upstream watch split: advisories stay daily, release drift moves to maintenance**: the daily `monty-upstream.yml` went red the moment upstream shipped 1.5.0 and stayed red until a ~9k-line fork re-sync landed, which is noise rather than signal. The *release* half is therefore a maintenance checklist item now (`just check-monty-upstream`). The *advisory* half stays on the daily schedule, via the script's existing `--no-release`: the fork crates are renamed, so cargo audit/deny and Dependabot can never match an upstream `monty` CVE by name, and this workflow is the only automated thing that would. Moving it to a quarterly pass would have stretched CVE detection from about a day to about a quarter. Advisory-only is green by default, so it has the opposite noise profile to the release check. The workflow invokes the script directly rather than the `just` recipe, which takes no arguments. See [Dependencies](operations/dependencies.md#monty-forks), [Maintenance](operations/maintenance.md).

@@ -16,8 +16,7 @@
 //! `node`/`deno`/`bun` aliases.
 
 use crate::time_compat::Instant;
-#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
-use crate::zapcode_browser as zapcode_core;
+use crate::zapcode_vendor as zapcode_core;
 use async_trait::async_trait;
 use std::future::Future;
 use std::path::{Path, PathBuf};
