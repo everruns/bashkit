@@ -950,8 +950,10 @@ async fn run_typescript(
         cwd,
         external_fns,
         execution_budget.as_ref(),
-        time_limit,
-        deadline,
+        RunClock {
+            limit: time_limit,
+            deadline,
+        },
         &meter,
     )
     .await
@@ -1009,6 +1011,13 @@ fn charge_vm_time(budget: Option<&crate::limits::ExecutionBudget>, started: Inst
     Ok(())
 }
 
+/// Time limit of one `ts` run and its wall-clock deadline (TM-TS-027).
+#[derive(Clone, Copy)]
+struct RunClock {
+    limit: std::time::Duration,
+    deadline: Option<Instant>,
+}
+
 /// Process a VmState, handling suspension for external function calls.
 async fn process_vm_result(
     result: RunResult,
@@ -1016,10 +1025,13 @@ async fn process_vm_result(
     cwd: &Path,
     external_fns: Option<&TypeScriptExternalFns>,
     execution_budget: Option<&crate::limits::ExecutionBudget>,
-    time_limit: std::time::Duration,
-    deadline: Option<Instant>,
+    clock: RunClock,
     meter: &crate::vm_meter::VmMeter,
 ) -> Result<ExecResult> {
+    let RunClock {
+        limit: time_limit,
+        deadline,
+    } = clock;
     let stdout = result.stdout;
     let mut state = result.state;
 
