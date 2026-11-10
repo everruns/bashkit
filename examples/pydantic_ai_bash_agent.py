@@ -68,7 +68,7 @@ async def main():
     result = await agent.run(task)
     print("\n" + "-" * 60)
     print("Agent output:")
-    print(result.data)
+    print(result.output)
     print("=" * 60)
 
 
