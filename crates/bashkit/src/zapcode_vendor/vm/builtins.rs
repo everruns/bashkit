@@ -68,6 +68,8 @@ pub fn call_global_method(
 fn call_console_method(method: &str, args: &[Value], stdout: &mut String) -> Result<Option<Value>> {
     match method {
         "log" | "info" | "warn" | "error" | "debug" => {
+            // bashkit fork: spread arguments may share one large string.
+            crate::zapcode_guard::reserve_join(args, " ")?;
             let output: Vec<String> = args.iter().map(|v| v.to_js_string()).collect();
             let line = output.join(" ");
             stdout.push_str(&line);
@@ -216,6 +218,8 @@ fn call_json_method(method: &str, args: &[Value]) -> Result<Option<Value>> {
     match method {
         "stringify" => {
             let val = args.first().unwrap_or(&Value::Undefined);
+            // bashkit fork: size the JSON text before building it.
+            crate::zapcode_guard::reserve_json(val)?;
             let json = value_to_json(val);
             Ok(Some(Value::String(Arc::from(json.as_str()))))
         }
@@ -493,6 +497,8 @@ fn call_string_method(s: &Arc<str>, method: &str, args: &[Value]) -> Result<Opti
             if result_len > 10_000_000 {
                 return Err(ZapcodeError::AllocationLimitExceeded);
             }
+            // bashkit fork: the 10 MB cap can exceed a tighter per-run limit.
+            crate::zapcode_guard::reserve(result_len)?;
             Value::String(Arc::from(s.repeat(count).as_str()))
         }
         "padStart" => {
@@ -509,6 +515,7 @@ fn call_string_method(s: &Arc<str>, method: &str, args: &[Value]) -> Result<Opti
                 let pad_len = target_len - current_len;
                 // bashkit fork: cap like `repeat`; unbounded take() aborted the host.
                 if target_len > 10_000_000 { return Err(ZapcodeError::AllocationLimitExceeded); }
+                crate::zapcode_guard::reserve(target_len)?;
                 let padding: String = pad.chars().cycle().take(pad_len).collect();
                 Value::String(Arc::from(format!("{}{}", padding, s).as_str()))
             }
@@ -527,12 +534,15 @@ fn call_string_method(s: &Arc<str>, method: &str, args: &[Value]) -> Result<Opti
                 let pad_len = target_len - current_len;
                 // bashkit fork: cap like `repeat`; unbounded take() aborted the host.
                 if target_len > 10_000_000 { return Err(ZapcodeError::AllocationLimitExceeded); }
+                crate::zapcode_guard::reserve(target_len)?;
                 let padding: String = pad.chars().cycle().take(pad_len).collect();
                 Value::String(Arc::from(format!("{}{}", s, padding).as_str()))
             }
         }
         "split" => {
             let separator = arg_str(args, 0);
+            // bashkit fork: one new value per part.
+            crate::zapcode_guard::reserve_values(if separator.is_empty() { s.len() } else { s.matches(&*separator).count() + 1 })?;
             let parts: Vec<Value> = if separator.is_empty() {
                 s.chars()
                     .map(|c| Value::String(Arc::from(c.to_string().as_str())))
@@ -547,14 +557,20 @@ fn call_string_method(s: &Arc<str>, method: &str, args: &[Value]) -> Result<Opti
         "replace" => {
             let search = arg_str(args, 0);
             let replacement = arg_str(args, 1);
+            // bashkit fork: a large replacement multiplies per match.
+            crate::zapcode_guard::reserve_replace(s, &search, &replacement, false)?;
             Value::String(Arc::from(s.replacen(&*search, &replacement, 1).as_str()))
         }
         "replaceAll" => {
             let search = arg_str(args, 0);
             let replacement = arg_str(args, 1);
+            // bashkit fork: a large replacement multiplies per match.
+            crate::zapcode_guard::reserve_replace(s, &search, &replacement, true)?;
             Value::String(Arc::from(s.replace(&*search, &replacement).as_str()))
         }
         "concat" => {
+            // bashkit fork: arguments may share one large string many times.
+            crate::zapcode_guard::reserve_join(args, "")?;
             let mut result = s.to_string();
             for arg in args {
                 result.push_str(&arg.to_js_string());
@@ -604,6 +620,8 @@ fn call_array_method(arr: &[Value], method: &str, args: &[Value]) -> Result<Opti
             } else {
                 arg_str(args, 0)
             };
+            // bashkit fork: elements may share one large string; size before joining.
+            crate::zapcode_guard::reserve_join(arr, &sep)?;
             let joined: Vec<String> = arr.iter().map(|v| v.to_js_string()).collect();
             Value::String(Arc::from(joined.join(&sep).as_str()))
         }

@@ -139,7 +139,7 @@ fork adds two process-wide hooks in `monty_types::resource`:
   time checkpoint before the tracker's own time check; `Err` stops the run
   uncatchably.
 
-Per-VM memory metering (`src/python_meter.rs`): `bashkit::MeteredAllocator`
+Per-VM memory metering (`src/vm_meter.rs`): `bashkit::MeteredAllocator`
 wraps `System` and charges each allocation to the `VmMeter` of the Monty VM
 currently running on that thread (a const thread-local pointer, set by an RAII
 `VmWindow` around `MontyRun::new`, `start` and every `resume`). Those calls are

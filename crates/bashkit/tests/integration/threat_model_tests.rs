@@ -7642,6 +7642,118 @@ mod typescript_security {
         assert_eq!(result.stdout.trim(), "007|abxyx");
     }
 
+    /// Run `script` from a VFS file so template literals and quotes need no
+    /// shell escaping.
+    async fn run_ts_file(bash: &mut Bash, script: &str) -> bashkit::ExecResult {
+        bash.exec(&format!(
+            "cat > /tmp/m.ts <<'TSEOF'\n{script}\nTSEOF\nts /tmp/m.ts"
+        ))
+        .await
+        .unwrap()
+    }
+
+    fn bash_with_ts_mem(bytes: usize) -> Bash {
+        Bash::builder()
+            .typescript_with_limits(TypeScriptLimits::default().max_memory(bytes))
+            .build()
+    }
+
+    fn assert_ts_memory_refused(result: &bashkit::ExecResult, case: &str) {
+        assert_ne!(result.exit_code, 0, "{case} should fail");
+        assert!(
+            // Upstream's own size caps report "allocation limit exceeded".
+            result.stderr.contains("limit exceeded"),
+            "{case}: stderr {:?}",
+            result.stderr
+        );
+        assert!(
+            result.stdout.is_empty(),
+            "{case} printed {:?}",
+            result.stdout
+        );
+    }
+
+    /// TM-TS-026: growth past `max_memory` stops the run instead of aborting
+    /// the host. Upstream ZapCode never read the limit; each case aborted.
+    #[tokio::test]
+    async fn threat_ts_memory_doubling_fails_cleanly() {
+        let mut bash = bash_with_ts_mem(32 * 1024 * 1024);
+        let cases = [
+            (
+                "template",
+                "let s = 'x'.repeat(1e6); for (let i = 0; i < 30; i++) { s = `${s}${s}`; } console.log(s.length)",
+            ),
+            (
+                "concat",
+                "let a = [1]; for (let i = 0; i < 40; i++) { a = a.concat(a); } console.log(a.length)",
+            ),
+            (
+                "spread",
+                "let a = [1]; for (let i = 0; i < 40; i++) { a = [...a, ...a]; } console.log(a.length)",
+            ),
+            (
+                "plus",
+                "let s = 'x'.repeat(1e6); for (let i = 0; i < 30; i++) { s = s + s; } console.log(s.length)",
+            ),
+        ];
+        for (case, script) in cases {
+            let result = run_ts_file(&mut bash, script).await;
+            assert_ts_memory_refused(&result, case);
+        }
+    }
+
+    /// TM-TS-026: strings are shared, so an array of one big string costs a
+    /// few pointers but joins, stringifies or prints to many copies. These are
+    /// sized before allocating.
+    #[tokio::test]
+    async fn threat_ts_shared_string_amplification_fails_cleanly() {
+        let mut bash = bash_with_ts_mem(32 * 1024 * 1024);
+        let setup = "const s = 'x'.repeat(4e6); const a = [s, s, s, s, s, s, s, s, s, s, s, s, s, s, s, s];";
+        let cases = [
+            ("join", "console.log(a.join('').length)"),
+            (
+                "join_sep",
+                "console.log([1, 2, 3, 4, 5, 6, 7, 8, 9, 10].join(s).length)",
+            ),
+            ("stringify", "console.log(JSON.stringify(a).length)"),
+            ("to_string", "console.log(`${a}!`.length)"),
+            ("console_log", "console.log(...a)"),
+            ("string_concat", "console.log(''.concat(...a).length)"),
+            ("result_value", "a"),
+        ];
+        for (case, tail) in cases {
+            let result = run_ts_file(&mut bash, &format!("{setup}\n{tail}")).await;
+            assert_ts_memory_refused(&result, case);
+        }
+    }
+
+    /// TM-TS-026: the limit is per run. Work under the limit succeeds, and a
+    /// refused run leaves nothing charged for the next one.
+    #[tokio::test]
+    async fn threat_ts_memory_limit_is_per_run() {
+        let mut bash = bash_with_ts_mem(32 * 1024 * 1024);
+        let ok = "const s = 'x'.repeat(4e6); console.log([s, s].join('-').length, JSON.stringify({ s }).length)";
+        for _ in 0..3 {
+            let result = run_ts_file(&mut bash, ok).await;
+            assert_eq!(result.exit_code, 0, "stderr: {}", result.stderr);
+            assert_eq!(result.stdout.trim(), "8000001 4000008");
+            let big = run_ts_file(
+                &mut bash,
+                "let s = 'x'.repeat(1e6); while (true) { s = s + s; }",
+            )
+            .await;
+            assert_ts_memory_refused(&big, "loop");
+        }
+        // Ordinary scripts are unaffected.
+        let result = run_ts_file(
+            &mut bash,
+            "console.log(['a', 'b'].join(','), JSON.stringify([1, 'x']), 'ab'.repeat(3), 'a-b'.split('-').length, 'aXa'.replace('X', 'yy'))",
+        )
+        .await;
+        assert_eq!(result.exit_code, 0, "stderr: {}", result.stderr);
+        assert_eq!(result.stdout.trim(), "a,b [1,\"x\"] ababab 2 ayya");
+    }
+
     /// TM-TS-003: TypeScript stack overflow blocked
     #[tokio::test]
     async fn threat_ts_stack_overflow() {

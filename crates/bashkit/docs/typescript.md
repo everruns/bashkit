@@ -1,8 +1,9 @@
 # Embedded TypeScript (ZapCode)
 
 > **Experimental.** ZapCode is an early-stage TypeScript interpreter that may
-> have undiscovered crash or security bugs. Resource limits are enforced by
-> ZapCode's VM. The integration should be treated as experimental.
+> have undiscovered crash or security bugs. Bashkit enforces the memory and
+> wall-clock limits itself (ZapCode only counts allocations and VM time). The
+> integration should be treated as experimental.
 
 Bashkit embeds the [ZapCode](https://github.com/TheUncharted/zapcode) TypeScript
 interpreter, a pure-Rust implementation with ~2µs cold start, no V8 dependency,
@@ -17,10 +18,15 @@ resource limits and no host access.
 
 ## Quick Start
 
-Enable the `typescript` feature and register via builder:
+Enable the `typescript` feature, install `bashkit::MeteredAllocator` as the
+global allocator (the memory limit reads it; without it `ts` refuses to run),
+and register via builder:
 
 ```rust
 use bashkit::Bash;
+
+#[global_allocator]
+static ALLOC: bashkit::MeteredAllocator = bashkit::MeteredAllocator;
 
 # #[tokio::main]
 # async fn main() -> bashkit::Result<()> {

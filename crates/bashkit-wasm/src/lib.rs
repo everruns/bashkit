@@ -35,10 +35,10 @@ use serde::Serialize;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::{JsFuture, future_to_promise};
 
-// Monty python3 charges each VM for its own allocations through this
+// Monty python3 and ZapCode ts charge each VM for its own allocations through this
 // allocator (see bashkit::MeteredAllocator). In a cdylib it only governs this
 // library's Rust allocations, never the host runtime's allocator.
-#[cfg(feature = "python")]
+#[cfg(any(feature = "python", feature = "typescript"))]
 #[global_allocator]
 static METERED_ALLOC: bashkit::MeteredAllocator = bashkit::MeteredAllocator;
 

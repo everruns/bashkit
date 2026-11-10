@@ -483,16 +483,16 @@ async fn run_python(
     } else {
         format!("{code}\nNone\n")
     };
-    // Per-VM memory meter + shared-budget checkpoints (python_meter.rs).
-    if let Err(msg) = crate::python_meter::ensure_metering() {
+    // Per-VM memory meter + shared-budget checkpoints (vm_meter.rs).
+    if let Err(msg) = crate::vm_meter::ensure_metering() {
         return Ok(ExecResult::err(format!("{msg}\n"), 1));
     }
-    let meter = crate::python_meter::VmMeter::new(execution_budget.clone());
+    let meter = crate::vm_meter::VmMeter::new(execution_budget.clone());
     let mut vm_time = Duration::ZERO;
     // Runs one synchronous Monty call inside this VM's metering window.
     macro_rules! in_vm {
         ($e:expr) => {{
-            let _window = crate::python_meter::VmWindow::enter(&meter);
+            let _window = crate::vm_meter::VmWindow::enter(&meter);
             let started = Instant::now();
             let r = $e;
             vm_time += started.elapsed();

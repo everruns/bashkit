@@ -126,6 +126,9 @@ impl Value {
             }
             Value::String(s) => s.to_string(),
             Value::Array(arr) => {
+                // bashkit fork: size shared-string arrays before building their text.
+                if !crate::zapcode_guard::fits_js_string(arr) { return String::new(); }
+                let _sizing = crate::zapcode_guard::SizingScope::enter();
                 let items: Vec<String> = arr.iter().map(|v| v.to_js_string()).collect();
                 items.join(",")
             }

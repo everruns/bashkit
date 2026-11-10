@@ -4,7 +4,9 @@ Upstream `zapcode-core` 1.5.1, MIT, https://github.com/TheUncharted/zapcode.
 Every target (native, WASI, browser) builds this copy; the registry crate is
 no longer a dependency. The copy replaces std clocks that panic on
 wasm32-unknown-unknown and carries `bashkit fork:` resource-limit fixes
-upstream has not shipped (listed in `scripts/check_zapcode_vendor.py`). It adds
+upstream has not shipped (listed in `fork-edits.json`, checked by
+`scripts/check_zapcode_vendor.py`), including the `max_memory` hooks into
+`src/zapcode_guard.rs` that upstream never enforced. It adds
 no JS eval, imports, network or filesystem access.
 
 `upstream-sha256.json` records every original source file. Mechanical change:

@@ -893,9 +893,11 @@ access is bridged through Bashkit's VFS, never the host filesystem.
 | Shebang line injection (TM-TS-023) | `#!...` header | Shebang stripped safely | MITIGATED |
 | Deeply nested source aborts the host (TM-TS-024) | A few KB of `[[[...` or `1+1+...` overflows ZapCode's recursive parser/compiler | Nesting estimate rejects depth over 1000; ZapCode steps run on a 128 MiB-stack thread | MITIGATED |
 | Huge `padStart`/`padEnd` aborts the host (TM-TS-025) | `'a'.padStart(2**40)` asks the allocator for ~1 TiB | Vendored ZapCode caps the target length at 10,000,000, like `repeat`; the run fails cleanly | MITIGATED |
+| Memory growth past `max_memory` aborts the host (TM-TS-026) | Doubling a string or array, or joining/printing an array that shares one big string, until an allocation fails | A per-run meter stops the script once its heap passes `max_memory`; output-amplifying builtins size the result first; `ts` refuses to run without `MeteredAllocator` | MITIGATED |
+| Host-call loop outruns the time limit (TM-TS-027) | `while (true) { await writeFile(...) }` resumes ZapCode's clock at every call | Wall-clock deadline checked at every host call; callbacks capped at the remaining time; the loop yields to the executor | MITIGATED |
 | Bash var expansion injection (TM-TS-020) | Unquoted `$VAR` expanded before TS runs | By design; use single quotes to prevent expansion | MITIGATED |
 
-Per-threat coverage (TM-TS-001 … TM-TS-025), including error-isolation and
+Per-threat coverage (TM-TS-001 … TM-TS-027), including error-isolation and
 exit-code propagation cases, is also exercised by the `threat_ts_*` tests.
 
 ### Request Signing & Snapshot Integrity (TM-CRY-*, TM-SNAP-*)

@@ -34,6 +34,8 @@ impl ResourceTracker {
     }
 
     pub fn check_time(&self, limits: &ResourceLimits) -> crate::zapcode_vendor::error::Result<()> {
+        // bashkit fork: per-VM heap limit; upstream never read memory_limit_bytes.
+        if crate::zapcode_guard::over_limit() { return Err(crate::zapcode_guard::limit_error()); }
         if let Some(start) = self.start_time {
             if start.elapsed().as_millis() as u64 > limits.time_limit_ms {
                 return Err(crate::zapcode_vendor::ZapcodeError::TimeLimitExceeded);

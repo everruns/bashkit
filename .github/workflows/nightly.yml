@@ -194,6 +194,19 @@ jobs:
           cargo +nightly-2026-10-30 test -Z build-std --target x86_64-unknown-linux-gnu \
             -p bashkit --features python --lib --test integration -- --test-threads=1 python
 
+      # The vendored ZapCode VM (crates/bashkit/src/zapcode_vendor) is our
+      # code too, and ts runs under the same metered allocator. The filters
+      # pick up the unit, threat-model, security and tenant stress tests (a
+      # bare `ts` would match every `tests` module path).
+      - name: Run ts (ZapCode) tests with AddressSanitizer
+        env:
+          RUSTFLAGS: "-Z sanitizer=address"
+          ASAN_OPTIONS: "detect_stack_use_after_return=1:detect_leaks=0"
+        run: |
+          cargo +nightly-2026-10-30 test -Z build-std --target x86_64-unknown-linux-gnu \
+            -p bashkit --features typescript --lib --test integration -- --test-threads=1 \
+            typescript threat_ts ts_tenant_stress zapcode
+
   python-stress-soak:
     name: Python multi-tenant stress soak
     # PR CI runs python_tenant_stress_tests at 3 rounds. The soak repeats
@@ -220,3 +233,29 @@ jobs:
         run: |
           cargo test --release -p bashkit --features python --test integration \
             -- python_tenant_stress
+
+  ts-stress-soak:
+    name: TypeScript multi-tenant stress soak
+    # PR CI runs ts_tenant_stress_tests at 3 rounds. The soak repeats them in
+    # release mode so rare cross-tenant leaks (meter left on a worker thread,
+    # charge not released after an abandoned call) show up.
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@d86e0fa8f147d6539442c26a61ebba8becc19489 # 1.96.0
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          cache-on-failure: true
+
+      - name: Run stress soak
+        env:
+          BASHKIT_STRESS_ROUNDS: "300"
+        run: |
+          cargo test --release -p bashkit --features typescript --test integration \
+            -- ts_tenant_stress
