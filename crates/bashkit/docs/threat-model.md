@@ -892,9 +892,10 @@ access is bridged through Bashkit's VFS, never the host filesystem.
 | Script reads host filesystem (TM-TS-022) | Load a host script | Script file loaded via VFS | MITIGATED |
 | Shebang line injection (TM-TS-023) | `#!...` header | Shebang stripped safely | MITIGATED |
 | Deeply nested source aborts the host (TM-TS-024) | A few KB of `[[[...` or `1+1+...` overflows ZapCode's recursive parser/compiler | Nesting estimate rejects depth over 1000; ZapCode steps run on a 128 MiB-stack thread | MITIGATED |
+| Huge `padStart`/`padEnd` aborts the host (TM-TS-025) | `'a'.padStart(2**40)` asks the allocator for ~1 TiB | Vendored ZapCode caps the target length at 10,000,000, like `repeat`; the run fails cleanly | MITIGATED |
 | Bash var expansion injection (TM-TS-020) | Unquoted `$VAR` expanded before TS runs | By design; use single quotes to prevent expansion | MITIGATED |
 
-Per-threat coverage (TM-TS-001 … TM-TS-024), including error-isolation and
+Per-threat coverage (TM-TS-001 … TM-TS-025), including error-isolation and
 exit-code propagation cases, is also exercised by the `threat_ts_*` tests.
 
 ### Request Signing & Snapshot Integrity (TM-CRY-*, TM-SNAP-*)

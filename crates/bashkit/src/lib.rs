@@ -610,14 +610,9 @@ pub use builtins::{
     TypeScriptConfig, TypeScriptExtension, TypeScriptExternalFnHandler, TypeScriptExternalFns,
     TypeScriptLimits,
 };
-// Re-export zapcode-core types needed by external handler consumers.
-#[cfg(all(feature = "typescript", target_arch = "wasm32", target_os = "unknown"))]
-pub use zapcode_browser::Value as ZapcodeValue;
-#[cfg(all(
-    feature = "typescript",
-    not(all(target_arch = "wasm32", target_os = "unknown"))
-))]
-pub use zapcode_core::Value as ZapcodeValue;
+// Re-export ZapCode types needed by external handler consumers.
+#[cfg(feature = "typescript")]
+pub use zapcode_vendor::Value as ZapcodeValue;
 
 /// Logging utilities module
 ///
@@ -8721,9 +8716,10 @@ echo missing fi"#,
     }
 }
 
-// Browser-only upstream source retains VM limits; native builds keep the
-// external crate and its public value types. See runtimes/zapcode-runtime.md.
-#[cfg(all(feature = "typescript", target_arch = "wasm32", target_os = "unknown"))]
+// Decision: every target runs this in-tree ZapCode 1.5.1 copy instead of the
+// registry crate, so Bashkit can carry resource-limit fixes (marked
+// `bashkit fork:`) that upstream has not shipped. See runtimes/zapcode-runtime.md.
+#[cfg(feature = "typescript")]
 #[rustfmt::skip]
 #[allow(dead_code, unused_imports, clippy::all, clippy::unwrap_used)]
-mod zapcode_browser;
+mod zapcode_vendor;

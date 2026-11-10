@@ -2,8 +2,8 @@ pub mod instruction;
 
 use std::collections::{HashMap, HashSet};
 
-use crate::zapcode_browser::error::{Result, ZapcodeError};
-use crate::zapcode_browser::parser::ir::*;
+use crate::zapcode_vendor::error::{Result, ZapcodeError};
+use crate::zapcode_vendor::parser::ir::*;
 use instruction::*;
 
 /// Compiled program ready for VM execution.

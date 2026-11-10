@@ -7614,6 +7614,34 @@ mod typescript_security {
         assert_ne!(result.exit_code, 0, "Memory bomb should not succeed");
     }
 
+    /// TM-TS-025: a huge padStart/padEnd length fails the run instead of
+    /// asking the allocator for ~1 TiB and aborting the host process.
+    #[tokio::test]
+    async fn threat_ts_pad_huge_length_fails_cleanly() {
+        let mut bash = bash_with_ts();
+        for method in ["padStart", "padEnd"] {
+            let result = bash
+                .exec(&format!(
+                    "ts -c \"console.log('a'.{method}(2 ** 40).length)\""
+                ))
+                .await
+                .unwrap();
+            assert_ne!(result.exit_code, 0, "{method} should fail");
+            assert!(
+                result.stdout.is_empty(),
+                "{method} printed {:?}",
+                result.stdout
+            );
+        }
+        // Ordinary padding still works, including multi-char pads.
+        let result = bash
+            .exec("ts -c \"console.log('7'.padStart(3, '0') + '|' + 'ab'.padEnd(5, 'xy'))\"")
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, 0, "stderr: {}", result.stderr);
+        assert_eq!(result.stdout.trim(), "007|abxyx");
+    }
+
     /// TM-TS-003: TypeScript stack overflow blocked
     #[tokio::test]
     async fn threat_ts_stack_overflow() {

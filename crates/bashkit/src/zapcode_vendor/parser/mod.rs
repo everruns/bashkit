@@ -6,7 +6,7 @@ use oxc_ast::ast;
 use oxc_parser::Parser;
 use oxc_span::SourceType;
 
-use crate::zapcode_browser::error::{Result, ZapcodeError};
+use crate::zapcode_vendor::error::{Result, ZapcodeError};
 
 pub fn parse(source: &str) -> Result<Program> {
     // Auto-wrap trailing object literals: `{ key: value }` → `({ key: value })`

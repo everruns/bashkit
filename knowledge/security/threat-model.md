@@ -2229,6 +2229,7 @@ TypeScript execution requires two explicit opt-in steps, matching the Python bui
 | TM-TS-022 | Script reads from host filesystem | Critical | Script file loaded via VFS | `threat_ts_script_from_vfs` |
 | TM-TS-023 | Shebang line injection | Low | Shebang stripped safely | `threat_ts_shebang_stripped` |
 | TM-TS-024 | Deeply nested source overflows the native stack in ZapCode's parser/compiler and aborts the host process | Critical | Conservative nesting estimate rejects depth > 1000 before ZapCode; parse/compile run on a 128 MiB-stack thread (4x debug margin) | `deeply_nested_source_fails_cleanly`, `deep_nesting_at_the_limit_does_not_overflow`, `deep_nesting_past_the_limit_is_rejected` |
+| TM-TS-025 | `'a'.padStart(2**40)` / `padEnd` asks the allocator for ~1 TiB and aborts the host process (all tenants) | High | Vendored ZapCode `bashkit fork:` edit caps the target length at 10,000,000 (same cap as `repeat`) and fails the run with `AllocationLimitExceeded` | `threat_ts_pad_huge_length_fails_cleanly` |
 
 ### Blocked Language Features
 

@@ -23,7 +23,8 @@ Experimental
 Sandboxed TypeScript/JavaScript execution via `typescript`, `ts`, `node`,
 `deno`, and `bun` builtins, powered by the
 [ZapCode](https://github.com/TheUncharted/zapcode) embedded TypeScript
-interpreter written in Rust (`zapcode-core` on crates.io). Runs directly in
+interpreter written in Rust (`zapcode-core` 1.5.1, vendored in-tree as
+`crates/bashkit/src/zapcode_vendor`, see "Vendored source"). Runs directly in
 the host process, no subprocess, no IPC.
 
 ### Registration (Opt-in)
@@ -42,7 +43,7 @@ matching the `python` pattern: `Bash::builder().typescript()`,
 - No filesystem/network/eval access by design (sandbox-safe)
 - Snapshotable execution state (<2 KB)
 - External function suspend/resume for VFS bridging
-- Published on crates.io (`zapcode-core`)
+- MIT, small enough to vendor and patch (`zapcode-core`)
 
 ### Usage
 
@@ -197,22 +198,35 @@ a hint to `help()` and `system_prompt()`:
 > File I/O via readFile()/writeFile() async functions. No npm/import/require.
 > No HTTP/network. No eval().
 
-### Browser platform clocks
+### Vendored source
 
-Only wasm32-unknown-unknown uses the source copy in
-`crates/bashkit/src/zapcode_browser`. ZapCode 1.5.1 uses std Instant in its resource
-tracker and Instant/SystemTime in tracing, which panic on this target. The copy
-replaces those reads with Bashkit's clock shim; time limits remain enabled.
-Native and WASI builds retain the registry crate and its public value types.
+Decision (2026-11-10): every target builds the in-tree copy of ZapCode 1.5.1 in
+`crates/bashkit/src/zapcode_vendor`; the registry `zapcode-core` crate is no
+longer a dependency. Two reasons:
+
+1. **Resource-limit fixes.** Upstream allocates unchecked in places, and an
+   allocation failure aborts the whole process (all tenants). Bashkit carries
+   those fixes as `bashkit fork:` edits. Current: `padStart`/`padEnd` reject a
+   target length above 10,000,000 with `AllocationLimitExceeded`, the same cap
+   upstream applies to `repeat` (TM-TS-025, security audit run-1 F5).
+2. **Browser clocks.** ZapCode uses std Instant in its resource tracker and
+   Instant/SystemTime in tracing, which panic on wasm32-unknown-unknown. The
+   copy reads Bashkit's clock shim (`crate::time`), which is std::time on
+   native, so time limits stay enabled everywhere.
+
+A crates.io fork (like `bashkit-monty`) was not needed: ZapCode has no
+dependents outside bashkit, and the copy ships inside the `bashkit` crate.
 
 Upstream is MIT, with its license retained. `upstream-sha256.json` records every
-original source file. The only mechanical namespace change is `crate::` to
-`crate::zapcode_browser::`, plus lib.rs to mod.rs. `scripts/check_zapcode_browser.py`
-reverses those changes and the two clock substitutions, then checks hashes and
-the complete file inventory and alignment with the native Cargo.lock version. Rustfmt and Clippy skip this upstream source like
-the jaq-json vendor. To update, copy a reviewed crate release, regenerate hashes,
-apply those changes, retain the license and rerun the real browser runtime suite.
-Keep parser/postcard/indexmap dependency versions aligned with upstream. Remove
-the copy once upstream provides browser-safe clocks; never disable deadlines.
+original source file. Mechanical changes: `crate::` to
+`crate::zapcode_vendor::`, lib.rs to mod.rs. `scripts/check_zapcode_vendor.py`
+(CI) reverses those, the two clock substitutions and every listed
+`bashkit fork:` edit, then checks hashes and the complete file inventory; an
+unlisted marker or drifted edit fails. Rustfmt and Clippy skip this upstream
+source like the jaq-json vendor. To update, copy a reviewed crate release,
+regenerate hashes, re-apply the namespace/clock changes and fork edits (drop
+any upstream fixed), retain the license, and rerun the TypeScript threat-model
+tests and the real browser runtime suite. Keep oxc/postcard/indexmap versions
+aligned with upstream. Never disable deadlines or limits in the copy.
 
 See [Browser Package](browser-package.md) for bundle and callback session rules.

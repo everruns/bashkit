@@ -95,8 +95,8 @@ jobs:
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
 
-      - name: Check browser VM source drift
-        run: python3 scripts/check_zapcode_browser.py
+      - name: Check vendored ZapCode source drift
+        run: python3 scripts/check_zapcode_vendor.py
 
       - name: Check bashkit for wasm32-unknown-unknown
         run: cargo check -p bashkit -p bashkit-scripted-tool --target wasm32-unknown-unknown --features bashkit/jq,bashkit/wasm_js,bashkit/terminal
