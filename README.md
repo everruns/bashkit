@@ -5,10 +5,9 @@
 [![Crates.io](https://img.shields.io/crates/v/bashkit.svg)](https://crates.io/crates/bashkit)
 [![docs.rs](https://img.shields.io/docsrs/bashkit)](https://docs.rs/bashkit)
 [![Repo: Agent Friendly](https://img.shields.io/badge/Repo-Agent%20Friendly-blue)](https://github.com/everruns/bashkit/blob/main/AGENTS.md)
+[![Homepage](https://img.shields.io/badge/Homepage-bashkit.sh-blue)](https://bashkit.sh)
 
 Awesomely fast virtual sandbox with bash and file system. Written in Rust.
-
-Homepage: [bashkit.sh](https://bashkit.sh)
 
 ## Features
 
