@@ -77,6 +77,77 @@ test("execution timeout aborts the builtin signal and reports exit 124", async (
   t.true(next.stdout.includes("alive"));
 });
 
+// Regression: the JS timeout mirror and the native deadline observe the same
+// duration, so either can win. Only the mirror-wins direction was handled, so
+// when native resolved first the mirror was cleared unfired and a builtin that
+// outlived the deadline never saw `ctx.signal` abort — its `ctx.fetch` kept
+// hanging on after `execute()` had already returned 124. Blocking the event
+// loop past the deadline from inside the builtin forces the native-wins order.
+test("execution timeout aborts the builtin signal when the native deadline wins", async (t) => {
+  let aborted = false;
+  let signal: AbortSignal | undefined;
+  const bash = new Bash({
+    timeoutMs: 300,
+    customBuiltins: {
+      hold: async (ctx: any) => {
+        signal = ctx.signal;
+        ctx.onCancel(() => {
+          aborted = true;
+        });
+        // Starve the loop so the mirror's 300ms timer cannot run before the
+        // native deadline delivers its result.
+        const until = Date.now() + 700;
+        while (Date.now() < until) {
+          /* busy-wait: deliberately blocking */
+        }
+        await new Promise((r) => setTimeout(r, 5000));
+        return "x";
+      },
+    },
+  });
+  const timedOut = await bash.execute("hold");
+  t.is(timedOut.exitCode, 124);
+  t.true(aborted, "builtin onCancel ran before execute() resolved");
+  t.true(signal?.aborted, "ctx.signal is aborted once the deadline passed");
+  const next = await bash.execute("echo alive");
+  t.is(next.exitCode, 0);
+  t.true(next.stdout.includes("alive"));
+});
+
+// The cleanup abort keys off exit 124 *and* elapsed time, not elapsed time
+// alone. A builtin that returns gracefully right around the deadline reports
+// exit 0, and pairing that with an aborted signal would be neither a clean
+// success nor a timeout. The builtin here returns just under a short deadline,
+// so the cleanup is reached at or past it with a successful result.
+test("a graceful return near the deadline leaves the builtin signal intact", async (t) => {
+  let aborted = false;
+  let signal: AbortSignal | undefined;
+  const bash = new Bash({
+    timeoutMs: 120,
+    customBuiltins: {
+      quick: async (ctx: any) => {
+        signal = ctx.signal;
+        ctx.onCancel(() => {
+          aborted = true;
+        });
+        await new Promise((r) => setTimeout(r, 90));
+        return "done";
+      },
+    },
+  });
+  const result = await bash.execute("quick");
+  // Only assert the contract when the run really did succeed; a loaded machine
+  // may push it past the deadline, which is a genuine timeout, not this bug.
+  if (result.exitCode === 0) {
+    t.false(aborted, "a successful run must not fire onCancel");
+    t.false(signal?.aborted, "a successful run must not abort ctx.signal");
+    t.true(result.stdout.includes("done"));
+  } else {
+    t.is(result.exitCode, 124);
+    t.pass("run exceeded the deadline; timeout path covered elsewhere");
+  }
+});
+
 test("Ctrl+C aborts a held server connection via ctx.fetch: exit 130", async (t) => {
   const http = await import("node:http");
   let serverAborted = false;
