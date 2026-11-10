@@ -277,7 +277,7 @@ criteria = "safe-to-deploy"
 [[exemptions.brotli-decompressor]]
 version = "5.0.3"
 criteria = "safe-to-deploy"
-notes = "New transitive dep of lopdf 0.45 via fetchkit 0.7.1 (fetchkit feature only, off by default). Widely used decompressor from the brotli crate family."
+notes = "New transitive dep of lopdf 0.45 via fetchkit 0.7.x (fetchkit feature only, off by default). Widely used decompressor from the brotli crate family."
 
 [[exemptions.bstr]]
 version = "1.13.1"
@@ -738,11 +738,11 @@ version = "2.5.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.fetchkit]]
-version = "0.7.1"
+version = "0.7.2"
 criteria = "safe-to-deploy"
 
 [[exemptions.fetchkit-cli]]
-version = "0.7.1"
+version = "0.7.2"
 criteria = "safe-to-deploy"
 
 [[exemptions.ff]]
@@ -1517,7 +1517,7 @@ criteria = "safe-to-deploy"
 [[exemptions.pdf-inspector]]
 version = "1.25.2"
 criteria = "safe-to-deploy"
-notes = "Major jump from 0.1.8, pulled in by fetchkit 0.7.1 (the version fetchkit ships and tests with). Parses untrusted PDFs only behind the off-by-default `fetchkit` feature; bashkit's fetchkit builtin tests and markkit_fetchkit example pass on it."
+notes = "Major jump from 0.1.8, pulled in by fetchkit 0.7.x (the version fetchkit ships and tests with). Parses untrusted PDFs only behind the off-by-default `fetchkit` feature; bashkit's fetchkit builtin tests and markkit_fetchkit example pass on it."
 
 [[exemptions.pem-rfc7468]]
 version = "1.0.0"
