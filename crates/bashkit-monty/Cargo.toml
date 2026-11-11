@@ -36,7 +36,7 @@ test = false
 doctest = false
 
 [dependencies]
-monty-types = { package = "bashkit-monty-types", path = "../bashkit-monty-types", version = "0.20.3", features = ["cpu-clock"] }
+monty-types = { package = "bashkit-monty-types", path = "../bashkit-monty-types", version = "0.21.0", features = ["cpu-clock"] }
 ahash = { version = "0.8.0", features = ["serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 fancy-regex = { version = "0.20.0" }

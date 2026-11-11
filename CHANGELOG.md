@@ -1,5 +1,90 @@
 # Changelog
 
+## [0.21.0] - 2026-11-10
+
+### Highlights
+
+- **Embedded Python on Monty 1.5, with real per-tenant memory limits.** The headline of this release. `python3` now runs on our own Monty forks (`bashkit-monty`, `bashkit-monty-types`, published to crates.io), upgraded from Monty 0.0.19 to 1.4 and re-synced to upstream 1.5.0. Each Python run is charged exactly for its own allocations through `bashkit::MeteredAllocator`, so one tenant can no longer exhaust another's budget or abort the shared process; the time limit now bounds wall-clock time across host calls; and the forks are covered by multi-tenant stress tests, nightly ASan and soak runs, a fuzz target, a Monty-vs-CPython differential fuzzer, a drift check that allows changes only at marked fork edits, and a daily upstream advisory watch ([#2842](https://github.com/everruns/bashkit/pull/2842), [#2855](https://github.com/everruns/bashkit/pull/2855), [#2853](https://github.com/everruns/bashkit/pull/2853), [#2874](https://github.com/everruns/bashkit/pull/2874), [#2875](https://github.com/everruns/bashkit/pull/2875), [#2861](https://github.com/everruns/bashkit/pull/2861), [#2872](https://github.com/everruns/bashkit/pull/2872), [#2887](https://github.com/everruns/bashkit/pull/2887)). **Breaking:** embedders using the `python` feature must install `bashkit::MeteredAllocator` as the global allocator, or `python3` refuses to run.
+- **TypeScript resource limits enforced.** ZapCode never read `max_memory`, so doubling a string or array, or joining one shared string many times, aborted the whole process with every tenant. Each `ts` run now has its own heap meter checked at every instruction, output-amplifying builtins size their result first, and `max_duration` bounds wall-clock time across host calls. ZapCode is vendored in-tree on every target, and `padStart`/`padEnd` are capped ([#2909](https://github.com/everruns/bashkit/pull/2909), [#2910](https://github.com/everruns/bashkit/pull/2910)). **Breaking:** the same `MeteredAllocator` requirement now applies to the `typescript` feature.
+- **Security audit fixes.** Bounded eval/compgen/path-script recursion with on-demand stack growth, setuid bits dropped on real mounts, caller Host headers dropped before credential injection, `json.dumps` indent preflight, markkit/fetchkit honoring the exec deadline, and fetchkit 0.7.2 for linear readable extraction ([#2867](https://github.com/everruns/bashkit/pull/2867), [#2871](https://github.com/everruns/bashkit/pull/2871), [#2869](https://github.com/everruns/bashkit/pull/2869), [#2868](https://github.com/everruns/bashkit/pull/2868), [#2870](https://github.com/everruns/bashkit/pull/2870), [#2914](https://github.com/everruns/bashkit/pull/2914)).
+- **Execution-scoped cancellation for custom builtins** in the language bindings ([#2893](https://github.com/everruns/bashkit/pull/2893), [#2905](https://github.com/everruns/bashkit/pull/2905)).
+- **Embedded runtimes are friendlier to agents.** The ~95-call cap on `python3`/`ts` per session is gone, time limits exit 124, deep nesting fails cleanly, and `timeout_seconds` raises the runtime time limit in the Python package ([#2832](https://github.com/everruns/bashkit/pull/2832), [#2833](https://github.com/everruns/bashkit/pull/2833), [#2835](https://github.com/everruns/bashkit/pull/2835), [#2873](https://github.com/everruns/bashkit/pull/2873)).
+
+### What's Changed
+
+* fix(deps): pick up fetchkit 0.7.2 linear readable extraction ([#2914](https://github.com/everruns/bashkit/pull/2914)) by @chaliy
+* fix(ts): enforce max_memory and wall-clock limit for TypeScript ([#2910](https://github.com/everruns/bashkit/pull/2910)) by @chaliy
+* fix(typescript): vendor ZapCode on every target and cap padStart/padEnd ([#2909](https://github.com/everruns/bashkit/pull/2909)) by @chaliy
+* fix(examples): read pydantic-ai run result from .output ([#2908](https://github.com/everruns/bashkit/pull/2908)) by @chaliy
+* docs(readme): move homepage link into badge row ([#2907](https://github.com/everruns/bashkit/pull/2907)) by @chaliy
+* docs: describe bashkit as part of the Everruns community ecosystem ([#2906](https://github.com/everruns/bashkit/pull/2906)) by @chaliy
+* fix(bindings): abort the builtin signal when the native deadline wins ([#2905](https://github.com/everruns/bashkit/pull/2905)) by @chaliy
+* chore(deps): bump flate2 to 1.1.11 with the vet exemption it needs ([#2904](https://github.com/everruns/bashkit/pull/2904)) by @chaliy
+* chore(deps): bump flate2 from 1.1.10 to 1.1.11 in /crates/bashkit/fuzz in the fuzz-dependencies group ([#2897](https://github.com/everruns/bashkit/pull/2897)) by @app/dependabot
+* chore(deps): bump @langchain/core from 1.3.4 to 1.3.5 in /crates/bashkit-js in the js-npm group ([#2898](https://github.com/everruns/bashkit/pull/2898)) by @app/dependabot
+* chore(deps): bump the examples-npm group across 1 directory with 3 updates ([#2899](https://github.com/everruns/bashkit/pull/2899)) by @app/dependabot
+* chore(deps): bump the site-npm group in /site with 3 updates ([#2900](https://github.com/everruns/bashkit/pull/2900)) by @app/dependabot
+* chore(ci): bump taiki-e/install-action from 2.90.1 to 2.90.2 in the github-actions group ([#2901](https://github.com/everruns/bashkit/pull/2901)) by @app/dependabot
+* chore(ci): move Monty release-drift check to maintenance, keep advisories daily ([#2894](https://github.com/everruns/bashkit/pull/2894)) by @chaliy
+* fix(test): stop comparing an implementation-defined cp leftover to the host ([#2903](https://github.com/everruns/bashkit/pull/2903)) by @chaliy
+* feat(bindings): execution-scoped cancellation for custom builtins ([#2893](https://github.com/everruns/bashkit/pull/2893)) by @chaliy
+* fix(builtins): port uutils' thiserror messages and shared clap args ([#2895](https://github.com/everruns/bashkit/pull/2895)) by @chaliy
+* chore(deps): bump the examples-npm group across 2 directories ([#2890](https://github.com/everruns/bashkit/pull/2890)) by @app/dependabot
+* chore(deps): bump the docs-grep-agent-uv group in /examples/docs-grep-agent ([#2889](https://github.com/everruns/bashkit/pull/2889)) by @app/dependabot
+* chore(deps): bump wrangler from 4.157.0 to 4.158.0 in /site ([#2888](https://github.com/everruns/bashkit/pull/2888)) by @app/dependabot
+* chore(ci): bump softprops/action-gh-release from 3.0.3 to 3.0.4 ([#2891](https://github.com/everruns/bashkit/pull/2891)) by @app/dependabot
+* ci(workflows): retry the Doppler CLI install once ([#2892](https://github.com/everruns/bashkit/pull/2892)) by @chaliy
+* chore(deps): re-sync the Monty forks to upstream 1.5.0 ([#2887](https://github.com/everruns/bashkit/pull/2887)) by @chaliy
+* chore(deps): bump russh to 0.65.1 and signal-hook to 0.4.6 ([#2886](https://github.com/everruns/bashkit/pull/2886)) by @chaliy
+* chore(deps): bump toml and toml_writer, refreshing their publisher facts ([#2884](https://github.com/everruns/bashkit/pull/2884)) by @chaliy
+* chore(deps): bump wrangler from 4.156.2 to 4.157.0 in /site ([#2877](https://github.com/everruns/bashkit/pull/2877)) by @app/dependabot
+* chore(ci): bump taiki-e/install-action to v2.90.1 ([#2882](https://github.com/everruns/bashkit/pull/2882)) by @app/dependabot
+* fix(test): make the python regex DoS wall-clock bounds hang detectors, not budgets ([#2883](https://github.com/everruns/bashkit/pull/2883)) by @chaliy
+* chore(deps): unify pyo3 on 0.30 with compatible companions ([#2863](https://github.com/everruns/bashkit/pull/2863)) by @chaliy
+* chore(deps): bump the js-npm group in /crates/bashkit-js with 4 updates ([#2878](https://github.com/everruns/bashkit/pull/2878)) by @app/dependabot
+* chore(deps): bump the examples-npm group across 1 directory with 3 updates ([#2879](https://github.com/everruns/bashkit/pull/2879)) by @app/dependabot
+* fix(ci): migrate nightly jobs to the new dtolnay/rust-toolchain schema ([#2850](https://github.com/everruns/bashkit/pull/2850)) by @chaliy
+* fix(deps): let a Monty fork dependency move ahead of upstream when marked ([#2876](https://github.com/everruns/bashkit/pull/2876)) by @chaliy
+* test(python): differential fuzz Monty against CPython ([#2875](https://github.com/everruns/bashkit/pull/2875)) by @chaliy
+* fix(python): let timeout_seconds raise the embedded runtime time limit ([#2873](https://github.com/everruns/bashkit/pull/2873)) by @chaliy
+* ci(python): sanitize Monty under ASan and soak tenant stress nightly ([#2874](https://github.com/everruns/bashkit/pull/2874)) by @chaliy
+* ci(python): watch upstream Monty releases and advisories ([#2872](https://github.com/everruns/bashkit/pull/2872)) by @chaliy
+* fix(builtins): markkit/fetchkit respect the exec deadline off the async worker ([#2870](https://github.com/everruns/bashkit/pull/2870)) by @chaliy
+* fix(python): preflight json.dumps indent and separators ([#2868](https://github.com/everruns/bashkit/pull/2868)) by @chaliy
+* fix(interpreter): bound eval/compgen/path-script recursion and grow stack on demand ([#2867](https://github.com/everruns/bashkit/pull/2867)) by @chaliy
+* fix(realfs): drop setuid bits on host files, keep FsLimits on root mounts ([#2871](https://github.com/everruns/bashkit/pull/2871)) by @chaliy
+* fix(network): drop caller Host headers and refuse encoded slashes in path rules ([#2869](https://github.com/everruns/bashkit/pull/2869)) by @chaliy
+* fix(python): mark the Monty fork edits that turned main red ([#2865](https://github.com/everruns/bashkit/pull/2865)) by @chaliy
+* chore(python): CI check that the Monty forks drift only at marked edits ([#2861](https://github.com/everruns/bashkit/pull/2861)) by @chaliy
+* fix(python): stop shared-graph repr/compare outliving the time limit ([#2857](https://github.com/everruns/bashkit/pull/2857)) by @chaliy
+* test(rg): warm up rg before measuring its bounded-memory walk ([#2862](https://github.com/everruns/bashkit/pull/2862)) by @chaliy
+* chore(deps): bump the examples-npm group across 1 directory with 2 updates ([#2859](https://github.com/everruns/bashkit/pull/2859)) by @app/dependabot
+* fix(python): multi-tenant stress for Monty python3; bound wall-clock time across host calls ([#2855](https://github.com/everruns/bashkit/pull/2855)) by @chaliy
+* fix(rg): search each file as it is read instead of holding every file's text ([#2856](https://github.com/everruns/bashkit/pull/2856)) by @chaliy
+* fix(deps): drop the versioning-strategy cargo rejects; commit fixture lockfiles ([#2854](https://github.com/everruns/bashkit/pull/2854)) by @chaliy
+* test(python): fuzz the forked Monty python3 nightly ([#2853](https://github.com/everruns/bashkit/pull/2853)) by @chaliy
+* fix(deps): make the weekly Dependabot cargo jobs runnable again ([#2852](https://github.com/everruns/bashkit/pull/2852)) by @chaliy
+* chore(knowledge): list monty fork crates in trusted publishing check ([#2849](https://github.com/everruns/bashkit/pull/2849)) by @chaliy
+* chore(deps): bump the examples-npm group across 1 directory with 3 updates ([#2846](https://github.com/everruns/bashkit/pull/2846)) by @app/dependabot
+* chore(deps): bump the docs-grep-agent-uv group in /examples/docs-grep-agent with 2 updates ([#2845](https://github.com/everruns/bashkit/pull/2845)) by @app/dependabot
+* chore(deps): bump the site-npm group in /site with 2 updates ([#2844](https://github.com/everruns/bashkit/pull/2844)) by @app/dependabot
+* chore(deps): bump @langchain/core from 1.3.2 to 1.3.3 in /crates/bashkit-js in the js-npm group ([#2843](https://github.com/everruns/bashkit/pull/2843)) by @app/dependabot
+* feat(python): upgrade embedded Monty to 1.4.0 with per-VM memory metering ([#2842](https://github.com/everruns/bashkit/pull/2842)) by @chaliy
+* fix(fs): follow final link under linked dirs; slash keys for implicit parents ([#2841](https://github.com/everruns/bashkit/pull/2841)) by @chaliy
+* chore(ci): bump taiki-e/install-action from 2.88.1 to 2.89.1 in the github-actions group ([#2840](https://github.com/everruns/bashkit/pull/2840)) by @app/dependabot
+* chore(deps): bump the examples-npm group across 1 directory with 4 updates ([#2839](https://github.com/everruns/bashkit/pull/2839)) by @app/dependabot
+* chore(deps): bump langgraph from 1.2.18 to 1.2.19 in /examples/docs-grep-agent in the docs-grep-agent-uv group ([#2838](https://github.com/everruns/bashkit/pull/2838)) by @app/dependabot
+* chore(deps): bump wrangler from 4.156.0 to 4.156.1 in /site in the site-npm group ([#2837](https://github.com/everruns/bashkit/pull/2837)) by @app/dependabot
+* chore(deps): bump ava from 8.2.0 to 8.3.0 in /crates/bashkit-js in the js-npm group ([#2836](https://github.com/everruns/bashkit/pull/2836)) by @app/dependabot
+* fix(typescript): lift the per-call budget cap, exit 124 on timeout, guard deep nesting ([#2835](https://github.com/everruns/bashkit/pull/2835)) by @chaliy
+* fix(python): re gate follow-ups: budget before parse, parser pinned with Monty ([#2834](https://github.com/everruns/bashkit/pull/2834)) by @chaliy
+* fix(python): accurate LLM hint and exit 124 on Monty time limit ([#2833](https://github.com/everruns/bashkit/pull/2833)) by @chaliy
+* fix(python): lift the ~95-call cap and stop echoing the final value ([#2832](https://github.com/everruns/bashkit/pull/2832)) by @chaliy
+* fix(python): find blocked imports by parsing, not by line prefix ([#2831](https://github.com/everruns/bashkit/pull/2831)) by @chaliy
+* docs: add "How can I support this project?" section to README ([#2828](https://github.com/everruns/bashkit/pull/2828)) by @chaliy
+
+**Full Changelog**: https://github.com/everruns/bashkit/compare/v0.20.3...v0.21.0
+
 ## [0.20.3] - 2026-11-04
 
 ### Highlights
