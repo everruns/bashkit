@@ -124,10 +124,13 @@ async fn run(load: Load) {
             );
         }
         Load::Spin => {
-            // Whichever of the two limits the loop reaches first bounds it,
-            // and which one that is depends on how fast the build is (see
-            // SPIN_ALLOCATIONS). Both are correct bounded termination; the
-            // two tests at the end of this file pin each limit on its own.
+            // `tenant` keeps the default `max_allocations`, so this loop
+            // races the push budget against its 300 ms `max_duration` and
+            // which one binds depends on how fast the build is: release
+            // burns the 1,000,000 default in milliseconds, debug reaches the
+            // clock first. Both are correct bounded termination, so neither
+            // is asserted here; the two tests at the end of this file pin
+            // each limit on its own, with a budget chosen so it cannot race.
             assert_ne!(r.exit_code, 0, "{load:?} stdout: {}", r.stdout);
             assert!(
                 r.stderr.contains("timed out") || r.stderr.contains("allocation limit exceeded"),
