@@ -66,6 +66,13 @@ Configurable via `TypeScriptLimits`:
 | Max stack depth | 512 | `.max_stack_depth(n)` | Prevent stack overflow |
 | Max allocations | 1,000,000 | `.max_allocations(n)` | Bound VM allocation count |
 
+`max_allocations` counts VM stack pushes and array/object creations, and the
+counter never decreases within a run (`zapcode_vendor/sandbox.rs`,
+`track_allocation`), so it is a per-run budget of operations rather than a live
+heap bound - that is `max_memory`. A `while (true) {}` spends about one per
+iteration, so the 1M default stops a runaway loop after about 1M iterations
+regardless of how little heap it holds.
+
 Every VM entry charges source bytes, a fixed 4096 work units, and the
 microseconds each synchronous VM step ran to the request-scoped
 `ExecutionBudget`. Suspend/resume cycles and external/VFS callbacks retain the
@@ -249,6 +256,16 @@ must hit only its own limit. It runs 3 rounds on every PR;
 `BASHKIT_STRESS_ROUNDS` sets a longer soak. Each host call snapshots the VM
 heap, so a held 8 MiB string costs about 3x that during the call and counts
 against `max_memory`.
+
+Decision (2026-11-11): the spin tenant asserts only that it stopped on one of
+its own limits, because `max_allocations` and `max_duration` race and the
+winner depends on build speed. A release build burns the 1M push budget in a
+few milliseconds; a debug build reaches a 300 ms `max_duration` first. Pinning
+exit 124 there passed every debug PR run and failed the release nightly soak.
+Each limit is instead pinned on its own by
+`ts_runaway_loop_stops_on_the_wall_clock` (budget raised so the clock binds)
+and `ts_runaway_loop_stops_on_the_allocation_budget` (budget lowered so it
+binds), both deterministic in either profile.
 
 Nightly (`nightly.yml`): an ASan pass over the ts unit, threat-model, security
 and stress tests (`--features typescript`, filters `typescript threat_ts
