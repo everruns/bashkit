@@ -1004,6 +1004,18 @@ mod tests {
         );
     }
 
+    /// bash backslash-escapes braces in `%q`; it never single-quotes the
+    /// argument. GNU/uutils `printf %q` switched to single quotes for a
+    /// brace-bearing argument, so pin bash's spelling here: the vendored
+    /// `%q` arm asks for that switch and the shim has to keep refusing it.
+    #[test]
+    fn quoted_string_escapes_braces_the_way_bash_does() {
+        assert_eq!(render_printf("%q", &["a{b".into()]).unwrap(), "a\\{b");
+        assert_eq!(render_printf("%q", &["a}b".into()]).unwrap(), "a\\}b");
+        assert_eq!(render_printf("%q", &["{}".into()]).unwrap(), "\\{\\}");
+        assert_eq!(render_printf("%q", &["a{b c".into()]).unwrap(), "a\\{b\\ c");
+    }
+
     #[test]
     fn strips_zero_hex_escapes_at_stdout_boundary() {
         assert_eq!(render_printf("a\\x00b", &[]).unwrap(), "ab");

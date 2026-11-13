@@ -93,6 +93,30 @@ pub enum QuotingStyle {
     SHELL_ESCAPE,
 }
 
+impl QuotingStyle {
+    /// Stand-in for uucore's `QuotingStyle::always_quote` setter,
+    /// deliberately a no-op.
+    ///
+    /// Upstream's `%q` arm became
+    /// `QuotingStyle::SHELL_ESCAPE.always_quote(has_brace)` so that GNU
+    /// `printf %q` wraps a brace-bearing argument in single quotes
+    /// (`'a{b'`). bashkit's `printf` is bash's, and bash backslash-escapes
+    /// braces instead - `printf %q 'a{b'` is `a\{b` in bash 5.2 - so
+    /// honouring the flag would make `%q` diverge from the shell bashkit
+    /// implements. [`locale_aware_escape_name`] routes every shell style to
+    /// the bash-faithful [`shell_quote`] regardless of the flags carried on
+    /// the style, so the style is returned unchanged and the vendored call
+    /// site keeps compiling and keeps bash's output.
+    ///
+    /// The shim's variants are unit-only for the same reason: it carries
+    /// the *names* the vendored module uses, not uucore's quoting
+    /// behaviour.
+    #[must_use]
+    pub fn always_quote(self, _always_quote: bool) -> Self {
+        self
+    }
+}
+
 /// Style the vendored `format` module quotes a rejected numeric argument
 /// with before reporting it.
 ///
@@ -240,6 +264,30 @@ fn shell_quote(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// bash backslash-escapes braces in `printf %q` and never switches to
+    /// single quotes (`printf %q 'a{b'` is `a\{b` in bash 5.2). The
+    /// vendored `%q` arm now asks for [`QuotingStyle::always_quote`] when
+    /// the argument carries a brace, so the shim has to ignore the request;
+    /// honouring it would make bashkit's `%q` quote like GNU `printf`
+    /// rather than like the shell bashkit implements.
+    #[test]
+    fn always_quote_does_not_change_how_braces_are_escaped() {
+        for input in ["a{b", "a}b", "{}", "{a b}", "plain"] {
+            let os = OsStr::new(input);
+            let forced =
+                locale_aware_escape_name(os, QuotingStyle::SHELL_ESCAPE.always_quote(true));
+            assert_eq!(
+                forced,
+                locale_aware_escape_name(os, QuotingStyle::SHELL_ESCAPE),
+                "always_quote changed {input:?}" // debug-ok: assert-failure message
+            );
+            assert!(
+                !forced.to_string_lossy().starts_with('\''),
+                "{input:?} was single-quoted" // debug-ok: assert-failure message
+            );
+        }
+    }
 
     /// Upstream renamed `C_NO_QUOTES` to the `Escape` variant; both select
     /// uucore's `CQuoter` with `CQuotesEnforce::None`, and both are what
