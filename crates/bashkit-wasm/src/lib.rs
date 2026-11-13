@@ -65,13 +65,15 @@ pub fn __start() {
 // ---------------------------------------------------------------------------
 
 /// Result of a bash execution, mirrored from the Rust `ExecResult`.
-#[wasm_bindgen(getter_with_clone)]
+#[wasm_bindgen]
 pub struct ExecResult {
+    #[wasm_bindgen(getter_with_clone)]
     pub stdout: String,
-    #[wasm_bindgen(js_name = stdoutBytes)]
+    #[wasm_bindgen(getter_with_clone, js_name = stdoutBytes)]
     pub stdout_bytes: Vec<u8>,
+    #[wasm_bindgen(getter_with_clone)]
     pub stderr: String,
-    #[wasm_bindgen(js_name = stderrBytes)]
+    #[wasm_bindgen(getter_with_clone, js_name = stderrBytes)]
     pub stderr_bytes: Vec<u8>,
     #[wasm_bindgen(js_name = exitCode)]
     pub exit_code: i32,

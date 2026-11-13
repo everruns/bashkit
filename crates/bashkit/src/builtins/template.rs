@@ -292,7 +292,7 @@ impl Builtin for Template {
             let path = resolve_path(ctx.cwd, data_path);
             let text = match read_text_file(&*ctx.fs, &path, "template").await {
                 Ok(t) => t,
-                Err(e) => return Ok(e),
+                Err(e) => return Ok(*e),
             };
             match serde_json::from_str::<serde_json::Value>(&text) {
                 Ok(v) => v,
@@ -312,7 +312,7 @@ impl Builtin for Template {
             let path = resolve_path(ctx.cwd, tpl_path);
             match read_text_file(&*ctx.fs, &path, "template").await {
                 Ok(t) => t,
-                Err(e) => return Ok(e),
+                Err(e) => return Ok(*e),
             }
         } else if let Some(stdin) = ctx.stdin {
             stdin.to_string()

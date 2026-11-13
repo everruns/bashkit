@@ -150,7 +150,7 @@ fn split_obsolete_tabs(args: &[String]) -> (Vec<String>, Vec<String>) {
 async fn read_inputs<H: BuiltinHelper>(
     ctx: &Context<'_>,
     files: &[String],
-) -> std::result::Result<String, ExecResult> {
+) -> std::result::Result<String, Box<ExecResult>> {
     if files.is_empty() {
         return Ok(ctx.stdin.map(ToString::to_string).unwrap_or_default());
     }
@@ -163,7 +163,7 @@ async fn read_inputs<H: BuiltinHelper>(
         let path = resolve_path(ctx.cwd, file);
         match read_text_file(ctx.fs.as_ref(), &path, H::NAME).await {
             Ok(text) => buf.push_str(&text),
-            Err(_) => return Err(H::err_path(file, "No such file or directory", 1)),
+            Err(_) => return Err(Box::new(H::err_path(file, "No such file or directory", 1))),
         }
     }
     Ok(buf)
@@ -229,7 +229,7 @@ impl Builtin for Expand {
 
         let input = match read_inputs::<Self>(&ctx, &files).await {
             Ok(t) => t,
-            Err(e) => return Ok(e),
+            Err(e) => return Ok(*e),
         };
 
         let too_big = || Self::err(format!("output exceeds byte limit ({MAX_OUTPUT_BYTES})"), 1);
@@ -341,7 +341,7 @@ impl Builtin for Unexpand {
 
         let input = match read_inputs::<Self>(&ctx, &files).await {
             Ok(t) => t,
-            Err(e) => return Ok(e),
+            Err(e) => return Ok(*e),
         };
 
         let mut output = String::with_capacity(input.len());

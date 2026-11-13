@@ -26,6 +26,41 @@ Multi-layer testing strategy:
 For current test counts and pass rates, see CI (`spec_tests::bash_spec_tests`).
 For run commands, see AGENTS.md "Local Dev" and `.github/workflows/ci.yml`.
 
+## Rust toolchain and consumer compatibility
+
+Development and build workflows pin Rust 1.100.0. The toolchain pin does not
+change the compiler selected by an application depending on Bashkit. Keep
+compiler upgrades separate from dependency or runtime upgrades.
+
+The required `msrv` CI job resolves a fresh external consumer on Rust 1.96.0,
+without borrowing this repository's Cargo.lock. It runs lean/default smoke
+programs, checks all native features, and checks the supported browser/WASI
+feature sets, including slim browser runtime features and custom-backend
+non-JS compilation. These path consumers test checkout sources, not published
+crate contents; publication validation remains in the release workflow. Run `python3 scripts/check-msrv-consumer.py --profile default`
+locally; profiles are `lean`, `default`, `all`, `wasm`, `wasi`, `browser`, and `component`.
+Fresh consumer resolution is a compatibility probe, not a supply-chain audit.
+It may execute build scripts from newer registry versions outside the workspace
+Cargo.lock audit set. Keep these jobs on disposable hosted runners, with read-only
+repository permissions, no persisted checkout credentials, no project secrets,
+and no publication artifacts. Workspace `cargo vet --locked` and release/package
+checks retain their separate locked-dependency trust boundary. Do not promote a
+consumer-generated lockfile or cache into a release build.
+
+The optional-runtime profile is compile-only to avoid linking all interpreters
+at once. Runtime/packaging suites remain separate and run on the development
+compiler; the consumer check is not a replacement for those suites.
+
+Internal file-reading helpers box shell-result errors to keep the large diagnostic
+payload off their success paths; command boundaries unwrap the original result,
+preserving exit status, output, and control state. Compiler upgrades must not
+suppress lints or change shell behavior to pass the new compiler.
+
+Use distinct Cargo target directories for 1.96 and 1.100. Cargo 1.100 changes
+intermediate-artifact layout; scripts must not depend on internal build/deps
+paths. The consumer's own lockfile is used after fresh resolution, so this
+check catches dependency-floor drift hidden by the workspace's locked graph.
+
 ## Spec Test Framework
 
 ### Test File Format

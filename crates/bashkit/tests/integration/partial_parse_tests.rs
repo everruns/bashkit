@@ -125,7 +125,7 @@ async fn small_child_syntax_reports_match_bash() {
                     j += 1;
                 }
                 if j > i + 5 {
-                    out.splice(i + 5..j, [b'#']);
+                    out.splice(i + 5..j, *b"#");
                 }
             }
             i += 1;

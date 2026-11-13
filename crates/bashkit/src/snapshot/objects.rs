@@ -107,7 +107,7 @@ impl ObjectId {
             return Err(malformed("object id must be 64 hex characters"));
         }
         let mut out = [0u8; 32];
-        for (byte, pair) in out.iter_mut().zip(bytes.chunks_exact(2)) {
+        for (byte, pair) in out.iter_mut().zip(bytes.as_chunks::<2>().0.iter()) {
             let (hi, lo) = (hex_nibble(pair[0])?, hex_nibble(pair[1])?);
             *byte = (hi << 4) | lo;
         }

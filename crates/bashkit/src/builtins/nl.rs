@@ -312,7 +312,7 @@ impl Builtin for Nl {
             };
             let text = match read_text_file(&*ctx.fs, &path, "nl").await {
                 Ok(t) => t,
-                Err(e) => return Ok(e),
+                Err(e) => return Ok(*e),
             };
             number_lines(&text, &opts, &mut state, &mut output);
         }

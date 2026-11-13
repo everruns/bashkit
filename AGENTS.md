@@ -160,6 +160,9 @@ criteria live in `knowledge/operations/testing.md`.
 - Stable Rust, version pinned in `rust-toolchain.toml` (bump deliberately;
   match the new version in `dtolnay/rust-toolchain@<version>` refs across
   `.github/workflows/*` so CI can't be broken by a same-day rustc release)
+- Consumer compatibility is checked independently on Rust 1.96.0 via
+  `scripts/check-msrv-consumer.py`; do not raise the consumer floor just because
+  the development toolchain changes. Keep compiler-specific target caches separate.
 - `cargo fmt` and `cargo clippy -- -D warnings`
 - License checks: `cargo deny check` (see `deny.toml`)
 

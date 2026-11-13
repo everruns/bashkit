@@ -353,7 +353,7 @@ impl Builtin for Diff {
             };
             match read_text_file(&*ctx.fs, &path, "diff").await {
                 Ok(text) => text.lines().map(|l| l.to_string()).collect(),
-                Err(e) => return Ok(e),
+                Err(e) => return Ok(*e),
             }
         };
 
@@ -370,7 +370,7 @@ impl Builtin for Diff {
             };
             match read_text_file(&*ctx.fs, &path, "diff").await {
                 Ok(text) => text.lines().map(|l| l.to_string()).collect(),
-                Err(e) => return Ok(e),
+                Err(e) => return Ok(*e),
             }
         };
 

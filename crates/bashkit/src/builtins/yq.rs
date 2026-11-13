@@ -105,7 +105,7 @@ impl Builtin for Yq {
                     let path = resolve_path(ctx.cwd, file);
                     let input = match read_text_file(ctx.fs.as_ref(), &path, "yq").await {
                         Ok(input) => input,
-                        Err(error) => return Ok(error),
+                        Err(error) => return Ok(*error),
                     };
                     ctx.consume_budget_input(input.len())?;
                     match parse_documents(&input, args.input, Some(file)) {

@@ -156,7 +156,7 @@ impl Builtin for Wc {
                     Ok(data) => {
                         counted.push((count_data(data.as_bytes()), regular && *file != "-"))
                     }
-                    Err(e) => return Ok(e),
+                    Err(e) => return Ok(*e),
                 }
             }
             let width = number_width(&counted, flags.active_count());
