@@ -160,7 +160,7 @@ impl Builtin for Paste {
             };
             let text = match read_text_file(&*ctx.fs, &path, "paste").await {
                 Ok(t) => t,
-                Err(e) => return Ok(e),
+                Err(e) => return Ok(*e),
             };
             inputs.sources.push(Source::Lines(records(&text, sep), 0));
         }

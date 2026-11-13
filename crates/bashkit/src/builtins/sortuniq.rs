@@ -995,7 +995,7 @@ impl Builtin for Sort {
                     Ok(t) => t,
                     Err(mut e) => {
                         e.exit_code = 2;
-                        return Ok(e);
+                        return Ok(*e);
                     }
                 }
             };
@@ -1282,7 +1282,7 @@ impl Builtin for Uniq {
                 };
                 match read_text_file(&*ctx.fs, &path, "uniq").await {
                     Ok(text) => text,
-                    Err(e) => return Ok(e),
+                    Err(e) => return Ok(*e),
                 }
             }
         };

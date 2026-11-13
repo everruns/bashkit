@@ -400,10 +400,7 @@ fn is_clap_error_chrome_line(line: &str) -> bool {
     }
     // `For more information, try '--help'.` /
     // `For more information, try '<cmd> --help'.`
-    if line.starts_with("For more information, try '") && line.ends_with("'.") {
-        return true;
-    }
-    false
+    line.starts_with("For more information, try '") && line.ends_with("'.")
 }
 
 /// Full fuzz-invariant check. Like [`assert_no_leak`] but tolerates

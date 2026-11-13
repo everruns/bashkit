@@ -281,11 +281,7 @@ fn is_likely_secret(value: &str) -> bool {
     }
 
     // High entropy detection for longer strings (likely random secrets)
-    if trimmed.len() >= 32 && is_high_entropy(trimmed) {
-        return true;
-    }
-
-    false
+    trimmed.len() >= 32 && is_high_entropy(trimmed)
 }
 
 /// Check if string looks like base64

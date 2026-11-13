@@ -205,7 +205,9 @@ fn decode_from(input: &[u8], encoding: &str) -> std::result::Result<String, Stri
                 return Err("iconv: UTF-16 input has odd byte count\n".to_string());
             }
             let units: Vec<u16> = data
-                .chunks_exact(2)
+                .as_chunks::<2>()
+                .0
+                .iter()
                 .map(|c| {
                     if big_endian {
                         u16::from_be_bytes([c[0], c[1]])
@@ -221,7 +223,9 @@ fn decode_from(input: &[u8], encoding: &str) -> std::result::Result<String, Stri
                 return Err("iconv: UTF-16BE input has odd byte count\n".to_string());
             }
             let units: Vec<u16> = input
-                .chunks_exact(2)
+                .as_chunks::<2>()
+                .0
+                .iter()
                 .map(|c| u16::from_be_bytes([c[0], c[1]]))
                 .collect();
             String::from_utf16(&units).map_err(|e| format!("iconv: invalid UTF-16BE input: {e}\n"))

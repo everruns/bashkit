@@ -2479,7 +2479,7 @@ impl Interpreter {
 
         // Initialize default shell variables
         let mut variables = HashMap::new();
-        variables.insert("HOME".to_string(), format!("/home/{}", &username_val));
+        variables.insert("HOME".to_string(), format!("/home/{}", username_val));
         variables.insert("USER".to_string(), username_val.clone());
         variables.insert("UID".to_string(), "1000".to_string());
         variables.insert("EUID".to_string(), "1000".to_string());
@@ -10760,7 +10760,7 @@ impl Interpreter {
         // file, so `./missing 2>/dev/null` reports nothing.
         let raw = match self.read_executable(name, &path).await {
             Ok(raw) => raw,
-            Err(failed) => return self.redirect_result(failed, redirects).await,
+            Err(failed) => return self.redirect_result(*failed, redirects).await,
         };
         // A root-filesystem stub (`/usr/bin/env`) runs the builtin it names;
         // `/bin/bash` starts a child shell as `bash` does.
@@ -10799,7 +10799,7 @@ impl Interpreter {
         &self,
         name: &str,
         path: &Path,
-    ) -> std::result::Result<Vec<u8>, ExecResult> {
+    ) -> std::result::Result<Vec<u8>, Box<ExecResult>> {
         let missing = || {
             ExecResult::err(
                 self.diag(format!("{name}: No such file or directory\n")),
@@ -10809,25 +10809,25 @@ impl Interpreter {
         // A component past NAME_MAX fails before any lookup (execve's
         // ENAMETOOLONG), which bash reports as status 126.
         if path.components().any(|c| c.as_os_str().len() > 255) {
-            return Err(ExecResult::err(
+            return Err(Box::new(ExecResult::err(
                 self.diag(format!("{name}: File name too long\n")),
                 126,
-            ));
+            )));
         }
         let meta = self.fs.stat(path).await.map_err(|_| missing())?;
         if meta.file_type.is_dir() {
-            return Err(ExecResult::err(
+            return Err(Box::new(ExecResult::err(
                 self.diag(format!("{name}: Is a directory\n")),
                 126,
-            ));
+            )));
         }
         if meta.mode & 0o111 == 0 {
-            return Err(ExecResult::err(
+            return Err(Box::new(ExecResult::err(
                 self.diag(format!("{name}: Permission denied\n")),
                 126,
-            ));
+            )));
         }
-        self.fs.read_file(path).await.map_err(|_| missing())
+        Ok(self.fs.read_file(path).await.map_err(|_| missing())?)
     }
 
     /// Search $PATH for an executable script and run it.
@@ -10940,7 +10940,7 @@ impl Interpreter {
         let resolved = self.resolve_path(&found);
         let raw = match self.read_executable(&found, &resolved).await {
             Ok(raw) => raw,
-            Err(failed) => return self.redirect_result(failed, redirects).await.map(Some),
+            Err(failed) => return self.redirect_result(*failed, redirects).await.map(Some),
         };
         // A root-filesystem stub (`/usr/bin/env`) runs the builtin it names;
         // `/bin/bash` starts a child shell as `bash` does.

@@ -379,7 +379,7 @@ impl JobControl {
     /// or cancellation; nested pipelines and background jobs share this cap.
     pub(crate) fn try_claim_many(&self, max: usize, count: usize) -> Option<JobSlot> {
         self.live
-            .fetch_update(AtomicOrdering::AcqRel, AtomicOrdering::Acquire, |n| {
+            .try_update(AtomicOrdering::AcqRel, AtomicOrdering::Acquire, |n| {
                 n.checked_add(count).filter(|next| *next <= max)
             })
             .ok()

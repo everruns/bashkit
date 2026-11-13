@@ -334,11 +334,13 @@ use crate::error::Result;
 use crate::fs::FileSystem;
 use crate::interpreter::ExecResult;
 
+// Keep diagnostic-only failures off the success-path stack: ExecResult carries
+// complete shell output and control state, not just an error message.
 pub(crate) async fn read_text_file(
     fs: &dyn FileSystem,
     path: &Path,
     cmd_name: &str,
-) -> std::result::Result<String, ExecResult> {
+) -> std::result::Result<String, Box<ExecResult>> {
     let content = read_stream_file(fs, path, cmd_name).await?;
 
     Ok(content.to_string())
@@ -348,8 +350,9 @@ pub(crate) async fn read_stream_file(
     fs: &dyn FileSystem,
     path: &Path,
     cmd_name: &str,
-) -> std::result::Result<crate::StreamData, ExecResult> {
-    fs.read_file(path)
+) -> std::result::Result<crate::StreamData, Box<ExecResult>> {
+    Ok(fs
+        .read_file(path)
         .await
         .map(crate::StreamData::from)
         .map_err(|e| {
@@ -363,7 +366,7 @@ pub(crate) async fn read_stream_file(
                 ),
                 1,
             )
-        })
+        })?)
 }
 
 /// Check args for `--help` and optionally `--version`.

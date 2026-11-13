@@ -356,7 +356,7 @@ fn parse_options(args: &[String]) -> std::result::Result<(Options, Vec<String>),
             }
             opts.field = args[i]
                 .parse()
-                .map_err(|_| format!("numfmt: invalid field value: '{}'\n", &args[i]))?;
+                .map_err(|_| format!("numfmt: invalid field value: '{}'\n", args[i]))?;
             if opts.field == 0 {
                 return Err("numfmt: invalid field value: '0'\n".to_string());
             }

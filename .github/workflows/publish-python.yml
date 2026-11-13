@@ -152,7 +152,7 @@ jobs:
       # its LLVM matches Emscripten 4.0.9's binaryen. pyodide-build manages its
       # own matching emsdk via the cross-build env (no setup-emsdk needed).
       - name: Install Rust stable (default toolchain)
-        uses: dtolnay/rust-toolchain@d86e0fa8f147d6539442c26a61ebba8becc19489 # 1.96.0
+        uses: dtolnay/rust-toolchain@9522411a9bce8484da960823fc2f46e52f981f71 # 1.100.0
 
       # The action no longer accepts a `toolchain:` input (it installs
       # the rust-toolchain.toml toolchain), so install the pinned nightly

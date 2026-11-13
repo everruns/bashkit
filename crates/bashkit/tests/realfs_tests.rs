@@ -1322,7 +1322,7 @@ async fn realfs_chmod_drops_special_bits() {
     use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("tool"), b"#!/bin/sh\n").unwrap();
-    let mut bash = Bash::builder()
+    let mut bash = builder_allowing_host_paths(&[dir.path()])
         .mount_real_readwrite_at(dir.path(), "/mnt/host")
         .build();
     let r = bash
@@ -1347,7 +1347,7 @@ async fn realfs_copy_drops_special_bits() {
     let src = dir.path().join("tool");
     std::fs::write(&src, b"#!/bin/sh\n").unwrap();
     std::fs::set_permissions(&src, std::fs::Permissions::from_mode(0o4755)).unwrap();
-    let mut bash = Bash::builder()
+    let mut bash = builder_allowing_host_paths(&[dir.path()])
         .mount_real_readwrite_at(dir.path(), "/mnt/host")
         .build();
     let r = bash.exec("cp /mnt/host/tool /mnt/host/copy").await.unwrap();
@@ -1367,7 +1367,7 @@ async fn root_real_mount_keeps_filesystem_limits() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("marker"), b"mounted\n").unwrap();
         let limits = bashkit::FsLimits::new().max_file_size(1024);
-        let builder = Bash::builder().filesystem_limits(limits);
+        let builder = builder_allowing_host_paths(&[dir.path()]).filesystem_limits(limits);
         let mut bash = if readwrite {
             builder.mount_real_readwrite(dir.path())
         } else {

@@ -484,7 +484,9 @@ fn read_iovs(
     }
     let raw = read_bytes(caller, iovs, i32::try_from(count * 8).map_err(|_| EINVAL)?)?;
     Ok(raw
-        .chunks_exact(8)
+        .as_chunks::<8>()
+        .0
+        .iter()
         .map(|c| {
             let ptr = i32::from_le_bytes([c[0], c[1], c[2], c[3]]);
             let len = u32::from_le_bytes([c[4], c[5], c[6], c[7]]);
@@ -1600,7 +1602,7 @@ async fn poll_oneoff(
     let raw = read_bytes(c, subs, i32::try_from(n * 48).map_err(|_| EINVAL)?)?;
     let mut ready = Vec::new();
     let mut sleep: Option<(Duration, u64)> = None;
-    for sub in raw.chunks_exact(48) {
+    for sub in raw.as_chunks::<48>().0.iter() {
         let userdata = u64::from_le_bytes(sub[0..8].try_into().map_err(|_| EINVAL)?);
         match sub[8] {
             EVENTTYPE_CLOCK => {

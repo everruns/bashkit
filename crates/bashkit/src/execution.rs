@@ -139,7 +139,7 @@ impl OutputFile {
         }
         let Ok(start) = self
             .written
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |w| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |w| {
                 (w < self.max_bytes).then(|| w + chunk.len().min(self.max_bytes - w))
             })
         else {
