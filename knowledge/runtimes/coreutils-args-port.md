@@ -423,6 +423,34 @@ Worked example (2026-10): upstream renamed
 `CQuotesEnforce::None`, and both are what `--quoting-style=escape`
 resolves to — so the shim maps them to one arm.
 
+#### Shim refuses upstream behaviour bash does not have
+
+A new uucore API is not always a rename to mirror. When upstream adds
+one that encodes *GNU coreutils* behaviour, the shim must provide the
+**name** so the vendored call site compiles, and deliberately drop the
+**behaviour** when bash disagrees — bashkit's builtins are bash's, and
+the drift PR may only touch generated files, so a shim that forwarded
+the semantics would silently change a builtin's output.
+
+Worked example (2026-11): upstream's `%q` arm in
+`format/spec.rs` became
+`QuotingStyle::SHELL_ESCAPE.always_quote(has_brace)`, so GNU
+`printf %q` wraps a brace-bearing argument in single quotes (`'a{b'`).
+bash backslash-escapes braces instead: `printf %q 'a{b'` is `a\{b` in
+bash 5.2. `format_support::QuotingStyle::always_quote` therefore returns
+`self` unchanged, which is sound because
+`locale_aware_escape_name` routes every shell style to the
+bash-faithful `shell_quote` and never consults the flags carried on the
+style. The shim's variants stay unit-only for the same reason: it
+carries the names the vendored module uses, not uucore's quoting
+behaviour.
+
+Two tests pin it:
+`format_support::tests::always_quote_does_not_change_how_braces_are_escaped`
+(the flag is inert) and
+`printf::tests::quoted_string_escapes_braces_the_way_bash_does`
+(the resulting `%q` output is bash's).
+
 #### The drift PR cannot fix its own consumers
 
 The `open-pr` job enforces a generated-only diff, so an upstream change
