@@ -3,6 +3,8 @@
 
 The development toolchain must not silently become the consumer minimum.
 Resolve afresh, then use that consumer's lockfile for compilation/execution.
+This is not a supply-chain audit: run without project secrets or write tokens.
+Fresh registry dependencies may execute build scripts outside the workspace vet set.
 """
 import argparse
 import json

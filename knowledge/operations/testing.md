@@ -39,6 +39,14 @@ feature sets, including slim browser runtime features and custom-backend
 non-JS compilation. These path consumers test checkout sources, not published
 crate contents; publication validation remains in the release workflow. Run `python3 scripts/check-msrv-consumer.py --profile default`
 locally; profiles are `lean`, `default`, `all`, `wasm`, `wasi`, `browser`, and `component`.
+Fresh consumer resolution is a compatibility probe, not a supply-chain audit.
+It may execute build scripts from newer registry versions outside the workspace
+Cargo.lock audit set. Keep these jobs on disposable hosted runners, with read-only
+repository permissions, no persisted checkout credentials, no project secrets,
+and no publication artifacts. Workspace `cargo vet --locked` and release/package
+checks retain their separate locked-dependency trust boundary. Do not promote a
+consumer-generated lockfile or cache into a release build.
+
 The optional-runtime profile is compile-only to avoid linking all interpreters
 at once. Runtime/packaging suites remain separate and run on the development
 compiler; the consumer check is not a replacement for those suites.
