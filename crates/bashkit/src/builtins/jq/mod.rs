@@ -176,7 +176,7 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
         }
         let text = match read_text_file(&*ctx.fs, &path, "jq").await {
             Ok(t) => t,
-            Err(e) => return Ok(e),
+            Err(e) => return Ok(*e),
         };
         ctx.consume_budget_input(text.len())?;
         match file_binding_bytes.checked_add(text.len()) {

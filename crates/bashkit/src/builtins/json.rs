@@ -120,24 +120,28 @@ fn format_value(v: &Value) -> String {
 async fn read_json_input(
     ctx: &Context<'_>,
     file_arg: Option<&str>,
-) -> std::result::Result<String, ExecResult> {
+) -> std::result::Result<String, Box<ExecResult>> {
     if let Some(file) = file_arg {
         let path = resolve_path(ctx.cwd, file);
         match ctx.fs.read_file(&path).await {
-            Ok(bytes) => String::from_utf8(bytes)
-                .map_err(|e| ExecResult::err(format!("json: invalid UTF-8 in {file}: {e}\n"), 1)),
+            Ok(bytes) => Ok(String::from_utf8(bytes).map_err(|e| {
+                ExecResult::err(format!("json: invalid UTF-8 in {file}: {e}\n"), 1)
+            })?),
             Err(e) => {
                 let reason = crate::error::io_error_reason(&e);
-                Err(ExecResult::err(format!("json: {file}: {reason}\n"), 1))
+                Err(Box::new(ExecResult::err(
+                    format!("json: {file}: {reason}\n"),
+                    1,
+                )))
             }
         }
     } else if let Some(stdin) = ctx.stdin {
         Ok(stdin.to_string())
     } else {
-        Err(ExecResult::err(
+        Err(Box::new(ExecResult::err(
             "json: no input (provide file or pipe stdin)\n".to_string(),
             1,
-        ))
+        )))
     }
 }
 
@@ -166,7 +170,7 @@ impl Builtin for Json {
                 let file_arg = rest.get(1).map(|s| s.as_str());
                 let input = match read_json_input(&ctx, file_arg).await {
                     Ok(s) => s,
-                    Err(e) => return Ok(e),
+                    Err(e) => return Ok(*e),
                 };
                 let value: Value = match serde_json::from_str(input.trim()) {
                     Ok(v) => v,
@@ -193,7 +197,7 @@ impl Builtin for Json {
                 let file_arg = rest.get(2).map(|s| s.as_str());
                 let input = match read_json_input(&ctx, file_arg).await {
                     Ok(s) => s,
-                    Err(e) => return Ok(e),
+                    Err(e) => return Ok(*e),
                 };
                 let mut value: Value = match serde_json::from_str(input.trim()) {
                     Ok(v) => v,
@@ -216,7 +220,7 @@ impl Builtin for Json {
                 let file_arg = rest.first().map(|s| s.as_str());
                 let input = match read_json_input(&ctx, file_arg).await {
                     Ok(s) => s,
-                    Err(e) => return Ok(e),
+                    Err(e) => return Ok(*e),
                 };
                 let value: Value = match serde_json::from_str(input.trim()) {
                     Ok(v) => v,
@@ -241,7 +245,7 @@ impl Builtin for Json {
                 let file_arg = rest.first().map(|s| s.as_str());
                 let input = match read_json_input(&ctx, file_arg).await {
                     Ok(s) => s,
-                    Err(e) => return Ok(e),
+                    Err(e) => return Ok(*e),
                 };
                 let value: Value = match serde_json::from_str(input.trim()) {
                     Ok(v) => v,
@@ -264,7 +268,7 @@ impl Builtin for Json {
                 let file_arg = rest.first().map(|s| s.as_str());
                 let input = match read_json_input(&ctx, file_arg).await {
                     Ok(s) => s,
-                    Err(e) => return Ok(e),
+                    Err(e) => return Ok(*e),
                 };
                 let value: Value = match serde_json::from_str(input.trim()) {
                     Ok(v) => v,
@@ -284,7 +288,7 @@ impl Builtin for Json {
                 let file_arg = rest.first().map(|s| s.as_str());
                 let input = match read_json_input(&ctx, file_arg).await {
                     Ok(s) => s,
-                    Err(e) => return Ok(e),
+                    Err(e) => return Ok(*e),
                 };
                 let value: Value = match serde_json::from_str(input.trim()) {
                     Ok(v) => v,

@@ -189,7 +189,7 @@ impl Builtin for Cut {
 
                 let text = match read_text_file(&*ctx.fs, &path, "cut").await {
                     Ok(t) => t,
-                    Err(e) => return Ok(e),
+                    Err(e) => return Ok(*e),
                 };
                 process_input(&text, &mut output);
             }

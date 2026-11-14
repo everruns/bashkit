@@ -19,6 +19,40 @@ env:
   JQ_VERSION: 1.8.1
 
 jobs:
+  msrv:
+    name: Rust 1.96 consumer (${{ matrix.os }}, ${{ matrix.profile }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        profile: [lean, default, all]
+        include:
+          - os: ubuntu-latest
+            profile: wasm
+          - os: ubuntu-latest
+            profile: wasi
+          - os: ubuntu-latest
+            profile: browser
+          - os: ubuntu-latest
+            profile: component
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@d86e0fa8f147d6539442c26a61ebba8becc19489 # 1.96.0
+        with:
+          targets: wasm32-unknown-unknown, wasm32-wasip2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          shared-key: msrv-1.96-${{ matrix.os }}-${{ matrix.profile }}
+          workspaces: . -> target/consumer-1.96.0
+      - name: Check independently resolved consumer
+        run: python3 scripts/check-msrv-consumer.py --profile ${{ matrix.profile }}
+
   lint:
     name: Lint
     runs-on: ubuntu-latest
@@ -28,7 +62,7 @@ jobs:
           persist-credentials: false
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@d86e0fa8f147d6539442c26a61ebba8becc19489 # 1.96.0
+        uses: dtolnay/rust-toolchain@9522411a9bce8484da960823fc2f46e52f981f71 # 1.100.0
         with:
           components: rustfmt, clippy
 
@@ -89,7 +123,7 @@ jobs:
           persist-credentials: false
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@d86e0fa8f147d6539442c26a61ebba8becc19489 # 1.96.0
+        uses: dtolnay/rust-toolchain@9522411a9bce8484da960823fc2f46e52f981f71 # 1.100.0
         with:
           targets: wasm32-unknown-unknown, wasm32-wasip2
 
@@ -127,7 +161,7 @@ jobs:
           persist-credentials: false
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@d86e0fa8f147d6539442c26a61ebba8becc19489 # 1.96.0
+        uses: dtolnay/rust-toolchain@9522411a9bce8484da960823fc2f46e52f981f71 # 1.100.0
         with:
           targets: wasm32-unknown-unknown
 
@@ -158,7 +192,7 @@ jobs:
           persist-credentials: false
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@d86e0fa8f147d6539442c26a61ebba8becc19489 # 1.96.0
+        uses: dtolnay/rust-toolchain@9522411a9bce8484da960823fc2f46e52f981f71 # 1.100.0
         with:
           targets: wasm32-unknown-unknown
 
@@ -210,7 +244,7 @@ jobs:
           persist-credentials: false
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@d86e0fa8f147d6539442c26a61ebba8becc19489 # 1.96.0
+        uses: dtolnay/rust-toolchain@9522411a9bce8484da960823fc2f46e52f981f71 # 1.100.0
 
       # Install the prebuilt cargo-audit binary rather than letting
       # rustsec/audit-check compile it from source. The source build resolves
@@ -277,7 +311,7 @@ jobs:
           persist-credentials: false
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@d86e0fa8f147d6539442c26a61ebba8becc19489 # 1.96.0
+        uses: dtolnay/rust-toolchain@9522411a9bce8484da960823fc2f46e52f981f71 # 1.100.0
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
 
@@ -410,20 +444,20 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            rust: "1.96.0"
+            rust: "1.100.0"
           - os: macos-latest
-            rust: "1.96.0"
+            rust: "1.100.0"
           - os: windows-2025
-            rust: "1.96.0"
+            rust: "1.100.0"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Install Rust toolchain
-        # 1.96.0 comes from rust-toolchain.toml (the matrix pins the same);
+        # 1.100.0 comes from rust-toolchain.toml (the matrix pins the same);
         # the action no longer accepts a `toolchain:` input.
-        uses: dtolnay/rust-toolchain@d86e0fa8f147d6539442c26a61ebba8becc19489 # 1.96.0
+        uses: dtolnay/rust-toolchain@9522411a9bce8484da960823fc2f46e52f981f71 # 1.100.0
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
 
@@ -447,7 +481,7 @@ jobs:
           persist-credentials: false
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@d86e0fa8f147d6539442c26a61ebba8becc19489 # 1.96.0
+        uses: dtolnay/rust-toolchain@9522411a9bce8484da960823fc2f46e52f981f71 # 1.100.0
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
@@ -482,7 +516,7 @@ jobs:
           persist-credentials: false
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@d86e0fa8f147d6539442c26a61ebba8becc19489 # 1.96.0
+        uses: dtolnay/rust-toolchain@9522411a9bce8484da960823fc2f46e52f981f71 # 1.100.0
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
@@ -512,7 +546,7 @@ jobs:
           persist-credentials: false
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@d86e0fa8f147d6539442c26a61ebba8becc19489 # 1.96.0
+        uses: dtolnay/rust-toolchain@9522411a9bce8484da960823fc2f46e52f981f71 # 1.100.0
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
 
@@ -666,7 +700,7 @@ jobs:
           persist-credentials: false
 
       - name: Install Rust stable (default toolchain)
-        uses: dtolnay/rust-toolchain@d86e0fa8f147d6539442c26a61ebba8becc19489 # 1.96.0
+        uses: dtolnay/rust-toolchain@9522411a9bce8484da960823fc2f46e52f981f71 # 1.100.0
 
       # The action no longer accepts a `toolchain:` input (it installs
       # the rust-toolchain.toml toolchain), so install the pinned nightly
@@ -704,12 +738,13 @@ jobs:
   check:
     name: Check
     if: always()
-    needs: [lint, audit, test, cpython-platforms, windows-containment, test-windows, examples, fuzz-check, wasm, wasm-component, wasm-web]
+    needs: [msrv, lint, audit, test, cpython-platforms, windows-containment, test-windows, examples, fuzz-check, wasm, wasm-component, wasm-web]
     runs-on: ubuntu-latest
     steps:
       - name: Verify all jobs passed
         run: |
-          if [[ "${{ needs.lint.result }}" != "success" ]] || \
+          if [[ "${{ needs.msrv.result }}" != "success" ]] || \
+             [[ "${{ needs.lint.result }}" != "success" ]] || \
              [[ "${{ needs.audit.result }}" != "success" ]] || \
              [[ "${{ needs.test.result }}" != "success" ]] || \
              [[ "${{ needs.cpython-platforms.result }}" != "success" ]] || \

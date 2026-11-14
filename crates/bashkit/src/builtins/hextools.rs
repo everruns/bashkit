@@ -516,7 +516,7 @@ impl Builtin for Od {
 
         let data = match collect_input("od", ctx.stdin, &files, ctx.cwd, &ctx.fs).await {
             Ok(data) => data,
-            Err(failure) => return Ok(failure),
+            Err(failure) => return Ok(*failure),
         };
         let budget = ctx
             .execution_budget()
@@ -734,7 +734,7 @@ impl Builtin for Xxd {
 
         let data = match collect_input("xxd", ctx.stdin, &files, ctx.cwd, &ctx.fs).await {
             Ok(data) => data,
-            Err(failure) => return Ok(failure),
+            Err(failure) => return Ok(*failure),
         };
 
         if opts.reverse {
@@ -895,7 +895,7 @@ impl Builtin for Hexdump {
 
         let data = match collect_input("hexdump", ctx.stdin, &files, ctx.cwd, &ctx.fs).await {
             Ok(data) => data,
-            Err(failure) => return Ok(failure),
+            Err(failure) => return Ok(*failure),
         };
         let output = hexdump_dump(&data, &opts);
 
@@ -921,7 +921,7 @@ async fn collect_input(
     files: &[String],
     cwd: &std::path::Path,
     fs: &std::sync::Arc<dyn crate::fs::FileSystem>,
-) -> std::result::Result<Vec<u8>, ExecResult> {
+) -> std::result::Result<Vec<u8>, Box<ExecResult>> {
     let mut data = Vec::new();
 
     if files.is_empty() {

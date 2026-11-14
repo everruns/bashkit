@@ -118,16 +118,16 @@ fn resolve_column(col: &str, headers: &Option<Vec<String>>) -> Option<usize> {
 async fn read_input<'a>(
     ctx: &Context<'a>,
     file_arg: Option<&str>,
-) -> std::result::Result<String, ExecResult> {
+) -> std::result::Result<String, Box<ExecResult>> {
     if let Some(path_str) = file_arg {
         let path = resolve_path(ctx.cwd, path_str);
-        read_text_file(ctx.fs.as_ref(), &path, "csv")
+        Ok(read_text_file(ctx.fs.as_ref(), &path, "csv")
             .await
-            .map_err(|_| ExecResult::err(format!("csv: cannot read '{}'\n", path_str), 1))
+            .map_err(|_| ExecResult::err(format!("csv: cannot read '{}'\n", path_str), 1))?)
     } else if let Some(stdin) = ctx.stdin {
         Ok(stdin.to_string())
     } else {
-        Err(ExecResult::err("csv: no input\n".to_string(), 1))
+        Err(Box::new(ExecResult::err("csv: no input\n".to_string(), 1)))
     }
 }
 
@@ -192,7 +192,7 @@ impl Builtin for Csv {
                 let file_arg = rest.first().map(|s| s.as_str());
                 let content = match read_input(&ctx, file_arg).await {
                     Ok(c) => c,
-                    Err(e) => return Ok(e),
+                    Err(e) => return Ok(*e),
                 };
                 let table = parse_csv(&content, delim, has_header);
                 if let Some(hdrs) = &table.headers {
@@ -214,7 +214,7 @@ impl Builtin for Csv {
                 let file_arg = rest.first().map(|s| s.as_str());
                 let content = match read_input(&ctx, file_arg).await {
                     Ok(c) => c,
-                    Err(e) => return Ok(e),
+                    Err(e) => return Ok(*e),
                 };
                 let table = parse_csv(&content, delim, has_header);
                 Ok(ExecResult::ok(format!("{}\n", table.rows.len())))
@@ -230,7 +230,7 @@ impl Builtin for Csv {
                 let file_arg = rest.get(1).map(|s| s.as_str());
                 let content = match read_input(&ctx, file_arg).await {
                     Ok(c) => c,
-                    Err(e) => return Ok(e),
+                    Err(e) => return Ok(*e),
                 };
                 let table = parse_csv(&content, delim, has_header);
 
@@ -279,7 +279,7 @@ impl Builtin for Csv {
 
                 let content = match read_input(&ctx, file_arg).await {
                     Ok(c) => c,
-                    Err(e) => return Ok(e),
+                    Err(e) => return Ok(*e),
                 };
                 let table = parse_csv(&content, delim, has_header);
 
@@ -330,7 +330,7 @@ impl Builtin for Csv {
 
                 let content = match read_input(&ctx, file_arg).await {
                     Ok(c) => c,
-                    Err(e) => return Ok(e),
+                    Err(e) => return Ok(*e),
                 };
                 let table = parse_csv(&content, delim, has_header);
 

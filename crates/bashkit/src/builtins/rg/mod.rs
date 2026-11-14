@@ -2996,7 +2996,7 @@ async fn read_rg_text_file(
     cwd: &Path,
     display_path: &str,
     opts: &RgOptions,
-) -> std::result::Result<String, ExecResult> {
+) -> std::result::Result<String, Box<ExecResult>> {
     let content = fs.read_file(path).await.map_err(|e| {
         let reason = crate::error::io_error_reason(&e);
         ExecResult::err(format!("rg: {display_path}: {reason}\n"), 1)
@@ -3015,7 +3015,7 @@ async fn collect_rg_inputs(
     opts: &RgOptions,
     budget: &mut RgReadBudget,
     out: &mut RgSearch<'_>,
-) -> std::result::Result<(), ExecResult> {
+) -> std::result::Result<(), Box<ExecResult>> {
     if opts.paths.is_empty() {
         if !opts.stdin_consumed_for_patterns
             && let Some(stdin) = ctx.stdin
@@ -3174,7 +3174,7 @@ async fn load_rg_pattern_files(
     cwd: &Path,
     stdin: Option<&str>,
     opts: &mut RgOptions,
-) -> std::result::Result<(), ExecResult> {
+) -> std::result::Result<(), Box<ExecResult>> {
     for pattern_file in opts.pattern_files.clone() {
         let content = if pattern_file == "-" {
             opts.stdin_consumed_for_patterns = true;
@@ -3194,7 +3194,7 @@ async fn load_rg_ignore_files(
     fs: &dyn crate::fs::FileSystem,
     cwd: &Path,
     opts: &mut RgOptions,
-) -> std::result::Result<(), ExecResult> {
+) -> std::result::Result<(), Box<ExecResult>> {
     if opts.no_ignore_files {
         return Ok(());
     }
@@ -3204,13 +3204,13 @@ async fn load_rg_ignore_files(
         let content = match read_rg_ignore_file(fs, &path, None).await {
             Ok(content) => content,
             Err(Error::Execution(message)) if message.starts_with("rg: ignore file") => {
-                return Err(ExecResult::err(format!("{message}\n"), 2));
+                return Err(Box::new(ExecResult::err(format!("{message}\n"), 2)));
             }
             Err(err) => {
-                return Err(ExecResult::err(
+                return Err(Box::new(ExecResult::err(
                     format!("rg: {}: {err}\n", path.display()),
                     1,
-                ));
+                )));
             }
         };
         let content = String::from_utf8_lossy(&content);
@@ -5678,7 +5678,7 @@ impl Builtin for Rg {
         let output_limit = rg_output_limit(&ctx);
         load_rg_global_ignore_files(&*ctx.fs, ctx.env, &mut opts).await?;
         if let Err(result) = load_rg_ignore_files(&*ctx.fs, ctx.cwd, &mut opts).await {
-            return Ok(result);
+            return Ok(*result);
         }
         if opts.list_files {
             let files = collect_rg_file_list(&*ctx.fs, &opts, ctx.cwd).await;
@@ -5724,7 +5724,7 @@ impl Builtin for Rg {
         )
         .await
         {
-            return Ok(result);
+            return Ok(*result);
         }
         if opts.patterns.is_empty() {
             return Ok(ExecResult::with_code(String::new(), 1));
@@ -5774,7 +5774,7 @@ impl Builtin for Rg {
             done: None,
         };
         if let Err(result) = collect_rg_inputs(ctx, &opts, &mut read_budget, &mut search).await {
-            return Ok(result);
+            return Ok(*result);
         }
         if let Some(result) = search.done {
             return Ok(result);

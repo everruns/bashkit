@@ -188,7 +188,7 @@ impl Builtin for Column {
 
                     let text = match read_text_file(&*ctx.fs, &path, "column").await {
                         Ok(t) => t,
-                        Err(e) => return Ok(e),
+                        Err(e) => return Ok(*e),
                     };
                     input.push_str(&text);
                 }

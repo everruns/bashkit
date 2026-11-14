@@ -15,14 +15,14 @@ use crate::fs::vfs_join;
 use crate::interpreter::ExecResult;
 
 /// Read input from files or stdin, returning the raw text. Used by `rev`.
-async fn read_input(ctx: &Context<'_>) -> std::result::Result<String, ExecResult> {
+async fn read_input(ctx: &Context<'_>) -> std::result::Result<String, Box<ExecResult>> {
     let mut files: Vec<&str> = Vec::new();
     for arg in ctx.args {
         if !arg.starts_with('-') {
             files.push(arg);
         } else if arg.len() > 1 && arg != "--" {
             // rev takes no options → reject unknown option-shaped tokens (exits 1).
-            return Err(super::invalid_option("rev", arg, 1));
+            return Err(Box::new(super::invalid_option("rev", arg, 1)));
         }
     }
 
@@ -116,7 +116,7 @@ impl Builtin for Tac {
         for file in &files {
             let raw = match read_tac_file(&ctx, file).await {
                 Ok(r) => r,
-                Err(e) => return Ok(e),
+                Err(e) => return Ok(*e),
             };
             reverse_records(&raw, &sep, before, &mut out);
         }
@@ -146,7 +146,10 @@ impl TacSep {
     }
 }
 
-async fn read_tac_file(ctx: &Context<'_>, file: &str) -> std::result::Result<String, ExecResult> {
+async fn read_tac_file(
+    ctx: &Context<'_>,
+    file: &str,
+) -> std::result::Result<String, Box<ExecResult>> {
     if file == "-" {
         return Ok(ctx.stdin.map(ToString::to_string).unwrap_or_default());
     }
@@ -188,7 +191,7 @@ impl Builtin for Rev {
         }
         let raw = match read_input(&ctx).await {
             Ok(r) => r,
-            Err(e) => return Ok(e),
+            Err(e) => return Ok(*e),
         };
 
         if raw.is_empty() {

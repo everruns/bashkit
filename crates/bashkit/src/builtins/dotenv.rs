@@ -114,7 +114,7 @@ impl Builtin for Dotenv {
             let path = resolve_path(ctx.cwd, file);
             let content = match read_text_file(&*ctx.fs, &path, "dotenv").await {
                 Ok(t) => t,
-                Err(e) => return Ok(e),
+                Err(e) => return Ok(*e),
             };
 
             let pairs = parse_dotenv(&content);

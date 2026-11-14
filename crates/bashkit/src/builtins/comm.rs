@@ -125,7 +125,7 @@ impl Builtin for Comm {
                 };
                 match read_text_file(&*ctx.fs, &path, "comm").await {
                     Ok(text) => text,
-                    Err(e) => return Ok(e),
+                    Err(e) => return Ok(*e),
                 }
             };
             inputs.push(records(&text, sep));

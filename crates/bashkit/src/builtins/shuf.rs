@@ -101,7 +101,7 @@ impl Builtin for Shuf {
                     };
                     match read_text_file(&*ctx.fs, Path::new(&path), "shuf").await {
                         Ok(t) => t,
-                        Err(e) => return Ok(e),
+                        Err(e) => return Ok(*e),
                     }
                 }
             };

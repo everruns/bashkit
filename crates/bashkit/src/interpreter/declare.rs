@@ -295,10 +295,8 @@ pub(super) fn split_keyed_word(word: &Word) -> Option<(Word, Word, bool)> {
                         let rest = &s[ci + 1..];
                         let (append, value_head) = if let Some(v) = rest.strip_prefix("+=") {
                             (true, v)
-                        } else if let Some(v) = rest.strip_prefix('=') {
-                            (false, v)
                         } else {
-                            return None;
+                            (false, rest.strip_prefix('=')?)
                         };
                         let key_head = if pi == 0 { &s[1..ci] } else { &s[..ci] };
                         let mut key_parts = Vec::new();

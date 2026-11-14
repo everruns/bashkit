@@ -9,7 +9,7 @@
 //! | `.quit`/`.exit` | End execution.                                         |
 //! | `.tables`     | List tables in the main schema.                          |
 //! | `.schema [t]` | Print CREATE TABLE statements (optional table filter).   |
-//! | `.headers on|off` | Toggle column headers.                               |
+//! | `.headers on\|off` | Toggle column headers.                               |
 //! | `.mode <m>`   | Switch output mode (list/csv/tabs/line/box/json/markdown/column). |
 //! | `.separator <s>` | Set the field separator for list/csv modes.           |
 //! | `.nullvalue <s>` | Set the placeholder for NULL values.                  |
