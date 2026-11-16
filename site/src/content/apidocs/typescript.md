@@ -1441,9 +1441,41 @@ virtual filesystem.
 - **`name`** — `string`
 
   The command name as invoked.
+- **`signal`** — `AbortSignal`
+
+  Execution-scoped cancellation signal.
+
+  Aborted on `bash.cancel()`, caller `signal` abort, and execution timeout.
+  Pass to `fetch` (or use `ctx.fetch`) so hanging I/O aborts promptly.
 - **`stdin`** — `null | string`
 
   Piped input, or `null` if there is no pipe.
+
+### `fetch`
+
+```typescript
+fetch(input: any, init?: any): Promise<Response>
+```
+
+Cancellation-aware fetch: combines `signal` with `init.signal`
+so either source aborts the request.
+
+### `onCancel`
+
+```typescript
+onCancel(handler: () => void): () => void
+```
+
+Run `handler` on cancellation. Returns an unsubscribe function.
+The handler fires at most once per invocation.
+
+### `throwIfCancelled`
+
+```typescript
+throwIfCancelled(): void
+```
+
+Throw an `AbortError` when `signal` is aborted.
 
 ## CapabilityFingerprint
 
