@@ -71,7 +71,9 @@ Three pieces wire bashkit into mira (`src/mira_study.rs`):
    `transcript.metadata["bashkit"]`. The checks read those. See `src/snapshot.rs`.
 6. **Model matrix via mira `Target`s**: targets are gated on their provider's
    API-key env var, so an offline run skips them all (CI stays green) and a
-   keyed run lights up the subset whose credentials are present.
+   keyed run lights up the subset whose credentials are present. The OpenAI
+   matrix uses GPT-6.2 Sol via Responses and retains GPT-6 Luna as the cheaper
+   alternative. Historical results keep the model IDs that produced them.
 7. **No bespoke runner/report**: mira provides run orchestration, persistence
    (`./results/<run_id>/`), and reports. The original `runner.rs`, `report.rs`,
    and scripting equivalents are gone.
