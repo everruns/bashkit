@@ -168,6 +168,19 @@ criteria = "safe-to-deploy"
 delta = "0.17.0 -> 0.18.0"
 notes = "Reviewed delta: adds Oniguruma-compatible syntax, absent repeater, CRLF/newline handling, and subroutine calls; no Rust unsafe added, parser nesting/backtracking limits remain, subroutine expansion is bounded and analysis rejects left/unbounded recursion."
 
+[[audits.fancy-regex]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.20.0 -> 0.20.2"
+notes = '''
+Reviewed the complete published delta across 0.20.1 and 0.20.2: about 1300 changed lines over seven source files. No unsafe in either version, no dependency change, no build script, no host access of any kind.
+
+0.20.1 is a semantics-parity release and 0.20.2 fixes further unsound optimizer rewrites. What matters for this tree, which compiles caller-supplied patterns in grep/sed/awk/rg/find/jq: a backref or conditional inside the group it refers to now sees that group's previous capture, so `(?:(\1|a)b){2}` no longer panics on "abab". The optimizer's KeepOut and trailing-lookahead rewrites move behind a new `OptimizeOptions.find_not_empty` tier (plus a `RegexOptionsBuilder::optimize` switch), so find_not_empty patterns now get the safe rewrites instead of skipping the whole pass, and `start_bytes`/`required_bytes` analyze the same tree the compile path does.
+
+Behavior changes worth recording: positive lookaheads are atomic as in Oniguruma and PCRE; inline flags set inside a capturing, named, atomic, lookaround, conditional or absent group end with that group instead of leaking to the rest of the pattern; a conditional whose condition fails no longer leaves its entry on the VM stack for an enclosing atomic group; empty-matching bodies of `{n,}` repetitions run their required iterations; and in Oniguruma mode `{,}` is literal text, `a{3}?` and `a{3,2}?` parse as a second quantifier rather than a lazy marker, and `\cX`/`\C-X` control escapes are accepted.
+
+`Expr::has_descendant` moves from an explicit stack to recursion. Depth is bounded by the parser's MAX_RECURSION of 64, which also counts adjacent quantifiers, so the native stack stays bounded by nesting the parser already refuses. Parser nesting and backtrack limits are otherwise unchanged.'''
+
 [[audits.fastrand]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
@@ -386,6 +399,23 @@ Registered-class teardown is tightened (#3666) by a REGISTERED_CLASSES_OWNER coo
 Source safety review of the delta, not a review of the whole crate.
 """
 
+[[audits.napi]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "3.16.1 -> 3.16.2"
+notes = """
+Reviewed the complete published delta: about 3200 changed lines, with two new modules (src/async_work/{promise,settle_mode}.rs and src/bindgen_runtime/env_registration.rs). Cargo.toml changes only the version, so no new dependency (libc and rustc-hash were already there), build.rs is byte-identical, neither version references std::fs or std::net, std::process is unchanged at 8 occurrences and std::env at none. Unsafe grows from 1831 to 1926 occurrences, all of it the existing NAPI FFI idiom.
+
+Per-env state is the half that matters here. Everything napi-rs cached per thread - the current custom-GC handle, the class constructor table, the cached Reflect intrinsics - moves into an EnvRegistration record keyed by env and released from that env's cleanup hook, and generated code's get_class_constructor becomes get_class_constructor_in_env(env, ...). Registration ids start at 1 and are never reused, and a record is always removed before its env is freed, so a new env that reuses a freed env's address cannot match a stale record. Two loads of this addon on one thread (worker, reload, hardlinked copy) can no longer hand each other a constructor reference or a custom-GC handle; FunctionRef and the stream Reader now gate on their own env's handle instead of the thread's.
+
+The other half removes the deferred leak: a worker terminated with a task in flight used to leak the task's napi_deferred, because napi_resolve_deferred is refused once the env stops running JavaScript. Each env now picks a settle mode once, at its first task after registration returned. Deferred mode is the old path and is kept only where the env dies with its process or realm; every other env (workers, Electron, Deno, anything unplaced) settles through a thenable whose resolving functions are deleted on every path, including a refused settlement.
+
+The new native capability is the mode detection, and it is narrow: uv_default_loop, napi_get_uv_event_loop and node::Buffer::Data are looked up with dlsym(RTLD_DEFAULT, ...), or GetModuleHandleW(NULL) plus GetProcAddress on Windows, so the search stays inside the already-loaded image set - nothing is dlopen'd, no path is read, and no file, network or process access is added. uv_default_loop() is called only in a host that exports the Node symbol (Bun before 1.4.4 aborts on it), and thread placement uses pthread_main_np or syscall(SYS_gettid) == getpid(). The check also reads globalThis.process.versions through N-API: an exception pending on entry is left untouched, the reads run in their own handle scope, each step is type-checked before the next so no prototype getter is reached through a primitive, and only the presence of versions.bun/electron/nw is used, never the writable version strings. A faked process.versions can only move an env to the other mode - more main-thread CPU, or the 16-byte-per-task deferred leak of the old code. It cannot settle a promise wrongly or abort the process.
+
+The thenable path compiles one wrapper per env with napi_run_script from the fixed PROMISE_WRAPPER_SOURCE constant, with no interpolation (the same shape as the FOLLOW_LIKE_AWAIT audit at 3.15.0); where code generation is blocked the compile throws, the exception is cleared, and the promise is made from a deferred instead. The slot naming a task's settle state travels through JavaScript as an f64, so I checked that boundary: Handle::from_f64 rejects non-integral and out-of-range values, every lookup matches both generation and env, and an index is not reused while a queued then job can still carry it, so a stale or forged handle finds nothing and no pointer is ever derived from the number. The slot table is thread-local, taken with try_borrow_mut rather than borrow_mut, and never held across a call that can run JavaScript. napi_cancel_async_work failing now resets the task status to "not started" instead of leaving a promise that can never settle.
+
+Observable cost on thenable-mode envs: one extra microtask per task, one more async_hooks before/after pair while the promise is pending, and about 2 microseconds more main-thread CPU."""
+
 [[audits.napi-build]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
@@ -442,6 +472,12 @@ notes = """
 No source change. The only difference is the napi-derive-backend requirement in Cargo.toml, 6.1.6 -> 7.0.0; unsafe is unchanged at 10 occurrences, the ambient reference set is identical, and there is no build.rs.
 """
 
+[[audits.napi-derive]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "3.7.0 -> 3.7.1"
+notes = "No source change: src/ is byte-identical. The release only moves the napi-derive-backend requirement from 7.0.0 to 7.0.1 in Cargo.toml. Unsafe stays at 9 occurrences, no build script, ambient reference set identical."
+
 [[audits.napi-derive-backend]]
 who = "Mykhailo Chalyi <mykhailo.chalyi-contractor@procore.com>"
 criteria = "safe-to-deploy"
@@ -475,6 +511,12 @@ Codegen and AST only, 156 changed lines across 5 files. No new unsafe (73 occurr
 
 The behavioral change worth recording is the static-flag fix: the generated property map was keyed on js_name alone, which collapsed a static and an instance member of the same name into one property descriptor. The key becomes the tuple (symbol_for.is_some(), well_known_symbol.is_some(), resolved name, is_static), and PROPERTY_ATTRIBUTE_STATIC is now set for members with no receiver, so string, registry-symbol, well-known-symbol, static and instance members stay distinct. Verified `cargo build -p bashkit-js` with the generated bindings.
 """
+
+[[audits.napi-derive-backend]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "7.0.0 -> 7.0.1"
+notes = "Codegen only, two files. Generated async functions stop emitting a `NapiRefContainer` with hand-written napi_create_reference/napi_reference_unref/napi_delete_reference and `unsafe impl Send/Sync`, and root their arguments in the borrow scope instead (`_napi_native_borrow_scope.root_value`); that also removes the generated assert_eq!s that could unwind across the FFI boundary. Generated unsafe falls from 67 to 61 occurrences. `&self`/`&mut self` receivers no longer root `cb.this()` a second time, because `register_native_borrow_with_value` already roots it in a new_async scope or returns Err. Class constructor lookups become env-scoped (`get_class_constructor_in_env(env, ...)`), matching napi 3.16.2, so a constructor reference belonging to another env of the same thread can no longer be used. No new dependency, no build script, and no std::fs/std::net/std::process/std::env reference in either version."
 
 [[audits.napi-sys]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
@@ -688,6 +730,12 @@ who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
 delta = "3.0.7 -> 3.0.8"
 notes = "Reviewed the complete published delta: two production files plus a version stamp and tests. Operator parsing is narrowed, not widened. BinOp parsing no longer treats a leading '-' as subtraction when the token is actually '->', nor '<' as less-than when the token is '<-', and the two cast/comparison loops in expr.rs now return a parse error naming '<-' instead of silently breaking out. Token consumption stays bounded and the syntax tree construction is unchanged. No unsafe, no new dependencies, no build script, no host access."
+
+[[audits.syn]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "3.0.9 -> 3.0.10"
+notes = "Reviewed the complete published delta: one production file (src/fixup.rs) plus a version stamp and tests. `rightmost_subexpression_precedence` is split into an impl taking a `scan` flag; the four internal callers in `scan_right` pass false because they already know the subexpression would not consume, while the public entry keeps true. The condition is rewritten from a nested `if let` into a flat `&&` chain and stays equivalent: `Scan` has exactly Fail/Bailout/Consume, so `!= Consume` is the old `Bailout | Fail` arm. Only ToTokens grouping decisions are affected; parsing is untouched. No unsafe change (227 occurrences in both), no new dependency, no build script, no std::fs/net/process/env addition."
 
 [[audits.thin-vec]]
 who = "Mykhailo Chalyi <mykhailo.chalyi-contractor@procore.com>"
