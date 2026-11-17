@@ -42,12 +42,12 @@ pub const MAX_TURNS: usize = 10;
 /// (Kimi, Meta Muse, Gemini) go through OpenRouter's Chat Completions API;
 /// Gemini too because its own host is unreachable from the eval environment.
 /// GPT-6 models reject function tools on Chat Completions while reasoning is
-/// on, so OpenAI targets use the Responses API. Lineup chosen 2026-10-09.
+/// on, so OpenAI targets use the Responses API. Sol tracks the latest generation; Luna remains the cheaper alternative.
 pub fn default_targets() -> Vec<Target> {
     vec![
         Target::anthropic("claude-opus-5-5"),
         Target::anthropic("claude-sonnet-5-5"),
-        openai_responses("gpt-6.1-sol"),
+        openai_responses("gpt-6.2-sol"),
         openai_responses("gpt-6-luna"),
         openrouter("google/gemini-3.8-flash"),
         openrouter("moonshotai/kimi-k3"),
@@ -502,6 +502,17 @@ pub fn generate_eval() -> Eval {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_openai_targets_use_latest_sol_and_preserve_luna() {
+        let targets = default_targets();
+        let openai_models: Vec<_> = targets
+            .iter()
+            .filter(|target| target.provider == "openresponses")
+            .map(|target| target.model.as_str())
+            .collect();
+        assert_eq!(openai_models, ["gpt-6.2-sol", "gpt-6-luna"]);
+    }
 
     #[test]
     fn generate_samples_load_and_build() {
