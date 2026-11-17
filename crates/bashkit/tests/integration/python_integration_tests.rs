@@ -1668,6 +1668,7 @@ mod edge_cases {
 // 0.20 changed two things these cases pin: `\xHH` above 0x7F in Unicode mode
 // now matches the codepoint rather than the raw byte, and word boundaries
 // compile to one delegated engine instead of one branch per alternative.
+// 0.20.1 then made positive lookaheads atomic, which is what CPython does.
 // Every expected value here is what CPython 3.11 prints for the same program.
 mod regex_semantics {
     use super::*;
@@ -1716,6 +1717,16 @@ mod regex_semantics {
     async fn fixed_width_lookbehind_matches() {
         let out = re_line(r"print(bool(re.search(r'(?<=ab)c', 'abc')))").await;
         assert_eq!(out, "True\n");
+    }
+
+    #[tokio::test]
+    async fn positive_lookahead_is_atomic() {
+        // 0.20.1 made a positive lookahead atomic, as CPython's is: once it has
+        // matched, a later failure does not backtrack into it for another way of
+        // matching, so the group it captured stays what the first way captured.
+        // CPython 3.11 prints False; fancy-regex 0.20.0 matched here.
+        let out = re_line(r"print(bool(re.search(r'(?=x|(x))\1x', 'xx')))").await;
+        assert_eq!(out, "False\n");
     }
 }
 
