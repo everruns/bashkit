@@ -56,7 +56,7 @@ class MaintenanceSecurityTests(unittest.TestCase):
             cargo = root / 'cargo'
             cargo.write_text(
                 '#!/bin/sh\n'
-                '[ "$*" = "geiger --manifest-path crates/bashkit/Cargo.toml --locked --all-features" ] || exit 64\n'
+                '[ "$*" = "geiger --manifest-path $PWD/crates/bashkit/Cargo.toml --locked --all-features" ] || exit 64\n'
                 'echo "Geiger failed" >&2\n'
                 'exit 7\n'
             )
