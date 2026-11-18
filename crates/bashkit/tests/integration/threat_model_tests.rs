@@ -2913,6 +2913,7 @@ pub(crate) mod resource_exhaustion {
     /// byte-for-byte. Indexed arrays work on bash 3.2+, so this runs on
     /// macOS and Linux CI alike.
     #[tokio::test]
+    #[cfg_attr(not(unix), ignore = "compares against host Unix bash/tools")]
     async fn indirect_nested_indexed_matches_real_bash() {
         for script in [
             "a=(zero one two three); b=(2); r='a[b[0]]'; printf 'indirect=[%s]\n' \"${!r}\"; printf 'direct=[%s]\n' \"${a[b[0]]}\"",
