@@ -32,6 +32,9 @@ Fix root cause. Unsure: read more code; if stuck, ask w/ short options. Unrecogn
 | security/security-testing | Fail-point injection for security testing |
 | security/threat-model | Security threats and mitigations |
 | foundations/parallel-execution | Threading model, Arc usage |
+| foundations/execution-profiles | Execution profile limits and enforcement |
+| foundations/jq | jq implementation and compatibility |
+| foundations/streaming-roadmap | Streaming execution design and remaining work |
 | foundations/snapshot-history | Snapshot object graph: commits, forks, chunked binary deltas, version + capability rules |
 | operations/documentation | Rustdoc guides, embedded markdown |
 | operations/release-process | Version tagging, crates.io + PyPI + npm publishing |
@@ -57,6 +60,9 @@ Fix root cause. Unsure: read more code; if stuck, ask w/ short options. Unrecogn
 | runtimes/coreutils-args-port | Codegen port of uutils clap definitions + uucore modules |
 | security/credential-injection | Per-host HTTP credential injection without exposing secrets |
 | security/http-transport | Pluggable HTTP transport: route curl/wget via host egress boundary |
+| security/request-lifecycle | Per-request controls and cleanup |
+| status/builtin-inventory | Generated feature-gated command inventory |
+| status/capability-parity | Generated public-surface capability matrix |
 | operations/performance-results | Benchmark/eval result locations and `/benches` site aggregation contract |
 | operations/dependencies | Dependency policy: trims in effect, and what is deliberately not reimplemented |
 | runtimes/emscripten-wheels | Reduced-feature Pyodide/Emscripten Python wheel |

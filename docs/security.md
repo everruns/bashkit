@@ -195,7 +195,8 @@ published in the rustdoc:
 Bashkit intentionally deviates from POSIX where compliance would compromise
 the sandbox. Key exclusions:
 
-- **`exec`**: would break sandbox containment (`TM-ESC-005`)
+- **`exec`** runs a command in the virtual interpreter and ends the current script.
+  Supported redirects apply to virtual file descriptors (`TM-ESC-005`).
 - **`trap`**: handles shell events and self-sent virtual signals. Nested handlers share the function/source/child-shell depth budget (hard ceiling 16) plus a dedicated trap-nesting cap of 3 that trips first on small stacks; recursive signal delivery past either limit is skipped with a diagnostic and the first trip fails the exec with a resource-limit error
 - **Real process spawning**: all subprocess commands stay within the virtual interpreter (`TM-ESC-015`)
 
@@ -205,22 +206,21 @@ These decisions are documented in [`knowledge/operations/limitations.md`](../kno
 
 Bashkit uses multiple layers of security testing:
 
-**Threat model tests**: 232 tests in `threat_model_tests.rs` that directly
-validate mitigations against documented threat IDs. Each test maps to a specific
-`TM-*` threat.
+**Threat model tests** in `threat_model_tests.rs` validate mitigations against
+documented `TM-*` threats.
 
-**Fail-point injection**: A framework defined in [`knowledge/security/security-testing.md`](../knowledge/security/security-testing.md)
-that injects failures at specific points to verify the interpreter handles them
-safely. 14+ tests in `security_failpoint_tests.rs`.
+**Fail-point tests** in `security_failpoint_tests.rs` inject failures at specific
+points to verify that the interpreter handles them safely. See the
+[security testing strategy](../knowledge/security/security-testing.md).
 
-**Network security tests**: 68 tests covering allowlist enforcement, URL
-validation, timeout behaviour, and response limits.
+**Network security tests** cover allowlist enforcement, URL validation,
+timeouts, and response limits.
 
-**Error handling tests**: 39 tests verifying that builtins wrapped with
-`catch_unwind` never leak panic messages, stack traces, or memory addresses.
+**Builtin error tests** check that the interpreter keeps panic messages,
+stack traces, and memory addresses out of shell output.
 
-**Logging security tests**: 26 tests confirming that sensitive data (passwords,
-tokens, API keys, JWTs) is redacted in logs and that log injection is prevented.
+**Logging security tests** check credential redaction and guard against log
+injection.
 
 **Fuzz testing**: Parser and lexer fuzzing to catch panics and unexpected
 behaviour on malformed input.
