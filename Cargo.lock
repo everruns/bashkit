@@ -453,6 +453,7 @@ dependencies = [
  "clap",
  "criterion",
  "ed25519-dalek",
+ "encoding_rs",
  "fail",
  "fancy-regex",
  "fetchkit",
