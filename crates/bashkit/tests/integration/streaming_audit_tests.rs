@@ -121,6 +121,7 @@ async fn saved_output_descriptors_reach_sinks_and_capture() {
 }
 
 #[tokio::test]
+#[cfg_attr(not(unix), ignore = "compares against host Unix bash/tools")]
 async fn process_substitution_preserves_bytes_in_buffered_and_live_execution() {
     for script in [
         "cat <(printf '\\377\\000A')",
@@ -248,6 +249,7 @@ async fn descriptor_redirects_keep_final_filters_live() {
 }
 
 #[tokio::test]
+#[cfg_attr(not(unix), ignore = "compares against host Unix bash/tools")]
 async fn redirected_streaming_utilities_match_bash() {
     for script in [
         "printf 'a\\nb\\n' | cat 2>&1",

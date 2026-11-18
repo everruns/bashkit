@@ -6067,7 +6067,7 @@ impl Interpreter {
                     // Unary operators
                     let resolve = |p: &str| -> std::path::PathBuf {
                         let path = std::path::Path::new(p);
-                        let joined = if path.is_absolute() {
+                        let joined = if path.has_root() {
                             path.to_path_buf()
                         } else {
                             crate::fs::vfs_join(&self.cwd, path)
@@ -12941,7 +12941,7 @@ impl Interpreter {
     /// Resolve a path relative to cwd, normalizing `.` and `..` components.
     fn resolve_path(&self, path: &str) -> PathBuf {
         let p = Path::new(path);
-        let joined = if p.is_absolute() {
+        let joined = if p.has_root() {
             p.to_path_buf()
         } else {
             crate::fs::vfs_join(&self.cwd, p)

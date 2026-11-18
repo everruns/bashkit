@@ -188,6 +188,7 @@ ls X.Y.Z
 ### end
 
 ### ls_escape_nongraphic
+### skip_windows: `\` is a path separator in the VFS on Windows (L-FS-005)
 # The VFS rejects control characters in names, so only spaces and
 # backslashes need escaping here; control-char escapes are unit-tested.
 mkdir -p /tmp/lse && cd /tmp/lse && touch 'a b' plain 'g\h'

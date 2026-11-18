@@ -324,7 +324,7 @@ impl GitClient {
 
         // Add files
         for path_str in paths {
-            let path = if Path::new(path_str).is_absolute() {
+            let path = if Path::new(path_str).has_root() {
                 PathBuf::from(path_str)
             } else {
                 vfs_join(repo_path, path_str)

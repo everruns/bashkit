@@ -92,6 +92,14 @@ pub fn parse_spec_file(content: &str) -> Vec<SpecTest> {
                     test.skip = true;
                     test.skip_reason = Some(reason.trim().to_string());
                 }
+            } else if let Some(reason) = directive.strip_prefix("skip_windows:") {
+                // Host-specific VFS semantics (see L-FS-005): skip only there.
+                if cfg!(windows)
+                    && let Some(ref mut test) = current_test
+                {
+                    test.skip = true;
+                    test.skip_reason = Some(reason.trim().to_string());
+                }
             } else if directive == "skip" {
                 if let Some(ref mut test) = current_test {
                     test.skip = true;
@@ -429,6 +437,7 @@ hello
     }
 
     #[test]
+    #[cfg_attr(not(unix), ignore = "compares against host Unix bash/tools")]
     fn test_real_bash_comparison_uses_isolated_current_dir() {
         let probe_name = format!("bashkit_real_bash_isolation_probe_{}", std::process::id());
         let probe = std::env::current_dir().unwrap().join(&probe_name);

@@ -3704,7 +3704,7 @@ async fn resolve_rg_symlink_target(
     containment_root: &Path,
 ) -> Option<(PathBuf, crate::fs::Metadata)> {
     let target = fs.read_link(link_path).await.ok()?;
-    let resolved = if target.is_absolute() {
+    let resolved = if target.has_root() {
         crate::fs::normalize_path(&target)
     } else {
         crate::fs::normalize_path(&vfs_join(
@@ -4219,7 +4219,7 @@ async fn try_indexed_search(
         let mut ignore: Option<RgIndexIgnore<'_>> = None;
         let uses_ignore = opts.uses_ignore_files() && !explicit_file_root;
         for m in &results.matches {
-            let candidate = if m.path.is_absolute() {
+            let candidate = if m.path.has_root() {
                 crate::fs::normalize_path(&m.path)
             } else {
                 crate::fs::normalize_path(&vfs_join(&root, &m.path))

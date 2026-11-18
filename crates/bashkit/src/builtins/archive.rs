@@ -905,7 +905,6 @@ fn validate_tar_for_extraction(
             // and this arm never fired (issue #2425's class). The
             // `starts_with(extract_base)` arm below still blocked the write.
             if entry.has_root()
-                || entry.is_absolute()
                 || entry
                     .components()
                     .any(|component| matches!(component, std::path::Component::ParentDir))

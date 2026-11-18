@@ -149,6 +149,7 @@ async fn tar_files_from_preserves_order_duplicates_crlf_and_lossy_names() {
 }
 
 #[tokio::test]
+#[cfg_attr(not(unix), ignore = "compares against host Unix bash/tools")]
 async fn tar_files_from_matches_real_bash_tar() {
     let script = "printf a > a; printf b > b; printf 'a\\n\\nb\\na' > list; cp list list2; tar -cf out.tar -T list --files-from=list2; tar -tf out.tar; printf 'b\\n' | tar -cf stdin.tar -T -; tar -tf stdin.tar";
     let mut bash = Bash::new();

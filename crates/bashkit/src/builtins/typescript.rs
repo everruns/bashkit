@@ -1167,7 +1167,7 @@ fn extract_path(args: &[Value], cwd: &Path) -> Option<PathBuf> {
     match args.first()? {
         Value::String(s) => {
             let p = Path::new(s.as_ref());
-            if p.is_absolute() {
+            if p.has_root() {
                 Some(p.to_owned())
             } else {
                 Some(vfs_join(cwd, p))

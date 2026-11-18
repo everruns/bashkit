@@ -291,6 +291,7 @@ async fn competitor_regressions_stay_green_without_network() {
 }
 
 #[test]
+#[cfg_attr(not(unix), ignore = "compares against host Unix bash/tools")]
 fn competitor_real_bash_oracles_match_locked_expectations() {
     let bash = host_program("bash");
     let bash_major = bash_major(&bash);

@@ -611,6 +611,7 @@ async fn indexed_array_pending_storage_is_released_between_assignments() {
 }
 
 #[tokio::test]
+#[cfg_attr(not(unix), ignore = "compares against host Unix bash/tools")]
 async fn indexed_array_budget_preserves_expansion_order() {
     let script = "a=(old); a=([0]=1+2 [a[0]]=$a [0]+=x); printf '%s\\n' \"${a[0]}\" \"${a[3]}\"; a+=([0]=new [1]=$a); printf '%s\\n' \"${a[1]}\"";
     let expected = std::process::Command::new("bash")
@@ -660,6 +661,7 @@ async fn tilde_expansion_retains_sibling_assignment_leases() {
 }
 
 #[tokio::test]
+#[cfg_attr(not(unix), ignore = "compares against host Unix bash/tools")]
 async fn tilde_expansion_preserves_bash_semantics() {
     let script = r#"HOME='/home/test dir'; PWD=/pwd; OLDPWD=/old
 x=~:~+/bin:~-/lib:~missing

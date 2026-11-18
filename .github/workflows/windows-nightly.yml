@@ -1,0 +1,58 @@
+# Decision: bashkit's VFS is `/`-separated on every host (TM-ESC-033), but
+# Windows-only path bugs (#2425, #2933) are invisible to Linux CI and to the
+# Linux fuzzers, because the Linux host separator already is `/`. PR CI runs
+# only targeted Windows filters (`windows_containment`, adoption suites) to
+# stay fast. This nightly job runs the bashkit lib and integration suites and
+# the proptest security suite on windows-latest, so the rest of the code is
+# exercised there too. Tests that compare against host Unix tools (bash, GNU
+# coreutils, jq, rg, sqlite3) skip their oracle step off unix.
+#
+# It also runs on PRs that edit this file, so a change here is trial-run
+# before it lands.
+name: Windows nightly
+
+on:
+  schedule:
+    # 5 AM UTC daily (after nightly at 4 AM)
+    - cron: '0 5 * * *'
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/windows-nightly.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-nightly-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  windows-tests:
+    name: Windows full test suite
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@9522411a9bce8484da960823fc2f46e52f981f71 # 1.100.0
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          shared-key: windows-nightly
+
+      - name: Library tests
+        run: cargo test -p bashkit --lib --features http_client,realfs
+
+      - name: Integration tests
+        run: cargo test -p bashkit --test integration --features http_client,realfs
+
+      - name: Property-based security tests
+        run: cargo test -p bashkit --test proptest_security -- --test-threads=1

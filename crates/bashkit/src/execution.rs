@@ -257,7 +257,9 @@ impl<'a> Execution<'a> {
         let session_cancel = self.bash.cancellation_token();
         let output_file = match self.output_file {
             Some((path, max_bytes)) => {
-                if !path.is_absolute() {
+                // `has_root`, not `is_absolute`: a VFS path like `/tmp/out.log`
+                // has no drive prefix, so `is_absolute` is false on Windows.
+                if !path.has_root() {
                     return Err(crate::Error::Execution(format!(
                         "output file must be an absolute path: {}",
                         path.display()

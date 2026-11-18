@@ -73,7 +73,8 @@ pub mod cpython_capability_tests;
 pub mod cpython_http_tests;
 pub mod cpython_integration_tests;
 pub mod cpython_security_tests;
-#[cfg(feature = "tzdata")]
+// Oracle suite: compares against host GNU `date`/zoneinfo, Unix only.
+#[cfg(all(unix, feature = "tzdata"))]
 pub mod date_timezone_differential_tests;
 #[cfg(not(feature = "tzdata"))]
 pub mod date_timezone_no_tzdata_tests;
@@ -141,6 +142,8 @@ pub mod pipeline_tests;
 pub mod pr_resource_tests;
 pub mod process_substitution_fd_tests;
 pub mod prompt_resource_tests;
+// Oracle suite: compares against host bash, Unix only.
+#[cfg(unix)]
 pub mod proptest_differential;
 pub mod python_integration_tests;
 pub mod python_security_tests;

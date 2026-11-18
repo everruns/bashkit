@@ -514,7 +514,7 @@ async fn follow_readlink_symlinks(
                     return None;
                 }
                 let link_parent = current.parent().unwrap_or_else(|| Path::new("/"));
-                let mut next = if target.is_absolute() {
+                let mut next = if target.has_root() {
                     target
                 } else {
                     vfs_join(link_parent, target)

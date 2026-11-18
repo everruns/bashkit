@@ -326,6 +326,7 @@ async fn failed_atomic_replace_cleans_temporary_report() {
 }
 
 #[tokio::test]
+#[cfg_attr(not(unix), ignore = "compares against host Unix bash/tools")]
 async fn reserved_word_matches_real_bash_stream_and_status_semantics() {
     let script = "set -o pipefail; f() { echo out; echo err >&2; return 6; }; time f | cat";
     let host = Command::new("bash")
