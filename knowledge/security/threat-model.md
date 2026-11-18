@@ -404,6 +404,9 @@ its canonical root. Existing entries and nearest existing ancestors are then
 canonicalized, so symlink/junction targets, root-prefix siblings, and missing
 suffixes cannot escape. `windows_containment_*` tests run continuously on a
 Windows runner; drive roots are also sensitive mounts under TM-FS-013.
+VFS paths must never be built with the host separator: `crates/bashkit/clippy.toml`
+bans `Path::join`/`PathBuf::push` outside scoped host-path code, because a
+`\`-joined `/dev\stderr` slipped past the interpreter's device match (#2933).
 
 **TM-ESC-034**: `HostMounts` normalizes both recorded VFS mount points and each
 absolute lookup path before matching. Parent components therefore affect mount

@@ -5,6 +5,9 @@
 //!
 //! Run with: cargo run --example realfs_readonly --features realfs
 
+// Host paths for the RealFs mount; the VFS separator ban targets VFS paths.
+#![allow(clippy::disallowed_methods)]
+
 use bashkit::Bash;
 
 #[tokio::main]

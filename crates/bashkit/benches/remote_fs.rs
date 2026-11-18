@@ -18,6 +18,9 @@
 //! Run with: `cargo bench --bench remote_fs`
 //! Counts only: `cargo bench --bench remote_fs -- --counts`
 
+// Reads the host checkout; the VFS separator ban targets library code.
+#![allow(clippy::disallowed_methods)]
+
 use bashkit::testing::{CallCounts, CountingFs};
 use bashkit::{Bash, FileSystem, FsLimits};
 use criterion::{BenchmarkId, Criterion, criterion_group};

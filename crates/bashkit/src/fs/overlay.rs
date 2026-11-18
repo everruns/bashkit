@@ -441,7 +441,8 @@ impl OverlayFs {
         let mut current = PathBuf::from("/");
         let mut missing = 0u64;
         for component in path.components().skip(1) {
-            current.push(component);
+            // vfs_join, not `push`: keep `/` separators on Windows (#2933).
+            current = vfs_join(&current, component);
             if !self.upper.exists(&current).await.unwrap_or(false) {
                 missing = missing.saturating_add(1);
             }

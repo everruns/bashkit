@@ -47,20 +47,9 @@ impl SimpleStorage {
     }
 
     fn normalize(path: &Path) -> PathBuf {
-        let mut result = PathBuf::from("/");
-        for component in path.components() {
-            match component {
-                std::path::Component::Normal(name) => result.push(name),
-                std::path::Component::ParentDir => {
-                    result.pop();
-                }
-                _ => {}
-            }
-        }
-        if result.as_os_str().is_empty() {
-            result.push("/");
-        }
-        result
+        // The VFS is `/`-separated on every host. Use bashkit's normalizer, not
+        // `PathBuf::push`, which joins with `\` on Windows.
+        bashkit::normalize_path(path)
     }
 }
 
@@ -114,7 +103,7 @@ impl FsBackend for SimpleStorage {
             let mut current = PathBuf::from("/");
             let mut entries = self.entries.write().unwrap();
             for component in path.components().skip(1) {
-                current.push(component);
+                current = bashkit::vfs_join(&current, component);
                 entries
                     .entry(current.clone())
                     .or_insert(StorageEntry::Directory);

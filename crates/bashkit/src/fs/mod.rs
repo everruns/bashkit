@@ -468,6 +468,7 @@ pub fn vfs_join(base: &Path, child: impl AsRef<Path>) -> PathBuf {
     // the VFS (paths come from shell words and `DirEntry::name`, both `String`),
     // so fall back rather than mangle them through a lossy conversion.
     let (Some(base), Some(child)) = (base.to_str(), child.to_str()) else {
+        #[allow(clippy::disallowed_methods)] // non-UTF-8 fallback, see above
         return base.join(child);
     };
     match (base, child) {

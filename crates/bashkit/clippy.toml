@@ -1,0 +1,14 @@
+# Decision: the VFS is POSIX-rooted on every host (TM-ESC-033). `Path::join`,
+# `PathBuf::push` and friends join with the host separator, so on Windows they
+# turn `/a` + `b` into `/a\b`. That broke `/dev/stderr` redirects (#2933) and
+# printed mixed separators (#2425); Linux CI and fuzzing cannot see it because
+# the host separator there is already `/`. Build VFS paths with
+# `crate::fs::vfs_join` instead. Code that really handles host paths (RealFs,
+# host mounts, test temp dirs) opts out with a scoped
+# `#[allow(clippy::disallowed_methods)]` and a reason.
+disallowed-methods = [
+  { path = "std::path::Path::join", reason = "joins with the host separator (`\\` on Windows); use crate::fs::vfs_join for VFS paths" },
+  { path = "std::path::PathBuf::push", reason = "joins with the host separator (`\\` on Windows); use crate::fs::vfs_join for VFS paths" },
+  { path = "std::path::PathBuf::set_file_name", reason = "joins with the host separator (`\\` on Windows); build VFS paths with crate::fs::vfs_join" },
+  { path = "std::path::Path::with_file_name", reason = "joins with the host separator (`\\` on Windows); build VFS paths with crate::fs::vfs_join" },
+]
