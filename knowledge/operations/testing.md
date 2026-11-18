@@ -292,7 +292,17 @@ and command-resolver suites on `windows-latest` and gates `Check`.
 
 It is deliberately scoped rather than a full workspace port: the adoption shape
 exists to work on Windows without a real `bash`, and that claim needs a Windows
-runner to stay true. Everything else stays ubuntu-only.
+runner to stay true. Everything else stays ubuntu-only on PRs.
+
+`windows-nightly.yml` (daily 05:00 UTC, manual dispatch, and PRs that edit it)
+runs `bashkit`'s lib, integration and `proptest_security` suites on
+`windows-latest`, because host-separator bugs (#2425, #2933) cannot show up
+on Linux. It is not a `Check` gate. Two kinds of tests are ignored off unix,
+with `#[cfg_attr(not(unix), ignore = ...)]` or a module `#[cfg(unix)]`:
+oracles that run host bash/GNU tools (Windows `bash` is the WSL launcher), and
+the Unix child-process harness in `threat_model_tests`. Spec cases that cannot
+hold on Windows use `### skip_windows: reason`. `.gitattributes` forces LF
+checkout, since CRLF fixtures broke skill and workflow parsers.
 
 ## Third-Party API Steps in CI
 

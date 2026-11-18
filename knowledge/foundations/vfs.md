@@ -326,7 +326,8 @@ public `custom_backend` and `custom_filesystem_impl` examples taught the
 Fuzzing cannot find this class: the fuzz targets run on Linux, where the
 host separator already is `/`. These guards keep it out:
 - `crates/bashkit/clippy.toml` bans `Path::join`, `PathBuf::push`,
-  `PathBuf::set_file_name` and `Path::with_file_name` in the `bashkit` crate
+  `PathBuf::set_file_name`, `Path::with_file_name` and `Path::is_absolute`
+  (VFS code asks `has_root()`) in the `bashkit` crate
   (`clippy::disallowed_methods`, run by CI's `-D warnings` clippy on Linux).
   Host-path code opts out with a scoped `#[allow]` and a reason: `realfs.rs`,
   `HostMounts::host_path_for`, the non-UTF-8 fallback in `vfs_join`,
@@ -348,6 +349,10 @@ host separator already is `/`. These guards keep it out:
   CI job runs (`cargo test -p bashkit --lib --features realfs
   windows_containment`). The `test-windows` job also runs the integration
   binary's `windows_containment`, `dev_fd_path_tests` and `dev_null_tests`.
+- `.github/workflows/windows-nightly.yml` runs the whole lib, integration and
+  `proptest_security` suites on `windows-latest` daily, including a proptest of
+  random path scripts through `CheckedFs`. See
+  [Testing](../operations/testing.md#windows-ci).
 
 Host paths are the exception and keep using `Path::join`: `RealFs` joining
 under its host root, and `HostMounts` mapping a VFS path back to a host path.
