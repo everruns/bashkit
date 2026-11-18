@@ -190,6 +190,7 @@ async fn iconv_repairs_cp_export_and_writes_real_bytes() {
 }
 
 #[tokio::test]
+#[cfg_attr(not(unix), ignore = "compares against host Unix bash/tools")]
 async fn iconv_matches_real_iconv_byte_for_byte() {
     // Skip where the host has no iconv; CI runners ship glibc's.
     if Command::new("iconv").arg("-l").output().is_err() {
