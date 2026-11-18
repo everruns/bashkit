@@ -43,7 +43,7 @@ class MaintenanceSecurityTests(unittest.TestCase):
                         self.assertNotIn('doppler run', script)
                         self.assertNotIn('uses', step)
 
-    def test_nightly_geiger_propagates_failure_and_keeps_report(self):
+    def test_nightly_geiger_requires_a_valid_report_and_rust_coverage(self):
         jobs = yaml.safe_load((ROOT / '.github/workflows/nightly.yml').read_text())['jobs']
         steps = jobs['security-analysis']['steps']
         audit = next(step for step in steps if step.get('name') == 'Run cargo-geiger (unsafe code audit)')
@@ -51,21 +51,46 @@ class MaintenanceSecurityTests(unittest.TestCase):
         self.assertEqual(audit.get('shell'), 'bash')
         self.assertFalse(audit.get('continue-on-error', False))
         self.assertEqual(upload['if'], 'always()')
+        self.assertEqual(upload['with']['path'], 'geiger-*.json*')
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             cargo = root / 'cargo'
             cargo.write_text(
                 '#!/bin/sh\n'
-                '[ "$*" = "geiger --manifest-path $PWD/crates/bashkit/Cargo.toml --locked --all-features" ] || exit 64\n'
-                'echo "Geiger failed" >&2\n'
-                'exit 7\n'
+                '[ "$*" = "geiger --manifest-path $PWD/crates/bashkit/Cargo.toml --locked --all-features --output-format Json" ] || exit 64\n'
+                'printf "%s\\n" "$GEIGER_OUTPUT"\n'
+                'exit "$GEIGER_EXIT"\n'
             )
             cargo.chmod(0o755)
             env = dict(os.environ, PATH=str(root) + os.pathsep + os.environ['PATH'])
-            result = subprocess.run(['bash', '-e', '-o', 'pipefail', '-c', audit['run']],
-                                    cwd=root, env=env, capture_output=True, text=True)
-            self.assertEqual(result.returncode, 7, result.stdout)
-            self.assertEqual((root / upload['with']['path']).read_text(), 'Geiger failed\n')
+            report = {
+                'packages': [{'package': {'id': {'name': 'bashkit'}}}],
+                'packages_without_metrics': [],
+                'used_but_not_scanned_files': [
+                    str(root / 'target/debug/build/dependency/out/generated.rs'),
+                    str(root / 'README.md'),
+                ],
+            }
+            for name, output, exit_code, expected in (
+                ('complete', report, 0, 0),
+                ('geiger failure', report, 7, 7),
+                ('no report', {}, 0, 5),
+                ('invalid report', {'packages': report['packages']}, 0, 5),
+                ('no Bashkit', dict(report, packages=[]), 0, 5),
+                ('missing package metrics', dict(report, packages_without_metrics=['dep']), 0, 5),
+                ('unscanned Rust input', dict(report, used_but_not_scanned_files=['/src/lib.rs']), 0, 5),
+            ):
+                with self.subTest(name=name):
+                    raw_output = '{"$message_type":"artifact"}\n' + json.dumps(output)
+                    result = subprocess.run(
+                        ['bash', '-e', '-o', 'pipefail', '-c', audit['run']], cwd=root,
+                        env=dict(env, GEIGER_OUTPUT=raw_output, GEIGER_EXIT=str(exit_code)),
+                        capture_output=True, text=True,
+                    )
+                    self.assertEqual(result.returncode, expected, result.stderr)
+                    self.assertEqual((root / 'geiger-output.jsonl').read_text(), raw_output + '\n')
+                    if expected == 0:
+                        self.assertEqual(json.loads((root / 'geiger-report.json').read_text()), report)
 
     def test_optional_ci_examples_skip_failed_fetches(self):
         steps = yaml.safe_load((ROOT / '.github/workflows/ci.yml').read_text())['jobs']['examples']['steps']
