@@ -51,7 +51,7 @@ unicode-general-category = { version = "1" }
 web-time = { version = "1.1" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-nix = { version = "0.31", features = ["fs", "time"], optional = true }
+nix = { version = "0.32", features = ["fs", "time"], optional = true }
 
 [features]
 cpu-clock = ["dep:nix"]
