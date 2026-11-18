@@ -300,7 +300,8 @@ runs `bashkit`'s lib, integration and `proptest_security` suites on
 on Linux. It is not a `Check` gate. Two kinds of tests are ignored off unix,
 with `#[cfg_attr(not(unix), ignore = ...)]` or a module `#[cfg(unix)]`:
 oracles that run host bash/GNU tools (Windows `bash` is the WSL launcher), and
-the Unix child-process harness in `threat_model_tests`. Spec cases that cannot
+the Unix child-process harness in `threat_model_tests`. A new oracle test needs
+the same attribute, or the nightly goes red. Spec cases that cannot
 hold on Windows use `### skip_windows: reason`. `.gitattributes` forces LF
 checkout, since CRLF fixtures broke skill and workflow parsers.
 
