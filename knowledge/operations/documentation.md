@@ -53,6 +53,10 @@ Repo-root `docs/` is for user-facing site articles.
   SVG elements as code. `site/scripts/verify-inline-svg.mjs` enforces this for
   both canonical guide trees during the site postbuild checks.
 
+Site CI runs `pnpm check` before the build. The site uses TypeScript 6
+because Astro's current checker rejects TypeScript 7. Remove the Dependabot
+version bound when the checker supports a newer TypeScript release.
+
 ## Code Examples
 
 Rust examples in guides are compiled/tested by `cargo test --doc`. Hide
