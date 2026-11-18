@@ -1029,14 +1029,13 @@ Normal Unicode (accented, CJK, emoji) is allowed in filenames and script content
 
 Bashkit includes comprehensive security tests:
 
-- **Threat Model Tests**: [`tests/threat_model_tests.rs`][threat_tests] - 232 tests
-- **Unicode Security Tests**: `tests/unicode_security_tests.rs` - TM-UNI-* tests
-- **Nesting Depth Tests**: 18 tests covering positive, negative, misconfiguration,
-  and regression scenarios for parser depth attacks
-- **Fail-Point Tests**: [`tests/security_failpoint_tests.rs`][failpoint_tests] - 14 tests
-- **Network Security**: [`tests/network_security_tests.rs`][network_tests] - 68 tests
-- **Builtin Error Security**: `tests/builtin_error_security_tests.rs` - 39 tests
-- **Logging Security**: `tests/logging_security_tests.rs` - 26 tests
+- **Threat model tests** validate documented mitigations. [Threat model tests][threat_tests]
+- **Unicode tests** cover `TM-UNI-*` threats in `unicode_security_tests.rs`.
+- **Nesting depth tests** cover valid inputs, excessive depth, and limit configuration.
+- **Fail-point tests** check recovery from injected errors. [Fail-point tests][failpoint_tests]
+- **Network security tests** exercise allowlists, timeouts, and response limits. [Network tests][network_tests]
+- **Builtin error tests** check diagnostics in `builtin_error_security_tests.rs`.
+- **Logging tests** check redaction in `logging_security_tests.rs`.
 - **Git Security**: `tests/git_security_tests.rs` + `tests/git_remote_security_tests.rs`
 - **Audit PoC Tests**: `tests/security_audit_pocs.rs` - 2026-03 deep audit findings
 - **Fuzz Testing**: [`fuzz/`][fuzz] - Parser and lexer fuzzing

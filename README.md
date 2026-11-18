@@ -13,7 +13,7 @@ Awesomely fast virtual sandbox with bash and file system. Written in Rust.
 
 - **Secure by default** - No process spawning, no filesystem access, no network access unless explicitly enabled. [280+ threats](knowledge/security/threat-model.md) analyzed and mitigated
 - **POSIX compliant** - Substantial IEEE 1003.1-2024 Shell Command Language compliance
-- **Sandboxed, in-process execution** - All 167 commands reimplemented in Rust, no `fork`/`exec`
+- **Sandboxed, in-process execution** - Built-in commands run inside the Rust interpreter
 - **Virtual filesystem** - InMemoryFs, OverlayFs, MountableFs with optional RealFs backend (`realfs` feature)
 - **Resource limits** - Command count, loop iterations, function depth, output size, filesystem size, parser fuel
 - **Network allowlist** - HTTP access denied by default, per-domain control
@@ -155,7 +155,9 @@ check must consult it. Available in Rust, Node (`bash.analyze()`), and Python
   </a>
 </div>
 
-## Built-in Commands (167)
+## Built-in Commands
+
+The full-feature inventory lists 230 registered command names, including aliases and feature-gated commands. See the [generated builtin inventory](knowledge/status/builtin-inventory.md).
 
 | Category | Commands |
 |----------|----------|
@@ -641,7 +643,7 @@ Bashkit is built for running untrusted scripts from AI agents and users. Securit
 
 | Layer | Protection |
 |-------|------------|
-| **No process spawning** | All 167 commands are reimplemented in Rust, no `fork`, `exec`, or shell escape |
+| **No process spawning** | Shell commands run in the virtual interpreter. Bashkit never starts a host process for a command. |
 | **Virtual filesystem** | Scripts see an in-memory FS by default; no host filesystem access unless explicitly mounted |
 | **Network allowlist** | HTTP access is denied by default; each domain must be explicitly allowed |
 | **Resource limits** | Configurable caps on commands (10K), loop iterations (10K per loop, 1M total), function depth (100), stdout/stderr (1MiB each), input (10MB) |
