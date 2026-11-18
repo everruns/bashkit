@@ -416,6 +416,7 @@ async fn differential_real_curl_matches_mixed_post_data() {
 }
 
 #[tokio::test]
+#[cfg_attr(not(unix), ignore = "compares against host Unix bash/tools")]
 async fn differential_real_curl_matches_get_query_aggregation() {
     let expected = run_real_curl(&[
         "-G",

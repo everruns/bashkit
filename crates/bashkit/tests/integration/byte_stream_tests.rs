@@ -118,6 +118,7 @@ async fn command_substitution_drops_nuls_at_text_boundary() {
 }
 
 #[tokio::test]
+#[cfg_attr(not(unix), ignore = "compares against host Unix bash/tools")]
 async fn binary_pipeline_matches_real_bash_byte_for_byte() {
     let script = "printf 'AAHDqf/+QgB/' | base64 -d | head -c 8 | cat";
     let expected = Command::new("bash").args(["-c", script]).output().unwrap();

@@ -2,6 +2,7 @@
 use bashkit::{Bash, ExecOptions, ExecutionLimits};
 
 #[tokio::test]
+#[cfg_attr(not(unix), ignore = "compares against host Unix bash/tools")]
 async fn two_stage_pipeline_preserves_exports_status_and_isolation() {
     let script = "export DEMO=parent; { export DEMO=child; printf '%s\\n' \"$DEMO\"; } | cat; printf '%s %s\\n' \"$DEMO\" \"${PIPESTATUS[*]}\"";
     let mut bash = Bash::builder()

@@ -36,6 +36,7 @@ fn tar_with_entry(name: &str, content: &[u8]) -> Vec<u8> {
 }
 
 #[tokio::test]
+#[cfg_attr(not(unix), ignore = "compares against host Unix bash/tools")]
 async fn bashkit_tar_bzip2_output_is_readable_by_system_tar() {
     let mut bash = Bash::new();
     let setup = bash

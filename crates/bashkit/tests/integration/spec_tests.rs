@@ -7,6 +7,7 @@
 //! ## Test Directives
 //! - `### skip: reason` - Skip test entirely (not run in any test)
 //! - `### bash_diff: reason` - Known difference from real bash (runs in spec tests, excluded from comparison)
+//! - `### skip_windows: reason` - Skip only on Windows hosts (host-specific VFS semantics, L-FS-005)
 //!
 //! ## Skipped Tests (32 total)
 //!

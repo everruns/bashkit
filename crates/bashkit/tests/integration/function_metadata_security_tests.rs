@@ -136,6 +136,7 @@ async fn function_metadata_budget_boundary() {
 }
 
 #[tokio::test]
+#[cfg_attr(not(unix), ignore = "compares against host Unix bash/tools")]
 async fn source_filename_lifecycle_matches_real_bash() {
     let dir = tempfile::tempdir().unwrap();
     // Bash versions label functions defined in `-c` differently. Source the

@@ -118,6 +118,7 @@ mod finding_nested_cmd_subst_stack_overflow {
     }
 
     #[tokio::test]
+    #[cfg_attr(not(unix), ignore = "compares against host Unix bash/tools")]
     async fn moderate_substitutions_match_real_bash() {
         for template in [
             "echo $(BODY)",

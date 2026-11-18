@@ -111,6 +111,7 @@ async fn child_syntax_report_is_bounded() {
 }
 
 #[tokio::test]
+#[cfg_attr(not(unix), ignore = "compares against host Unix bash/tools")]
 async fn small_child_syntax_reports_match_bash() {
     // Host /bin/bash varies by platform (macOS bash 3.2 reports `-c` input as
     // `line 0`, modern GNU bash reports `line 1`, matching our parser), so

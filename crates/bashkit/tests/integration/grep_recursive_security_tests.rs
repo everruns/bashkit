@@ -153,13 +153,14 @@ async fn grep_recursive_files_share_aggregate_input_budget() {
 #[tokio::test]
 async fn grep_recursive_cycle_diagnostic_is_bounded_utf8() {
     let mut bash = Bash::new();
+    // `/`-joined on every host: the path is also spliced into the script.
     let mut dir = std::path::PathBuf::from("/d");
     for _ in 0..6 {
-        dir.push("é".repeat(100));
+        dir = bashkit::vfs_join(&dir, "é".repeat(100));
     }
     bash.fs().mkdir(&dir, true).await.unwrap();
     bash.fs()
-        .symlink(Path::new("."), &dir.join("loop"))
+        .symlink(Path::new("."), &bashkit::vfs_join(&dir, "loop"))
         .await
         .unwrap();
     let result = bash

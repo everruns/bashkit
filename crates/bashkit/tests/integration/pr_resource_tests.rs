@@ -103,6 +103,7 @@ async fn pr_line_metadata_and_work_are_budgeted() {
 }
 
 #[tokio::test]
+#[cfg_attr(not(unix), ignore = "compares against host Unix bash/tools")]
 async fn pr_finite_pagination_matches_real_bash_and_gnu_pr() {
     use std::process::Command;
     let program = ["gpr", "pr"].into_iter().find(|program| {

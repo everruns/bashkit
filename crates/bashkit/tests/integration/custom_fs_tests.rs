@@ -31,21 +31,10 @@ impl MinimalFs {
     }
 
     fn normalize_path(path: &Path) -> PathBuf {
-        let mut result = PathBuf::new();
-        for component in path.components() {
-            match component {
-                std::path::Component::RootDir => result.push("/"),
-                std::path::Component::Normal(name) => result.push(name),
-                std::path::Component::ParentDir => {
-                    result.pop();
-                }
-                _ => {}
-            }
-        }
-        if result.as_os_str().is_empty() {
-            result.push("/");
-        }
-        result
+        // bashkit's normalizer joins with `/` on every host; a `PathBuf::push`
+        // rebuild keyed entries as `/data\nested` on Windows and broke the
+        // `/`-prefix scan in `read_dir`.
+        bashkit::normalize_path(path)
     }
 }
 
@@ -82,7 +71,7 @@ impl FileSystem for MinimalFs {
         if recursive {
             let mut current = PathBuf::new();
             for component in path.components() {
-                current.push(component);
+                current = bashkit::vfs_join(&current, component);
                 let mut files = self.files.write().unwrap();
                 files.entry(current.clone()).or_default();
             }

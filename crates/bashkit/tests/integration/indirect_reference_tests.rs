@@ -4,6 +4,7 @@ use bashkit::Bash;
 use std::process::Command;
 
 #[tokio::test]
+#[cfg_attr(not(unix), ignore = "compares against host Unix bash/tools")]
 async fn indirect_reference_nested_index_matches_bash() {
     let script = r#"a=(zero one); b=(1); r='a[b[0]]'; printf '%s/%s\n' "${!r}" "${a[b[0]]}""#;
     let result = Bash::new().exec(script).await.unwrap();
@@ -36,6 +37,7 @@ printf '%s/%s/%s\n' "${!quoted}" "${!escaped}" "${items['left]right']}"
 }
 
 #[tokio::test]
+#[cfg_attr(not(unix), ignore = "compares against host Unix bash/tools")]
 async fn indirect_reference_explicit_default_and_slice_remain_valid() {
     let script = r#"a=(zero one); r='a[1]'; printf '%s/%s\n' "${!r:-fallback}" "${!r:1}""#;
     let result = Bash::new().exec(script).await.unwrap();

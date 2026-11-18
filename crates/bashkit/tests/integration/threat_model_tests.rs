@@ -958,6 +958,10 @@ pub(crate) mod resource_exhaustion {
     /// back what its own process received. This pins the actual value, which
     /// the static scan in `bounded_child_launcher_scan_tests` cannot.
     #[test]
+    #[cfg_attr(
+        not(unix),
+        ignore = "Unix child-process harness (signals, pipes, CLI layout)"
+    )]
     fn bounded_cli_children_get_a_profile_path_outside_the_merge_set() {
         fn profile_of(cmd: &Command) -> std::ffi::OsString {
             cmd.get_envs()
@@ -1289,6 +1293,10 @@ pub(crate) mod resource_exhaustion {
     /// shape and flat <=1 KiB stderr, proving the report no longer grows
     /// with the product. Never runs in the test process.
     #[test]
+    #[cfg_attr(
+        not(unix),
+        ignore = "Unix child-process harness (signals, pipes, CLI layout)"
+    )]
     fn syntax_diagnostic_multiline_times_arg0_is_bounded_in_child() {
         for token_lines in [200usize, 2000usize] {
             let mut script = String::from("for x \"");
@@ -1384,6 +1392,10 @@ pub(crate) mod resource_exhaustion {
     }
 
     #[test]
+    #[cfg_attr(
+        not(unix),
+        ignore = "Unix child-process harness (signals, pipes, CLI layout)"
+    )]
     fn harness_reader_exact_cap_eof_is_clean() {
         // Two 4096-byte reads land exactly on the 8192 cap, then EOF:
         // full retention, no excess flag.
@@ -1399,6 +1411,10 @@ pub(crate) mod resource_exhaustion {
     }
 
     #[test]
+    #[cfg_attr(
+        not(unix),
+        ignore = "Unix child-process harness (signals, pipes, CLI layout)"
+    )]
     fn harness_reader_real_excess_flags_oversized() {
         let mut over: &[u8] = &vec![b'x'; BOUNDED_SAMPLE_CAP + 1];
         let (buf, oversized, read_error) = drain_capped(&mut over);
@@ -1412,6 +1428,10 @@ pub(crate) mod resource_exhaustion {
     }
 
     #[test]
+    #[cfg_attr(
+        not(unix),
+        ignore = "Unix child-process harness (signals, pipes, CLI layout)"
+    )]
     fn harness_reader_retries_interrupted_and_reports_errors() {
         let mut ok = ScriptedRead {
             ops: vec![ReadOp::Interrupted, ReadOp::Data(b"hi"), ReadOp::Eof],
@@ -1431,6 +1451,10 @@ pub(crate) mod resource_exhaustion {
     }
 
     #[test]
+    #[cfg_attr(
+        not(unix),
+        ignore = "Unix child-process harness (signals, pipes, CLI layout)"
+    )]
     fn harness_signal_reports_presence_trichotomy() {
         // Direct deterministic proof of the ESRCH/EPERM/Unknown split
         // through the actual helper: self is Present, an impossible PID
@@ -1515,6 +1539,10 @@ pub(crate) mod resource_exhaustion {
     }
 
     #[test]
+    #[cfg_attr(
+        not(unix),
+        ignore = "Unix child-process harness (signals, pipes, CLI layout)"
+    )]
     fn harness_drain_ends_without_eof_at_cap() {
         let start = Instant::now();
         let mut src = EndlessWriter;
@@ -1534,6 +1562,10 @@ pub(crate) mod resource_exhaustion {
     }
 
     #[test]
+    #[cfg_attr(
+        not(unix),
+        ignore = "Unix child-process harness (signals, pipes, CLI layout)"
+    )]
     fn harness_helper_timeout_kills_and_reaps_bounded() {
         // Deterministic timeout path through the shared helper: a 30s
         // sleeper against a 200ms end always trips the deadline first.
@@ -1560,6 +1592,10 @@ pub(crate) mod resource_exhaustion {
     }
 
     #[test]
+    #[cfg_attr(
+        not(unix),
+        ignore = "Unix child-process harness (signals, pipes, CLI layout)"
+    )]
     fn harness_helper_retained_writer_times_out_bounded() {
         // Controlled retained-writer negative proof THROUGH the shared
         // helper entry (not a manual copy of its poll/drain/channel): a
@@ -1653,6 +1689,10 @@ pub(crate) mod resource_exhaustion {
     }
 
     #[test]
+    #[cfg_attr(
+        not(unix),
+        ignore = "Unix child-process harness (signals, pipes, CLI layout)"
+    )]
     fn harness_handshake_failure_has_owned_unknown_verdict() {
         // Two identity channels for the SAME controlled victim: pidA is
         // written by the fixture and establishes independent ownership
@@ -1736,6 +1776,10 @@ pub(crate) mod resource_exhaustion {
     }
 
     #[test]
+    #[cfg_attr(
+        not(unix),
+        ignore = "Unix child-process harness (signals, pipes, CLI layout)"
+    )]
     fn harness_ownership_channel_failure_has_owned_unknown_verdict() {
         // Fixture with NO pid echo anywhere: no per-process identity
         // channel exists, so the parent verdict stays honestly unknown.
@@ -1825,6 +1869,10 @@ pub(crate) mod resource_exhaustion {
     }
 
     #[test]
+    #[cfg_attr(
+        not(unix),
+        ignore = "Unix child-process harness (signals, pipes, CLI layout)"
+    )]
     fn harness_drop_preserves_unfinished_reader_for_owner() {
         let (release, wait) = std::sync::mpsc::channel();
         let handle = std::thread::spawn(move || {
@@ -1865,6 +1913,10 @@ pub(crate) mod resource_exhaustion {
     }
 
     #[test]
+    #[cfg_attr(
+        not(unix),
+        ignore = "Unix child-process harness (signals, pipes, CLI layout)"
+    )]
     fn harness_marker_drop_cleans_up_on_unwind() {
         // Caught failure through a MARKER-owned fixture (no pid identity
         // anywhere): the guard is built before any assert, the panic
@@ -1946,6 +1998,10 @@ pub(crate) mod resource_exhaustion {
     }
 
     #[test]
+    #[cfg_attr(
+        not(unix),
+        ignore = "Unix child-process harness (signals, pipes, CLI layout)"
+    )]
     fn harness_owned_guard_survives_unwind_then_completes() {
         // The guard survives a borrow-only panic (never consumed by it),
         // then runs its explicit finite cleanup AFTER catch_unwind: same
@@ -2022,6 +2078,10 @@ pub(crate) mod resource_exhaustion {
     }
 
     #[test]
+    #[cfg_attr(
+        not(unix),
+        ignore = "Unix child-process harness (signals, pipes, CLI layout)"
+    )]
     fn harness_handshake_fixture_cleans_up_on_unwind() {
         // Caught setup/assertion failure through the owned handshake
         // fixture: panic BEFORE normal complete, then prove the guard's
@@ -2095,6 +2155,10 @@ pub(crate) mod resource_exhaustion {
         std::fs::remove_file(&pid_a).ok();
     }
     #[test]
+    #[cfg_attr(
+        not(unix),
+        ignore = "Unix child-process harness (signals, pipes, CLI layout)"
+    )]
     fn harness_cleanup_guard_fires_on_unwind() {
         // A live sleeper owned by a guard that never reaches complete():
         // the panic below simulates an assertion failure, and Drop must
@@ -2170,6 +2234,10 @@ pub(crate) mod resource_exhaustion {
     }
 
     #[test]
+    #[cfg_attr(
+        not(unix),
+        ignore = "Unix child-process harness (signals, pipes, CLI layout)"
+    )]
     fn harness_reap_seam_covers_poll_verdicts() {
         // A pre-reaped status to replay through the seam.
         let mut done = Command::new("bash");
@@ -2216,6 +2284,10 @@ pub(crate) mod resource_exhaustion {
     }
 
     #[test]
+    #[cfg_attr(
+        not(unix),
+        ignore = "Unix child-process harness (signals, pipes, CLI layout)"
+    )]
     fn harness_join_gate_proves_paused_sender_unfinished() {
         // A sender paused after send, driven through the ACTUAL
         // `join_finished` gate the runner uses. The sender blocks on
@@ -2256,6 +2328,10 @@ pub(crate) mod resource_exhaustion {
         );
     }
     #[test]
+    #[cfg_attr(
+        not(unix),
+        ignore = "Unix child-process harness (signals, pipes, CLI layout)"
+    )]
     fn harness_parent_verdict_covers_injected_faults() {
         // Poll failure against a TRULY LIVE child through the REAL parent
         // lifecycle: no panic, real termination in common cleanup, and a
@@ -2365,6 +2441,10 @@ pub(crate) mod resource_exhaustion {
     }
 
     #[test]
+    #[cfg_attr(
+        not(unix),
+        ignore = "Unix child-process harness (signals, pipes, CLI layout)"
+    )]
     fn harness_timeout_kills_and_reaps_within_grace() {
         // Pure-builtin busy loop: no grandchildren can inherit the pipes,
         // so killing the shell closes them and the readers finish.
@@ -2404,6 +2484,10 @@ pub(crate) mod resource_exhaustion {
     }
 
     #[test]
+    #[cfg_attr(
+        not(unix),
+        ignore = "Unix child-process harness (signals, pipes, CLI layout)"
+    )]
     fn harness_overflow_child_is_flagged_with_clean_read() {
         // 9000 bytes: just over the 8192 cap, small enough to exit on its
         // own through the pipe buffer, so the verdict is overflow alone.
@@ -2436,6 +2520,10 @@ pub(crate) mod resource_exhaustion {
     /// refused with `invalid variable name`, like modern bash (5.x); the
     /// real producer exit status is asserted, never relabeled.
     #[test]
+    #[cfg_attr(
+        not(unix),
+        ignore = "Unix child-process harness (signals, pipes, CLI layout)"
+    )]
     fn indirect_hostile_cycles_rejected_in_bounded_child() {
         for script in [
             "unset a\nr='a[0]:-${!r}]'\necho \"${!r}\"",
@@ -2478,6 +2566,10 @@ pub(crate) mod resource_exhaustion {
     /// it; and absence must stay an error, never a path that fails later as
     /// a spawn error or an exit 127.
     #[test]
+    #[cfg_attr(
+        not(unix),
+        ignore = "Unix child-process harness (signals, pipes, CLI layout)"
+    )]
     fn cli_lookup_resolves_known_cargo_layouts() {
         let root = std::env::temp_dir().join(format!("bashkit-cli-layout-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
@@ -2540,6 +2632,10 @@ pub(crate) mod resource_exhaustion {
     /// repeatedly: the timeout verdict must be deterministic, never a
     /// scheduling coin flip.
     #[test]
+    #[cfg_attr(
+        not(unix),
+        ignore = "Unix child-process harness (signals, pipes, CLI layout)"
+    )]
     fn bounded_helper_kills_hung_child() {
         let run = run_cli_bounded("sleep 30", Duration::from_secs(3));
         assert!(
@@ -2564,6 +2660,10 @@ pub(crate) mod resource_exhaustion {
     /// starts (exit 99) instead of running unbounded. A shadowed failing
     /// `ulimit` exercises the refusal with a harmless instant child.
     #[test]
+    #[cfg_attr(
+        not(unix),
+        ignore = "Unix child-process harness (signals, pipes, CLI layout)"
+    )]
     fn bounded_launcher_failure_is_fail_closed() {
         let probe = [
             "ulimit() { return 1; }; ",
@@ -2596,6 +2696,10 @@ pub(crate) mod resource_exhaustion {
     /// may end the run. The previous loop broke on complete buffers and
     /// then waited without a deadline; this case hung it forever.
     #[test]
+    #[cfg_attr(
+        not(unix),
+        ignore = "Unix child-process harness (signals, pipes, CLI layout)"
+    )]
     fn bounded_helper_covers_early_pipe_close() {
         let run = run_cli_bounded("echo hi; exec 1>&- 2>&-; sleep 30", Duration::from_secs(5));
         assert!(run.timed_out, "live producer with closed pipes not killed");
@@ -2620,6 +2724,10 @@ pub(crate) mod resource_exhaustion {
     /// portably). The elapsed assertion proves the run returns without
     /// waiting for it.
     #[test]
+    #[cfg_attr(
+        not(unix),
+        ignore = "Unix child-process harness (signals, pipes, CLI layout)"
+    )]
     fn bounded_helper_flags_retained_pipes() {
         // The sleeper's PID is retained through a second receipt file so
         // the test itself terminates and finitely observes the exact
@@ -2714,6 +2822,10 @@ pub(crate) mod resource_exhaustion {
     }
 
     #[test]
+    #[cfg_attr(
+        not(unix),
+        ignore = "Unix child-process harness (signals, pipes, CLI layout)"
+    )]
     fn bounded_helper_flags_oversize_output() {
         let script =
             "i=0; while ((i < 4000)); do echo \"padding line $i padding\"; i=$((i + 1)); done";

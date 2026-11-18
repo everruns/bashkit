@@ -96,7 +96,7 @@ impl Builtin for Bracket {
 /// Resolve a file path against cwd (relative paths become absolute)
 fn resolve_file_path(cwd: &Path, arg: &str) -> PathBuf {
     let p = Path::new(arg);
-    if p.is_absolute() {
+    if p.has_root() {
         p.to_path_buf()
     } else {
         vfs_join(cwd, p)

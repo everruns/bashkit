@@ -193,7 +193,9 @@ impl CommandOutput {
                     .await??;
             }
             Destination::Discard => {}
-            Destination::Closed => return Err(std::io::Error::from_raw_os_error(9).into()),
+            // Fixed text, not `from_raw_os_error(9)`: errno 9 is EBADF only on
+            // unix (Windows renders a host message), and bash prints no errno.
+            Destination::Closed => return Err(std::io::Error::other("Bad file descriptor").into()),
             Destination::Pipe(pipe) => self.budget.run(pipe.write_bounded(bytes)).await??,
             Destination::Capture(capture) => {
                 let mut capture = capture.lock().unwrap_or_else(|e| e.into_inner());

@@ -1001,7 +1001,7 @@ async fn open_vfs_file(path: &Path, mode: FileMode, fs: &Arc<dyn FileSystem>) ->
 /// Resolve a Python path string against cwd if relative.
 fn resolve_python_path(path_str: &str, cwd: &Path) -> PathBuf {
     let p = Path::new(path_str);
-    if p.is_absolute() {
+    if p.has_root() {
         p.to_owned()
     } else {
         vfs_join(cwd, p)
