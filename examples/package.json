@@ -10,7 +10,7 @@
   },
   "devDependencies": {
     "@ai-sdk/openai": "^4.0.117",
-    "@langchain/core": "^1.4.0",
+    "@langchain/core": "^1.4.1",
     "@langchain/langgraph": "^1.7.4",
     "@langchain/openai": "^1.8.4",
     "ai": "^7.0.172",
