@@ -51,7 +51,7 @@ class MaintenanceSecurityTests(unittest.TestCase):
         self.assertEqual(audit.get('shell'), 'bash')
         self.assertFalse(audit.get('continue-on-error', False))
         self.assertEqual(upload['if'], 'always()')
-        self.assertEqual(upload['with']['path'], 'geiger-*.json*')
+        self.assertEqual(upload['with']['path'].splitlines(), ['geiger-*.json*', 'geiger-diagnostics.txt'])
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             cargo = root / 'cargo'
@@ -59,6 +59,7 @@ class MaintenanceSecurityTests(unittest.TestCase):
                 '#!/bin/sh\n'
                 '[ "$*" = "geiger --manifest-path $PWD/crates/bashkit/Cargo.toml --locked --all-features --output-format Json" ] || exit 64\n'
                 'printf "%s\\n" "$GEIGER_OUTPUT"\n'
+                'printf "%s" "$GEIGER_DIAGNOSTICS" >&2\n'
                 'exit "$GEIGER_EXIT"\n'
             )
             cargo.chmod(0o755)
@@ -84,13 +85,26 @@ class MaintenanceSecurityTests(unittest.TestCase):
                     raw_output = '{"$message_type":"artifact"}\n' + json.dumps(output)
                     result = subprocess.run(
                         ['bash', '-e', '-o', 'pipefail', '-c', audit['run']], cwd=root,
-                        env=dict(env, GEIGER_OUTPUT=raw_output, GEIGER_EXIT=str(exit_code)),
+                        env=dict(env, GEIGER_OUTPUT=raw_output, GEIGER_EXIT=str(exit_code),
+                                 GEIGER_DIAGNOSTICS=''),
                         capture_output=True, text=True,
                     )
                     self.assertEqual(result.returncode, expected, result.stderr)
                     self.assertEqual((root / 'geiger-output.jsonl').read_text(), raw_output + '\n')
                     if expected == 0:
                         self.assertEqual(json.loads((root / 'geiger-report.json').read_text()), report)
+
+            for path, expected in ((root / 'src/lib.rs', 1), (root.parent / 'dependency.rs', 0)):
+                with self.subTest(parser_error=path):
+                    diagnostic = f'Failed to parse file: {path}, syntax error\n'
+                    result = subprocess.run(
+                        ['bash', '-e', '-o', 'pipefail', '-c', audit['run']], cwd=root,
+                        env=dict(env, GEIGER_OUTPUT=json.dumps(report), GEIGER_EXIT='0',
+                                 GEIGER_DIAGNOSTICS=diagnostic),
+                        capture_output=True, text=True,
+                    )
+                    self.assertEqual(result.returncode, expected, result.stderr)
+                    self.assertEqual((root / 'geiger-diagnostics.txt').read_text(), diagnostic)
 
     def test_optional_ci_examples_skip_failed_fetches(self):
         steps = yaml.safe_load((ROOT / '.github/workflows/ci.yml').read_text())['jobs']['examples']['steps']

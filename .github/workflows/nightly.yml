@@ -122,8 +122,16 @@ jobs:
         run: |
           # The JSON report exposes coverage gaps without failing just because
           # rustc's dependency files list data assets or generated sources.
-          cargo geiger --manifest-path "$PWD/crates/bashkit/Cargo.toml" --locked --all-features --output-format Json > geiger-output.jsonl
+          cargo geiger --manifest-path "$PWD/crates/bashkit/Cargo.toml" --locked --all-features --output-format Json > geiger-output.jsonl 2> geiger-diagnostics.txt || {
+            scan_status=$?
+            tail -n 50 geiger-diagnostics.txt >&2
+            exit "$scan_status"
+          }
           jq -s -e 'map(select(type == "object" and has("packages"))) | if length == 1 then .[0] else error("expected one Geiger report") end' geiger-output.jsonl > geiger-report.json
+          # Geiger logs parser errors separately from its JSON metrics.
+          if grep -F "Failed to parse file: $PWD/" geiger-diagnostics.txt >&2; then
+            exit 1
+          fi
           jq -e --arg build_dir "$PWD/target/debug/build/" '
             if any(.packages, .packages_without_metrics, .used_but_not_scanned_files; type != "array") then
               error("Geiger report is missing its package or file lists")
@@ -142,7 +150,9 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: geiger-report
-          path: geiger-*.json*
+          path: |
+            geiger-*.json*
+            geiger-diagnostics.txt
           retention-days: 30
 
   asan:

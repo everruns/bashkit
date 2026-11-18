@@ -139,8 +139,9 @@ these files with it.
 - Unsafe usage reviewed (`cargo geiger`). Nightly scans the Bashkit crate
   and its dependencies with all features using the crate's package manifest.
   Nightly fails if the scan fails, package metrics are missing, or Rust inputs
-  outside Cargo's generated build directory go unscanned. The uploaded JSON
-  report lists generated sources and other build inputs outside Geiger's scan.
+  outside Cargo's generated build directory go unscanned. The audit also
+  rejects Geiger parser errors in the checkout. The uploaded report and
+  diagnostics list generated inputs and dependency parser errors for review.
 - No OWASP-style issues (injection, path traversal, etc.)
 
 ### Tests
