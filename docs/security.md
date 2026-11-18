@@ -195,7 +195,8 @@ published in the rustdoc:
 Bashkit intentionally deviates from POSIX where compliance would compromise
 the sandbox. Key exclusions:
 
-- **`exec`**: would break sandbox containment (`TM-ESC-005`)
+- **`exec`** runs a command in the virtual interpreter and ends the current script.
+  Supported redirects apply to virtual file descriptors (`TM-ESC-005`).
 - **`trap`**: handles shell events and self-sent virtual signals. Nested handlers share the function/source/child-shell depth budget (hard ceiling 16) plus a dedicated trap-nesting cap of 3 that trips first on small stacks; recursive signal delivery past either limit is skipped with a diagnostic and the first trip fails the exec with a resource-limit error
 - **Real process spawning**: all subprocess commands stay within the virtual interpreter (`TM-ESC-015`)
 
