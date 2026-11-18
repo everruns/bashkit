@@ -9,9 +9,8 @@ Currently configured project: `bashkit` (target: `..`).
 
 ## Setup
 
-1. Use `npx deepsec@2.1.2 ...` for one-off runs, or `pnpm install` if
-   you want a local `pnpm deepsec` binary. The lockfile is intentionally
-   ignored; DeepSec is a maintenance scanner, not shipped runtime code.
+1. Run `pnpm install --frozen-lockfile` from this directory, then use
+   `pnpm deepsec`. The committed lockfile pins the scanner and its dependencies.
 2. Add an AI Gateway / Anthropic / OpenAI token to `.env.local`. If
    you already have `claude` or `codex` CLI logged in on this
    machine, you can skip the token for non-sandbox runs (`process` /
@@ -22,13 +21,17 @@ Currently configured project: `bashkit` (target: `..`).
    and have it follow `data/bashkit/SETUP.md` to fill in
    `data/bashkit/INFO.md`.
 
+The workspace overrides keep the scanner on patched Zod and minimatch versions.
+Vercel Sandbox 2 uses Zod 4. Review the overrides when updating DeepSec and run
+`pnpm audit` against the refreshed lockfile.
+
 ## Daily commands
 
 ```bash
-npx deepsec@2.1.2 scan
-npx deepsec@2.1.2 process     --concurrency 5
-npx deepsec@2.1.2 revalidate  --concurrency 5                  # cuts FP rate
-npx deepsec@2.1.2 export      --format md-dir --out ./findings
+pnpm deepsec scan
+pnpm deepsec process     --concurrency 5
+pnpm deepsec revalidate  --concurrency 5
+pnpm deepsec export      --format md-dir --out ./findings
 ```
 
 `--project-id` is auto-resolved while there's only one project in
@@ -67,7 +70,7 @@ AGENTS.md                Pointer for coding agents
 
 ## Docs
 
-After `pnpm install` or `npx deepsec@2.1.2 ...`:
+After installing the workspace dependencies:
 
 - Skill: `node_modules/deepsec/SKILL.md`
 - Full docs: `node_modules/deepsec/dist/docs/{getting-started,configuration,models,writing-matchers,plugins,architecture,data-layout,vercel-setup,faq}.md`

@@ -2,3 +2,8 @@ packages: []
 allowBuilds:
   '@google/genai': true
   protobufjs: true
+overrides:
+  # Vercel Sandbox 2 uses Zod 4. Revisit these overrides when DeepSec upgrades.
+  'deepsec>@vercel/sandbox': 2.9.2
+  'deepsec>minimatch': 11.0.8
+  'zod@>=4.0.0 <4.6.6': 4.6.7

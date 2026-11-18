@@ -96,9 +96,10 @@ Deliberately not covered, and why:
   races that process.
 - `crates/bashkit-wasm` has a `package.json` with no dependencies and no
   lockfile, so there is nothing to update.
-- `.deepsec/` is updated by hand during the security pass below
-  (`pnpm update deepsec@latest`), because the scan is run against whatever
-  version the pass pulls, not on dependabot's schedule.
+- `.deepsec/` is updated and audited by hand during the security pass below.
+  The committed lockfile pins the exact scanner and dependencies used by the
+  pass. Refresh it immediately before scanning so the pass uses the latest
+  scanner, including releases younger than the npm cooldown.
 - Python: `crates/bashkit-python/pyproject.toml` declares only optional extras
   with open lower bounds (`>=`) and ships no lockfile, so a pip entry would
   have nothing to pin.
@@ -130,6 +131,7 @@ these files with it.
 - Every new builtin/feature has a corresponding TM-XXX entry
 - DeepSec is updated to the latest published version before scanning:
   - Run `cd .deepsec && pnpm update deepsec@latest`
+  - Run `pnpm audit` against the refreshed lockfile and resolve advisories.
   - Run `pnpm deepsec scan --project-id bashkit`
   - Run `pnpm deepsec process --project-id bashkit --agent codex`
   - Review `pnpm deepsec report --project-id bashkit`, fix findings, and verify

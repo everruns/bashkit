@@ -1,4 +1,4 @@
-"""Every dependency-resolving workspace in the tree needs a Dependabot entry.
+"""Every dependency-resolving workspace needs Dependabot or a manual policy.
 
 Dependabot cannot glob: each workspace has to be named in
 `.github/dependabot.yml` by hand, and that list has to grow with every new
@@ -90,7 +90,9 @@ class DependabotCoverageTests(unittest.TestCase):
     def test_every_pnpm_project_is_covered(self):
         projects = tracked_dirs('pnpm-lock.yaml')
         self.assertGreaterEqual(len(projects), 5, projects)
-        self.assert_covered('npm', projects)
+        # The maintenance playbook refreshes and audits DeepSec immediately
+        # before each scan, including releases younger than the npm cooldown.
+        self.assert_covered('npm', projects - {'/.deepsec'})
 
     def test_every_uv_project_is_covered(self):
         projects = tracked_dirs('uv.lock')
