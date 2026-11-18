@@ -113,17 +113,16 @@ class DependabotCoverageTests(unittest.TestCase):
                 self.assertIn(fixture, covered)
 
     def test_no_cargo_entry_can_propose_a_wasmtime_bump(self):
-        # wasmtime is held at =48.0.6 for two independent reasons: the
-        # `cpython` feature loads a module precompiled by build.rs, which only
-        # loads into the identical wasmtime version, and 48.x is the newest
-        # line whose MSRV the pinned rustc satisfies. 49.x needs 1.96.
+        # `cpython` loads the module precompiled by build.rs with the same
+        # Wasmtime version. Wasmtime 49 supports the Rust 1.96 consumer
+        # minimum. Wasmtime 50 requires Rust 1.97.
         #
         # The "/" entry carried that ignore; the fuzz and example entries did
         # not, and the ignore is per-entry. The fuzz lockfile resolves the root
         # workspace, so dependabot edited the root `=48.0.6` pin straight
         # through the gap and opened #2708, where every rust job died at
         # resolution with "wasmtime@49.0.2 requires rustc 1.96.0". The
-        # hyperlight host pins its own wasmtime "48" and is built by required
+        # hyperlight host shares the Wasmtime release series and is built by required
         # CI on the same pinned toolchain, so it had the same exposure.
         #
         # Which entry happens to reach which manifest is not a useful thing to
@@ -149,7 +148,7 @@ class DependabotCoverageTests(unittest.TestCase):
                     'wasmtime',
                     ignored,
                     f'cargo entry {scope} can propose a wasmtime bump; '
-                    'it is pinned to =48.0.6 by MSRV and by precompiled-module '
+                    'its version is constrained by MSRV and precompiled-module '
                     'compatibility, so every cargo entry must ignore it',
                 )
 
