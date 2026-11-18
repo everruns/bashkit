@@ -136,7 +136,8 @@ these files with it.
     regressions before shipping; use the external-blocker policy below only when needed
 - Security tests exist for every MITIGATED threat
 - Failpoint tests pass
-- Unsafe usage reviewed (`cargo geiger`)
+- Unsafe usage reviewed (`cargo geiger`). Nightly fails on a nonzero scan exit
+  and uploads the captured report even on failure.
 - No OWASP-style issues (injection, path traversal, etc.)
 
 ### Tests
@@ -442,8 +443,10 @@ Sections dependencies, tests, examples, code quality, and nightly CI are fully
 automatable. Security, documentation, specs, simplification, and agent config
 require human or agent review.
 
-CI health check enforced by `just check-nightly` (nightly + fuzz) and manual
-inspection of CI on `main` (audit, test, lint). Called by `just release-check`.
+`just release-check` calls `just check-nightly`. The gate requires the three
+newest runs of each Nightly and Fuzz Testing workflow on `main` to have
+completed successfully. Missing or unfinished runs and GitHub CLI errors
+block the gate. Review CI on `main` (audit, test, lint) separately.
 
 ## Invocation
 

@@ -372,39 +372,9 @@ vet-certify crate version: _ensure-vet
 
 # === Nightly CI ===
 
-# Check that recent nightly and fuzz CI runs are green (requires gh CLI)
+# Check that the three newest nightly and fuzz runs on main are green (requires gh CLI)
 check-nightly:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    echo "Checking nightly CI status..."
-    failed=0
-    for workflow in nightly.yml fuzz.yml; do
-        name=$(echo "$workflow" | sed 's/\.yml//')
-        echo ""
-        echo "=== $name ==="
-        conclusions=$(gh run list --workflow="$workflow" --limit 3 --json conclusion --jq '.[].conclusion')
-        i=0
-        for c in $conclusions; do
-            i=$((i + 1))
-            if [ "$c" = "success" ]; then
-                echo "  Run $i: ok"
-            else
-                echo "  Run $i: FAILED ($c)"
-                failed=$((failed + 1))
-            fi
-        done
-        if [ "$i" -eq 0 ]; then
-            echo "  WARNING: no runs found (is gh authenticated?)"
-        fi
-    done
-    echo ""
-    if [ "$failed" -gt 0 ]; then
-        echo "ERROR: $failed nightly run(s) failed in last 3 runs."
-        echo "Inspect with: gh run list --workflow=<workflow>.yml --limit 5"
-        echo "Do NOT release with red nightly jobs."
-        exit 1
-    fi
-    echo "Nightly CI: all recent runs green."
+    python3 scripts/check_nightly.py
 
 # === Release ===
 

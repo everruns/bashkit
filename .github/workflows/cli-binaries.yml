@@ -227,23 +227,27 @@ jobs:
         if: steps.doppler_cli.outcome == 'failure'
         uses: dopplerhq/cli-action@4819d808ab99e5cde19a0637a16536a4038fad73 # v4
 
-      - name: Push formula to homebrew-tap
+      # Keep the broad Doppler credential out of the git processes.
+      - name: Fetch Homebrew tap token
+        id: tap-token
         env:
           DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
+        run: |
+          token=$(doppler secrets get HOMEBREW_TAP_GITHUB_TOKEN --plain)
+          if [[ -z "$token" ]]; then
+            echo "::error::Homebrew tap token is empty"
+            exit 1
+          fi
+          printf '::add-mask::%s\n' "$token"
+          printf 'token=%s\n' "$token" >> "$GITHUB_OUTPUT"
+
+      - name: Push formula to homebrew-tap
+        env:
+          GH_PAT: ${{ steps.tap-token.outputs.token }}
           RELEASE_TAG: ${{ needs.validate-tag.outputs.tag }}
         run: |
           TAG="$RELEASE_TAG"
           VERSION="${TAG#v}"
-
-          # Fetch the homebrew-tap PAT from Doppler. This token is a
-          # fine-grained PAT scoped to `everruns/homebrew-tap` only
-          # (Contents: read+write, Metadata: read), so a leak cannot
-          # touch the main bashkit repo.
-          # Register the mask before the value can reach any log line: an
-          # `set -x` or error trace between fetch and mask would print it.
-          GH_PAT=$(doppler secrets get HOMEBREW_TAP_GITHUB_TOKEN --plain)
-          echo "::add-mask::$GH_PAT"
-          export GH_PAT
 
           # Use askpass to avoid embedding token in clone/push URLs or logs
           ASKPASS_SCRIPT=$(mktemp)

@@ -118,12 +118,12 @@ jobs:
           locked: true
 
       - name: Run cargo-geiger (unsafe code audit)
-        run: |
-          cargo geiger --all-features 2>&1 | tee geiger-report.txt
-          echo "::notice::Unsafe code report generated. Review geiger-report.txt for details."
-        continue-on-error: true
+        # Explicit bash enables pipefail so tee cannot hide a failed scan.
+        shell: bash
+        run: cargo geiger --all-features 2>&1 | tee geiger-report.txt
 
       - name: Upload geiger report
+        if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: geiger-report

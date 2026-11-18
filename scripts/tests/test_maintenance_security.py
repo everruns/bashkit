@@ -29,18 +29,38 @@ class MaintenanceSecurityTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
 
     def test_broad_credential_steps_never_execute_repository_code(self):
-        for workflow in ('ci.yml', 'js.yml', 'publish-js.yml'):
-            jobs = yaml.safe_load((ROOT / '.github/workflows' / workflow).read_text())['jobs']
+        for workflow in sorted((ROOT / '.github/workflows').glob('*.yml')):
+            jobs = yaml.safe_load(workflow.read_text())['jobs']
             for job in jobs.values():
                 self.assertNotIn('DOPPLER_TOKEN', job.get('env', {}))
                 for step in job.get('steps', []):
                     if 'DOPPLER_TOKEN' not in step.get('env', {}):
                         continue
-                    with self.subTest(workflow=workflow, step=step['name']):
+                    with self.subTest(workflow=workflow.name, step=step['name']):
                         script = step.get('run', '')
                         self.assertNotRegex(script, r'\b(cargo|node|bun|docker)\b|examples/')
+                        self.assertNotRegex(script, r'(?m)^\s*(?:if\s+)?(?:git|gh)\s')
                         self.assertNotIn('doppler run', script)
                         self.assertNotIn('uses', step)
+
+    def test_nightly_geiger_propagates_failure_and_keeps_report(self):
+        jobs = yaml.safe_load((ROOT / '.github/workflows/nightly.yml').read_text())['jobs']
+        steps = jobs['security-analysis']['steps']
+        audit = next(step for step in steps if step.get('name') == 'Run cargo-geiger (unsafe code audit)')
+        upload = next(step for step in steps if step.get('name') == 'Upload geiger report')
+        self.assertEqual(audit.get('shell'), 'bash')
+        self.assertFalse(audit.get('continue-on-error', False))
+        self.assertEqual(upload['if'], 'always()')
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cargo = root / 'cargo'
+            cargo.write_text('#!/bin/sh\necho "Geiger failed" >&2\nexit 7\n')
+            cargo.chmod(0o755)
+            env = dict(os.environ, PATH=str(root) + os.pathsep + os.environ['PATH'])
+            result = subprocess.run(['bash', '-e', '-o', 'pipefail', '-c', audit['run']],
+                                    cwd=root, env=env, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 7, result.stdout)
+            self.assertEqual((root / upload['with']['path']).read_text(), 'Geiger failed\n')
 
     def test_optional_ci_examples_skip_failed_fetches(self):
         steps = yaml.safe_load((ROOT / '.github/workflows/ci.yml').read_text())['jobs']['examples']['steps']
@@ -53,7 +73,7 @@ class MaintenanceSecurityTests(unittest.TestCase):
 
     def test_actual_workflow_scripts_separate_fetch_and_execution(self):
         """Execute checked-in scripts; replace executables, not shell wrappers."""
-        for workflow in ('ci.yml', 'js.yml', 'publish-js.yml'):
+        for workflow in ('ci.yml', 'js.yml', 'publish-js.yml', 'cli-binaries.yml'):
             jobs = yaml.safe_load((ROOT / '.github/workflows' / workflow).read_text())['jobs']
             for name, job in jobs.items():
                 fetches = [step for step in job.get('steps', [])
@@ -93,21 +113,31 @@ else:
     if name == 'docker':
         assert '-e' in sys.argv and 'OPENAI_API_KEY' in sys.argv
         assert not any('scoped-' in arg or arg.startswith('OPENAI_API_KEY=') for arg in sys.argv)
+    if name == 'git':
+        import subprocess
+        askpass = os.environ['GIT_ASKPASS']
+        assert subprocess.check_output([askpass, 'Password:'], text=True).strip() == 'scoped-HOMEBREW_TAP_GITHUB_TOKEN'
+        if sys.argv[1] == 'clone':
+            pathlib.Path('tap/Formula').mkdir(parents=True)
+        if sys.argv[1] == 'diff':
+            sys.exit(1)
 ''')
                     stub.chmod(0o755)
-                    for executable in ('node', 'bun', 'deno', 'cargo', 'bash'):
+                    for executable in ('node', 'bun', 'deno', 'cargo', 'bash', 'git'):
                         (root / 'bin' / executable).symlink_to(stub)
                     (root / 'bin' / 'docker').symlink_to(stub)
                     (root / 'target/debug/examples').mkdir(parents=True)
                     (root / 'target/debug/examples/agent_tool').symlink_to(stub)
+                    (root / 'bashkit.rb').write_text('fixture formula\n')
                     base_env = {key: value for key, value in os.environ.items()
-                                if key not in ('DOPPLER_TOKEN', 'OPENAI_API_KEY', 'ANTHROPIC_API_KEY')}
+                                if key not in ('DOPPLER_TOKEN', 'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'GH_PAT')}
                     base_env.update(PATH=str(root / 'bin') + os.pathsep + base_env['PATH'], CALL_LOG=str(log))
                     outputs = {}
                     for step in job['steps']:
                         if step not in fetches and step.get('name') not in (
                             'Run AI examples', 'Run LLM agent example',
-                            'Run harness OpenAI joke example', 'Build LLM examples without credentials'
+                            'Run harness OpenAI joke example', 'Build LLM examples without credentials',
+                            'Push formula to homebrew-tap',
                         ):
                             continue
                         output = root / 'output'
@@ -116,6 +146,8 @@ else:
                         for key, value in step.get('env', {}).items():
                             if key == 'DOPPLER_TOKEN':
                                 env[key] = 'synthetic-broad-token'
+                            elif key == 'RELEASE_TAG' and value == '${{ needs.validate-tag.outputs.tag }}':
+                                env[key] = 'v1.2.3'
                             else:
                                 reference = re.fullmatch(r'\$\{\{ steps\.([\w-]+)\.outputs\.([\w-]+) \}\}', value)
                                 self.assertIsNotNone(reference, value)
@@ -137,6 +169,10 @@ else:
                     calls = [json.loads(line) for line in log.read_text().splitlines()]
                     self.assertTrue(any(call['name'] == 'doppler' for call in calls))
                     self.assertTrue(any(call['name'] != 'doppler' for call in calls))
+                    if workflow == 'cli-binaries.yml':
+                        self.assertIn(['push', 'origin', 'main'],
+                                      [call['args'] for call in calls if call['name'] == 'git'])
+                        self.assertEqual((root / 'tap/Formula/bashkit.rb').read_text(), 'fixture formula\n')
                     for call in calls:
                         if call['name'] != 'doppler':
                             self.assertFalse(call['broad'])
