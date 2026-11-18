@@ -54,7 +54,12 @@ class MaintenanceSecurityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             cargo = root / 'cargo'
-            cargo.write_text('#!/bin/sh\necho "Geiger failed" >&2\nexit 7\n')
+            cargo.write_text(
+                '#!/bin/sh\n'
+                '[ "$*" = "geiger --manifest-path crates/bashkit/Cargo.toml --locked --all-features" ] || exit 64\n'
+                'echo "Geiger failed" >&2\n'
+                'exit 7\n'
+            )
             cargo.chmod(0o755)
             env = dict(os.environ, PATH=str(root) + os.pathsep + os.environ['PATH'])
             result = subprocess.run(['bash', '-e', '-o', 'pipefail', '-c', audit['run']],

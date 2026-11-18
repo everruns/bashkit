@@ -118,9 +118,10 @@ jobs:
           locked: true
 
       - name: Run cargo-geiger (unsafe code audit)
+        # Geiger requires a package manifest. The workspace root is virtual.
         # Explicit bash enables pipefail so tee cannot hide a failed scan.
         shell: bash
-        run: cargo geiger --all-features 2>&1 | tee geiger-report.txt
+        run: cargo geiger --manifest-path crates/bashkit/Cargo.toml --locked --all-features 2>&1 | tee geiger-report.txt
 
       - name: Upload geiger report
         if: always()

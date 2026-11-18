@@ -136,8 +136,9 @@ these files with it.
     regressions before shipping; use the external-blocker policy below only when needed
 - Security tests exist for every MITIGATED threat
 - Failpoint tests pass
-- Unsafe usage reviewed (`cargo geiger`). Nightly fails on a nonzero scan exit
-  and uploads the captured report even on failure.
+- Unsafe usage reviewed (`cargo geiger`). Nightly scans the Bashkit crate
+  and its dependencies with all features using the crate's package manifest.
+  Nightly fails on a nonzero scan exit and uploads the captured report.
 - No OWASP-style issues (injection, path traversal, etc.)
 
 ### Tests
