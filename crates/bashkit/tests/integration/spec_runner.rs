@@ -270,17 +270,18 @@ pub fn run_real_bash(script: &str) -> (String, i32) {
     let sandbox = tempfile::tempdir().expect("Failed to create bash comparison tempdir");
     let sandbox_tmp = sandbox.path().to_string_lossy();
     let sandbox_tmp_prefix = format!("{sandbox_tmp}/");
-    // Match the interpreter's initial file creation mask.
-    let rewritten_script = format!(
-        "umask 022\n{}",
-        script.replace("/tmp/", &sandbox_tmp_prefix)
-    );
+    let rewritten_script = script.replace("/tmp/", &sandbox_tmp_prefix);
+    // Set the initial mask outside the fixture so its line numbers stay intact.
+    let oracle_env =
+        tempfile::NamedTempFile::new().expect("Failed to create Bash oracle init file");
+    fs::write(oracle_env.path(), "umask 022\nunset BASH_ENV\n")
+        .expect("Failed to write Bash oracle init file");
     let output = Command::new("bash")
         .arg("-c")
         .arg(&rewritten_script)
         .current_dir(sandbox.path())
         .env("TMPDIR", sandbox.path())
-        .env_remove("BASH_ENV")
+        .env("BASH_ENV", oracle_env.path())
         // A bashkit script is a top-level shell; drop the test runner's own
         // SHLVL so real bash starts at 1 too.
         .env_remove("SHLVL")
