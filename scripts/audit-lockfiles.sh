@@ -53,11 +53,25 @@ IGNORED_ADVISORIES=(
     RUSTSEC-2023-0071
 )
 
-# npm advisories, by GHSA/CVE id. No active exceptions. The previous
-# GHSA-vfj7-8cjw-p6xm (braces) exception was retired after GitHub withdrew
-# the advisory on 2026-10-23 as not practically exploitable. This is not a
-# patched-code claim; a newly published finding must fail normally.
-IGNORED_NPM_ADVISORIES=()
+# npm advisories, by GHSA/CVE id. Same bar as the cargo list above: every
+# entry needs a rationale and a removal condition in the threat model.
+#
+# GHSA-fc5q-39xc-vjpf (CVE-2026-112366) - ReDoS in `picomatch`, where a glob
+# built from a single repeated extglob branch (`+(*)`) slips past
+# `analyzeRepeatedExtglob` and backtracks. The advisory covers `<= 4.0.7`,
+# which is picomatch's entire release history, and lists no patched version,
+# so there is nothing to upgrade to. picomatch is build tooling here and
+# nothing else: `ava` and `@napi-rs/cli` in crates/bashkit-js, `vite` and
+# `tinyglobby` in examples/browser, `astro` and `vite` in site. Every glob it
+# compiles comes from repo config or a build tool's own defaults, never from
+# tenant input, and no published package resolves it. Drop once picomatch
+# ships a release above 4.0.7 that patches the advisory.
+#
+# The earlier GHSA-vfj7-8cjw-p6xm (braces) exception was retired after GitHub
+# withdrew the advisory on 2026-10-23 as not practically exploitable.
+IGNORED_NPM_ADVISORIES=(
+    GHSA-fc5q-39xc-vjpf
+)
 
 # PyPI advisories, by OSV (or GHSA) id. Empty: nothing has yet needed
 # suppressing here. Same bar as the npm list above — an entry needs a rationale
