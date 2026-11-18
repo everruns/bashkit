@@ -272,18 +272,24 @@ async fn run_spec_test_paused_time(test: &SpecTest) -> TestResult {
 
 /// Run a spec test against real bash for comparison
 pub fn run_real_bash(script: &str) -> (String, i32) {
-    // Important decision: host bash comparison is untrusted spec input. Run it
-    // from a private temp directory, and remap hard-coded /tmp paths there, so
-    // redirects cannot clobber host or repo files while stdout parity remains /tmp-based.
+    // Run the host comparison from a private directory and remap fixture paths
+    // under /tmp. Scripts that assume Bashkit's synthetic root must opt out of
+    // the host comparison.
     let sandbox = tempfile::tempdir().expect("Failed to create bash comparison tempdir");
     let sandbox_tmp = sandbox.path().to_string_lossy();
     let sandbox_tmp_prefix = format!("{sandbox_tmp}/");
     let rewritten_script = script.replace("/tmp/", &sandbox_tmp_prefix);
+    // Set the initial mask outside the fixture so its line numbers stay intact.
+    let oracle_env =
+        tempfile::NamedTempFile::new().expect("Failed to create Bash oracle init file");
+    fs::write(oracle_env.path(), "umask 022\nunset BASH_ENV\n")
+        .expect("Failed to write Bash oracle init file");
     let output = Command::new("bash")
         .arg("-c")
         .arg(&rewritten_script)
         .current_dir(sandbox.path())
         .env("TMPDIR", sandbox.path())
+        .env("BASH_ENV", oracle_env.path())
         // A bashkit script is a top-level shell; drop the test runner's own
         // SHLVL so real bash starts at 1 too.
         .env_remove("SHLVL")

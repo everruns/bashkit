@@ -128,15 +128,15 @@ parent still: parent
 not_exported="hidden"
 export VISIBLE="yes"
 
-mkdir -p /usr/local/bin
-cat > /usr/local/bin/check-isolation <<'SCRIPT'
+mkdir -p /tmp/bin
+cat > /tmp/bin/check-isolation <<'SCRIPT'
 #!/usr/bin/env bash
 echo "visible=${VISIBLE:-unset}"
 echo "hidden=${not_exported:-unset}"
 SCRIPT
-chmod +x /usr/local/bin/check-isolation
+chmod +x /tmp/bin/check-isolation
 
-PATH="/usr/local/bin:${PATH}" check-isolation
+PATH="/tmp/bin:${PATH}" check-isolation
 ### expect
 visible=yes
 hidden=unset
