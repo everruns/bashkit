@@ -40,6 +40,7 @@ fancy-regex = { workspace = true }
 # Date/Time
 chrono = { workspace = true }
 chrono-tz = { workspace = true, optional = true }
+encoding_rs = { workspace = true, optional = true }
 vt100 = { workspace = true, optional = true }
 
 # HTTP client (for curl/wget) - optional, enabled with http_client feature
@@ -153,7 +154,7 @@ turso_core = { workspace = true, optional = true }
 branches = { workspace = true, optional = true }
 
 [features]
-default = ["bash_tool", "ring", "tzdata"]
+default = ["bash_tool", "ring", "tzdata", "iconv_charsets"]
 # Named IANA timezone support for the `date` builtin's `TZ=` handling, via the
 # chrono-tz database. On by default.
 #
@@ -170,6 +171,15 @@ default = ["bash_tool", "ring", "tzdata"]
 # is still never consulted. `TZ=UTC`, unset, empty, and path-style values are
 # unaffected.
 tzdata = ["dep:chrono-tz"]
+# Code pages for the `iconv` builtin beyond UTF-8/ASCII/Latin-1/UTF-16:
+# windows-125x, iso-8859-x, koi8, macintosh and the CJK sets, from the WHATWG
+# Encoding Standard tables in encoding_rs. On by default.
+#
+# Important decision: a feature for the same reason as `tzdata`: the CJK
+# tables are a few hundred KB of static data that the slim browser wasm
+# package should not carry. Without it `iconv` names other charsets as
+# unsupported and exits 1; the built-in charsets are unaffected.
+iconv_charsets = ["dep:encoding_rs"]
 # Enable the LLM-facing `BashTool` wrapper: the `Tool` trait, `ToolExecution`,
 # OpenAI tool-definition/JSON-schema helpers, and the `tower::Service` bridge.
 # On by default. Disable with `--no-default-features` to compile just the

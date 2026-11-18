@@ -57,6 +57,12 @@ lives there, next to the pin, so it cannot drift away from what it explains.
 - **`chrono-tz` behind the `tzdata` feature** (on by default). Worth 911 KB of
   the browser wasm binary. See
   [Gate rather than reimplement](#gate-rather-than-reimplement).
+- **`encoding_rs` behind the `iconv_charsets` feature** (on by default, listed
+  by `bashkit-cli` and `bashkit-capi`, absent from `bashkit-wasm`). Gives
+  `iconv` the WHATWG code pages (windows-125x, iso-8859-x, koi8, CJK).
+  `for_label` reaches every table, so LTO keeps them all; same gate-don't-
+  reimplement reasoning as `tzdata`. Without it, other charsets are refused
+  with exit 1.
 
 ## Monty forks
 

@@ -111,7 +111,7 @@
     }
   },
   "devDependencies": {
-    "@langchain/core": "^1.2.9",
+    "@langchain/core": "^1.4.1",
     "@napi-rs/cli": "^3.9.0",
     "@types/node": "^26.4.1",
     "ava": "^8.0.1",

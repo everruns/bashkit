@@ -72,6 +72,7 @@ fancy-regex = "0.20"
 # embedders. Re-enabled by the bashkit `wasm_js` feature for the JS packages.
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 chrono-tz = "0.10"
+encoding_rs = "0.8"
 # In-process terminal screen model (terminal feature)
 vt100 = "0.18"
 

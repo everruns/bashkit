@@ -251,6 +251,9 @@ updates:
           - "*"
     ignore:
       - dependency-name: "@everruns/*"
+      # astro check rejects TypeScript 7. Remove when the checker supports it.
+      - dependency-name: "typescript"
+        versions: [">=7"]
 
   # Build and test toolchain for the published `@everruns/bashkit` napi
   # package. All devDependencies, but they run in CI and produce the artifact
