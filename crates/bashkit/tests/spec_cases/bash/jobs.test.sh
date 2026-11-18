@@ -84,7 +84,7 @@ code=1
 ### jobs_list_running
 sleep 2 & sleep 3 &
 true &
-sleep 0.1
+wait %3
 jobs
 jobs -p | wc -l
 kill %1 %2

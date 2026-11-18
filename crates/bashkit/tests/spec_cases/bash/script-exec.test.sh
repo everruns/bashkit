@@ -94,11 +94,11 @@ inner
 
 ### script_exec_path_search
 # $PATH search finds executable
-mkdir -p /usr/local/bin
+mkdir -p /tmp/bin
 echo '#!/bin/bash
-echo found via path' > /usr/local/bin/myutil
-chmod +x /usr/local/bin/myutil
-PATH=/usr/local/bin
+echo found via path' > /tmp/bin/myutil
+chmod +x /tmp/bin/myutil
+PATH=/tmp/bin
 myutil
 ### expect
 found via path
@@ -131,14 +131,14 @@ got: test input
 
 ### script_exec_pipe_stdin_path_search
 # Piped stdin works for PATH-based script execution
-mkdir -p /usr/local/bin
-cat > /usr/local/bin/my-tool <<'SCRIPT'
+mkdir -p /tmp/bin
+cat > /tmp/bin/my-tool <<'SCRIPT'
 #!/usr/bin/env bash
 input="$(cat)"
 echo "received: ${input}"
 SCRIPT
-chmod +x /usr/local/bin/my-tool
-export PATH="/usr/local/bin:${PATH}"
+chmod +x /tmp/bin/my-tool
+export PATH="/tmp/bin:${PATH}"
 echo "data" | my-tool
 ### expect
 received: data

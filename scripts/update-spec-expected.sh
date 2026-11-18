@@ -58,21 +58,24 @@ done
 
 cd "$ROOT_DIR"
 
+if ! command -v bc >/dev/null; then
+    echo "Strict Bash parity requires GNU bc on PATH." >&2
+    exit 1
+fi
+
 echo "Checking spec tests against real bash..."
 echo ""
 
+test_args=(--test integration -- spec_tests:: --ignored)
 if $VERBOSE; then
-    cargo test --test integration -- spec_tests:: --ignored --nocapture 2>&1
-else
-    cargo test --test integration -- spec_tests:: --ignored 2>&1
+    test_args+=(--nocapture)
 fi
 
-exit_code=$?
-
-if [[ $exit_code -eq 0 ]]; then
+if cargo test "${test_args[@]}" 2>&1; then
     echo ""
     echo "All non-excluded tests match real bash."
 else
+    exit_code=$?
     echo ""
     echo "Some tests have differences from real bash."
     echo ""
@@ -81,6 +84,5 @@ else
     echo "  2. Add '### bash_diff: reason' if the difference is intentional"
     echo ""
     echo "Run with --verbose to see all comparisons."
+    exit "$exit_code"
 fi
-
-exit $exit_code

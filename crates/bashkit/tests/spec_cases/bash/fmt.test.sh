@@ -110,9 +110,17 @@ rc=1
 ### end
 
 ### fmt_goal_over_width
-LC_ALL=C fmt -w 20 -g 30 </dev/null 2>&1; echo "rc=$?"
+# GNU coreutils versions use different errno messages for this bound.
+diagnostic=$(LC_ALL=C fmt -w 20 -g 30 </dev/null 2>&1)
+rc=$?
+case "$diagnostic" in
+    *": Numerical result out of range"|*": Value too large for defined data type")
+        diagnostic=${diagnostic%: *}
+        ;;
+esac
+printf '%s\nrc=%s\n' "$diagnostic" "$rc"
 ### expect
-fmt: invalid width: '30': Numerical result out of range
+fmt: invalid width: '30'
 rc=1
 ### end
 
