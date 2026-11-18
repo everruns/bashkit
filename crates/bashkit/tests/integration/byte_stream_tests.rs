@@ -161,3 +161,57 @@ async fn select_consumes_binary_pipeline_lines_by_raw_byte_offset() {
     );
     assert_eq!(result.exit_code, 0);
 }
+
+#[tokio::test]
+async fn iconv_repairs_cp_export_and_writes_real_bytes() {
+    // Latin-1 export in, UTF-8 for text tools, then Latin-1 / UTF-16 bytes out.
+    let mut bash = Bash::new();
+    let result = bash
+        .exec(
+            "printf 'K\\366ln;1\\n' > /e.csv
+             iconv -f latin1 -t utf-8 -o /e.csv /e.csv
+             cut -d';' -f1 /e.csv | iconv -f utf-8 -t latin1 | od -An -tx1
+             printf 'K\\303\\203\\302\\266ln' | iconv -f utf-8 -t latin1 | iconv -f utf-8 -t utf-16le | od -An -tx1",
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        result.stdout.text().unwrap(),
+        " 4b f6 6c 6e 0a\n 4b 00 f6 00 6c 00 6e 00\n"
+    );
+    assert_eq!(
+        bash.fs()
+            .read_file(std::path::Path::new("/e.csv"))
+            .await
+            .unwrap(),
+        "Köln;1\n".as_bytes()
+    );
+}
+
+#[tokio::test]
+async fn iconv_matches_real_iconv_byte_for_byte() {
+    // Skip where the host has no iconv; CI runners ship glibc's.
+    if Command::new("iconv").arg("-l").output().is_err() {
+        return;
+    }
+    for script in [
+        "printf 'K\\303\\266ln \\342\\202\\254\\n' | iconv -f utf-8 -t utf-16",
+        "printf 'K\\303\\266ln\\n' | iconv -f utf-8 -t utf-16be",
+        "printf 'K\\303\\266ln\\n' | iconv -f utf-8 -t latin1",
+        "printf 'K\\366ln\\n' | iconv -f iso-8859-1 -t utf-8",
+        "printf '\\377\\376a\\000\\330\\075\\336\\000' | iconv -f utf-16 -t utf-8",
+        // -c exit status differs on purpose (L-ICONV-001); bytes must match.
+        "printf 'a\\377b\\n' | iconv -c -f utf-8 -t utf-8; true",
+        "printf 'ab\\303' | iconv -f utf-8 -t latin1",
+    ] {
+        let expected = Command::new("bash").args(["-c", script]).output().unwrap();
+        let mut bash = Bash::new();
+        let actual = bash.exec(script).await.unwrap();
+        assert_eq!(actual.stdout.as_bytes(), expected.stdout, "{script}");
+        assert_eq!(
+            actual.exit_code,
+            expected.status.code().unwrap(),
+            "{script}"
+        );
+    }
+}
