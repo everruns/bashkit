@@ -57,3 +57,73 @@ async fn windows_containment_readlink_f_walks_slash_paths() {
     );
     fs.assert_slash_only("readlink -f");
 }
+
+mod random_scripts {
+    //! Random path-heavy scripts through `CheckedFs`. On Linux this only
+    //! proves the harness; on the Windows runners (PR `windows_containment`
+    //! filter, nightly full suite) any `\`-joined path fails it.
+
+    use super::*;
+    use proptest::prelude::*;
+
+    fn path() -> impl Strategy<Value = String> {
+        (
+            any::<bool>(),
+            prop::collection::vec(prop::sample::select(vec!["a", "b", "c", ".", ".."]), 1..5),
+        )
+            .prop_map(|(abs, segs)| {
+                let p = segs.join("/");
+                if abs { format!("/{p}") } else { p }
+            })
+    }
+
+    fn command() -> impl Strategy<Value = String> {
+        (
+            prop::sample::select(vec![
+                "mkdir -p {p}",
+                "touch {p}",
+                "cd {p}",
+                "cat {p}",
+                "ls -R {p}",
+                "find {p}",
+                "du {p}",
+                "grep -r x {p}",
+                "cp -r {p} {q}",
+                "mv {p} {q}",
+                "rm -rf {p}",
+                "realpath {p}",
+                "readlink -f {p}",
+                "ln -s {p} {q}",
+                "echo x > {p}",
+                "echo x >> {p}",
+                "wc -l {p}",
+                "tar -cf {q}.tar {p}",
+                "echo x > /dev/stderr",
+                "echo x > /dev/fd/1",
+            ]),
+            path(),
+            path(),
+        )
+            .prop_map(|(tpl, p, q)| tpl.replace("{p}", &p).replace("{q}", &q))
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(64))]
+
+        #[test]
+        fn windows_containment_random_path_scripts_stay_slash_only(
+            cmds in prop::collection::vec(command(), 1..8)
+        ) {
+            let script = format!("mkdir -p /a/b/c; cd /a; {}", cmds.join("; "));
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            let fs = Arc::new(CheckedFs::new());
+            let mut bash = Bash::builder().fs(fs.clone()).build();
+            let _ = rt.block_on(bash.exec(&script));
+            let bad = fs.separator_violations();
+            prop_assert!(bad.is_empty(), "script `{}` sent host-separator paths: {:?}", script, bad);
+        }
+    }
+}
