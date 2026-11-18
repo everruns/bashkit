@@ -79,26 +79,9 @@ impl SessionFileSystemAdapter {
     }
 
     fn normalize_path(&self, path: &Path) -> PathBuf {
-        let mut result = PathBuf::new();
-        for component in path.components() {
-            match component {
-                std::path::Component::RootDir => {
-                    result.push("/");
-                }
-                std::path::Component::Normal(name) => {
-                    result.push(name);
-                }
-                std::path::Component::ParentDir => {
-                    result.pop();
-                }
-                std::path::Component::CurDir => {}
-                std::path::Component::Prefix(_) => {}
-            }
-        }
-        if result.as_os_str().is_empty() {
-            result.push("/");
-        }
-        result
+        // The VFS is `/`-separated on every host. Use bashkit's normalizer, not
+        // `PathBuf::push`, which joins with `\` on Windows.
+        bashkit::normalize_path(path)
     }
 }
 
@@ -163,7 +146,7 @@ impl FileSystem for SessionFileSystemAdapter {
         if recursive {
             let mut current = PathBuf::new();
             for component in path.components() {
-                current.push(component);
+                current = bashkit::vfs_join(&current, component);
                 let mut files = self.store.files.write().unwrap();
                 if !files.contains_key(&current) {
                     files.insert(current.clone(), Vec::new());

@@ -183,6 +183,12 @@ async fn stream_aliases_and_append_match_bash() {
     let (_, result) = run(script).await;
     assert_eq!(result.stdout, "hihihi");
     assert_eq!(result.stderr, "hihi");
+    // Real-bash differential only where a POSIX bash is the host shell: on the
+    // Windows runner `bash` is the WSL launcher, which prints a UTF-16 "no
+    // distribution installed" notice instead of running the script.
+    if !cfg!(unix) {
+        return;
+    }
     let oracle = std::process::Command::new("bash")
         .args(["-c", script])
         .output()

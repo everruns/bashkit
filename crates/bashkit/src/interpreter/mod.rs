@@ -1018,16 +1018,13 @@ fn nested_syntax_report(e: &crate::error::Error, who: &str, source: &str) -> Str
 
 /// Check if a path refers to /dev/null after normalization.
 /// Handles attempts to bypass via paths like `/dev/../dev/null`.
+///
+/// Uses the shared slash-only VFS normalizer: rebuilding with `PathBuf::push`
+/// would join with `\` on Windows and miss every string match (#2933).
 fn is_dev_null(path: &Path) -> bool {
-    normalize_dev_path(path) == Path::new(DEV_NULL)
+    crate::fs::normalize_path(path) == Path::new(DEV_NULL)
 }
 
-/// File descriptor aliased by `/dev/stdin`, `/dev/stdout`, `/dev/stderr` or
-/// `/dev/fd/N` (after `..` normalization), as on Linux.
-///
-/// Decision: these paths are resolved at the interpreter level like
-/// `/dev/null`, never through the VFS. Writing them as regular files silently
-/// swallowed `echo err > /dev/stderr`, a pattern agents use constantly.
 /// The script a body runs (see `Interpreter::reread_script_rest`).
 enum ScriptView<'a> {
     Parsed(&'a Script),
@@ -1043,8 +1040,14 @@ impl ScriptView<'_> {
     }
 }
 
+/// File descriptor aliased by `/dev/stdin`, `/dev/stdout`, `/dev/stderr` or
+/// `/dev/fd/N` (after `..` normalization), as on Linux.
+///
+/// Decision: these paths are resolved at the interpreter level like
+/// `/dev/null`, never through the VFS. Writing them as regular files silently
+/// swallowed `echo err > /dev/stderr`, a pattern agents use constantly.
 fn dev_fd_alias(path: &Path) -> Option<i32> {
-    let normalized = normalize_dev_path(path);
+    let normalized = crate::fs::normalize_path(path);
     match normalized.to_str()? {
         "/dev/stdin" => Some(0),
         "/dev/stdout" => Some(1),
@@ -1057,26 +1060,6 @@ fn dev_fd_alias(path: &Path) -> Option<i32> {
             n.parse().ok()
         }
     }
-}
-
-fn normalize_dev_path(path: &Path) -> PathBuf {
-    // Normalize the path to handle .. and . components
-    let mut normalized = PathBuf::new();
-    for component in path.components() {
-        match component {
-            std::path::Component::RootDir => normalized.push("/"),
-            std::path::Component::Normal(name) => normalized.push(name),
-            std::path::Component::ParentDir => {
-                normalized.pop();
-            }
-            std::path::Component::CurDir => {}
-            std::path::Component::Prefix(_) => {}
-        }
-    }
-    if normalized.as_os_str().is_empty() {
-        normalized.push("/");
-    }
-    normalized
 }
 
 /// THREAT[TM-INJ-009,TM-INJ-016]: Check if a variable name is an internal marker.
@@ -15393,6 +15376,35 @@ mod tests {
     use crate::Bash;
     use crate::fs::InMemoryFs;
     use crate::parser::Parser;
+
+    /// #2933: the device aliases must match on Windows too, where rebuilding
+    /// a path with `PathBuf::push` joins with `\`. Named for the Windows CI
+    /// job's `windows_containment` filter.
+    #[test]
+    fn windows_containment_dev_paths_alias_descriptors() {
+        for (path, fd) in [
+            ("/dev/stdin", Some(0)),
+            ("/dev/stdout", Some(1)),
+            ("/dev/stderr", Some(2)),
+            ("/dev/fd/0", Some(0)),
+            ("/dev/fd/2", Some(2)),
+            ("/dev/fd/63", Some(63)),
+            ("/dev/../dev/stderr", Some(2)),
+            ("/dev/./stdout", Some(1)),
+            ("//dev//stderr", Some(2)),
+            ("/tmp/../dev/fd/1", Some(1)),
+            ("/dev/stderrx", None),
+            ("/dev/fd/", None),
+            ("/dev/fd/x", None),
+            ("/dev/fd/1234567890", None),
+            ("/tmp/stderr", None),
+        ] {
+            assert_eq!(dev_fd_alias(Path::new(path)), fd, "{path}");
+        }
+        assert!(is_dev_null(Path::new("/dev/null")));
+        assert!(is_dev_null(Path::new("/dev/../dev/./null")));
+        assert!(!is_dev_null(Path::new("/dev/nullx")));
+    }
 
     fn ordinary_pipeline_commands() -> Vec<Command> {
         let parser = Parser::new("{ :; } | :");

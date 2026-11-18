@@ -528,6 +528,11 @@ jobs:
       - name: Run host mount mapping tests
         run: cargo test -p bashkit --test integration --features realfs -- host_mounts_tests
 
+      # The VFS is `/`-separated on every host; host-separator joins only show
+      # up here (#2425, #2933). Reuses the realfs build from the steps above.
+      - name: Run VFS separator and device path tests
+        run: cargo test -p bashkit --test integration --features realfs -- windows_containment dev_fd_path_tests dev_null_tests
+
       - name: Run command resolver tests
         run: cargo test -p bashkit --test integration -- command_resolver_tests
 

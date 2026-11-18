@@ -5,6 +5,9 @@
 // Security: path traversal is prevented by canonicalizing the resolved path or
 // the nearest existing ancestor, then checking the root prefix before I/O.
 // This module is only available with the `realfs` feature flag.
+// Host paths are built with `Path::join` on purpose: below `resolve` these are
+// host paths, where the host separator is correct (see crates/bashkit/clippy.toml).
+#![allow(clippy::disallowed_methods)]
 
 //! Real filesystem backend.
 //!

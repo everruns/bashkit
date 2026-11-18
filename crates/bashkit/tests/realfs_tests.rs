@@ -2,6 +2,8 @@
 //!
 //! Tests the full pipeline: host directory → RealFs → PosixFs → Bash interpreter.
 
+// RealFs tests build host paths; the VFS separator ban targets library code.
+#![allow(clippy::disallowed_methods)]
 #![cfg(feature = "realfs")]
 
 use bashkit::{Bash, BashBuilder};

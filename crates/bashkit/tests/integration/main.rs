@@ -11,6 +11,9 @@
 //! binary (process-global env mutation, `--test-threads=1`, feature-isolation
 //! sweeps) stay as siblings at `tests/<name>.rs`.
 
+// Integration tests build host temp paths freely; the VFS separator ban
+// (crates/bashkit/clippy.toml) targets library code.
+#![allow(clippy::disallowed_methods)]
 #![allow(clippy::single_component_path_imports)]
 
 pub mod agent_skills_publication_tests;
@@ -190,6 +193,7 @@ pub mod typescript_security_tests;
 pub mod unicode_security_tests;
 pub mod unset_function_tests;
 pub mod urandom_tests;
+pub mod vfs_separator_tests;
 pub mod workflow_security_tests;
 pub mod yq_integration_tests;
 
