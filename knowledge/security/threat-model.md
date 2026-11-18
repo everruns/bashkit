@@ -1891,6 +1891,7 @@ checks.
 |----------|-------|----------------|-------------|
 | RUSTSEC-2023-0071 | `rsa` | Marvin timing sidechannel (TM-CRY-002). No patched version exists; reachable only via the opt-in `ssh` feature | `rsa` ships a constant-time release |
 | RUSTSEC-2023-0089 | `atomic-polyfill` | Unmaintained, no known vulnerability; transitive via `monty` → `postcard` → `heapless` (pinned at 0.7, which still requires it) | Upstream drops the dependency |
+| GHSA-fc5q-39xc-vjpf | `picomatch` (npm) | ReDoS via a single repeated extglob branch (`+(*)`). The advisory covers `<= 4.0.7`, picomatch's whole release history, and lists no patched version. Build tooling only (`ava`, `@napi-rs/cli`, `vite`, `tinyglobby`, `astro`); every glob comes from repo config, not tenant input, and no published package resolves it | picomatch ships a release above 4.0.7 that patches it |
 
 A suppression that stops matching is not evidence that it can be dropped.
 `cargo deny check advisories` currently warns `advisory-not-detected` for
@@ -1904,8 +1905,18 @@ explicit upstream withdrawal rather than the scanner's silence.
 Retired: [GHSA-vfj7-8cjw-p6xm](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm)
 (`braces`, npm), withdrawn by GitHub on 2026-10-23 at 12:53:02 UTC because it
 was not a practically exploitable vulnerability. The AVA dev-only chain still
-resolves braces 3.0.3; withdrawal is not evidence of patched parser code. The
-npm suppression list is now empty, so future findings fail without that exception.
+resolves braces 3.0.3; withdrawal is not evidence of patched parser code. That
+exception was deleted rather than kept, so the npm list carries only the
+picomatch entry above and any other finding fails normally.
+
+The picomatch entry is the shape the paragraph above predicts: an advisory
+published against a package's newest release, where the bump the other two
+ecosystems rely on does not exist. GHSA-fc5q-39xc-vjpf was widened to include
+4.0.7 on 2026-11-17, between a green push scan and the next nightly: 4.0.7 had
+been the resolution in all three lockfiles since 2026-11-07 and audited clean
+every push until that update, so the scan went red with nothing in the tree
+changed. That is exactly the gap the scheduled caller exists to catch. Verify a patched release on npm before dropping the entry; picomatch
+4.0.7 remaining `latest` is not a fix.
 
 Cargo scans use `--deny unsound` across every discovered lockfile. Informational
 soundness findings such as RUSTSEC-2026-0386 must fail the required audit gate,
