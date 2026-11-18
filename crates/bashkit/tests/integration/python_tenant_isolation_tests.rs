@@ -6,63 +6,96 @@
 
 #![cfg(feature = "python")]
 
-use bashkit::{Bash, PythonLimits};
-use std::time::Duration;
+use bashkit::{Bash, ExtFunctionResult, MontyObject, PythonLimits};
+use std::{sync::Arc, time::Duration};
+use tokio::sync::Barrier;
+
+const TENANT_TIMEOUT: Duration = Duration::from_secs(20);
+
+fn limits(limit_mib: usize) -> PythonLimits {
+    PythonLimits::default()
+        .max_memory(limit_mib * 1024 * 1024)
+        .max_duration(TENANT_TIMEOUT)
+}
 
 fn tenant(limit_mib: usize) -> Bash {
     Bash::builder()
-        .python_with_limits(
-            PythonLimits::default()
-                .max_memory(limit_mib * 1024 * 1024)
-                .max_duration(Duration::from_secs(20)),
+        .python_with_limits(limits(limit_mib))
+        .env("BASHKIT_ALLOW_INPROCESS_PYTHON", "1")
+        .build()
+}
+
+fn synchronized_tenant(ready: Arc<Barrier>) -> Bash {
+    Bash::builder()
+        .python_with_external_handler(
+            limits(32),
+            vec!["wait_for_tenants".into()],
+            Arc::new(move |_, _, _| {
+                let ready = Arc::clone(&ready);
+                Box::pin(async move {
+                    ready.wait().await;
+                    ExtFunctionResult::Return(MontyObject::none())
+                })
+            }),
         )
         .env("BASHKIT_ALLOW_INPROCESS_PYTHON", "1")
         .build()
 }
 
-/// Holds `mib` MiB live while spinning, so concurrent runs overlap.
-fn hold(mib: usize) -> String {
+/// Hold the Python allocation across each synchronization point.
+fn hold(mib: usize, waits: usize) -> String {
     format!(
-        "python3 -c \"x = 'a' * ({mib} * 1024 * 1024)\nn = 0\nfor i in range(3000000):\n    n += 1\nprint(len(x) // 1048576, n)\""
+        "python3 -c \"x = 'a' * ({mib} * 1024 * 1024)\n{}print(len(x) // 1048576)\"",
+        "wait_for_tenants()\n".repeat(waits)
     )
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn concurrent_tenants_are_charged_separately() {
     // 4 tenants x 20 MiB live at once = 80 MiB process-wide, 32 MiB limit each.
+    let ready = Arc::new(Barrier::new(4));
     let mut handles = Vec::new();
     for _ in 0..4 {
+        let mut bash = synchronized_tenant(Arc::clone(&ready));
         handles.push(tokio::spawn(async move {
-            let mut bash = tenant(32);
-            bash.exec(&hold(20)).await.unwrap()
+            bash.exec(&hold(20, 1)).await.unwrap()
         }));
     }
     for h in handles {
         let r = h.await.unwrap();
         assert_eq!(r.exit_code, 0, "stderr: {}", r.stderr);
-        assert_eq!(r.stdout, "20 3000000\n");
+        assert_eq!(r.stdout, "20\n");
     }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn one_tenant_over_limit_does_not_hurt_neighbours() {
-    let greedy = tokio::spawn(async move {
-        let mut bash = tenant(32);
-        bash.exec(&hold(64)).await.unwrap()
-    });
+    let ready = Arc::new(Barrier::new(4));
     let mut small = Vec::new();
     for _ in 0..3 {
+        let mut bash = synchronized_tenant(Arc::clone(&ready));
         small.push(tokio::spawn(async move {
-            let mut bash = tenant(32);
-            bash.exec(&hold(8)).await.unwrap()
+            bash.exec(&hold(8, 2)).await.unwrap()
         }));
     }
-    let r = greedy.await.unwrap();
+    // Wait until the neighbors have allocated. They retain their strings
+    // until the over-limit call returns and the second barrier releases them.
+    tokio::time::timeout(TENANT_TIMEOUT, ready.wait())
+        .await
+        .expect("neighbors did not allocate in time");
+    let r = tenant(32)
+        .exec("python3 -c \"x = 'a' * (64 * 1024 * 1024)\"")
+        .await
+        .unwrap();
+    tokio::time::timeout(TENANT_TIMEOUT, ready.wait())
+        .await
+        .expect("neighbors did not retain their allocations");
     assert_ne!(r.exit_code, 0);
     assert!(r.stderr.contains("MemoryError"), "stderr: {}", r.stderr);
     for h in small {
         let r = h.await.unwrap();
         assert_eq!(r.exit_code, 0, "stderr: {}", r.stderr);
+        assert_eq!(r.stdout, "8\n");
     }
 }
 
