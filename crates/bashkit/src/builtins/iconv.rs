@@ -10,9 +10,14 @@
 //! - Conversion runs char by char (decode one char, encode it), so error
 //!   positions are byte offsets in the input, like GNU iconv.
 //! - On a hard error the converted prefix is still written to stdout and the
-//!   exit status is 1 (GNU). With `-o FILE` nothing is written unless the
-//!   whole input converted, so a wrong `-f` guess never damages FILE, even
-//!   when FILE is also the input.
+//!   exit status is 1 (GNU). With `-o FILE` nothing is written when
+//!   conversion stops on an error, so a wrong `-f` guess never damages FILE,
+//!   even when FILE is also the input. `-c` is the exception by request: it
+//!   asks to drop what does not convert, so `-c -o FILE` writes the rest
+//!   (that is how a damaged export is saved) and exits 1.
+//! - `-s` suppresses nothing: glibc's `-s` keeps conversion errors on
+//!   stderr, and bashkit iconv prints no other warnings.
+//! - Empty suffixes (`UTF-8//`, `ASCII//,,`) are accepted, as glibc does.
 //! - `-c` / `//IGNORE` drop invalid input and characters the target cannot
 //!   hold, write the rest, and exit 1 (POSIX, GNU libiconv). glibc 2.39 exits
 //!   0 when only unconvertible characters were dropped; we follow POSIX.
@@ -382,7 +387,7 @@ impl Converter {
     }
 }
 
-const USAGE: &str = "Usage: iconv [OPTION...] [FILE...]\nConvert encoding of given files from one encoding to another.\n\n  -f, --from-code=NAME\tencoding of original text\n  -t, --to-code=NAME\tencoding for output (suffixes //TRANSLIT, //IGNORE)\n  -c\t\t\tomit invalid characters from output\n  -o, --output=FILE\toutput file, written only when conversion finishes\n  -s, --silent\t\tsuppress warnings\n  -l, --list\t\tlist all known coded character sets\n      --help\t\tdisplay this help and exit\n      --version\t\toutput version information and exit\n";
+const USAGE: &str = "Usage: iconv [OPTION...] [FILE...]\nConvert encoding of given files from one encoding to another.\n\n  -f, --from-code=NAME\tencoding of original text\n  -t, --to-code=NAME\tencoding for output (suffixes //TRANSLIT, //IGNORE)\n  -c\t\t\tomit invalid characters from output\n  -o, --output=FILE\toutput file, not written if conversion stops on an error\n  -s, --silent\t\tsuppress warnings\n  -l, --list\t\tlist all known coded character sets\n      --help\t\tdisplay this help and exit\n      --version\t\toutput version information and exit\n";
 
 #[async_trait]
 impl Builtin for Iconv {
@@ -543,7 +548,8 @@ impl Builtin for Iconv {
         let exit_code = i32::from(failure.is_some() || converter.skipped);
 
         if let Some(target) = output {
-            // Only a complete conversion replaces the file.
+            // A conversion that stopped never replaces the file; `-c` drops
+            // were requested and still write.
             if let Some(msg) = failure {
                 return Ok(ExecResult::err(msg, 1));
             }
@@ -866,6 +872,35 @@ mod tests {
         .await;
         assert_eq!(r.exit_code, 1);
         assert_eq!(fs.read_file(Path::new("/out")).await.unwrap(), b"ab");
+    }
+
+    #[tokio::test]
+    async fn omit_in_place_rewrites_with_dropped_bytes() {
+        let fs = fs_with("/data", b"a\xffb\n").await;
+        let r = run_bytes(
+            &["-c", "-f", "utf-8", "-t", "utf-8", "-o", "/data", "/data"],
+            None,
+            fs.clone(),
+        )
+        .await;
+        assert_eq!(r.exit_code, 1);
+        assert_eq!(fs.read_file(Path::new("/data")).await.unwrap(), b"ab\n");
+    }
+
+    #[tokio::test]
+    async fn empty_suffixes_are_accepted_like_glibc() {
+        for target in ["UTF-8//", "ASCII//,,", "ASCII//TRANSLIT//"] {
+            let r = run(&["-f", "utf-8", "-t", target], Some("ab")).await;
+            assert_eq!(r.exit_code, 0, "{target}");
+            assert_eq!(r.stdout, "ab", "{target}");
+        }
+    }
+
+    #[tokio::test]
+    async fn silent_keeps_error_messages_like_glibc() {
+        let r = run(&["-s", "-f", "utf-8", "-t", "ascii"], Some("aé")).await;
+        assert_eq!(r.exit_code, 1);
+        assert!(r.stderr.contains("illegal input sequence"));
     }
 
     #[tokio::test]
