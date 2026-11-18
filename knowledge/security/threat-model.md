@@ -1309,7 +1309,7 @@ command count, timeout, `catch_unwind`).
 | `base64` | Encode/decode base64 | Pure byte transformation; output bounded by input size |
 | `md5sum`, `sha1sum`, `sha256sum` | Compute checksums | Hash computation on VFS file data; O(n) CPU, bounded by `max_file_size` |
 | `verify` | Compute/verify file hashes | Same as checksum builtins; reads VFS files only |
-| `iconv` | Encoding conversion | Pure byte transformation; output growth (up to 2x for UTF-16) charged to the shared execution budget; `-o` writes through the VFS only after the whole input converted |
+| `iconv` | Encoding conversion | Pure byte transformation (code pages via `encoding_rs` static tables, malformed input reported, never panics: exhaustive byte tests); output growth (up to 2x for UTF-16) charged to the shared execution budget; `-o` writes through the VFS only after the whole input converted |
 | `hextools` (`od`, `xxd`, `hexdump`) | Byte-level inspection | Format VFS file bytes as hex/octal; output bounded by input size |
 | `semver` | Version string parsing | Pure string comparison; no recursion or resource access |
 | `strings` | Extract printable strings | Linear scan of byte data; output bounded by input |

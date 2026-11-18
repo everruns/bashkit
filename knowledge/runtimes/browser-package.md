@@ -94,7 +94,9 @@ Absent (need sockets, threads, or a host FS the browser sandbox lacks):
 mounts, and native `interop`. Reach the network from a custom builtin that calls
 the app's own `fetch` instead.
 
-Absent for size rather than capability: `tzdata`. chrono-tz's compiled IANA
+Absent for size rather than capability: `tzdata` and `iconv_charsets` (the
+`iconv` code page tables; `iconv` then supports UTF-8, ASCII, Latin-1 and
+UTF-16 only and refuses other charsets with exit 1). chrono-tz's compiled IANA
 database is the largest single artifact in the dependency tree (911 KB of this
 package's binary), so this package omits it. `date` then **fails loudly** on a
 named `TZ=` zone — a diagnostic on stderr and exit 1 — instead of formatting in

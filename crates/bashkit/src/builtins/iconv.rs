@@ -56,6 +56,9 @@ enum Charset {
     Utf16,
     Utf16Le,
     Utf16Be,
+    /// Any other WHATWG charset (cp1252, iso-8859-15, gbk, ...), via encoding_rs.
+    #[cfg(feature = "iconv_charsets")]
+    Other(&'static encoding_rs::Encoding),
 }
 
 /// Look up a charset name, ignoring case, `-` and `_`.
@@ -72,8 +75,129 @@ fn lookup_charset(name: &str) -> Option<Charset> {
         "utf16" => Charset::Utf16,
         "utf16le" => Charset::Utf16Le,
         "utf16be" => Charset::Utf16Be,
+        #[cfg(feature = "iconv_charsets")]
+        _ => return charsets::lookup(name, &key),
+        #[cfg(not(feature = "iconv_charsets"))]
         _ => return None,
     })
+}
+
+/// Code pages beyond the built-in set, from the WHATWG Encoding Standard
+/// tables in `encoding_rs`.
+///
+/// Decisions:
+/// - Built-in names win. WHATWG maps `latin1`, `iso-8859-1` and `ascii` to
+///   windows-1252 (a browser rule); iconv users mean the real charsets, so
+///   any windows-1252 label not spelled 1252 resolves to Latin-1 or ASCII.
+/// - UTF-16 labels resolve to the built-in UTF-16 (encoding_rs cannot encode
+///   UTF-16); the WHATWG `replacement` encoding is refused.
+/// - Encoding never uses HTML numeric references: unmappable characters are
+///   errors, or dropped under `-c`, like GNU.
+/// - WHATWG tables are not glibc tables: windows-1252 decodes the five
+///   unassigned bytes 0x81/0x8D/0x8F/0x90/0x9D to C1 controls instead of
+///   failing (L-ICONV-001).
+#[cfg(feature = "iconv_charsets")]
+mod charsets {
+    use super::Charset;
+    use encoding_rs::Encoding;
+
+    /// GNU/glibc spellings that are not WHATWG labels (key: lowercase,
+    /// `-`/`_` removed).
+    const ALIASES: &[(&str, &str)] = &[
+        ("latin2", "iso-8859-2"),
+        ("latin3", "iso-8859-3"),
+        ("latin4", "iso-8859-4"),
+        ("latin5", "windows-1254"),
+        ("latin6", "iso-8859-10"),
+        ("latin7", "iso-8859-13"),
+        ("latin8", "iso-8859-14"),
+        ("latin9", "iso-8859-15"),
+        ("latin10", "iso-8859-16"),
+        ("cyrillic", "iso-8859-5"),
+        ("arabic", "iso-8859-6"),
+        ("greek", "iso-8859-7"),
+        ("hebrew", "iso-8859-8"),
+        ("cp866", "ibm866"),
+        ("cp874", "windows-874"),
+        ("cp932", "shift_jis"),
+        ("ms932", "shift_jis"),
+        ("cp936", "gbk"),
+        ("cp949", "euc-kr"),
+        ("cp950", "big5"),
+        ("eucjp", "euc-jp"),
+        ("euckr", "euc-kr"),
+        ("eucchinese", "gbk"),
+        ("koi8r", "koi8-r"),
+        ("koi8u", "koi8-u"),
+        ("mac", "macintosh"),
+        ("macroman", "macintosh"),
+        ("maccyrillic", "x-mac-cyrillic"),
+    ];
+
+    pub(super) fn lookup(name: &str, key: &str) -> Option<Charset> {
+        let encoding = Encoding::for_label(name.as_bytes()).or_else(|| {
+            let (_, label) = ALIASES.iter().find(|(alias, _)| *alias == key)?;
+            Encoding::for_label(label.as_bytes())
+        })?;
+        Some(
+            if encoding == encoding_rs::WINDOWS_1252 && !key.contains("1252") {
+                if key.contains("ascii") || key.contains("646") || key.contains("x3.4") {
+                    Charset::Ascii
+                } else {
+                    Charset::Latin1
+                }
+            } else if encoding == encoding_rs::UTF_8 {
+                Charset::Utf8
+            } else if encoding == encoding_rs::UTF_16LE {
+                Charset::Utf16Le
+            } else if encoding == encoding_rs::UTF_16BE {
+                Charset::Utf16Be
+            } else if encoding == encoding_rs::REPLACEMENT {
+                return None;
+            } else {
+                Charset::Other(encoding)
+            },
+        )
+    }
+
+    /// Canonical names listed by `iconv -l`.
+    pub(super) const NAMES: &[&str] = &[
+        "BIG5",
+        "EUC-JP",
+        "EUC-KR",
+        "GB18030",
+        "GBK",
+        "IBM866",
+        "ISO-2022-JP",
+        "ISO-8859-2",
+        "ISO-8859-3",
+        "ISO-8859-4",
+        "ISO-8859-5",
+        "ISO-8859-6",
+        "ISO-8859-7",
+        "ISO-8859-8",
+        "ISO-8859-8-I",
+        "ISO-8859-10",
+        "ISO-8859-13",
+        "ISO-8859-14",
+        "ISO-8859-15",
+        "ISO-8859-16",
+        "KOI8-R",
+        "KOI8-U",
+        "MACINTOSH",
+        "SHIFT_JIS",
+        "WINDOWS-874",
+        "WINDOWS-1250",
+        "WINDOWS-1251",
+        "WINDOWS-1252",
+        "WINDOWS-1253",
+        "WINDOWS-1254",
+        "WINDOWS-1255",
+        "WINDOWS-1256",
+        "WINDOWS-1257",
+        "WINDOWS-1258",
+        "X-MAC-CYRILLIC",
+    ];
 }
 
 /// A parsed encoding argument like `ASCII//TRANSLIT//IGNORE`.
@@ -245,6 +369,9 @@ fn decode_one(input: &[u8], pos: usize, charset: Charset, big_endian: bool) -> (
                 },
             }
         }
+        // Decoded by `Converter::convert_other`, which keeps decoder state.
+        #[cfg(feature = "iconv_charsets")]
+        Charset::Other(_) => (Decoded::Invalid, rest.len()),
     }
 }
 
@@ -259,9 +386,12 @@ fn first_char(s: &str) -> (Decoded, usize) {
 fn encode_one(
     ch: char,
     charset: Charset,
+    encoder: &mut Option<CharsetEncoder>,
     out: &mut BudgetedBytes,
 ) -> std::result::Result<bool, crate::limits::LimitExceeded> {
     let mut buf = [0u8; 4];
+    #[cfg(not(feature = "iconv_charsets"))]
+    let _ = encoder;
     match charset {
         Charset::Utf8 => out.try_extend_from_slice(ch.encode_utf8(&mut buf).as_bytes())?,
         Charset::Ascii if ch.is_ascii() => out.try_push(ch as u8)?,
@@ -278,9 +408,27 @@ fn encode_one(
                 out.try_extend_from_slice(&bytes)?;
             }
         }
+        #[cfg(feature = "iconv_charsets")]
+        Charset::Other(encoding) => {
+            let encoder = encoder.get_or_insert_with(|| encoding.new_encoder());
+            let mut tmp = [0u8; 16];
+            let (result, _, written) = encoder.encode_from_utf8_without_replacement(
+                ch.encode_utf8(&mut buf),
+                &mut tmp,
+                false,
+            );
+            // Stateful encoders (ISO-2022-JP) may emit an escape first.
+            out.try_extend_from_slice(&tmp[..written])?;
+            return Ok(result == encoding_rs::EncoderResult::InputEmpty);
+        }
     }
     Ok(true)
 }
+
+#[cfg(feature = "iconv_charsets")]
+type CharsetEncoder = encoding_rs::Encoder;
+#[cfg(not(feature = "iconv_charsets"))]
+type CharsetEncoder = ();
 
 /// Why a conversion stopped early.
 enum ConvertError {
@@ -308,6 +456,8 @@ struct Converter {
     /// Set when `skip` dropped anything (exit status 1).
     skipped: bool,
     bom_written: bool,
+    /// Encoder state for `Charset::Other` targets, kept across files.
+    encoder: Option<CharsetEncoder>,
 }
 
 impl Converter {
@@ -337,16 +487,16 @@ impl Converter {
         if let Some(budget) = budget {
             budget.consume_work(input.len() as u64)?;
         }
+        #[cfg(feature = "iconv_charsets")]
+        if let Charset::Other(encoding) = self.from {
+            return self.convert_other(encoding, input, out);
+        }
         while pos < input.len() {
             let (decoded, len) = decode_one(input, pos, self.from, big_endian);
             match decoded {
                 Decoded::Char(ch) => {
-                    if !self.emit(ch, out)? {
-                        if self.skip {
-                            self.skipped = true;
-                        } else {
-                            return Ok(Err(ConvertError::Illegal(pos)));
-                        }
+                    if let Err(e) = self.take(ch, pos, out)? {
+                        return Ok(Err(e));
                     }
                 }
                 Decoded::Invalid if self.skip => self.skipped = true,
@@ -360,13 +510,93 @@ impl Converter {
         Ok(Ok(()))
     }
 
+    /// Write one decoded char that started at input byte `pos`.
+    fn take(
+        &mut self,
+        ch: char,
+        pos: usize,
+        out: &mut BudgetedBytes,
+    ) -> Result<std::result::Result<(), ConvertError>> {
+        if !self.emit(ch, out)? {
+            if self.skip {
+                self.skipped = true;
+            } else {
+                return Ok(Err(ConvertError::Illegal(pos)));
+            }
+        }
+        Ok(Ok(()))
+    }
+
+    /// Decode with encoding_rs. Bytes are fed one at a time so every char
+    /// and every malformed sequence gets its exact input position.
+    #[cfg(feature = "iconv_charsets")]
+    fn convert_other(
+        &mut self,
+        encoding: &'static encoding_rs::Encoding,
+        input: &[u8],
+        out: &mut BudgetedBytes,
+    ) -> Result<std::result::Result<(), ConvertError>> {
+        use encoding_rs::DecoderResult;
+        let mut decoder = encoding.new_decoder_without_bom_handling();
+        let mut buf = [0u8; 64];
+        let mut char_start = 0;
+        for i in 0..=input.len() {
+            let last = i == input.len();
+            let mut src: &[u8] = if last { &[] } else { &input[i..=i] };
+            loop {
+                let (result, read, written) =
+                    decoder.decode_to_utf8_without_replacement(src, &mut buf, last);
+                src = &src[read..];
+                // Input bytes the decoder has taken so far.
+                let consumed = i + usize::from(!last) - src.len();
+                // decode_to_utf8 writes whole UTF-8 chars only.
+                let text = std::str::from_utf8(&buf[..written]).unwrap_or_default();
+                for ch in text.chars() {
+                    if let Err(e) = self.take(ch, char_start, out)? {
+                        return Ok(Err(e));
+                    }
+                }
+                if written > 0 {
+                    char_start = consumed;
+                }
+                match result {
+                    DecoderResult::InputEmpty => break,
+                    DecoderResult::OutputFull => continue,
+                    DecoderResult::Malformed(_, _) if self.skip => self.skipped = true,
+                    DecoderResult::Malformed(_, _) if last => {
+                        return Ok(Err(ConvertError::Incomplete));
+                    }
+                    DecoderResult::Malformed(bad, after) => {
+                        let pos = consumed.saturating_sub(usize::from(bad) + usize::from(after));
+                        return Ok(Err(ConvertError::Illegal(pos)));
+                    }
+                }
+                char_start = consumed;
+            }
+        }
+        Ok(Ok(()))
+    }
+
+    /// Flush a stateful target encoder (ISO-2022-JP returns to ASCII).
+    fn finish(&mut self, out: &mut BudgetedBytes) -> Result<()> {
+        #[cfg(feature = "iconv_charsets")]
+        if let Some(encoder) = self.encoder.as_mut() {
+            let mut tmp = [0u8; 16];
+            let (_, _, written) = encoder.encode_from_utf8_without_replacement("", &mut tmp, true);
+            out.try_extend_from_slice(&tmp[..written])?;
+        }
+        #[cfg(not(feature = "iconv_charsets"))]
+        let _ = out;
+        Ok(())
+    }
+
     /// Encode `ch`, transliterating when asked. False when it cannot be written.
     fn emit(
-        &self,
+        &mut self,
         ch: char,
         out: &mut BudgetedBytes,
     ) -> std::result::Result<bool, crate::limits::LimitExceeded> {
-        if encode_one(ch, self.to, out)? {
+        if encode_one(ch, self.to, &mut self.encoder, out)? {
             return Ok(true);
         }
         if !self.translit {
@@ -376,14 +606,14 @@ impl Converter {
         if let Some(rep) = transliterate(ch) {
             let mut ok = true;
             for c in rep.chars() {
-                ok &= encode_one(c, self.to, out)?;
+                ok &= encode_one(c, self.to, &mut self.encoder, out)?;
             }
             if ok {
                 return Ok(true);
             }
             out.truncate(mark);
         }
-        encode_one('?', self.to, out)
+        encode_one('?', self.to, &mut self.encoder, out)
     }
 }
 
@@ -471,7 +701,10 @@ impl Builtin for Iconv {
 
         if list {
             let mut out = String::new();
-            for enc in SUPPORTED_ENCODINGS {
+            let names = SUPPORTED_ENCODINGS.iter();
+            #[cfg(feature = "iconv_charsets")]
+            let names = names.chain(charsets::NAMES.iter());
+            for enc in names {
                 out.push_str(enc);
                 out.push('\n');
             }
@@ -519,6 +752,7 @@ impl Builtin for Iconv {
             skip: omit_invalid || to.ignore,
             skipped: false,
             bom_written: false,
+            encoder: None,
         };
 
         let mut failure: Option<String> = None;
@@ -542,6 +776,9 @@ impl Builtin for Iconv {
                 failure = Some(e.message());
                 break;
             }
+        }
+        if failure.is_none() {
+            converter.finish(&mut out)?;
         }
 
         let (bytes, _lease) = out.into_parts();
@@ -1035,6 +1272,177 @@ mod tests {
                     let mut args = flags.to_vec();
                     args.extend(["-f", from, "-t", "utf-16"]);
                     let _ = run_bytes(&args, Some(input), fs.clone()).await;
+                }
+            }
+        }
+    }
+
+    // --- code pages (iconv_charsets) ---
+
+    #[cfg(feature = "iconv_charsets")]
+    mod charsets {
+        use super::*;
+
+        #[tokio::test]
+        async fn cp1252_export_to_utf8() {
+            // "Köln – 5€" from an Excel CSV export (cp1252).
+            let fs = fs_with("/e.csv", b"K\xf6ln \x96 5\x80\n").await;
+            let r = run_bytes(&["-f", "cp1252", "-t", "utf-8", "/e.csv"], None, fs).await;
+            assert_eq!(r.exit_code, 0);
+            assert_eq!(r.stdout, "Köln – 5€\n");
+        }
+
+        #[tokio::test]
+        async fn cp1250_and_iso_8859_15() {
+            let fs = Arc::new(InMemoryFs::new());
+            let r = run_bytes(
+                &["-f", "CP1250", "-t", "UTF-8"],
+                Some(b"\x8a\xe8"),
+                fs.clone(),
+            )
+            .await;
+            assert_eq!(r.stdout, "Šč");
+            let r = run_bytes(
+                &["-f", "ISO-8859-15", "-t", "UTF-8"],
+                Some(b"\xa4"),
+                fs.clone(),
+            )
+            .await;
+            assert_eq!(r.stdout, "€");
+            let r = run_bytes(&["-f", "latin9", "-t", "UTF-8"], Some(b"\xa4"), fs).await;
+            assert_eq!(r.stdout, "€");
+        }
+
+        #[tokio::test]
+        async fn utf8_to_code_page_bytes() {
+            let r = run(&["-f", "utf-8", "-t", "windows-1250"], Some("Šč")).await;
+            assert_eq!(r.exit_code, 0);
+            assert_eq!(r.stdout.as_bytes(), b"\x8a\xe8");
+            let r = run(&["-f", "utf-8", "-t", "cp1252"], Some("5€")).await;
+            assert_eq!(r.stdout.as_bytes(), b"5\x80");
+        }
+
+        #[tokio::test]
+        async fn latin1_and_ascii_are_not_windows_1252() {
+            // WHATWG would read 0x80 as € under these labels; iconv must not.
+            let fs = Arc::new(InMemoryFs::new());
+            let r = run_bytes(
+                &["-f", "ISO_8859-1:1987", "-t", "utf-8"],
+                Some(b"\x80"),
+                fs.clone(),
+            )
+            .await;
+            assert_eq!(r.stdout, "\u{80}");
+            let r = run_bytes(&["-f", "csASCII", "-t", "utf-8"], Some(b"\x80"), fs).await;
+            assert_eq!(r.exit_code, 1);
+        }
+
+        #[tokio::test]
+        async fn multibyte_charsets_round_trip() {
+            for (name, text) in [
+                ("shift_jis", "日本語テキスト"),
+                ("euc-jp", "日本語"),
+                ("gbk", "中文"),
+                ("gb18030", "中文😀"),
+                ("big5", "中文"),
+                ("euc-kr", "한국어"),
+                ("iso-2022-jp", "日本 abc"),
+                ("koi8-r", "Привет"),
+            ] {
+                let enc = run(&["-f", "utf-8", "-t", name], Some(text)).await;
+                assert_eq!(enc.exit_code, 0, "{name}");
+                let fs = Arc::new(InMemoryFs::new());
+                let dec = run_bytes(
+                    &["-f", name, "-t", "utf-8"],
+                    Some(enc.stdout.as_bytes()),
+                    fs,
+                )
+                .await;
+                assert_eq!(dec.exit_code, 0, "{name}");
+                assert_eq!(dec.stdout, text, "{name}");
+            }
+        }
+
+        #[tokio::test]
+        async fn unmappable_char_reports_position_without_ncr() {
+            let r = run(&["-f", "utf-8", "-t", "cp1252"], Some("aЖb")).await;
+            assert_eq!(r.exit_code, 1);
+            assert_eq!(r.stdout, "a");
+            assert!(r.stderr.contains("position 1"));
+            let r = run(&["-c", "-f", "utf-8", "-t", "cp1252"], Some("aЖb")).await;
+            assert_eq!(r.exit_code, 1);
+            assert_eq!(r.stdout, "ab");
+            let r = run(&["-f", "utf-8", "-t", "cp1252//TRANSLIT"], Some("aЖ€")).await;
+            assert_eq!(r.stdout.as_bytes(), b"a?\x80");
+        }
+
+        #[tokio::test]
+        async fn malformed_multibyte_input_reports_position() {
+            let fs = Arc::new(InMemoryFs::new());
+            // 0x82 0xA0 is a valid Shift_JIS pair; a space is never a trail byte.
+            let r = run_bytes(
+                &["-f", "shift_jis", "-t", "utf-8"],
+                Some(b"ab\x82\xa0\x82 "),
+                fs.clone(),
+            )
+            .await;
+            assert_eq!(r.exit_code, 1);
+            assert_eq!(r.stdout, "abあ");
+            assert!(r.stderr.contains("position 4"), "{}", r.stderr.text_lossy());
+            let r = run_bytes(
+                &["-c", "-f", "shift_jis", "-t", "utf-8"],
+                Some(b"ab\x82 "),
+                fs.clone(),
+            )
+            .await;
+            assert_eq!(r.exit_code, 1);
+            assert_eq!(r.stdout, "ab ");
+            // Lead byte at end of input.
+            let r = run_bytes(&["-f", "gbk", "-t", "utf-8"], Some(b"a\x81"), fs).await;
+            assert_eq!(r.exit_code, 1);
+            assert_eq!(r.stdout, "a");
+            assert!(r.stderr.contains("incomplete character"));
+        }
+
+        #[tokio::test]
+        async fn list_includes_code_pages() {
+            let r = run(&["-l"], None).await;
+            for name in charsets_names() {
+                assert!(r.stdout.contains(name), "{name}");
+                let spec = parse_encoding_spec(name);
+                assert!(spec.is_some(), "{name} must resolve");
+            }
+        }
+
+        fn charsets_names() -> &'static [&'static str] {
+            super::super::charsets::NAMES
+        }
+
+        #[tokio::test]
+        async fn replacement_encoding_is_refused() {
+            let r = run(&["-f", "csiso2022kr", "-t", "utf-8"], Some("x")).await;
+            assert_eq!(r.exit_code, 1);
+            assert!(r.stderr.contains("unsupported encoding"));
+        }
+
+        #[tokio::test]
+        async fn arbitrary_bytes_never_panic_in_code_pages() {
+            let fs = Arc::new(InMemoryFs::new());
+            let all: Vec<u8> = (0u8..=255).collect();
+            let mut inputs: Vec<Vec<u8>> = vec![all.clone()];
+            inputs.extend(all.chunks(3).map(<[u8]>::to_vec));
+            inputs.extend((0u8..=255).map(|b| vec![b, b'x']));
+            for name in charsets_names() {
+                for input in &inputs {
+                    for flags in [&["-c"][..], &[][..]] {
+                        let mut args = flags.to_vec();
+                        args.extend(["-f", name, "-t", "utf-16"]);
+                        let r = run_bytes(&args, Some(input), fs.clone()).await;
+                        // Round-trip back must also hold up.
+                        let mut back = flags.to_vec();
+                        back.extend(["-f", "utf-16", "-t", name]);
+                        let _ = run_bytes(&back, Some(r.stdout.as_bytes()), fs.clone()).await;
+                    }
                 }
             }
         }

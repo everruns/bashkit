@@ -215,3 +215,29 @@ async fn iconv_matches_real_iconv_byte_for_byte() {
         );
     }
 }
+
+#[cfg(feature = "iconv_charsets")]
+#[tokio::test]
+async fn iconv_code_pages_match_real_iconv() {
+    if Command::new("iconv").arg("-l").output().is_err() {
+        return;
+    }
+    for script in [
+        "printf 'K\\366ln \\226 5\\200\\n' | iconv -f cp1252 -t utf-8",
+        "printf '\\212\\350\\n' | iconv -f CP1250 -t UTF-8",
+        "printf '\\305\\240\\304\\215 \\342\\202\\254\\n' | iconv -f utf-8 -t windows-1250",
+        "printf '\\244\\n' | iconv -f ISO-8859-15 -t UTF-8",
+        "printf '\\344\\270\\255\\346\\226\\207\\n' | iconv -f utf-8 -t gbk",
+        "printf '\\344\\270\\255\\346\\226\\207\\n' | iconv -f utf-8 -t shift_jis | iconv -f shift_jis -t utf-8",
+    ] {
+        let expected = Command::new("bash").args(["-c", script]).output().unwrap();
+        let mut bash = Bash::new();
+        let actual = bash.exec(script).await.unwrap();
+        assert_eq!(actual.stdout.as_bytes(), expected.stdout, "{script}");
+        assert_eq!(
+            actual.exit_code,
+            expected.status.code().unwrap(),
+            "{script}"
+        );
+    }
+}
