@@ -11,7 +11,7 @@ use std::cmp::Ordering;
 
 use async_trait::async_trait;
 
-use super::{Builtin, Context, read_text_file};
+use super::{Builtin, Context, read_text_file, resolve_path};
 use crate::error::Result;
 use crate::fs::vfs_join;
 use crate::interpreter::ExecResult;
@@ -987,17 +987,10 @@ impl Builtin for Sort {
         // FILE would be silently destroyed; refuse instead, like `sed -i`
         // (L-SED-003). Writing to a different file stays lossy-but-safe.
         if let Some(ref outfile) = output_file {
-            let out_path = if outfile.starts_with('/') {
-                std::path::PathBuf::from(outfile)
-            } else {
-                vfs_join(ctx.cwd, outfile)
-            };
+            // Normalize both sides so `./f`, `d/../f` and `/cwd/f` all match.
+            let out_path = resolve_path(ctx.cwd, outfile);
             for file in files.iter().filter(|f| f.as_str() != "-") {
-                let path = if file.starts_with('/') {
-                    std::path::PathBuf::from(file)
-                } else {
-                    vfs_join(ctx.cwd, file)
-                };
+                let path = resolve_path(ctx.cwd, file);
                 if path != out_path {
                     continue;
                 }
