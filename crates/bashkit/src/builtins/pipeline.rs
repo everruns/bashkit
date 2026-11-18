@@ -780,7 +780,9 @@ impl Builtin for Tee {
             .map(|vs| vs.map(|v| v.to_string_lossy().into_owned()).collect())
             .unwrap_or_default();
 
-        let input = ctx.stdin.map(|stdin| &**stdin).unwrap_or("");
+        // Bytes, not text: tee is a passthrough and must not rewrite invalid
+        // UTF-8 (a Latin-1 CSV, a binary blob) to U+FFFD.
+        let input = ctx.stdin_bytes().unwrap_or_default();
 
         for file in &files {
             // tee(1): "If a FILE is -, it refers to a file named - ."
@@ -788,13 +790,13 @@ impl Builtin for Tee {
             let path = resolve_path(ctx.cwd, file);
 
             if append {
-                ctx.fs.append_file(&path, input.as_bytes()).await?;
+                ctx.fs.append_file(&path, input).await?;
             } else {
-                ctx.fs.write_file(&path, input.as_bytes()).await?;
+                ctx.fs.write_file(&path, input).await?;
             }
         }
 
-        Ok(ExecResult::ok(input.to_string()))
+        Ok(ExecResult::ok_bytes(input.to_vec()))
     }
 }
 

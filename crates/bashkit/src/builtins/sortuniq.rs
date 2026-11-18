@@ -11,7 +11,7 @@ use std::cmp::Ordering;
 
 use async_trait::async_trait;
 
-use super::{Builtin, Context, read_text_file};
+use super::{Builtin, Context, read_text_file, resolve_path};
 use crate::error::Result;
 use crate::fs::vfs_join;
 use crate::interpreter::ExecResult;
@@ -981,6 +981,39 @@ impl Builtin for Sort {
             files.push("-".to_string());
         }
         let line_sep = if zero_terminated { '\0' } else { '\n' };
+
+        // `sort -o FILE FILE` rewrites its own input. Text builtins decode
+        // invalid UTF-8 with U+FFFD (L-STREAM-001), so a Latin-1 or binary
+        // FILE would be silently destroyed; refuse instead, like `sed -i`
+        // (L-SED-003). Writing to a different file stays lossy-but-safe.
+        if let Some(ref outfile) = output_file {
+            // Canonicalize both sides (normalize + follow symlinks) so `./f`,
+            // `d/../f`, `/cwd/f` and `ln -s f link` all match, like GNU's
+            // stat-based same-file check. Unresolvable paths fall back to the
+            // lexical form (a missing -o target cannot alias an input).
+            let fs = ctx.fs.as_ref();
+            let lexical_out = resolve_path(ctx.cwd, outfile);
+            let out_path = crate::fs::canonicalize(fs, &lexical_out)
+                .await
+                .unwrap_or(lexical_out);
+            for file in files.iter().filter(|f| f.as_str() != "-") {
+                let lexical = resolve_path(ctx.cwd, file);
+                let path = crate::fs::canonicalize(fs, &lexical)
+                    .await
+                    .unwrap_or(lexical);
+                if path != out_path {
+                    continue;
+                }
+                if let Ok(bytes) = ctx.fs.read_file(&path).await
+                    && std::str::from_utf8(&bytes).is_err()
+                {
+                    return Ok(sort_err(format!(
+                        "sort: cannot rewrite {file}: not a valid UTF-8 text file\n"
+                    )));
+                }
+            }
+        }
+
         let mut streams: Vec<Vec<String>> = Vec::new();
         for file in &files {
             let text = if file == "-" {
