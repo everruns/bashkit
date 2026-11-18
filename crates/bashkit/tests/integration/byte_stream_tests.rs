@@ -302,11 +302,11 @@ async fn sort_refuses_to_rewrite_non_utf8_file_in_place() {
 async fn sort_in_place_guard_sees_through_path_aliases() {
     let mut bash = Bash::new();
     let result = bash
-        .exec("mkdir -p /d/s && cd /d && printf 'b\\n\\366\\n' > f; for o in ./f s/../f /d/f; do sort -o \"$o\" f; echo rc=$?; done; od -An -tx1 f")
+        .exec("mkdir -p /d/s && cd /d && printf 'b\\n\\366\\n' > f; ln -s f link; for o in ./f s/../f /d/f link; do sort -o \"$o\" f; echo rc=$?; done; sort -o f link; echo rc=$?; od -An -tx1 f")
         .await
         .unwrap();
     assert_eq!(
         result.stdout.text().unwrap(),
-        "rc=2\nrc=2\nrc=2\n 62 0a f6 0a\n"
+        "rc=2\nrc=2\nrc=2\nrc=2\nrc=2\n 62 0a f6 0a\n"
     );
 }

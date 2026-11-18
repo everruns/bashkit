@@ -987,10 +987,20 @@ impl Builtin for Sort {
         // FILE would be silently destroyed; refuse instead, like `sed -i`
         // (L-SED-003). Writing to a different file stays lossy-but-safe.
         if let Some(ref outfile) = output_file {
-            // Normalize both sides so `./f`, `d/../f` and `/cwd/f` all match.
-            let out_path = resolve_path(ctx.cwd, outfile);
+            // Canonicalize both sides (normalize + follow symlinks) so `./f`,
+            // `d/../f`, `/cwd/f` and `ln -s f link` all match, like GNU's
+            // stat-based same-file check. Unresolvable paths fall back to the
+            // lexical form (a missing -o target cannot alias an input).
+            let fs = ctx.fs.as_ref();
+            let lexical_out = resolve_path(ctx.cwd, outfile);
+            let out_path = crate::fs::canonicalize(fs, &lexical_out)
+                .await
+                .unwrap_or(lexical_out);
             for file in files.iter().filter(|f| f.as_str() != "-") {
-                let path = resolve_path(ctx.cwd, file);
+                let lexical = resolve_path(ctx.cwd, file);
+                let path = crate::fs::canonicalize(fs, &lexical)
+                    .await
+                    .unwrap_or(lexical);
                 if path != out_path {
                     continue;
                 }
