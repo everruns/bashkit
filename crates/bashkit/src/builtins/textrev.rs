@@ -38,7 +38,7 @@ async fn read_input(ctx: &Context<'_>) -> std::result::Result<String, Box<ExecRe
                     raw.push_str(stdin);
                 }
             } else {
-                let path = if Path::new(file).is_absolute() {
+                let path = if Path::new(file).has_root() {
                     file.to_string()
                 } else {
                     vfs_join(ctx.cwd, file).to_string_lossy().to_string()
@@ -153,7 +153,7 @@ async fn read_tac_file(
     if file == "-" {
         return Ok(ctx.stdin.map(ToString::to_string).unwrap_or_default());
     }
-    let path = if Path::new(file).is_absolute() {
+    let path = if Path::new(file).has_root() {
         file.to_string()
     } else {
         vfs_join(ctx.cwd, file).to_string_lossy().into_owned()

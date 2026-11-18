@@ -89,7 +89,7 @@ impl Builtin for Cat {
                     raw.try_extend_from_slice(&input.read_to_end().await?)?;
                 }
             } else {
-                let path = if Path::new(file).is_absolute() {
+                let path = if Path::new(file).has_root() {
                     file.clone()
                 } else {
                     vfs_join(ctx.cwd, file).to_string_lossy().into_owned()
@@ -166,7 +166,7 @@ async fn stream_plain(
             }
             ok
         } else {
-            let path = if Path::new(file).is_absolute() {
+            let path = if Path::new(file).has_root() {
                 file.clone()
             } else {
                 vfs_join(ctx.cwd, file).to_string_lossy().into_owned()

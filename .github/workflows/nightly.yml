@@ -118,16 +118,41 @@ jobs:
           locked: true
 
       - name: Run cargo-geiger (unsafe code audit)
+        shell: bash
         run: |
-          cargo geiger --all-features 2>&1 | tee geiger-report.txt
-          echo "::notice::Unsafe code report generated. Review geiger-report.txt for details."
-        continue-on-error: true
+          # The JSON report exposes coverage gaps without failing just because
+          # rustc's dependency files list data assets or generated sources.
+          cargo geiger --manifest-path "$PWD/crates/bashkit/Cargo.toml" --locked --all-features --output-format Json > geiger-output.jsonl 2> geiger-diagnostics.txt || {
+            scan_status=$?
+            tail -n 50 geiger-diagnostics.txt >&2
+            exit "$scan_status"
+          }
+          jq -s -e 'map(select(type == "object" and has("packages"))) | if length == 1 then .[0] else error("expected one Geiger report") end' geiger-output.jsonl > geiger-report.json
+          # Geiger logs parser errors separately from its JSON metrics.
+          if grep -F "Failed to parse file: $PWD/" geiger-diagnostics.txt >&2; then
+            exit 1
+          fi
+          jq -e --arg build_dir "$PWD/target/debug/build/" '
+            if any(.packages, .packages_without_metrics, .used_but_not_scanned_files; type != "array") then
+              error("Geiger report is missing its package or file lists")
+            elif (any(.packages[]; .package.id.name == "bashkit") | not) then
+              error("Bashkit is missing from the Geiger report")
+            elif (.packages_without_metrics | length) != 0 then
+              error("Geiger did not report metrics for every package: \(.packages_without_metrics)")
+            elif any(.used_but_not_scanned_files[]; endswith(".rs") and (startswith($build_dir) | not)) then
+              error("Geiger did not scan checked-in Rust inputs; see used_but_not_scanned_files in the report")
+            else
+              "Geiger scanned \(.packages | length) packages. Report lists \(.used_but_not_scanned_files | length) unscanned build inputs."
+            end' geiger-report.json
 
       - name: Upload geiger report
+        if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: geiger-report
-          path: geiger-report.txt
+          path: |
+            geiger-*.json*
+            geiger-diagnostics.txt
           retention-days: 30
 
   asan:

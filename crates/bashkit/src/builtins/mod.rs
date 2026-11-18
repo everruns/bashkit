@@ -911,7 +911,7 @@ pub enum ExecutionPlan {
 /// ```
 pub fn resolve_path(cwd: &Path, path_str: &str) -> PathBuf {
     let path = Path::new(path_str);
-    let joined = if path.is_absolute() {
+    let joined = if path.has_root() {
         path.to_path_buf()
     } else {
         vfs_join(cwd, path)

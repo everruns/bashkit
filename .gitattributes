@@ -1,0 +1,7 @@
+# Decision: check out LF on every host. Tests parse shell fixtures, spec cases,
+# workflow files and snapshot payloads byte for byte, and a Windows checkout
+# with core.autocrlf rewrote them to CRLF (found by the Windows nightly).
+* text=auto eol=lf
+
+# Snapshot fixtures are byte-exact binary formats; never convert them.
+crates/bashkit/tests/fixtures/snapshots/** binary

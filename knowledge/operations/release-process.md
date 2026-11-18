@@ -291,10 +291,10 @@ Dispatched by release.yml after tag verification. Accepts only stable
 tag, and the tag commit is reachable from `origin/main` before building.
 Builds prebuilt CLI binaries (macOS aarch64/x86_64, Linux x86_64), uploads
 to the Release, and pushes a Homebrew formula to `everruns/homebrew-tap`
-(`brew install everruns/tap/bashkit`). Formula license matches the workspace
-license; generated tap commits use the repository's configured human release
-identity, never a bot identity. Secret: `DOPPLER_TOKEN`
-(Doppler-managed GitHub PAT for the tap push).
+(`brew install everruns/tap/bashkit`). The formula license matches the workspace
+license. Generated tap commits use the configured human release identity.
+A dedicated step uses `DOPPLER_TOKEN` to fetch and mask the fine-grained tap
+PAT. The push step receives only that PAT and supplies it to Git via askpass.
 
 ### publish.yml
 

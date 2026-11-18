@@ -136,7 +136,12 @@ these files with it.
     regressions before shipping; use the external-blocker policy below only when needed
 - Security tests exist for every MITIGATED threat
 - Failpoint tests pass
-- Unsafe usage reviewed (`cargo geiger`)
+- Unsafe usage reviewed (`cargo geiger`). Nightly scans the Bashkit crate
+  and its dependencies with all features using the crate's package manifest.
+  Nightly fails if the scan fails, package metrics are missing, or Rust inputs
+  outside Cargo's generated build directory go unscanned. The audit also
+  rejects Geiger parser errors in the checkout. The uploaded report and
+  diagnostics list generated inputs and dependency parser errors for review.
 - No OWASP-style issues (injection, path traversal, etc.)
 
 ### Tests
@@ -442,8 +447,10 @@ Sections dependencies, tests, examples, code quality, and nightly CI are fully
 automatable. Security, documentation, specs, simplification, and agent config
 require human or agent review.
 
-CI health check enforced by `just check-nightly` (nightly + fuzz) and manual
-inspection of CI on `main` (audit, test, lint). Called by `just release-check`.
+`just release-check` calls `just check-nightly`. The gate requires the three
+newest runs of each Nightly and Fuzz Testing workflow on `main` to have
+completed successfully. Missing or unfinished runs and GitHub CLI errors
+block the gate. Review CI on `main` (audit, test, lint) separately.
 
 ## Invocation
 

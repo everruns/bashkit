@@ -118,6 +118,7 @@ async fn command_substitution_drops_nuls_at_text_boundary() {
 }
 
 #[tokio::test]
+#[cfg_attr(not(unix), ignore = "compares against host Unix bash/tools")]
 async fn binary_pipeline_matches_real_bash_byte_for_byte() {
     let script = "printf 'AAHDqf/+QgB/' | base64 -d | head -c 8 | cat";
     let expected = Command::new("bash").args(["-c", script]).output().unwrap();
@@ -189,6 +190,7 @@ async fn iconv_repairs_cp_export_and_writes_real_bytes() {
 }
 
 #[tokio::test]
+#[cfg_attr(not(unix), ignore = "compares against host Unix bash/tools")]
 async fn iconv_matches_real_iconv_byte_for_byte() {
     // Skip where the host has no iconv; CI runners ship glibc's.
     if Command::new("iconv").arg("-l").output().is_err() {
@@ -218,6 +220,7 @@ async fn iconv_matches_real_iconv_byte_for_byte() {
 
 #[cfg(feature = "iconv_charsets")]
 #[tokio::test]
+#[cfg_attr(not(unix), ignore = "compares against host Unix bash/tools")]
 async fn iconv_code_pages_match_real_iconv() {
     if Command::new("iconv").arg("-l").output().is_err() {
         return;

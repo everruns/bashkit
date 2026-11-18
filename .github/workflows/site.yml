@@ -72,6 +72,9 @@ jobs:
       - name: Install dependencies
         working-directory: site
         run: pnpm install --frozen-lockfile
+      - name: Check Astro types
+        working-directory: site
+        run: pnpm check
       - name: Build site (runs all verify-* postbuild checks)
         working-directory: site
         run: pnpm run build

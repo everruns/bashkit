@@ -185,6 +185,7 @@ async fn fmt_missing_file_reports_error_and_formats_remaining_file() {
 }
 
 #[tokio::test]
+#[cfg_attr(not(unix), ignore = "compares against host Unix bash/tools")]
 async fn fmt_finite_shell_input_matches_real_bash() {
     use std::process::Command;
     // One short line per paragraph: GNU/BSD fmt and the vendored optimal-fit

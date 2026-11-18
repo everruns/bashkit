@@ -120,6 +120,13 @@ criteria = "safe-to-deploy"
 delta = "1.5.0 -> 1.5.1"
 notes = "Reviewed SIMD load guards and initialized tail buffers; CPU dispatch checks required features and AArch64 slices remain bounded. Wide CRC casts have documented indeterminate upper lanes but pinned Rust1.95 stdarch zeroes these lanes; re-review this assumption on toolchain change. No new ambient runtime access."
 
+[[audits.crypto-bigint]]
+who = "Bashkit maintenance review"
+criteria = "safe-to-deploy"
+delta = "0.7.6 -> 0.7.11"
+importable = false
+notes = "Reviewed the packaged Rust and manifest delta for the SSH dependency graph. The arithmetic updates cover carry propagation, modular inverse precision, and Montgomery squaring scratch bounded by the public limb count. The scratch is zeroized with the existing product buffer. The low-level comparison changes use integer operations and compiler barriers on affected architectures. The delta adds no unsafe code, build script, or filesystem, process, or network access. The ctutils floor moves to the separately reviewed 0.4.8."
+
 [[audits.ctor]]
 who = "Mykhailo Chalyi <mykhailo.chalyi-contractor@procore.com>"
 criteria = "safe-to-deploy"
@@ -137,6 +144,13 @@ who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
 delta = "0.4.2 -> 0.4.5"
 notes = 'Reviewed complete runtime delta (the RUSTSEC-2026-0385 fix). Two constant-time repairs: every `Choice::to_*_mask` now negates `to_u8()` rather than reading the inner byte directly, so the `black_box` barrier is no longer bypassed on the mask path; and `from_u128_lt`/`from_u128_le` switch to half-width `u64` predicates on 32-bit targets, where full-width subtraction let LLVM lower the comparison to a short-circuiting multiword branch. The comparison macros move verbatim into a new public `primitives` module, which adds a `bitborrow` helper and `black_box` barriers behind `cfg(all(target_arch = "arm", not(target_has_atomic = "ptr")))` (Thumb-1); `CtGt for u128` is hand-written over `from_u128_lt` instead of the macro. The rest is MSRV follow-through for 1.87: `cast_signed`/`cast_unsigned` replacing `as` casts, `to_bool`/`to_u8` becoming `const fn`, and `to_bool_vartime`/`to_u8_vartime` deprecated and redirected to them. `#![forbid(unsafe_code)]` holds, no new dependencies (the `subtle` floor moves 2 -> 2.6), no filesystem, network or process access, and MSRV 1.85 -> 1.87 stays below the pinned toolchain.'
+
+[[audits.ctutils]]
+who = "Bashkit maintenance review"
+criteria = "safe-to-deploy"
+delta = "0.4.5 -> 0.4.8"
+importable = false
+notes = "Reviewed the packaged source and manifest delta. Word-sized subtraction normalizes borrow masks and reuses the checked-width arithmetic. The comparison changes gate input barriers and wider narrow-integer comparisons by architecture, with added boundary tests. Unsafe code remains forbidden and no I/O or build script was added. The cmov floor advances to the already locked 0.5.4."
 
 [[audits.der]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
@@ -981,6 +995,13 @@ who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
 delta = "0.11.4 -> 0.11.6"
 notes = "Reviewed generated validator passing each element chunk instead of whole bytes; raw slice pointer construction avoids temporary out-of-bounds reference. Validation length constraints precede interpretation; no new host access."
+
+[[trusted.object]]
+criteria = "safe-to-deploy"
+user-id = 4415 # Philip Craig (philipc)
+start = "2026-08-01"
+end = "2026-08-02"
+notes = "Trust is limited to Philip Craig's object 0.40.0 release used by Wasmtime 49.0.6. Bytecode Alliance's cargo-vet policy trusts the same publisher for this crate."
 
 [[trusted.serde_spanned]]
 criteria = "safe-to-deploy"

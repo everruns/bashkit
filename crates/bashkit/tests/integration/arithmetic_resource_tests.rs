@@ -52,6 +52,7 @@ async fn arithmetic_dollar_siblings_share_expansion_fuel() {
 }
 
 #[tokio::test]
+#[cfg_attr(not(unix), ignore = "compares against host Unix bash/tools")]
 async fn arithmetic_dollar_subscripts_match_bash_within_limits() {
     let expr = nested_array_expansion(4, false);
     // NOTE: subscript stays portable on purpose: macOS ships bash 3.2 with no
@@ -229,6 +230,7 @@ async fn arithmetic_array_key_size_boundary() {
 }
 
 #[tokio::test]
+#[cfg_attr(not(unix), ignore = "compares against host Unix bash/tools")]
 async fn arithmetic_array_keys_match_modern_bash() {
     let version = std::process::Command::new("bash")
         .args(["--noprofile", "--norc", "-c", "echo ${BASH_VERSINFO[0]}"])

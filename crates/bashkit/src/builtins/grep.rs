@@ -1587,7 +1587,7 @@ async fn try_indexed_search(
     let mut path_leases = budgeted_vec(ctx)?;
     for m in &results.matches {
         ctx.consume_budget_work(1)?;
-        let candidate = if m.path.is_absolute() {
+        let candidate = if m.path.has_root() {
             crate::fs::normalize_path(&m.path)
         } else {
             crate::fs::normalize_path(&vfs_join(root, &m.path))

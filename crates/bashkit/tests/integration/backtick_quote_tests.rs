@@ -5,6 +5,7 @@ use bashkit::{Bash, CommandPlacement, ExecutionLimits};
 use std::sync::{Arc, Mutex};
 
 #[tokio::test]
+#[cfg_attr(not(unix), ignore = "compares against host Unix bash/tools")]
 async fn backticks_after_quotes_match_bash() {
     let cases = [
         r#"printf '[%s]\n' 'x'`printf '1 2'`; echo tail"#,

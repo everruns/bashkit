@@ -75,6 +75,11 @@ and a checkpoint hook. They are published with each release before `bashkit`.
 Upgrade by re-copying upstream source and re-applying the `bashkit fork:`
 edits. See [Python Builtin](../runtimes/python-builtin.md#monty-15-embedding-forks-per-vm-metering-checkpoint-hook).
 
+Monty 1.6.0 and monty-types 1.6.0 require Rust 1.98. Keep the 1.5.0
+fork base while Bashkit supports Rust 1.96. The upstream checker still
+reports new releases and advisories. The November 18 maintenance check
+found no open advisories for the 1.5.0 base.
+
 `scripts/check_monty_fork.py` (CI lint job, `just check-monty-fork`) diffs both
 forks against the SHA-256-pinned upstream 1.5.0 `.crate` files and fails on any
 changed region without a `bashkit fork:` marker in it, in the comment or
@@ -279,10 +284,10 @@ Remove it when `branches` compiles on nightly without `std`.
 
 ## oxc is held at 0.117.x by the vendored ZapCode parser
 
-`bashkit` declares five oxc crates (`oxc_parser`, `oxc_ast`, `oxc_allocator`,
-`oxc_span`, `oxc_syntax`) for the TypeScript builtin, where the vendored
-`zapcode_vendor/parser` (ZapCode 1.5.1, used on every target since the
-registry `zapcode-core` dependency was dropped) walks the oxc AST directly.
+`bashkit` declares `oxc_parser`, `oxc_ast`, `oxc_allocator`, and `oxc_span`
+for the TypeScript builtin. The parser brings in `oxc_syntax` transitively.
+The vendored `zapcode_vendor/parser` from ZapCode 1.5.1 walks the oxc AST
+directly on every target.
 The versions match what upstream ZapCode 1.5.1 was written against.
 
 History: while `zapcode-core` was still a native dependency it required

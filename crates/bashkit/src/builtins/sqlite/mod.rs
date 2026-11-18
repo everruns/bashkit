@@ -840,11 +840,7 @@ async fn run_statements(
                     Ok(DotOutcome::Configured) => {}
                     Ok(DotOutcome::Quit) => return Ok(()),
                     Ok(DotOutcome::Read(p)) => {
-                        let abs = if p.is_absolute() {
-                            p
-                        } else {
-                            vfs_join(cwd, &p)
-                        };
+                        let abs = if p.has_root() { p } else { vfs_join(cwd, &p) };
                         let bytes = fs
                             .read_file(&abs)
                             .await
