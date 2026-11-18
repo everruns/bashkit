@@ -314,8 +314,9 @@ snapshots, smoke-tests with the reference runtime and rewrites `artifacts/`
 three together. Changing `engine_config()` or the wasmtime version requires
 no guest rebuild; `build.rs` recompiles the `.cwasm`.
 
-wasmtime is pinned (`=48.0.8`): a `.cwasm` loads only into the version and
-compile-affecting configuration that produced it. 49.x needs rustc 1.96.
+Wasmtime is pinned at `=49.0.6`. A `.cwasm` loads only with the version and
+compile-affecting configuration that produced it. Wasmtime 49 supports the
+Rust 1.96 consumer minimum. Wasmtime 50 requires Rust 1.97.
 
 ## Known gaps
 

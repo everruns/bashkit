@@ -107,7 +107,6 @@ dependencies = [
  "os_display",
  "regex",
  "regex-automata",
- "ryu",
  "self_cell",
  "serde",
  "serde_json",

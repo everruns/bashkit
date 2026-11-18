@@ -21,8 +21,8 @@ categories = ["command-line-utilities", "parser-implementations"]
 # Important decision: pinned exactly. Precompiled `.cwasm` artifacts only load
 # into the identical wasmtime version. Runtime build: no Cranelift, Pulley
 # interpreter only; Cranelift is added as a build-dependency by the artifact
-# crate. 49.x became possible with rustc 1.96; bump it as its own change.
-wasmtime = { version = "=48.0.8", default-features = false, features = ["runtime", "std", "pulley", "async"] }
+# crate. Wasmtime 49 supports Rust 1.96. Wasmtime 50 requires Rust 1.97.
+wasmtime = { version = "=49.0.6", default-features = false, features = ["runtime", "std", "pulley", "async"] }
 # Async runtime
 # Base features are WASM-compatible; crates needing more (rt-multi-thread, fs, net, process)
 # add them in their own Cargo.toml or via [target.'cfg(...)'.dependencies].
