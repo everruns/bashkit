@@ -1198,7 +1198,7 @@ impl GitClient {
     ) -> Result<()> {
         Self::validate_ref_name(name)?;
         let git_dir = vfs_join(repo_path, ".git");
-        let branch_path = vfs_join(&git_dir, "refs/heads").join(name);
+        let branch_path = vfs_join(&vfs_join(&git_dir, "refs/heads"), name);
 
         if !fs.exists(&git_dir).await? {
             return Err(Error::Internal(format!(
@@ -1238,7 +1238,7 @@ impl GitClient {
         Self::validate_ref_name(target)?;
         let git_dir = vfs_join(repo_path, ".git");
         let head_path = vfs_join(&git_dir, "HEAD");
-        let branch_path = vfs_join(&git_dir, "refs/heads").join(target);
+        let branch_path = vfs_join(&vfs_join(&git_dir, "refs/heads"), target);
 
         if !fs.exists(&git_dir).await? {
             return Err(Error::Internal(format!(
@@ -1511,7 +1511,7 @@ impl GitClient {
                     let head = String::from_utf8_lossy(&head_content);
                     if let Some(branch) = head.trim().strip_prefix("ref: refs/heads/") {
                         Self::validate_ref_name(branch)?;
-                        let ref_path = vfs_join(&git_dir, "refs/heads").join(branch);
+                        let ref_path = vfs_join(&vfs_join(&git_dir, "refs/heads"), branch);
                         if fs.exists(&ref_path).await? {
                             let hash = fs.read_file(&ref_path).await?;
                             // Sanitize hash read from ref file (TM-GIT-015)
@@ -1536,7 +1536,7 @@ impl GitClient {
                             arg
                         ))
                     })?;
-                    let ref_path = vfs_join(&git_dir, "refs/heads").join(arg);
+                    let ref_path = vfs_join(&vfs_join(&git_dir, "refs/heads"), arg);
                     if fs.exists(&ref_path).await? {
                         let hash = fs.read_file(&ref_path).await?;
                         // Sanitize hash read from ref file (TM-GIT-015)
@@ -1735,7 +1735,7 @@ impl GitClient {
             let head = String::from_utf8_lossy(&head_content);
             if let Some(branch) = head.trim().strip_prefix("ref: refs/heads/") {
                 Self::validate_ref_name(branch)?;
-                let ref_path = vfs_join(git_dir, "refs/heads").join(branch);
+                let ref_path = vfs_join(&vfs_join(git_dir, "refs/heads"), branch);
                 if fs.exists(&ref_path).await? {
                     let hash = fs.read_file(&ref_path).await?;
                     return Ok(String::from_utf8_lossy(&hash).trim().to_string());
@@ -1746,7 +1746,7 @@ impl GitClient {
 
         // Try as branch name. Invalid ref names cannot be resolved via the VFS.
         if Self::validate_ref_name(refspec).is_ok() {
-            let ref_path = vfs_join(git_dir, "refs/heads").join(refspec);
+            let ref_path = vfs_join(&vfs_join(git_dir, "refs/heads"), refspec);
             if fs.exists(&ref_path).await? {
                 let hash = fs.read_file(&ref_path).await?;
                 return Ok(String::from_utf8_lossy(&hash).trim().to_string());

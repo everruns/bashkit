@@ -7,6 +7,9 @@
 //! reads bytes written by an older one. See
 //! `knowledge/foundations/snapshot-history.md`.
 
+// Writes host fixture files; the VFS separator ban targets VFS paths.
+#![allow(clippy::disallowed_methods)]
+
 use bashkit::{Bash, SnapshotOptions};
 use std::path::Path;
 

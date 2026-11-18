@@ -55,8 +55,8 @@ use std::sync::Arc;
 
 use super::backend::FsBackend;
 use super::limits::{FsLimits, FsUsage};
-use super::normalize_path;
 use super::traits::{DirEntry, FileSystem, FileSystemExt, Metadata, fs_errors};
+use super::{normalize_path, vfs_join};
 use crate::error::Result;
 
 /// POSIX-compatible filesystem wrapper.
@@ -191,7 +191,9 @@ impl<B: FsBackend + 'static> FileSystem for PosixFs<B> {
             if let Some(parent) = path.parent() {
                 let mut current = PathBuf::from("/");
                 for component in parent.components().skip(1) {
-                    current.push(component);
+                    // vfs_join, not `push`: `push` joins with `\` on Windows
+                    // and the backend would see `/a\b` (#2933).
+                    current = vfs_join(&current, component);
                     if let Ok(meta) = self.backend.stat(&current).await
                         && !meta.file_type.is_dir()
                     {
@@ -307,6 +309,8 @@ mod tests {
         files: Mutex<HashSet<PathBuf>>,
         symlinks: Mutex<HashSet<PathBuf>>,
         reads: AtomicUsize,
+        /// Every path `stat` received, as text (`PathBuf` equality would hide `\`).
+        stats: Mutex<Vec<String>>,
     }
 
     impl AppendCreatesFileBackend {
@@ -318,6 +322,7 @@ mod tests {
                 files: Mutex::new(files),
                 symlinks: Mutex::new(HashSet::new()),
                 reads: AtomicUsize::new(0),
+                stats: Mutex::new(Vec::new()),
             }
         }
     }
@@ -354,6 +359,10 @@ mod tests {
         }
 
         async fn stat(&self, path: &Path) -> Result<Metadata> {
+            self.stats
+                .lock()
+                .expect("backend lock poisoned")
+                .push(path.to_string_lossy().into_owned());
             if self
                 .symlinks
                 .lock()
@@ -525,5 +534,17 @@ mod tests {
             0,
             "raw backends may follow symlinks, so PosixFs must not delegate the read"
         );
+    }
+
+    /// #2933 family: `mkdir -p` checks each parent on the backend. Those
+    /// paths must be `/`-joined on every host, or a string-keyed backend on
+    /// Windows sees `/a\b`. Named for the Windows CI `windows_containment` filter.
+    #[tokio::test]
+    async fn windows_containment_mkdir_p_hands_backend_slash_paths() {
+        let fs = PosixFs::new(AppendCreatesFileBackend::new());
+        fs.mkdir(Path::new("/a/b/c/d"), true).await.unwrap();
+        let stats = fs.backend.stats.lock().unwrap().clone();
+        assert!(stats.iter().any(|p| p == "/a/b/c"), "{stats:?}");
+        assert!(stats.iter().all(|p| !p.contains('\\')), "{stats:?}");
     }
 }

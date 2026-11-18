@@ -46,6 +46,8 @@ impl Recorder {
 #[tokio::main]
 async fn main() {
     let out_path = std::env::args().nth(1).unwrap_or_else(|| {
+        // Host temp dir, not a VFS path.
+        #[allow(clippy::disallowed_methods)]
         std::env::temp_dir()
             .join("terminal-demo.cast")
             .display()

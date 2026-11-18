@@ -503,7 +503,8 @@ async fn follow_readlink_symlinks(
 
             match component {
                 Component::RootDir => continue,
-                Component::Normal(part) => current.push(part),
+                // vfs_join, not `push`: keep `/` separators on Windows (#2933).
+                Component::Normal(part) => current = vfs_join(&current, part),
                 _ => continue,
             }
 

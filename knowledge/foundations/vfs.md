@@ -310,7 +310,31 @@ path asks `has_root()`, never `is_absolute()`.
 It joins with `/` on every host, keeps `Path::join` semantics (an absolute
 child replaces the base) and leaves `.`/`..` for the backends to normalize.
 It is re-exported as `bashkit::vfs_join`, since custom `FileSystem`
-implementations have the same obligation. Two guards keep it that way:
+implementations have the same obligation.
+
+The text scan below only knew two call shapes, so a second sweep still found
+five more sites (issue #2933): `dev_fd_alias`'s private normalizer rebuilt
+`/dev/stderr` as `/dev\stderr` on Windows, so `echo x > /dev/stderr` was
+written to the VFS as a regular file; `PosixFs::mkdir -p` handed the backend
+`/a\b` for its parent checks, before any normalization (a string-keyed custom
+`FsBackend` misses); `cd x/..` and `readlink -f`/`realpath` probed the
+filesystem with `\`-joined prefixes; `OverlayFs` counted missing upper
+directories the same way (harmless, its upper is always `InMemoryFs`). The
+public `custom_backend` and `custom_filesystem_impl` examples taught the
+`push` pattern too; they now call `bashkit::normalize_path`/`vfs_join`.
+
+Fuzzing cannot find this class: the fuzz targets run on Linux, where the
+host separator already is `/`. These guards keep it out:
+- `crates/bashkit/clippy.toml` bans `Path::join`, `PathBuf::push`,
+  `PathBuf::set_file_name` and `Path::with_file_name` in the `bashkit` crate
+  (`clippy::disallowed_methods`, run by CI's `-D warnings` clippy on Linux).
+  Host-path code opts out with a scoped `#[allow]` and a reason: `realfs.rs`,
+  `HostMounts::host_path_for`, the non-UTF-8 fallback in `vfs_join`,
+  `testing::child_profile_path`, and test/bench/example targets that build
+  host temp paths.
+- `bashkit::testing::CheckedFs` records every path a `FileSystem` receives;
+  `assert_slash_only` fails on `\`. `tests/integration/vfs_separator_tests.rs`
+  runs device redirects, `mkdir -p`, `cd ..` and `realpath` through it.
 - `builtins::tests::no_host_separator_joins_on_vfs_paths` — static scan of
   every workspace crate's `src/` for the `cwd.join(` and `.join(&entry.name)`
   shapes, with a `// host-join-ok: <reason>` escape hatch.
@@ -319,9 +343,11 @@ implementations have the same obligation. Two guards keep it that way:
   `\`, `is_absolute()` being false for `/etc/passwd`, `\` and `/` comparing
   equal). If std or the platform ever changed, it says so before the rules
   start looking arbitrary.
-- `windows_containment_*` unit tests next to `vfs_join`, `grep`, `du`, `wc` and
-  `InMemoryFs::rename`, which the Windows CI job runs (`cargo test -p bashkit
-  --lib --features realfs windows_containment`).
+- `windows_containment_*` unit tests next to `vfs_join`, `grep`, `du`, `wc`,
+  `InMemoryFs::rename`, `dev_fd_alias` and `PosixFs::mkdir`, which the Windows
+  CI job runs (`cargo test -p bashkit --lib --features realfs
+  windows_containment`). The `test-windows` job also runs the integration
+  binary's `windows_containment`, `dev_fd_path_tests` and `dev_null_tests`.
 
 Host paths are the exception and keep using `Path::join`: `RealFs` joining
 under its host root, and `HostMounts` mapping a VFS path back to a host path.

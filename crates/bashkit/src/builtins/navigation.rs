@@ -205,7 +205,8 @@ async fn logical_dir(fs: &dyn crate::fs::FileSystem, path: &std::path::Path) -> 
     let mut out = PathBuf::from("/");
     for comp in path.components() {
         match comp {
-            Component::Normal(name) => out.push(name),
+            // vfs_join, not `push`: keep `/` separators on Windows (#2933).
+            Component::Normal(name) => out = crate::fs::vfs_join(&out, name),
             Component::ParentDir => {
                 if !fs.stat(&out).await.is_ok_and(|m| m.file_type.is_dir()) {
                     return None;
