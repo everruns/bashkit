@@ -241,3 +241,59 @@ async fn iconv_code_pages_match_real_iconv() {
         );
     }
 }
+
+#[tokio::test]
+async fn byte_tools_match_real_bash_on_non_utf8_input() {
+    // tee, split and cut pass bytes through; text tools would print U+FFFD.
+    let setup = "cd \"$(mktemp -d)\" && printf 'K\\366ln,\\377\\376\\000z\\nb,K\\303\\266ln\\200\\r\\n' > in.bin && ";
+    for case in [
+        "tee o.bin < in.bin && cat o.bin",
+        "split -b 4 in.bin p_ && cat p_*",
+        "split -l 1 in.bin q_ && cat q_ab",
+        "cut -b1-3 in.bin",
+        "cut -b2- --complement in.bin",
+        "cut -c1-3 in.bin",
+        "cut -d, -f2 in.bin",
+    ] {
+        let script = format!("{setup}{case}");
+        let expected = Command::new("bash").args(["-c", &script]).output().unwrap();
+        assert!(expected.status.success(), "{case}");
+        let mut bash = Bash::new();
+        let actual = bash.exec(&script).await.unwrap();
+        assert_eq!(actual.stdout.as_bytes(), expected.stdout, "{case}");
+        assert_eq!(actual.exit_code, 0, "{case}");
+    }
+}
+
+#[tokio::test]
+async fn xxd_reverse_rebuilds_exact_bytes() {
+    let mut bash = Bash::new();
+    let result = bash
+        .exec("printf 'K\\366\\377\\000\\n' | xxd | xxd -r | od -An -tx1; printf '4bf6ff' | xxd -r -p | od -An -tx1")
+        .await
+        .unwrap();
+    assert_eq!(
+        result.stdout.text().unwrap(),
+        " 4b f6 ff 00 0a\n 4b f6 ff\n"
+    );
+}
+
+#[tokio::test]
+async fn sort_refuses_to_rewrite_non_utf8_file_in_place() {
+    let mut bash = Bash::new();
+    let result = bash
+        .exec("printf 'b\\n\\366\\na\\n' > /f; sort -o /f /f; echo rc=$?; od -An -tx1 /f; sort -o /g /f; echo rc=$?")
+        .await
+        .unwrap();
+    assert_eq!(
+        result.stdout.text().unwrap(),
+        "rc=2\n 62 0a f6 0a 61 0a\nrc=0\n"
+    );
+    assert!(
+        result
+            .stderr
+            .text()
+            .unwrap()
+            .contains("not a valid UTF-8 text file")
+    );
+}

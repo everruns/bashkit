@@ -2,7 +2,7 @@
 
 use async_trait::async_trait;
 
-use super::{Builtin, Context, read_text_file, resolve_path};
+use super::{Builtin, Context, read_stream_file, resolve_path};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
 
@@ -80,12 +80,14 @@ impl Builtin for Split {
         let file = positional.first().copied().unwrap_or("-");
         let prefix = positional.get(1).copied().unwrap_or("x");
 
-        let input = if file == "-" {
-            ctx.stdin.map(ToString::to_string).unwrap_or_default()
+        // Bytes end to end: pieces must concatenate back to the exact input,
+        // whatever its encoding or line endings.
+        let input: Vec<u8> = if file == "-" {
+            ctx.stdin_bytes().unwrap_or_default().to_vec()
         } else {
             let path = resolve_path(ctx.cwd, file);
-            match read_text_file(ctx.fs.as_ref(), &path, "split").await {
-                Ok(text) => text,
+            match read_stream_file(ctx.fs.as_ref(), &path, "split").await {
+                Ok(data) => data.into_bytes(),
                 Err(_) => {
                     return Ok(ExecResult::err(
                         format!(
@@ -109,7 +111,7 @@ impl Builtin for Split {
                 ));
             }
             let chunk_size = input.len().div_ceil(n);
-            let bytes = input.as_bytes();
+            let bytes = input.as_slice();
             let mut pos = 0;
             while pos < bytes.len() {
                 let end = (pos + chunk_size).min(bytes.len());
@@ -121,7 +123,7 @@ impl Builtin for Split {
             }
         } else if let Some(size) = bytes_per_file {
             // Split by byte size
-            let bytes = input.as_bytes();
+            let bytes = input.as_slice();
             let mut pos = 0;
             while pos < bytes.len() {
                 let end = (pos + size).min(bytes.len());
@@ -134,21 +136,15 @@ impl Builtin for Split {
         } else {
             // Split by lines
             let n = lines_per_file.unwrap_or(1000);
-            let lines: Vec<&str> = input.lines().collect();
+            // Each line keeps its own terminator (`\r\n` stays intact).
+            let lines: Vec<&[u8]> = input.split_inclusive(|&b| b == b'\n').collect();
             let mut pos = 0;
             while pos < lines.len() {
                 let end = (pos + n).min(lines.len());
                 let suffix = make_suffix(file_index, numeric_suffix);
                 let out_path = resolve_path(ctx.cwd, &format!("{}{}", prefix, suffix));
-                let chunk = lines[pos..end].join("\n");
-                let chunk_with_newline = if end < lines.len() || input.ends_with('\n') {
-                    format!("{}\n", chunk)
-                } else {
-                    chunk
-                };
-                ctx.fs
-                    .write_file(&out_path, chunk_with_newline.as_bytes())
-                    .await?;
+                let chunk = lines[pos..end].concat();
+                ctx.fs.write_file(&out_path, &chunk).await?;
                 file_index += 1;
                 pos = end;
             }

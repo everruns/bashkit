@@ -2,7 +2,7 @@
 
 use async_trait::async_trait;
 
-use super::{Builtin, BuiltinHelper, Context, read_text_file};
+use super::{Builtin, BuiltinHelper, Context, read_stream_file};
 use crate::error::Result;
 use crate::fs::vfs_join;
 use crate::interpreter::ExecResult;
@@ -33,7 +33,46 @@ impl BuiltinHelper for Cut {
 #[derive(PartialEq)]
 enum CutMode {
     Fields,
+    /// `-c`: UTF-8 characters; an invalid byte counts as one character.
     Chars,
+    /// `-b`: bytes.
+    Bytes,
+}
+
+/// Selection units of a line: one per UTF-8 char, one per invalid byte.
+/// Input stays bytes end to end, so `cut` never rewrites a Latin-1 or
+/// binary line to U+FFFD (L-STREAM-001 does not apply to cut).
+fn char_units(line: &[u8]) -> Vec<&[u8]> {
+    let mut units = Vec::new();
+    for chunk in line.utf8_chunks() {
+        let valid = chunk.valid();
+        let mut start = 0;
+        for ch in valid.chars() {
+            let end = start + ch.len_utf8();
+            units.push(&valid.as_bytes()[start..end]);
+            start = end;
+        }
+        units.extend(chunk.invalid().chunks(1));
+    }
+    units
+}
+
+/// Split `line` on every occurrence of `delim` (non-empty).
+fn split_bytes<'a>(line: &'a [u8], delim: &[u8]) -> Vec<&'a [u8]> {
+    let mut parts = Vec::new();
+    let mut start = 0;
+    let mut i = 0;
+    while i + delim.len() <= line.len() {
+        if &line[i..i + delim.len()] == delim {
+            parts.push(&line[start..i]);
+            i += delim.len();
+            start = i;
+        } else {
+            i += 1;
+        }
+    }
+    parts.push(&line[start..]);
+    parts
 }
 
 #[async_trait]
@@ -84,7 +123,11 @@ impl Builtin for Cut {
                     spec = val;
                     mode = CutMode::Fields;
                 }
-                'b' | 'c' => {
+                'b' => {
+                    spec = val;
+                    mode = CutMode::Bytes;
+                }
+                'c' => {
                     spec = val;
                     mode = CutMode::Chars;
                 }
@@ -104,40 +147,44 @@ impl Builtin for Cut {
         let positions = parse_position_spec(&spec);
         let out_delim = output_delimiter.unwrap_or_else(|| delimiter.to_string());
 
-        let process_line = |line: &str| -> Option<String> {
+        let mut delim_buf = [0u8; 4];
+        let delim: &[u8] = delimiter.encode_utf8(&mut delim_buf).as_bytes();
+        let out_delim = out_delim.into_bytes();
+
+        let select = |units: Vec<&[u8]>| -> Vec<u8> {
+            let resolved = resolve_positions(&positions, units.len());
+            if complement {
+                units
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, _)| resolved.binary_search(&(i + 1)).is_err())
+                    .flat_map(|(_, u)| u.iter().copied())
+                    .collect()
+            } else {
+                resolved
+                    .iter()
+                    .filter_map(|&p| units.get(p - 1))
+                    .flat_map(|u| u.iter().copied())
+                    .collect()
+            }
+        };
+
+        let process_line = |line: &[u8]| -> Option<Vec<u8>> {
             match mode {
-                CutMode::Chars => {
-                    let chars: Vec<char> = line.chars().collect();
-                    let total = chars.len();
-                    let resolved = resolve_positions(&positions, total);
-                    let selected: Vec<char> = if complement {
-                        chars
-                            .iter()
-                            .enumerate()
-                            .filter(|(i, _)| !resolved.contains(&(i + 1)))
-                            .map(|(_, c)| *c)
-                            .collect()
-                    } else {
-                        resolved
-                            .iter()
-                            .filter_map(|&p| chars.get(p - 1).copied())
-                            .collect()
-                    };
-                    Some(selected.into_iter().collect())
-                }
+                CutMode::Bytes => Some(select(line.chunks(1).collect())),
+                CutMode::Chars => Some(select(char_units(line))),
                 CutMode::Fields => {
+                    let parts = split_bytes(line, delim);
                     // Lines without a delimiter print whole unless -s.
-                    if !line.contains(delimiter) {
-                        return (!only_delimited).then(|| line.to_string());
+                    if parts.len() == 1 {
+                        return (!only_delimited).then(|| line.to_vec());
                     }
-                    let parts: Vec<&str> = line.split(delimiter).collect();
-                    let total = parts.len();
-                    let resolved = resolve_positions(&positions, total);
-                    let selected: Vec<&str> = if complement {
+                    let resolved = resolve_positions(&positions, parts.len());
+                    let selected: Vec<&[u8]> = if complement {
                         parts
                             .iter()
                             .enumerate()
-                            .filter(|(i, _)| !resolved.contains(&(i + 1)))
+                            .filter(|(i, _)| resolved.binary_search(&(i + 1)).is_err())
                             .map(|(_, s)| *s)
                             .collect()
                     } else {
@@ -146,36 +193,35 @@ impl Builtin for Cut {
                             .filter_map(|&f| parts.get(f - 1).copied())
                             .collect()
                     };
-                    Some(selected.join(&out_delim))
+                    Some(selected.join(out_delim.as_slice()))
                 }
             }
         };
 
-        let mut output = String::new();
-        let line_sep = if zero_terminated { '\0' } else { '\n' };
-        let out_sep = if zero_terminated { "\0" } else { "\n" };
+        let mut output: Vec<u8> = Vec::new();
+        let line_sep = if zero_terminated { b'\0' } else { b'\n' };
 
-        let process_input = |text: &str, output: &mut String| {
-            let body = text.strip_suffix(line_sep).unwrap_or(text);
+        let process_input = |text: &[u8], output: &mut Vec<u8>| {
             if text.is_empty() {
                 return;
             }
-            for line in body.split(line_sep) {
+            let body = text.strip_suffix(&[line_sep]).unwrap_or(text);
+            for line in body.split(|&b| b == line_sep) {
                 if let Some(result) = process_line(line) {
-                    output.push_str(&result);
-                    output.push_str(out_sep);
+                    output.extend_from_slice(&result);
+                    output.push(line_sep);
                 }
             }
         };
 
         if files.is_empty() || files.iter().all(|f| f.as_str() == "-") {
-            if let Some(stdin) = ctx.stdin {
+            if let Some(stdin) = ctx.stdin_bytes() {
                 process_input(stdin, &mut output);
             }
         } else {
             for file in &files {
                 if file.as_str() == "-" {
-                    if let Some(stdin) = ctx.stdin {
+                    if let Some(stdin) = ctx.stdin_bytes() {
                         process_input(stdin, &mut output);
                     }
                     continue;
@@ -187,15 +233,15 @@ impl Builtin for Cut {
                     vfs_join(ctx.cwd, file)
                 };
 
-                let text = match read_text_file(&*ctx.fs, &path, "cut").await {
+                let data = match read_stream_file(&*ctx.fs, &path, "cut").await {
                     Ok(t) => t,
                     Err(e) => return Ok(*e),
                 };
-                process_input(&text, &mut output);
+                process_input(data.as_bytes(), &mut output);
             }
         }
 
-        Ok(ExecResult::ok(output))
+        Ok(ExecResult::ok_bytes(output))
     }
 }
 

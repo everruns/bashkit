@@ -738,10 +738,8 @@ impl Builtin for Xxd {
         };
 
         if opts.reverse {
-            let bytes = xxd_reverse(&data, opts.plain);
-            // Output raw bytes as lossy UTF-8
-            let output = String::from_utf8_lossy(&bytes).to_string();
-            Ok(ExecResult::ok(output))
+            // Raw bytes: `xxd -r` exists to rebuild binary data.
+            Ok(ExecResult::ok_bytes(xxd_reverse(&data, opts.plain)))
         } else {
             let output = xxd_dump(&data, &opts);
             Ok(ExecResult::ok(output))

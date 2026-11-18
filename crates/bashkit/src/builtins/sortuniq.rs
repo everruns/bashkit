@@ -981,6 +981,36 @@ impl Builtin for Sort {
             files.push("-".to_string());
         }
         let line_sep = if zero_terminated { '\0' } else { '\n' };
+
+        // `sort -o FILE FILE` rewrites its own input. Text builtins decode
+        // invalid UTF-8 with U+FFFD (L-STREAM-001), so a Latin-1 or binary
+        // FILE would be silently destroyed; refuse instead, like `sed -i`
+        // (L-SED-003). Writing to a different file stays lossy-but-safe.
+        if let Some(ref outfile) = output_file {
+            let out_path = if outfile.starts_with('/') {
+                std::path::PathBuf::from(outfile)
+            } else {
+                vfs_join(ctx.cwd, outfile)
+            };
+            for file in files.iter().filter(|f| f.as_str() != "-") {
+                let path = if file.starts_with('/') {
+                    std::path::PathBuf::from(file)
+                } else {
+                    vfs_join(ctx.cwd, file)
+                };
+                if path != out_path {
+                    continue;
+                }
+                if let Ok(bytes) = ctx.fs.read_file(&path).await
+                    && std::str::from_utf8(&bytes).is_err()
+                {
+                    return Ok(sort_err(format!(
+                        "sort: cannot rewrite {file}: not a valid UTF-8 text file\n"
+                    )));
+                }
+            }
+        }
+
         let mut streams: Vec<Vec<String>> = Vec::new();
         for file in &files {
             let text = if file == "-" {
