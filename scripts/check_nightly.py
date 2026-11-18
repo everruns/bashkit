@@ -26,7 +26,13 @@ def check_workflow(workflow):
     passed = len(runs) == REQUIRED_RUNS
     if not passed:
         print(f'ERROR: {workflow}: expected {REQUIRED_RUNS} runs, got {len(runs)}')
-    for run in runs:
+    for index, run in enumerate(runs, start=1):
+        if (not isinstance(run, dict)
+                or not all(isinstance(run.get(key), str) for key in ('status', 'conclusion', 'url'))
+                or not run['status'] or not run['url']):
+            print(f'ERROR: {workflow}: malformed run {index}')
+            passed = False
+            continue
         status = run['status']
         result = run['conclusion'] if status == 'completed' else status
         passed = passed and result == 'success' and status == 'completed'

@@ -41,11 +41,23 @@ class NightlyGateTests(unittest.TestCase):
         self.assertEqual(result, 0, output)
 
     def test_empty_and_partial_history_block_release(self):
-        for count in range(3):
-            with self.subTest(count=count):
-                result, output = self.check([run()] * count, [run()] * 3)
+        for index, workflow in enumerate(('nightly.yml', 'fuzz.yml')):
+            for count in range(3):
+                with self.subTest(workflow=workflow, count=count):
+                    histories = [[run()] * 3, [run()] * 3]
+                    histories[index] = [run()] * count
+                    result, output = self.check(*histories)
+                    self.assertEqual(result, 1, output)
+                    self.assertIn(f'{workflow}: expected 3 runs, got {count}', output)
+
+    def test_malformed_record_blocks_release_and_keeps_other_run_links(self):
+        for malformed in (None, {'status': 'completed'}, dict(run(), url=42)):
+            with self.subTest(malformed=malformed):
+                result, output = self.check([run(), malformed, run()], [run()] * 3)
                 self.assertEqual(result, 1, output)
-                self.assertIn(f'nightly.yml: expected 3 runs, got {count}', output)
+                self.assertIn('nightly.yml: malformed run 2', output)
+                self.assertIn('fuzz.yml', output)
+                self.assertEqual(output.count(run()['url']), 5)
 
     def test_non_successful_runs_block_release_and_show_the_run_url(self):
         for record, label in ((run('in_progress', ''), 'in_progress'),
