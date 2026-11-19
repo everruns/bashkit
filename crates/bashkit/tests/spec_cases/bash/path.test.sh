@@ -122,6 +122,24 @@ realpath /home/user/docs/../file.txt
 /home/user/file.txt
 ### end
 
+### realpath_follows_intermediate_symlink
+# realpath resolves a symlinked directory anywhere in the path
+d=$(mktemp -d)
+mkdir -p "$d/a/b"; touch "$d/a/b/c"; ln -s "$d/a/b" "$d/l"
+realpath "$d/l/c" "$d/l" | sed "s|^$d|D|"
+realpath -s "$d/l/./c" | sed "s|^$d|D|"
+realpath -e "$d/l/nope" 2>/dev/null; echo "e=$?"
+realpath --relative-to="$d/l" "$d/a/b/c"
+cd "$d/l" && realpath c | sed "s|^$d|D|"
+### expect
+D/a/b/c
+D/a/b
+D/l/c
+e=1
+c
+D/a/b/c
+### end
+
 ### realpath_no_args
 ### bash_diff: clap-backed realpath returns exit 2 for parse errors; GNU realpath returns 1
 # realpath with no args should error
