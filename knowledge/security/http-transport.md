@@ -18,7 +18,7 @@ Implemented
 
 ## Problem
 
-Embedding hosts (reference consumer: [everruns](https://github.com/everruns/everruns), `specs/egress.md` there) must route *all* outbound traffic through a host-owned egress boundary, for network policy, audit, signing, and airgapped deployments. bashkit's built-in reqwest connectivity dials the network directly and deliberately ignores host proxy env vars (TM-NET-015), so without an injection point an embedder cannot centralize sandbox HTTP. The legacy `HttpHandler` hook was too weak for this: loose `(method, url, body, headers)` args, no timeouts, no SSRF precheck result, stringly-typed errors that could not distinguish a host policy denial from a connect failure.
+Embedding hosts (reference consumer: [everruns](https://github.com/everruns/everruns), `specs/egress.md` there) must route *all* outbound traffic through a host-owned egress boundary, for network policy, audit, signing, and airgapped deployments. bashkit's built-in reqwest connectivity dials the network directly and deliberately ignores host proxy env vars (TM-NET-033), so without an injection point an embedder cannot centralize sandbox HTTP. The legacy `HttpHandler` hook was too weak for this: loose `(method, url, body, headers)` args, no timeouts, no SSRF precheck result, stringly-typed errors that could not distinguish a host policy denial from a connect failure.
 
 ## Design Decisions
 
@@ -78,5 +78,5 @@ handling without live network dependencies.
 
 - [Request Signing](request-signing.md), signing pipeline the transport inherits
 - [Credential Injection](credential-injection.md), header injection ahead of dispatch
-- [Threat Model](threat-model.md), TM-NET-023 (SSRF responsibility of custom transports), TM-NET-015 (host proxy isolation on the built-in path)
+- [Threat Model](threat-model.md), TM-NET-023 (SSRF responsibility of custom transports), TM-NET-033 (host proxy isolation on the built-in path)
 - [Tool Contract](../integrations/tool-contract.md), LLM tool surface this feeds

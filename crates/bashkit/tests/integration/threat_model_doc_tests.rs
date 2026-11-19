@@ -69,6 +69,43 @@ fn walk_rs_files(root: &Path, out: &mut Vec<PathBuf>) {
 }
 
 #[test]
+fn threat_definition_ids_are_unique_within_each_section() {
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let doc_path = manifest.join("../../knowledge/security/threat-model.md");
+    let doc = std::fs::read_to_string(&doc_path)
+        .unwrap_or_else(|e| panic!("read {}: {e}", doc_path.display()));
+    let mut section = "preamble";
+    let mut definitions = BTreeMap::<String, usize>::new();
+    let mut duplicates = Vec::new();
+
+    for (index, line) in doc.lines().enumerate() {
+        let line_number = index + 1;
+        if line.starts_with("### ") {
+            section = line;
+            definitions.clear();
+        }
+        let Some(rest) = line.strip_prefix("| TM-") else {
+            continue;
+        };
+        let Some((suffix, _)) = rest.split_once(" |") else {
+            continue;
+        };
+        let id = format!("TM-{suffix}");
+        if let Some(first_line) = definitions.insert(id.clone(), line_number) {
+            duplicates.push(format!(
+                "{id} in {section}: lines {first_line} and {line_number}"
+            ));
+        }
+    }
+
+    assert!(
+        duplicates.is_empty(),
+        "duplicate canonical threat definitions:\n{}",
+        duplicates.join("\n")
+    );
+}
+
+#[test]
 fn threat_ids_cited_in_code_exist_in_threat_model_doc() {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
     let doc_path = manifest.join("../../knowledge/security/threat-model.md");

@@ -186,6 +186,25 @@ When the duration limit fires, the command exits with status 124 and prints
 `ts: execution timed out after Ns` on stderr, like coreutils `timeout` and
 `python3`. Any other error (including a script's own `throw`) exits 1.
 
+Native VM steps use dedicated 128 MiB-stack threads so accepted parser depth
+cannot overflow the host stack. A process-wide admission limit bounds active
+VM threads across every `Bash` instance and keeps their joins off Tokio async
+workers. The default is available CPU parallelism capped at four. Configure it
+once, before the first TypeScript execution:
+
+```rust
+use bashkit::configure_typescript_vm_concurrency;
+
+configure_typescript_vm_concurrency(2)?;
+# Ok::<(), bashkit::TypeScriptVmConcurrencyError>(())
+```
+
+Excess calls wait asynchronously, and that queue time consumes each call's
+own duration limit. If an admitted VM step outlives the caller deadline it may
+finish in the background, but it retains its slot until it stops, so abandoned
+work cannot exceed the configured cap. wasm32 has no native threads; VM steps
+there still run synchronously on the JavaScript event loop.
+
 ## Configuration
 
 Use `TypeScriptConfig` for full control over aliases and hint behavior:

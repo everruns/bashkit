@@ -63,6 +63,17 @@ async fn exec_ts(bash: &mut Bash, script: &str) -> bashkit::ExecResult {
     .unwrap()
 }
 
+fn spin_tenant(max_ms: u64) -> Bash {
+    Bash::builder()
+        .typescript_with_limits(
+            TypeScriptLimits::default()
+                .max_memory(16 * 1024 * 1024)
+                .max_duration(Duration::from_millis(max_ms))
+                .max_allocations(SPIN_ALLOCATIONS),
+        )
+        .build()
+}
+
 #[derive(Clone, Copy, Debug)]
 enum Load {
     /// Computes and prints a known value.
@@ -278,6 +289,54 @@ async fn ts_host_call_loops_stop_at_the_wall_clock_limit() {
         elapsed < Duration::from_secs(2),
         "ran {elapsed:?} past a 500 ms limit"
     );
+}
+
+/// A synchronous VM join must not hold the only Tokio worker for the whole
+/// attacker deadline (EVE-1351).
+#[tokio::test(flavor = "current_thread")]
+async fn ts_cpu_loop_does_not_starve_current_thread_timer() {
+    let started = std::time::Instant::now();
+    let attacker = tokio::spawn(async {
+        let mut bash = spin_tenant(300);
+        exec_ts(&mut bash, script(Load::Spin)).await
+    });
+
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    let timer_elapsed = started.elapsed();
+    assert!(
+        timer_elapsed < Duration::from_millis(200),
+        "20 ms timer was starved for {timer_elapsed:?}"
+    );
+
+    let result = attacker.await.unwrap();
+    assert_eq!(result.exit_code, 124, "stderr: {}", result.stderr);
+}
+
+/// Filling every Tokio worker with hostile VMs must not stop an unrelated
+/// tenant's timer (EVE-1351).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ts_cpu_loops_do_not_starve_all_multi_thread_workers() {
+    let started = std::time::Instant::now();
+    let attackers: Vec<_> = (0..2)
+        .map(|_| {
+            tokio::spawn(async {
+                let mut bash = spin_tenant(300);
+                exec_ts(&mut bash, script(Load::Spin)).await
+            })
+        })
+        .collect();
+
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    let timer_elapsed = started.elapsed();
+    assert!(
+        timer_elapsed < Duration::from_millis(200),
+        "20 ms timer was starved for {timer_elapsed:?}"
+    );
+
+    for attacker in attackers {
+        let result = attacker.await.unwrap();
+        assert_eq!(result.exit_code, 124, "stderr: {}", result.stderr);
+    }
 }
 
 /// A pure runaway loop, with no host calls to carry the deadline check, stops

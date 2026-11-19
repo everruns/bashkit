@@ -14,7 +14,7 @@
 //! - **TM-NET-012**: Chunked encoding bomb → streaming size check
 //! - **TM-NET-013**: Gzip/compression bomb → auto-decompression disabled
 //! - **TM-NET-014**: DNS rebind via redirect → manual redirect requires allowlist check
-//! - **TM-NET-015**: Host proxy leakage → `.no_proxy()` ignores host `HTTP_PROXY`/`HTTPS_PROXY`
+//! - **TM-NET-033**: Host proxy leakage → `.no_proxy()` ignores host `HTTP_PROXY`/`HTTPS_PROXY`
 //! - **TM-NET-002 (TOCTOU)**: DNS rebinding between pre-resolve check and actual connect →
 //!   private-IP filtering installed as reqwest's DNS resolver, so the connection path itself
 //!   refuses to dial any private/reserved IP, even if DNS answers diverge between checks.
@@ -808,7 +808,7 @@ fn build_client(
         .no_gzip()
         .no_brotli()
         .no_deflate()
-        // THREAT[TM-NET-015]: Ignore host proxy env vars (HTTP_PROXY, HTTPS_PROXY, ALL_PROXY)
+        // THREAT[TM-NET-033]: Ignore host proxy env vars (HTTP_PROXY, HTTPS_PROXY, ALL_PROXY)
         // to prevent sandboxed HTTP traffic from being redirected through a host proxy
         .no_proxy();
 
@@ -1001,7 +1001,7 @@ mod tests {
     #[test]
     fn test_build_client_uses_no_proxy() {
         // Verify build_client succeeds — the .no_proxy() call ensures
-        // host HTTP_PROXY/HTTPS_PROXY env vars are ignored (TM-NET-015).
+        // host HTTP_PROXY/HTTPS_PROXY env vars are ignored (TM-NET-033).
         let client = build_client(Duration::from_secs(30), None, true);
         assert!(client.is_ok(), "build_client should succeed with no_proxy");
     }

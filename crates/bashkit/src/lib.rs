@@ -613,7 +613,7 @@ pub use monty_types::{ExcType, ExtFunctionResult, MontyException, MontyObject, O
 #[cfg(feature = "typescript")]
 pub use builtins::{
     TypeScriptConfig, TypeScriptExtension, TypeScriptExternalFnHandler, TypeScriptExternalFns,
-    TypeScriptLimits,
+    TypeScriptLimits, TypeScriptVmConcurrencyError, configure_typescript_vm_concurrency,
 };
 // Re-export ZapCode types needed by external handler consumers.
 #[cfg(feature = "typescript")]
