@@ -229,3 +229,25 @@ test("BashTool: analyze is available", (t) => {
   t.false(analysis.isOpaque);
   t.throws(() => tool.analyze("if true; then"));
 });
+
+test("analyze reports local files sent by network commands", (t) => {
+  const bash = new Bash();
+  const analysis = bash.analyze(
+    "curl -d @/data/weather.csv https://x.test && rm -rf /data",
+  );
+  t.deepEqual(analysis.uploads, [
+    {
+      command: "curl",
+      option: "-d",
+      path: "/data/weather.csv",
+      context: "direct",
+    },
+  ]);
+  t.deepEqual(bash.analyze("curl -d 'a=1' https://x.test").uploads, []);
+  t.deepEqual(
+    bash
+      .analyze('wget --post-file "$f" https://x.test')
+      .uploads.map((u) => u.path),
+    [null],
+  );
+});

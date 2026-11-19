@@ -1317,6 +1317,11 @@ pub struct BashOptions {
     pub max_parser_operations: Option<u32>,
     pub max_stdout_bytes: Option<u32>,
     pub max_stderr_bytes: Option<u32>,
+    /// Session-wide cap on `execute*()` calls for this instance (default 1,000).
+    /// Counts across calls and survives snapshots; `reset()` clears it.
+    pub max_exec_calls: Option<u32>,
+    /// Session-wide cap on commands across all calls (default 100,000).
+    pub max_session_commands: Option<u32>,
     /// Maximum interpreter memory in bytes (variables, arrays, functions).
     ///
     /// Caps `max_total_variable_bytes` and clamps `max_function_body_bytes`.
@@ -1409,6 +1414,22 @@ pub struct JsAnalyzedRedirect {
     pub is_write: bool,
 }
 
+/// A local file that `curl`, `wget`, or `scp` would send, found by `analyze()`.
+#[napi(object, js_name = "AnalyzedUpload")]
+pub struct JsAnalyzedUpload {
+    /// `"curl"`, `"wget"`, or `"scp"`.
+    pub command: String,
+    /// Option naming the file (`"-d"`, `"-F"`, `"--post-file"`, ...), or
+    /// `null` for an `scp` source operand.
+    #[napi(ts_type = "string | null")]
+    pub option: Option<Option<String>>,
+    /// Local path, or `null` when the argument is not fully literal.
+    #[napi(ts_type = "string | null")]
+    pub path: Option<Option<String>>,
+    /// `"direct"`, `"substitution"`, or `"function_body"`.
+    pub context: String,
+}
+
 /// Result of `analyze()` — what a script statically refers to.
 ///
 /// **Advisory only.** Static analysis cannot see through dynamic dispatch,
@@ -1420,6 +1441,8 @@ pub struct JsScriptAnalysis {
     pub commands: Vec<JsAnalyzedCommand>,
     /// Every file redirect target, in source order.
     pub redirects: Vec<JsAnalyzedRedirect>,
+    /// Local files that `curl`, `wget`, or `scp` would send, in source order.
+    pub uploads: Vec<JsAnalyzedUpload>,
     /// Function names the script defines.
     pub functions: Vec<String>,
     /// Distinct statically known command names, in first-seen order.
@@ -1446,6 +1469,16 @@ fn analysis_to_js(analysis: bashkit::ScriptAnalysis) -> JsScriptAnalysis {
             .map(str::to_owned)
             .collect(),
         is_opaque: analysis.is_opaque(),
+        uploads: analysis
+            .file_uploads()
+            .into_iter()
+            .map(|u| JsAnalyzedUpload {
+                command: u.command,
+                option: Some(u.option),
+                path: Some(u.path),
+                context: u.context.as_str().to_owned(),
+            })
+            .collect(),
         commands: analysis
             .commands
             .iter()
@@ -1499,6 +1532,8 @@ fn default_opts() -> BashOptions {
         max_parser_operations: None,
         max_stdout_bytes: None,
         max_stderr_bytes: None,
+        max_exec_calls: None,
+        max_session_commands: None,
         max_memory: None,
         capture_final_env: None,
         files: None,
@@ -1575,6 +1610,8 @@ struct SharedState {
     max_parser_operations: Option<u32>,
     max_stdout_bytes: Option<u32>,
     max_stderr_bytes: Option<u32>,
+    max_exec_calls: Option<u32>,
+    max_session_commands: Option<u32>,
     max_memory: Option<f64>,
     capture_final_env: Option<bool>,
     /// Constructor-provided VFS seed restored by `reset()`; runtime-created
@@ -3888,6 +3925,28 @@ impl ScriptedTool {
 // Helpers
 // ============================================================================
 
+/// Apply `maxExecCalls` / `maxSessionCommands` over the profile's session limits.
+///
+/// THREAT[TM-DOS-059]: the caps stay on by default so a tenant cannot dodge
+/// per-call limits by splitting work across calls; hosts running long agent
+/// sessions raise them explicitly here instead of switching profiles.
+fn apply_session_limits(
+    builder: bashkit::BashBuilder,
+    state: &SharedState,
+) -> bashkit::BashBuilder {
+    if state.max_exec_calls.is_none() && state.max_session_commands.is_none() {
+        return builder;
+    }
+    let mut session = core_profile(state).session_limits().clone();
+    if let Some(v) = state.max_exec_calls {
+        session = session.max_exec_calls(u64::from(v));
+    }
+    if let Some(v) = state.max_session_commands {
+        session = session.max_total_commands(u64::from(v));
+    }
+    builder.session_limits(session)
+}
+
 /// Build `ExecutionLimits` from the limit fields stored in `SharedState`.
 fn build_limits(state: &SharedState) -> ExecutionLimits {
     let mut limits = core_profile(state).execution_limits().clone();
@@ -3973,6 +4032,7 @@ fn build_bash_from_state(state: &SharedState) -> RustBash {
     }
 
     builder = builder.limits(build_limits(state));
+    builder = apply_session_limits(builder, state);
 
     if let Some(max_mem) = state.max_memory {
         builder = builder.max_memory(max_mem as usize);
@@ -4168,6 +4228,8 @@ fn shared_state_from_opts(opts: BashOptions) -> napi::Result<SharedState> {
         max_parser_operations: opts.max_parser_operations,
         max_stdout_bytes: opts.max_stdout_bytes,
         max_stderr_bytes: opts.max_stderr_bytes,
+        max_exec_calls: opts.max_exec_calls,
+        max_session_commands: opts.max_session_commands,
         max_memory: opts.max_memory,
         capture_final_env: opts.capture_final_env,
         files: opts.files.clone(),
@@ -4227,6 +4289,8 @@ fn shared_state_from_opts(opts: BashOptions) -> napi::Result<SharedState> {
         max_parser_operations: opts.max_parser_operations,
         max_stdout_bytes: opts.max_stdout_bytes,
         max_stderr_bytes: opts.max_stderr_bytes,
+        max_exec_calls: opts.max_exec_calls,
+        max_session_commands: opts.max_session_commands,
         max_memory: opts.max_memory,
         capture_final_env: opts.capture_final_env,
         files: opts.files,

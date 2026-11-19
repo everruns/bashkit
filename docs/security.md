@@ -199,6 +199,14 @@ the sandbox. Key exclusions:
   Supported redirects apply to virtual file descriptors (`TM-ESC-005`).
 - **`trap`**: handles shell events and self-sent virtual signals. Nested handlers share the function/source/child-shell depth budget (hard ceiling 16) plus a dedicated trap-nesting cap of 3 that trips first on small stacks; recursive signal delivery past either limit is skipped with a diagnostic and the first trip fails the exec with a resource-limit error
 - **Real process spawning**: all subprocess commands stay within the virtual interpreter (`TM-ESC-015`)
+- **`sudo`** has no privilege boundary to cross: it runs its command as the one
+  sandbox user, so `sudo -u root id` still prints the sandbox uid and `sudo ls`
+  succeeds without granting anything (`TM-ESC-009`). An agent can read a
+  successful `sudo` as "it worked", which is true, but it never had more rights
+  than without it.
+- **`rm -r /`** refuses like GNU rm's default `--preserve-root` failsafe. `rm -rf
+  /*` empties the sandbox, as in real bash; snapshot first if an agent's files
+  matter ([snapshotting](./snapshotting.md)).
 
 These decisions are documented in [`knowledge/operations/limitations.md`](../knowledge/operations/limitations.md).
 

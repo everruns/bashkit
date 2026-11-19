@@ -231,9 +231,21 @@ export interface AnalyzedRedirect {
   readonly isWrite: boolean;
 }
 
+/** A local file that `curl`, `wget`, or `scp` would send. */
+export interface AnalyzedUpload {
+  readonly command: "curl" | "wget" | "scp";
+  /** Option naming the file, or `null` for an `scp` source operand. */
+  readonly option: string | null;
+  /** Local path, or `null` when the argument is not fully literal. */
+  readonly path: string | null;
+  readonly context: "direct" | "substitution" | "function_body";
+}
+
 export interface ScriptAnalysis {
   readonly commands: AnalyzedCommand[];
   readonly redirects: AnalyzedRedirect[];
+  /** Local files that `curl`, `wget`, or `scp` would send, in source order. */
+  readonly uploads: AnalyzedUpload[];
   readonly functions: string[];
   readonly commandNames: string[];
   readonly hasDynamicCommands: boolean;

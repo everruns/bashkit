@@ -765,10 +765,17 @@ pub enum LimitExceeded {
     #[error("parser fuel exhausted ({0} operations, max {1})")]
     ParserExhausted(usize, usize),
 
-    #[error("session command limit exceeded ({0} total commands)")]
+    // Decision: name the host knob in the message. The cap spans the whole
+    // Bash instance, so only the embedding host can lift it (new instance,
+    // reset, or a higher `SessionLimits`); the script cannot.
+    #[error(
+        "session command limit exceeded ({0} total commands); raise the session limit (host setting) or start a new session"
+    )]
     SessionMaxCommands(u64),
 
-    #[error("session exec() call limit exceeded ({0} calls)")]
+    #[error(
+        "session exec() call limit exceeded ({0} calls); raise the session limit (host setting) or start a new session"
+    )]
     SessionMaxExecCalls(u64),
 
     #[error("memory limit exceeded: {0}")]

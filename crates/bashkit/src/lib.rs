@@ -499,7 +499,8 @@ pub use execution::Execution;
 pub use stream::StreamData;
 
 pub use analysis::{
-    AnalyzedCommand, AnalyzedRedirect, CommandPlacement, RedirectMode, ScriptAnalysis,
+    AnalyzedCommand, AnalyzedRedirect, AnalyzedUpload, CommandPlacement, RedirectMode,
+    ScriptAnalysis,
 };
 pub use async_trait::async_trait;
 pub use builtins::git::GitConfig;

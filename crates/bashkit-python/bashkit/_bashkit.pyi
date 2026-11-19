@@ -527,6 +527,8 @@ class Bash:
         custom_builtins: Mapping[str, BuiltinCallback] | None = None,
         network: NetworkConfig | None = None,
         profile: ExecutionProfile = ExecutionProfile.Standard,
+        max_exec_calls: int | None = None,
+        max_session_commands: int | None = None,
     ) -> None:
         """Create a new Bash interpreter.
 
@@ -572,6 +574,12 @@ class Bash:
                 callbacks run on the caller's active asyncio loop for
                 ``await execute()`` and on a private loop for
                 ``execute_sync()``.
+            max_exec_calls: Session-wide cap on ``execute()`` calls (default
+                1,000). Counts across calls, so a tenant cannot dodge per-call
+                limits by splitting work; snapshots carry the count and
+                ``reset()`` clears it. Raise it for long agent sessions.
+            max_session_commands: Session-wide cap on commands across all
+                calls (default 100,000).
             network: Optional outbound HTTP / network configuration. Pass
                 ``{"allow": [...]}`` for an explicit allowlist or
                 ``{"allow_all": True}`` to allow every URL (mirrors
@@ -878,6 +886,8 @@ class Bash:
         custom_builtins: Mapping[str, BuiltinCallback] | None = None,
         network: NetworkConfig | None = None,
         profile: ExecutionProfile = ExecutionProfile.Standard,
+        max_exec_calls: int | None = None,
+        max_session_commands: int | None = None,
     ) -> Bash:
         """Create a new ``Bash`` from snapshot bytes and optional constructor kwargs."""
         ...
@@ -905,6 +915,8 @@ class Bash:
         custom_builtins: Mapping[str, BuiltinCallback] | None = None,
         network: NetworkConfig | None = None,
         profile: ExecutionProfile = ExecutionProfile.Standard,
+        max_exec_calls: int | None = None,
+        max_session_commands: int | None = None,
     ) -> Bash:
         """Create a new ``Bash`` from HMAC-protected snapshot bytes."""
         ...
@@ -1071,6 +1083,27 @@ class AnalyzedRedirect:
         """Return the redirect as a plain dictionary."""
         ...
 
+class AnalyzedUpload:
+    """A local file that ``curl``, ``wget``, or ``scp`` would send.
+
+    Covers ``curl -d @f`` / ``--data-binary @f`` / ``--json @f`` /
+    ``--data-urlencode name@f`` / ``-F k=@f`` / ``-T f``, ``wget
+    --post-file`` / ``--body-file``, and ``scp`` sources to a remote target.
+    Advisory: the network allowlist is what actually stops an upload.
+    """
+
+    command: str
+    option: str | None
+    """Option naming the file, or ``None`` for an ``scp`` source operand."""
+    path: str | None
+    """Local path, or ``None`` when the argument is not fully literal."""
+    context: str
+    """``"direct"``, ``"substitution"``, or ``"function_body"``."""
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the upload as a plain dictionary."""
+        ...
+
 class ScriptAnalysis:
     """Result of :meth:`Bash.analyze` — what a script statically refers to.
 
@@ -1090,6 +1123,8 @@ class ScriptAnalysis:
 
     commands: list[AnalyzedCommand]
     redirects: list[AnalyzedRedirect]
+    uploads: list[AnalyzedUpload]
+    """Local files that ``curl``, ``wget``, or ``scp`` would send."""
     functions: list[str]
     command_names: list[str]
     has_dynamic_commands: bool
@@ -1194,6 +1229,8 @@ class BashTool:
         external_handler: ExternalHandler | None = None,
         typescript_external_functions: list[str] | None = None,
         typescript_external_handler: TypeScriptExternalHandler | None = None,
+        max_exec_calls: int | None = None,
+        max_session_commands: int | None = None,
     ) -> None:
         """Create a new BashTool.
 
@@ -1225,6 +1262,12 @@ class BashTool:
                 either. Async callbacks run on the caller's active asyncio
                 loop for ``await execute()`` and on a private loop for
                 ``execute_sync()``.
+            max_exec_calls: Session-wide cap on ``execute()`` calls (default
+                1,000). Counts across calls, so a tenant cannot dodge per-call
+                limits by splitting work; snapshots carry the count and
+                ``reset()`` clears it. Raise it for long agent sessions.
+            max_session_commands: Session-wide cap on commands across all
+                calls (default 100,000).
             network: Optional outbound HTTP / network configuration. See
                 ``Bash.__init__`` for accepted keys. Preserved across
                 ``reset()`` and ``from_snapshot()``.
@@ -1553,6 +1596,8 @@ class BashTool:
         external_handler: ExternalHandler | None = None,
         typescript_external_functions: list[str] | None = None,
         typescript_external_handler: TypeScriptExternalHandler | None = None,
+        max_exec_calls: int | None = None,
+        max_session_commands: int | None = None,
     ) -> BashTool:
         """Create a new ``BashTool`` from snapshot bytes and optional constructor kwargs."""
         ...
@@ -1582,6 +1627,8 @@ class BashTool:
         external_handler: ExternalHandler | None = None,
         typescript_external_functions: list[str] | None = None,
         typescript_external_handler: TypeScriptExternalHandler | None = None,
+        max_exec_calls: int | None = None,
+        max_session_commands: int | None = None,
     ) -> BashTool:
         """Create a new ``BashTool`` from HMAC-protected snapshot bytes."""
         ...

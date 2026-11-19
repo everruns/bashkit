@@ -621,9 +621,22 @@ impl Bash {
                 })
             })
             .collect::<Vec<_>>();
+        let uploads = analysis
+            .file_uploads()
+            .into_iter()
+            .map(|upload| {
+                serde_json::json!({
+                    "command": upload.command,
+                    "option": upload.option,
+                    "path": upload.path,
+                    "context": upload.context.as_str(),
+                })
+            })
+            .collect::<Vec<_>>();
         let value = serde_json::json!({
             "commands": commands,
             "redirects": redirects,
+            "uploads": uploads,
             "functions": analysis.functions,
             "commandNames": analysis.command_names(),
             "hasDynamicCommands": analysis.has_dynamic_commands,
