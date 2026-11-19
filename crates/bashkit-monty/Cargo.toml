@@ -63,7 +63,16 @@ monty-macros = { version = "=1.5.0" }
 num-bigint = { version = "0.4", features = ["serde"] }
 num-integer = { version = "0.1" }
 num-traits = { version = "0.2" }
-postcard = { version = "1.1", features = ["alloc"] }
+# bashkit fork: upstream leaves postcard's default features on, and
+# `default = ["heapless-cas"]` is what pulls `heapless` 0.7 (and its
+# `atomic-polyfill`) into the graph. Nine unsoundness advisories landed
+# against heapless 0.7.17 on 2026-11-18 (RUSTSEC-2026-0574 through 0582) and
+# postcard 1.1.3, its newest release, still requires `heapless ^0.7`, so no
+# bump reaches the patched 0.9.4. Only `to_allocvec`, `from_bytes` and
+# `to_slice` are used here, all of which need `alloc` alone. Drop the marker
+# when upstream Monty turns postcard's default features off, or postcard
+# ships a release built on heapless >= 0.9.4.
+postcard = { version = "1.1", default-features = false, features = ["alloc"] }
 ruff_python_ast = { version = "0.0.14" }
 ruff_python_codegen = { version = "0.0.14" }
 ruff_python_parser = { version = "0.0.14" }

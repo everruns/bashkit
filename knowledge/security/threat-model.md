@@ -1894,7 +1894,6 @@ checks.
 | Advisory | Crate | Why suppressed | Remove when |
 |----------|-------|----------------|-------------|
 | RUSTSEC-2023-0071 | `rsa` | Marvin timing sidechannel (TM-CRY-002). No patched version exists; reachable only via the opt-in `ssh` feature | `rsa` ships a constant-time release |
-| RUSTSEC-2023-0089 | `atomic-polyfill` | Unmaintained, no known vulnerability; transitive via `monty` → `postcard` → `heapless` (pinned at 0.7, which still requires it) | Upstream drops the dependency |
 | GHSA-fc5q-39xc-vjpf | `picomatch` (npm) | ReDoS via a single repeated extglob branch (`+(*)`). The advisory covers `<= 4.0.7`, picomatch's whole release history, and lists no patched version. Build tooling only (`ava`, `@napi-rs/cli`, `vite`, `tinyglobby`, `astro`); every glob comes from repo config, not tenant input, and no published package resolves it | picomatch ships a release above 4.0.7 that patches it |
 
 A suppression that stops matching is not evidence that it can be dropped.
@@ -1905,6 +1904,14 @@ The advisory still carries `patched = []`, so the exposure is unchanged and
 matching resumes as soon as `rsa` ships a stable release. Before removing any
 entry above, verify the advisory's own patched release, dependency removal, or
 explicit upstream withdrawal rather than the scanner's silence.
+
+Retired: RUSTSEC-2023-0089 (`atomic-polyfill`), whose removal condition was
+upstream dropping the dependency. `postcard` gates `heapless` behind its
+`heapless-cas` default feature, and `heapless` 0.7 is what pulled in
+`atomic-polyfill`, so declaring `postcard` with `default-features = false`
+drops both from the graph. The crate is now absent from every discovered
+lockfile, which is dependency removal rather than scanner silence, so the
+entry was deleted instead of kept.
 
 Retired: [GHSA-vfj7-8cjw-p6xm](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm)
 (`braces`, npm), withdrawn by GitHub on 2026-10-23 at 12:53:02 UTC because it

@@ -154,9 +154,11 @@ What the 1.4.0 -> 1.5.0 re-sync (the first one) took, beyond that list:
 
 ### A fork dependency may be marked ahead of upstream
 
-A dependency's *version* may diverge when the fork's `Cargo.toml` line carries
-a `bashkit fork: <why>` marker, in the comment block directly above it or at
-the end of the line. What a marker does **not** cover:
+A dependency's *version* or its *feature selection* (including
+`default-features`) may diverge when the fork's `Cargo.toml` line carries a
+`bashkit fork: <why>` marker, in the comment block directly above it or at the
+end of the line. The check compares the whole dependency spec, so either kind
+of drift is markable. What a marker does **not** cover:
 
 - **Adding or dropping** a dependency. Re-sync cannot reconcile a crate
   upstream does not have.
@@ -192,7 +194,15 @@ every such bump unmergeable: #2860 (fancy-regex 0.17 -> 0.20, getrandom
 0.3 -> 0.4) is the shape, and it would have come back every week. Holding the
 fork at upstream's version instead put two majors of fancy-regex in the graph.
 
-`getrandom` and `jiter` are marked today. Taking a shared bump therefore
+`postcard` is marked for a different reason: not a shared-crate bump but a
+security one. Upstream Monty leaves its default features on, and postcard's
+`default = ["heapless-cas"]` exists only to pull in `heapless` 0.7, which
+collected nine unsoundness advisories on 2026-11-18 while postcard's newest
+release still required `heapless ^0.7`. Turning the default features off drops
+the unsound code out of the build instead of suppressing its advisories, and
+costs nothing here because only `alloc`-level postcard APIs are used.
+
+`getrandom`, `jiter` and `postcard` are marked today. Taking a shared bump therefore
 means moving the fork line too, marking it, and re-applying whatever source
 adaptation the new major needs. `fancy-regex` was marked until the 1.5.0
 re-sync: upstream Monty moved to 0.20 itself, so the fork no longer leads it

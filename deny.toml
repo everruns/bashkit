@@ -54,9 +54,6 @@ ignore = [
     # pre-release versions. Matching resumes the moment `rsa` ships a stable
     # release, so dropping the entry now would silently un-accept TM-CRY-002.
     "RUSTSEC-2023-0071",
-    # atomic-polyfill: transitive via monty -> postcard -> heapless
-    # Unmaintained but no security vulnerability; upstream dep we can't control
-    "RUSTSEC-2023-0089",
 ]
 
 [bans]
