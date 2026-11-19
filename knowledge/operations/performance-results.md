@@ -33,6 +33,8 @@ directories:
 
 Markdown files are the user-facing reports linked from `/benches`; JSON files
 are the aggregation input for benchmark and eval summaries.
+Save a new Criterion benchmark's first run as a baseline using
+`criterion-<bench>-<moniker>-<timestamp>.md` in the Criterion result directory.
 
 > `bashkit-eval` was reimplemented as a [mira](https://github.com/everruns/mira)
 > study (see [Evaluation Framework](eval.md)). `mira.toml` points mira's run
@@ -44,6 +46,8 @@ are the aggregation input for benchmark and eval summaries.
 > 7 days of the newest run), so they cannot drift from the results folder.
 
 ## Run Commands
+
+Run a single Criterion benchmark with `cargo bench -p bashkit --bench <name>`.
 
 Default benchmark recipes that represent a real run MUST save artifacts in the
 directories above: `just bench`, `just bench-parallel`, `just bench-sqlite`, `just bench-python`,

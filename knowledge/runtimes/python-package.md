@@ -542,8 +542,9 @@ which compares version coverage and ignores runner labels.
 
 ## Linting
 
-ruff (config in `crates/bashkit-python/pyproject.toml`; rules E/F/W/I/UP,
-target 3.9, line-length 120). Commands in `AGENTS.md` § Python.
+Run `just python-lint` for Ruff lint and format checks. Configuration lives in
+`crates/bashkit-python/pyproject.toml` (rules E/F/W/I/UP, Python 3.9 target,
+120-character lines).
 
 ## Local Development
 

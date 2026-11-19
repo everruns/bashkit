@@ -24,13 +24,38 @@ Multi-layer testing strategy:
 5. **Differential fuzzing** - Property-based testing against real bash
 
 For current test counts and pass rates, see CI (`spec_tests::bash_spec_tests`).
-For run commands, see AGENTS.md "Local Dev" and `.github/workflows/ci.yml`.
+
+## Local test commands
+
+`just pre-pr` runs `just check` and `cargo vet --locked`. Run `just test`
+separately for the HTTP-enabled workspace and single-threaded failpoint suites.
+The separate all-feature Clippy gate is documented in the [ship skill](../../.agents/skills/ship/SKILL.md).
+
+Run tests in feature slices as [CI](../../.github/workflows/ci.yml) does.
+A single `cargo test --all-features` run can exhaust runner memory by linking
+every interpreter at once. Failpoints use process-global state and require one
+test thread.
+
+```bash
+cargo test --workspace --lib --bins --tests --features http_client,ssh,sqlite
+cargo test --workspace --doc --features http_client,ssh,sqlite
+cargo test --features realfs -p bashkit --test realfs_tests -p bashkit-cli
+just test-failpoints
+cargo test --test proptest_security -- --test-threads=1
+cargo test --features ssh -p bashkit --test ssh_builtin_tests
+```
+
+Use [Python package validation](../runtimes/python-package.md#local-development)
+for the Python binding. Smoke-test the TypeScript callback example with
+`cargo run --example typescript_external_functions --features typescript`.
 
 ## Rust toolchain and consumer compatibility
 
 Development and build workflows pin Rust 1.100.0. The toolchain pin does not
 change the compiler selected by an application depending on Bashkit. Keep
 compiler upgrades separate from dependency or runtime upgrades.
+Bump `rust-toolchain.toml` and the matching `dtolnay/rust-toolchain` refs in
+the workflows together. Run `just check-workflow-parity` to check alignment.
 
 The required `msrv` CI job resolves a fresh external consumer on Rust 1.96.0,
 without borrowing this repository's Cargo.lock. It runs lean/default smoke

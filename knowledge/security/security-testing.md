@@ -185,6 +185,18 @@ spec, and add tests in `tests/security_failpoint_tests.rs`.
 3. **Document actions**: List all supported actions in code comments and this spec.
 4. **Test both paths**: Test that fail points affect behavior AND that normal operation works without them.
 
+## Builtin diagnostics and fuzzing
+
+For TM-INF-022, use `Display` or a domain formatter such as
+`format_compile_errors` in `builtins/jq/errors.rs`. Cap diagnostics at 1 KB.
+The builtin source scan rejects Debug formats. Test-only Debug formatting
+requires a per-line `// debug-ok: <reason>`.
+
+Add a `no_leak_*` regression test for each new library-wrapping builtin,
+using `bashkit::testing::assert_no_leak` with malformed input. Run fuzz
+cases through `bashkit::testing::fuzz_exec` so they check output invariants.
+See the [threat model](threat-model.md) and the `bashkit::testing` rustdoc.
+
 ## Filesystem Certification
 
 The backend-neutral helper in
