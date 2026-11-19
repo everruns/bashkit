@@ -751,11 +751,24 @@ fn curl_uploads(args: &[Option<String>], push: &mut impl FnMut(Option<&str>, Opt
             break;
         }
         if let Some(long) = arg.strip_prefix("--") {
-            if let Some(extract) = curl_long_upload(long) {
-                let value = args.get(i).map(|v| v.as_deref());
-                i += 1;
+            // Bashkit's curl also takes `--data=value` (real curl does not), so
+            // analysis follows the builtin: an `=value` is the inline value.
+            let (name, inline) = match long.split_once('=') {
+                Some((name, value)) => (name, Some(value)),
+                None => (long, None),
+            };
+            if let Some(extract) = curl_long_upload(name) {
+                let option = format!("--{name}");
+                let value = match inline {
+                    Some(v) => Some(Some(v)),
+                    None => {
+                        let v = args.get(i).map(|v| v.as_deref());
+                        i += 1;
+                        v
+                    }
+                };
                 if let Some(value) = value {
-                    record(push, arg, value, extract);
+                    record(push, &option, value, extract);
                 }
             }
             continue;
@@ -898,6 +911,20 @@ mod tests {
                 up("curl", Some("--data-urlencode"), Some("c")),
             ]
         );
+    }
+
+    #[test]
+    fn curl_long_equals_value_is_an_upload() {
+        assert_eq!(
+            uploads("curl --data-binary=@/f --form=x=@/g --upload-file=/h https://x.test"),
+            vec![
+                up("curl", Some("--data-binary"), Some("/f")),
+                up("curl", Some("--form"), Some("/g")),
+                up("curl", Some("--upload-file"), Some("/h")),
+            ]
+        );
+        // The inline value does not swallow the next argument.
+        assert!(uploads("curl --data=a=1 @/not-data https://x.test").is_empty());
     }
 
     #[test]

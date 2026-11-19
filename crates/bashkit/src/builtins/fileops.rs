@@ -128,7 +128,7 @@ impl Builtin for Rm {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
         if let Some(r) = super::check_help_version(
             ctx.args,
-            "Usage: rm [OPTION]... [FILE]...\nRemove (unlink) the FILE(s).\n\n  -f\t\tignore nonexistent files and arguments, never prompt\n  -r, -R\tremove directories and their contents recursively\n      --help\tdisplay this help and exit\n      --version\toutput version information and exit\n",
+            "Usage: rm [OPTION]... [FILE]...\nRemove (unlink) the FILE(s).\n\n  -f\t\tignore nonexistent files and arguments, never prompt\n  -r, -R\tremove directories and their contents recursively\n      --no-preserve-root\tdo not treat '/' specially\n      --preserve-root\tdo not remove '/' (default)\n      --help\tdisplay this help and exit\n      --version\toutput version information and exit\n",
             Some("rm (bashkit) 0.1"),
         ) {
             return Ok(r);
