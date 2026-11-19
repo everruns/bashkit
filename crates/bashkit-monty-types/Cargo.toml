@@ -51,7 +51,7 @@ unicode-general-category = { version = "1" }
 web-time = { version = "1.1" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-nix = { version = "0.32", features = ["fs", "time"], optional = true }
+nix = { version = "0.32", features = ["fs", "time"], optional = true } # bashkit fork: follow nix 0.32 (upstream monty-types 1.5.0 pins 0.31); only ClockId/time use, unaffected by accept/vmsplice breaking changes
 
 [features]
 cpu-clock = ["dep:nix"]
