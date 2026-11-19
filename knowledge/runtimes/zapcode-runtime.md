@@ -66,6 +66,11 @@ Configurable via `TypeScriptLimits`:
 | Max stack depth | 512 | `.max_stack_depth(n)` | Prevent stack overflow |
 | Max allocations | 1,000,000 | `.max_allocations(n)` | Bound VM allocation count |
 
+Native process-wide VM concurrency defaults to available CPU parallelism
+capped at four. `configure_typescript_vm_concurrency(n)` changes it once before
+the first run; this is aggregate host admission, separate from per-run
+`TypeScriptLimits`.
+
 `max_allocations` counts VM stack pushes and array/object creations, and the
 counter never decreases within a run (`zapcode_vendor/sandbox.rs`,
 `track_allocation`), so it is a per-run budget of operations rather than a live
@@ -245,9 +250,26 @@ Decision (2026-11-10, TM-TS-027): ZapCode restarts its time tracker at every
 resume, so `max_duration` alone bounded one VM step, not the run. The host-call
 loop in `typescript.rs` checks a wall-clock deadline (run start plus
 `max_duration`) before every host call, caps the call itself at the remaining
-time, and yields to the executor, so caller-side timeouts can cancel a run and
-co-tenants on the worker thread keep running. A single VM step can still run
-up to `max_duration`, so a run ends within about twice the limit.
+time, and yields to the executor.
+
+Decision (2026-11-19, TM-TS-028): every native VM step runs on a dedicated
+128 MiB-stack thread, but thread creation and join run inside Tokio's managed
+blocking pool rather than on an async worker. A process-wide semaphore admits
+at most the host's available parallelism, capped at four by default. Hosts can
+call `configure_typescript_vm_concurrency` once before the first TypeScript
+execution to choose a different cap. Admission is asynchronous and its wait
+consumes the run's wall-clock deadline; a request that cannot enter before its
+deadline exits 124 without starting another VM thread. The caller also stops
+waiting at the same deadline if an admitted step is still running. That
+abandoned native step retains its semaphore permit until its ZapCode limit
+ends it, so simultaneous CPU work and 128 MiB stack reservations stay capped.
+
+This removes TypeScript VM work and joins from shared Tokio workers: unrelated
+timers and tenants keep being polled during a pure `while (true) {}` step on
+both current-thread and saturated multi-thread runtimes. It does not hard-
+partition CPU; admitted VM threads can consume their configured cores until
+their per-run limits fire. wasm32 has no threads or blocking pool and still
+runs a VM step synchronously on the caller's JavaScript event loop.
 
 `tests/integration/ts_tenant_stress_tests.rs` mixes hostile `ts` tenants
 (memory doubling, shared-string amplification, spin, recursion, abandoned
@@ -256,6 +278,12 @@ must hit only its own limit. It runs 3 rounds on every PR;
 `BASHKIT_STRESS_ROUNDS` sets a longer soak. Each host call snapshots the VM
 heap, so a held 8 MiB string costs about 3x that during the call and counts
 against `max_memory`.
+
+The same suite proves 20 ms unrelated timers progress while pure CPU loops
+fill a current-thread or every multi-thread Tokio worker. The unit admission
+fixture starts eight blocking steps against a two-slot controller and proves
+only two native threads start while all queued callers expire within their
+own deadlines.
 
 Decision (2026-11-11): the spin tenant asserts only that it stopped on one of
 its own limits, because `max_allocations` and `max_duration` race and the

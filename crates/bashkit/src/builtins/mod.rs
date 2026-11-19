@@ -316,7 +316,7 @@ pub use python::{Python, PythonExternalFnHandler, PythonExternalFns, PythonLimit
 #[cfg(feature = "typescript")]
 pub use typescript::{
     TypeScriptConfig, TypeScriptExtension, TypeScriptExternalFnHandler, TypeScriptExternalFns,
-    TypeScriptLimits,
+    TypeScriptLimits, TypeScriptVmConcurrencyError, configure_typescript_vm_concurrency,
 };
 
 #[cfg(feature = "sqlite")]

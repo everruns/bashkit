@@ -60,6 +60,7 @@ through configurable limits.
 | Unicode path attacks (TM-DOS-015) | RTL override in filename | `validate_path()` rejects control/bidi chars | MITIGATED |
 | TOCTOU append (TM-DOS-034) | Concurrent appends bypass limits | Single write lock | **FIXED** |
 | OverlayFs upper-only check (TM-DOS-035) | `check_write_limits()` ignores lower layer | Combined limit accounting | **MITIGATED** |
+| DEBUG trap recursive amplification (TM-DOS-145) | Commands in a DEBUG/ERR trap recursively trigger traps | Suppress trap re-entry with the per-interpreter `in_trap` guard | **FIXED** |
 | OverlayFs double-count (TM-DOS-036) | `compute_usage()` counts overwritten files | Subtract overrides | **MITIGATED** |
 | OverlayFs chmod CoW bypass (TM-DOS-037) | chmod writes to unlimited upper | Route through `check_write_limits()` | **MITIGATED** |
 | OverlayFs incomplete whiteout (TM-DOS-038) | `rm -r` misses lower children | Check ancestor whiteouts | **MITIGATED** |
@@ -204,6 +205,7 @@ handling, including discarded output. Stdout cached text shares that budget
 | jq unbounded generator (TM-DOS-093) | `jq -n 'repeat(1)'` / `range(0;1e18)` | Cap output at `max_stdout_bytes`; poll deadline every 4096 values | FIXED |
 | Persistent history memory DoS (TM-DOS-094) | Unbounded command history in long-lived instances | `ExecutionLimits` caps history entries/bytes/output | FIXED |
 | Multi-component glob amplification (TM-DOS-095) | `/*/*/*/*` multiplies the candidate set at each component | Reject patterns deeper than `max_path_depth`; cap live candidates at `max_file_count` | FIXED |
+| CLI host-stdin memory ingestion (TM-DOS-146) | An unbounded producer grows one-shot CLI stdin before execution | Read at most `MAX_STDIN_BYTES + 1`; reject over-cap input; `--no-stdin` opts out | FIXED |
 | Aggregate budget refresh (TM-DOS-096) | Nest/mix parsers, pipelines, traversal, runtimes, archives, and callbacks to restart local ceilings | One poisoned request-scoped `ExecutionBudget` meters aggregate work/input/live bytes without replacing subsystem caps | MITIGATED |
 | Tilde expansion amplification (TM-DOS-134) | Large `HOME`/`PWD`/`OLDPWD` repeated after assignment colons | Borrowed directories, checked pre-allocation live-byte reservations, byte-proportional work/deadline checks, and leases retained through assignment/field consumption; failures abort expansion | MITIGATED |
 | Contradictory execution-profile limits (TM-DOS-097) | Host config silently requests ineffective or impossible limits | Validate profile cross-field invariants before `BashBuilder` accepts it | MITIGATED |
@@ -420,6 +422,7 @@ Network access is disabled by default. When enabled, strict controls apply.
 | Embedded CLI egress bypass (TM-NET-030) | `fetchkit fetch`/`markkit extract URL` follow a redirect off the allowlist or read host proxy env | Both builtins send every hop through the sandbox HTTP client (allowlist re-checked per hop); no own TLS stack; `--allow-env-proxy` refused | MITIGATED |
 | Host header steers credentials (TM-NET-031) | `curl -H 'Host: other'` to an approved IP | Caller Host/framing/proxy headers are dropped before credential injection | MITIGATED |
 | Encoded slash escapes path rule (TM-NET-032) | `/v1/..%2Fadmin` against a `/v1/` rule | Path-scoped rules refuse `%2F`/`%5C` | MITIGATED |
+| Host proxy leakage (TM-NET-033) | `HTTP_PROXY` routes sandbox traffic through host infrastructure | The built-in client uses `.no_proxy()` and ignores host proxy variables | MITIGATED |
 
 **Credential Injection (TM-NET-024–027):**
 
@@ -552,7 +555,7 @@ echo $user_input
 |--------|---------------|------------|--------|
 | Shared filesystem (TM-ISO-001) | Access other tenant files | Separate Bash instances | MITIGATED |
 | Shared memory (TM-ISO-002) | Read other tenant data | Rust memory safety | MITIGATED |
-| Resource starvation (TM-ISO-003) | One tenant exhausts limits | Per-instance limits | MITIGATED |
+| Aggregate resource starvation (TM-ISO-003) | Concurrent tenants exhaust shared workers, VM threads, CPU, or memory | TypeScript has process-wide asynchronous admission (TM-TS-028); per-instance limits contain each request. CPU-bound Python still holds one shared worker (TM-PY-039), and same-process CPU/memory are not hard-isolated | PARTIAL |
 | Cross-tenant jq env (TM-ISO-004) | `std::env::set_var()` in jq | Custom jaq context variable | **FIXED** |
 | Cumulative counter bypass (TM-ISO-005) | Repeated `exec()` resets counters | Session-level counters | **MITIGATED** |
 | Memory budget exhaustion (TM-ISO-006) | Unbounded variable/array growth | Per-instance MemoryLimits | **MITIGATED** |
@@ -747,7 +750,7 @@ Python `pathlib.Path` and `open()` operations are bridged to Bashkit's virtual f
 | Host-call loop outruns the time limit (TM-PY-036) | `while True:` around a cheap file write; Monty's clock pauses on host calls and the VM never yields the thread | Wall-clock deadline and an executor yield at every host call | MITIGATED |
 | Shared-graph walk outlives time limit (TM-PY-037) | `x = [x, x]` repeated, then `repr` or `==` inside Python | Forked tracker counts every amortized check on one tick, so recursive walks still check time | MITIGATED |
 | Huge `json.dumps` indent (TM-PY-038) | `json.dumps(x, indent=10**12)` or a huge separator inside Python | Indent size and every separator/indent write are checked against the memory limit (`MemoryError`) | MITIGATED |
-| CPU-bound run holds a shared worker thread (TM-PY-039) | `while True: pass` or `for (;;) {}` with no host calls; the run yields only at host calls | Per-run cap (profile 30 s, Hardened 10 s; Python bindings: `timeout_seconds`) plus the execution deadline. Hosts that raise `timeout_seconds` accept a longer hold | ACCEPTED |
+| CPU-bound Python run holds a shared worker thread (TM-PY-039) | `while True: pass` with no host calls; the run yields only at host calls | Per-run cap (profile 30 s, Hardened 10 s; Python bindings: `timeout_seconds`) plus the execution deadline. Hosts that raise `timeout_seconds` accept a longer hold. TypeScript uses separate native admission (TM-TS-028) | ACCEPTED |
 
 **Architecture:**
 
@@ -895,9 +898,10 @@ access is bridged through Bashkit's VFS, never the host filesystem.
 | Huge `padStart`/`padEnd` aborts the host (TM-TS-025) | `'a'.padStart(2**40)` asks the allocator for ~1 TiB | Vendored ZapCode caps the target length at 10,000,000, like `repeat`; the run fails cleanly | MITIGATED |
 | Memory growth past `max_memory` aborts the host (TM-TS-026) | Doubling a string or array, or joining/printing an array that shares one big string, until an allocation fails | A per-run meter stops the script once its heap passes `max_memory`; output-amplifying builtins size the result first; `ts` refuses to run without `MeteredAllocator` | MITIGATED |
 | Host-call loop outruns the time limit (TM-TS-027) | `while (true) { await writeFile(...) }` resumes ZapCode's clock at every call | Wall-clock deadline checked at every host call; callbacks capped at the remaining time; the loop yields to the executor | MITIGATED |
+| CPU-only VM step starves async workers (TM-TS-028) | Concurrent `while (true) {}` steps synchronously join dedicated 128 MiB-stack threads from Tokio workers | Run and join on the blocking pool; process-wide active-VM semaphore (default at most 4, configurable before first use); queue wait consumes the caller deadline and abandoned work retains its permit | MITIGATED |
 | Bash var expansion injection (TM-TS-020) | Unquoted `$VAR` expanded before TS runs | By design; use single quotes to prevent expansion | MITIGATED |
 
-Per-threat coverage (TM-TS-001 … TM-TS-027), including error-isolation and
+Per-threat coverage (TM-TS-001 … TM-TS-028), including error-isolation and
 exit-code propagation cases, is also exercised by the `threat_ts_*` tests.
 
 ### Request Signing & Snapshot Integrity (TM-CRY-*, TM-SNAP-*)

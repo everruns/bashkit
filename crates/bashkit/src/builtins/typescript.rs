@@ -22,6 +22,8 @@ use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::OnceLock;
 use std::time::Duration;
 use zapcode_core::{ResourceLimits, RunResult, Value, VmState, ZapcodeRun};
 
@@ -51,6 +53,118 @@ const TS_CALL_WORK_UNITS: u64 = 4096;
 /// gives 4x). The memory is reserved, not committed, until used.
 #[cfg(not(target_arch = "wasm32"))]
 const TS_VM_STACK_BYTES: usize = 128 * 1024 * 1024;
+
+/// Upper bound used when the host does not configure TypeScript VM admission.
+/// Four active 128 MiB stack reservations are a deliberate process-wide cap,
+/// while smaller hosts default to their available CPU parallelism.
+#[cfg(not(target_arch = "wasm32"))]
+const DEFAULT_MAX_ACTIVE_TS_VMS: usize = 4;
+
+/// Error returned by [`configure_typescript_vm_concurrency`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TypeScriptVmConcurrencyError {
+    /// At least one VM slot is required.
+    Zero,
+    /// Tokio cannot represent this many semaphore permits.
+    TooLarge { requested: usize, maximum: usize },
+    /// TypeScript has already initialized the process-wide admission limit.
+    AlreadyInitialized { active_limit: usize },
+}
+
+impl std::fmt::Display for TypeScriptVmConcurrencyError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Zero => f.write_str("TypeScript VM concurrency must be at least 1"),
+            Self::TooLarge { requested, maximum } => write!(
+                f,
+                "TypeScript VM concurrency {requested} exceeds the maximum {maximum}"
+            ),
+            Self::AlreadyInitialized { active_limit } => write!(
+                f,
+                "TypeScript VM concurrency is already initialized at {active_limit}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for TypeScriptVmConcurrencyError {}
+
+/// Configure the process-wide number of active native TypeScript VM steps.
+///
+/// Call this once, before the first TypeScript execution. Excess steps wait
+/// asynchronously and their wait time consumes their own runtime deadline.
+/// The default is the host's available parallelism, capped at four. The cap
+/// bounds simultaneous 128 MiB native stack reservations across all `Bash`
+/// instances in the process.
+///
+/// wasm32 has no native VM threads; a positive value is accepted as a no-op.
+pub fn configure_typescript_vm_concurrency(
+    max_active: usize,
+) -> std::result::Result<(), TypeScriptVmConcurrencyError> {
+    if max_active == 0 {
+        return Err(TypeScriptVmConcurrencyError::Zero);
+    }
+    if max_active > tokio::sync::Semaphore::MAX_PERMITS {
+        return Err(TypeScriptVmConcurrencyError::TooLarge {
+            requested: max_active,
+            maximum: tokio::sync::Semaphore::MAX_PERMITS,
+        });
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        TS_VM_ADMISSION
+            .set(VmAdmission::new(max_active))
+            .map_err(|_| TypeScriptVmConcurrencyError::AlreadyInitialized {
+                active_limit: vm_admission().limit,
+            })?;
+    }
+    Ok(())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Clone)]
+struct VmAdmission {
+    semaphore: Arc<tokio::sync::Semaphore>,
+    limit: usize,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl VmAdmission {
+    fn new(limit: usize) -> Self {
+        Self {
+            semaphore: Arc::new(tokio::sync::Semaphore::new(limit)),
+            limit,
+        }
+    }
+
+    async fn acquire(
+        &self,
+        deadline: Option<Instant>,
+    ) -> Option<tokio::sync::OwnedSemaphorePermit> {
+        let acquire = Arc::clone(&self.semaphore).acquire_owned();
+        match deadline {
+            Some(deadline) => {
+                let remaining = deadline.checked_duration_since(Instant::now())?;
+                crate::time_compat::timeout(remaining, acquire)
+                    .await
+                    .ok()?
+                    .ok()
+            }
+            None => acquire.await.ok(),
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+static TS_VM_ADMISSION: OnceLock<VmAdmission> = OnceLock::new();
+
+#[cfg(not(target_arch = "wasm32"))]
+fn vm_admission() -> &'static VmAdmission {
+    TS_VM_ADMISSION.get_or_init(|| {
+        let parallelism = std::thread::available_parallelism().map_or(1, usize::from);
+        VmAdmission::new(parallelism.min(DEFAULT_MAX_ACTIVE_TS_VMS))
+    })
+}
 
 /// Resource limits for the embedded TypeScript (ZapCode) interpreter.
 ///
@@ -914,7 +1028,9 @@ async fn run_typescript(
     if !crate::vm_meter::allocator_installed() {
         return Ok(ExecResult::err(METER_MISSING_ERROR.to_string(), 1));
     }
-    let meter = crate::vm_meter::VmMeter::with_limit(ts_limits.common.max_memory);
+    let meter = Arc::new(crate::vm_meter::VmMeter::with_limit(
+        ts_limits.common.max_memory,
+    ));
 
     let started = Instant::now();
     // Important security decision (TM-TS-027): ZapCode's clock restarts at
@@ -935,12 +1051,23 @@ async fn run_typescript(
         }
     };
 
-    let result = on_vm_stack(&meter, || runner.run(Vec::new()));
+    let result = run_vm_step(Arc::clone(&meter), deadline, move || runner.run(Vec::new())).await;
     charge_vm_time(execution_budget.as_ref(), started)?;
     let result = match result {
-        Some(Ok(r)) => r,
-        Some(Err(e)) => return Ok(format_error_with_output(e, "", time_limit)),
-        None => return Ok(ExecResult::err(VM_THREAD_ERROR.to_string(), 1)),
+        VmStepResult::Complete(Ok(r)) => r,
+        VmStepResult::Complete(Err(e)) => {
+            return Ok(format_error_with_output(e, "", time_limit));
+        }
+        VmStepResult::TimedOut => {
+            return Ok(format_error_with_output(
+                zapcode_core::ZapcodeError::TimeLimitExceeded,
+                "",
+                time_limit,
+            ));
+        }
+        VmStepResult::ThreadUnavailable => {
+            return Ok(ExecResult::err(VM_THREAD_ERROR.to_string(), 1));
+        }
     };
 
     // Process the result through the suspend/resume loop for VFS bridging
@@ -967,15 +1094,77 @@ const VM_THREAD_ERROR: &str = "ts: cannot start execution thread\n";
 const METER_MISSING_ERROR: &str =
     "ts: TypeScript memory limits need bashkit::MeteredAllocator as the global allocator\n";
 
-/// Run one synchronous ZapCode step (parse/compile/run, or a resume) inside
-/// `meter`'s window. Off wasm this runs on a dedicated thread with a
-/// [`TS_VM_STACK_BYTES`] stack; see that constant. `None` means no thread
-/// could be started: the caller fails the command rather than running
-/// accepted-depth source on a small stack.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+enum VmStepResult<T> {
+    Complete(T),
+    TimedOut,
+    ThreadUnavailable,
+}
+
+/// Run one synchronous ZapCode step without blocking a Tokio worker.
+///
+/// Native callers first wait asynchronously for the process-wide admission
+/// slot, then move the blocking thread creation/join onto Tokio's managed
+/// blocking pool. The permit lives inside that blocking task, so a caller
+/// whose deadline expires cannot release the slot while its abandoned VM
+/// thread is still winding down.
 #[cfg(not(target_arch = "wasm32"))]
-fn on_vm_stack<T: Send>(
+async fn run_vm_step<T: Send + 'static>(
+    meter: Arc<crate::vm_meter::VmMeter>,
+    deadline: Option<Instant>,
+    step: impl FnOnce() -> T + Send + 'static,
+) -> VmStepResult<T> {
+    run_vm_step_with_admission(vm_admission().clone(), meter, deadline, step).await
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+async fn run_vm_step_with_admission<T: Send + 'static>(
+    admission: VmAdmission,
+    meter: Arc<crate::vm_meter::VmMeter>,
+    deadline: Option<Instant>,
+    step: impl FnOnce() -> T + Send + 'static,
+) -> VmStepResult<T> {
+    let Some(permit) = admission.acquire(deadline).await else {
+        return VmStepResult::TimedOut;
+    };
+    let task = tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        // The blocking pool has its own queue after semaphore admission. Do
+        // not start a stale VM if that queue consumed the caller's deadline.
+        if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+            return VmStepResult::TimedOut;
+        }
+        match on_vm_stack(&meter, step) {
+            Some(result) => VmStepResult::Complete(result),
+            None => VmStepResult::ThreadUnavailable,
+        }
+    });
+    let joined = match deadline {
+        Some(deadline) => {
+            let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+                return VmStepResult::TimedOut;
+            };
+            match crate::time_compat::timeout(remaining, task).await {
+                Ok(joined) => joined,
+                Err(_) => return VmStepResult::TimedOut,
+            }
+        }
+        None => task.await,
+    };
+    match joined {
+        Ok(result) => result,
+        Err(error) if error.is_panic() => std::panic::resume_unwind(error.into_panic()),
+        Err(_) => VmStepResult::ThreadUnavailable,
+    }
+}
+
+/// Run one synchronous ZapCode step (parse/compile/run, or a resume) inside
+/// `meter`'s window on a dedicated [`TS_VM_STACK_BYTES`] stack. `None` means
+/// no thread could be started.
+#[cfg(not(target_arch = "wasm32"))]
+fn on_vm_stack<T: Send + 'static>(
     meter: &crate::vm_meter::VmMeter,
-    step: impl FnOnce() -> T + Send,
+    step: impl FnOnce() -> T + Send + 'static,
 ) -> Option<T> {
     std::thread::scope(|scope| {
         let handle = std::thread::Builder::new()
@@ -996,9 +1185,13 @@ fn on_vm_stack<T: Send>(
 /// wasm32 has no threads: run on the current stack. The nesting cap still
 /// applies; see the zapcode-runtime knowledge page for the residual risk.
 #[cfg(target_arch = "wasm32")]
-fn on_vm_stack<T>(meter: &crate::vm_meter::VmMeter, step: impl FnOnce() -> T) -> Option<T> {
-    let _window = crate::vm_meter::VmWindow::enter(meter);
-    Some(step())
+async fn run_vm_step<T>(
+    meter: Arc<crate::vm_meter::VmMeter>,
+    _deadline: Option<Instant>,
+    step: impl FnOnce() -> T,
+) -> VmStepResult<T> {
+    let _window = crate::vm_meter::VmWindow::enter(&meter);
+    VmStepResult::Complete(step())
 }
 
 /// Charge the wall-clock time a synchronous VM step ran to the shared work
@@ -1026,7 +1219,7 @@ async fn process_vm_result(
     external_fns: Option<&TypeScriptExternalFns>,
     execution_budget: Option<&crate::limits::ExecutionBudget>,
     clock: RunClock,
-    meter: &crate::vm_meter::VmMeter,
+    meter: &Arc<crate::vm_meter::VmMeter>,
 ) -> Result<ExecResult> {
     let RunClock {
         limit: time_limit,
@@ -1108,14 +1301,24 @@ async fn process_vm_result(
                 };
 
                 let started = Instant::now();
-                let resumed = on_vm_stack(meter, move || snapshot.resume(return_value));
+                let resumed = run_vm_step(Arc::clone(meter), deadline, move || {
+                    snapshot.resume(return_value)
+                })
+                .await;
                 charge_vm_time(execution_budget, started)?;
                 state = match resumed {
-                    Some(Ok(s)) => s,
-                    Some(Err(e)) => {
+                    VmStepResult::Complete(Ok(s)) => s,
+                    VmStepResult::Complete(Err(e)) => {
                         return Ok(format_error_with_output(e, &stdout, time_limit));
                     }
-                    None => {
+                    VmStepResult::TimedOut => {
+                        return Ok(format_error_with_output(
+                            zapcode_core::ZapcodeError::TimeLimitExceeded,
+                            &stdout,
+                            time_limit,
+                        ));
+                    }
+                    VmStepResult::ThreadUnavailable => {
                         let mut result = ExecResult::err(VM_THREAD_ERROR.to_string(), 1);
                         result.stdout = stdout.into();
                         return Ok(result);
@@ -1702,6 +1905,57 @@ mod tests {
         assert!(!config.enable_compat_aliases);
         assert!(!config.enable_unsupported_mode_hint);
         assert_eq!(config.limits.common.max_duration, Duration::from_secs(5));
+    }
+
+    #[test]
+    fn vm_concurrency_rejects_zero() {
+        assert_eq!(
+            configure_typescript_vm_concurrency(0),
+            Err(TypeScriptVmConcurrencyError::Zero)
+        );
+        assert!(matches!(
+            configure_typescript_vm_concurrency(usize::MAX),
+            Err(TypeScriptVmConcurrencyError::TooLarge { .. })
+        ));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn vm_admission_caps_active_threads_and_times_out_queued_steps() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let admission = VmAdmission::new(2);
+        let active = Arc::new(AtomicUsize::new(0));
+        let maximum = Arc::new(AtomicUsize::new(0));
+        let started = Arc::new(AtomicUsize::new(0));
+        let mut calls = Vec::new();
+
+        for _ in 0..8 {
+            let admission = admission.clone();
+            let active = Arc::clone(&active);
+            let maximum = Arc::clone(&maximum);
+            let started = Arc::clone(&started);
+            calls.push(tokio::spawn(async move {
+                let meter = Arc::new(crate::vm_meter::VmMeter::with_limit(1024));
+                let deadline = Instant::now().checked_add(Duration::from_millis(100));
+                run_vm_step_with_admission(admission, meter, deadline, move || {
+                    started.fetch_add(1, Ordering::SeqCst);
+                    let now = active.fetch_add(1, Ordering::SeqCst) + 1;
+                    maximum.fetch_max(now, Ordering::SeqCst);
+                    std::thread::sleep(Duration::from_millis(200));
+                    active.fetch_sub(1, Ordering::SeqCst);
+                })
+                .await
+            }));
+        }
+
+        for call in calls {
+            assert!(matches!(call.await.unwrap(), VmStepResult::TimedOut));
+        }
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        assert_eq!(started.load(Ordering::SeqCst), 2);
+        assert_eq!(maximum.load(Ordering::SeqCst), 2);
+        assert_eq!(active.load(Ordering::SeqCst), 0);
     }
 
     // --- Unsupported mode hint tests ---

@@ -79,7 +79,7 @@ is sent. Hosts refuse unknown future host features too (fail closed).
 | Flag | Why |
 |---|---|
 | markkit `--ocr` (+ `--ocr-*`) | runs a host Tesseract binary, reads host model files |
-| fetchkit `--allow-env-proxy` | host proxy env (TM-NET-015) |
+| fetchkit `--allow-env-proxy` | host proxy env (TM-NET-033) |
 | fetchkit `--render-rakers` | embedded QuickJS engine; decided never in the sandbox |
 | fetchkit `--bot-auth-key` / `--bot-auth-agent` | bashkit signs in `HttpClient`; a key in argv double-signs and lands in history |
 | fetchkit `--allow-remote-conversion` | uploads documents to a third party |

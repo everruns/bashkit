@@ -1971,7 +1971,7 @@ pub struct Interpreter {
     /// Interceptor hooks registry (shared with Bash callers).
     hooks: Arc<crate::hooks::Hooks>,
     /// True while executing a trap handler. Suppresses recursive DEBUG trap
-    /// invocation to prevent amplification attacks (TM-DOS-035).
+    /// invocation to prevent amplification attacks (TM-DOS-145).
     in_trap: bool,
     /// Nesting level of `run_trap_command` entries (TM-DOS-020).
     trap_nesting: usize,
@@ -3162,7 +3162,7 @@ impl Interpreter {
         self.nofork_now = false;
         self.traps_mut().clear();
         self.last_exit_code = 0;
-        // THREAT[TM-DOS-035/057]: A timeout can drop execution while a trap
+        // THREAT[TM-DOS-145/057]: A timeout can drop execution while a trap
         // handler is awaited; clear the re-entrancy guard before each exec so
         // one cancelled script cannot suppress traps in the next script.
         self.in_trap = false;
@@ -14883,7 +14883,7 @@ impl Interpreter {
     }
 
     /// The DEBUG handler to run before the next command, if any: not
-    /// inside another trap handler (TM-DOS-035), nor in a `( )` / `$( )`
+    /// inside another trap handler (TM-DOS-145), nor in a `( )` / `$( )`
     /// subshell or function body that does not inherit it.
     fn has_debug_trap(&self) -> bool {
         !self.in_trap && !self.debug_trap_dormant && self.scoped.traps.contains_key("DEBUG")
@@ -15107,7 +15107,7 @@ impl Interpreter {
         stdout: &mut crate::StreamData,
         stderr: &mut crate::StreamData,
     ) {
-        // THREAT[TM-DOS-035]: Suppress ERR trap re-entrancy while executing trap
+        // THREAT[TM-DOS-145]: Suppress ERR trap re-entrancy while executing trap
         // handlers to prevent recursive ERR -> ERR amplification.
         if self.in_trap {
             return;
@@ -18150,7 +18150,7 @@ echo "count=$COUNT"
 
     #[tokio::test]
     async fn test_debug_trap_no_recursive_amplification() {
-        // THREAT[TM-DOS-035]: Commands inside the DEBUG trap handler must NOT
+        // THREAT[TM-DOS-145]: Commands inside the DEBUG trap handler must NOT
         // trigger further DEBUG trap invocations (prevents N*M amplification).
         let result = run_script(
             r#"trap_count=0; trap '((trap_count++))' DEBUG; echo a; echo b; echo c; trap - DEBUG; echo $trap_count"#,
