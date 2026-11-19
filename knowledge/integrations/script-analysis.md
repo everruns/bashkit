@@ -155,6 +155,29 @@ values remain `direct`, `substitution` and `function_body`.
 duplications (`2>&1`), here-documents, and here-strings are not file targets and
 are omitted.
 
+### `AnalyzedUpload` (`ScriptAnalysis::file_uploads()`, bindings: `uploads`)
+
+| Field | Type | Meaning |
+|---|---|---|
+| `command` | `string` | `curl`, `wget`, or `scp` |
+| `option` | `string \| null` | Flag naming the file (`-d`, `-F`, `-T`, `--post-file`, ...); `null` for an `scp` source operand |
+| `path` | `string \| null` | Local file if fully literal, else `null` |
+| `context` | `CommandPlacement` | Where the command sits |
+
+Local files a network command would read and send: `curl -d/--data/
+--data-binary/--data-ascii/--json @f`, `--data-urlencode [name]@f`, `-F k=@f`
+and `k=<f`, `-T f`; `wget --post-file`/`--body-file`; `scp` sources when the
+last operand is `host:path`. Bundled short flags (`-sSd@f`) and command
+wrappers (`sudo`, `env`, ...) are seen through. `@-`/`-` (stdin) and
+`--data-raw` are skipped. A computed value reports `path: null` ("ask").
+
+Decision: a derived method over `commands`, not a stored field, so the Rust
+serde shape of `ScriptAnalysis` is unchanged; the bindings materialize it as
+an `uploads` list. Prompted by an external review (2026-11-19) whose
+`curl -d @/data/weather.csv … && rm -rf /data` example listed every argument
+but did not single out the file being sent. Still advisory: the network
+allowlist is the boundary.
+
 ### Decisions
 
 - **Literal-or-null.** A word yields `Some(text)` only when every part is a
@@ -211,6 +234,8 @@ are omitted.
 - `crates/bashkit-js/__test__/analyze.spec.ts` and
   `__test__/runtime-compat/analyze.mjs`, Node/Bun/Deno surface.
 - `crates/bashkit-python/tests/test_analyze.py`, Python surface.
+- `analysis::tests::{curl_*, wget_*, scp_*, dynamic_upload_*}`, upload
+  extraction: flags, bundling, wrappers, stdin and inline-data negatives.
 - `crates/bashkit/docs/script-analysis.md`, rustdoc guide, doctested.
 
 ## See also

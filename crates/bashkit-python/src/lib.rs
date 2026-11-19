@@ -2679,6 +2679,47 @@ impl AnalyzedRedirect {
     }
 }
 
+/// A local file a network command would send, found by `analyze()`.
+#[pyclass(from_py_object)]
+#[derive(Clone)]
+pub struct AnalyzedUpload {
+    /// `"curl"`, `"wget"`, or `"scp"`.
+    #[pyo3(get)]
+    pub command: String,
+    /// Option naming the file (`"-d"`, `"-F"`, `"--post-file"`, ...), or
+    /// `None` for an `scp` source operand.
+    #[pyo3(get)]
+    pub option: Option<String>,
+    /// Local path, or `None` when the argument is not fully literal.
+    #[pyo3(get)]
+    pub path: Option<String>,
+    /// `"direct"`, `"substitution"`, or `"function_body"`.
+    #[pyo3(get)]
+    pub context: String,
+}
+
+#[pymethods]
+impl AnalyzedUpload {
+    fn __repr__(&self) -> String {
+        format!(
+            "AnalyzedUpload(command={:?}, option={:?}, path={:?}, context={:?})",
+            self.command, self.option, self.path, self.context
+        )
+    }
+
+    /// Return the upload as a plain dictionary.
+    fn to_dict(&self) -> PyResult<Py<PyDict>> {
+        Python::attach(|py| {
+            let dict = PyDict::new(py);
+            dict.set_item("command", &self.command)?;
+            dict.set_item("option", &self.option)?;
+            dict.set_item("path", &self.path)?;
+            dict.set_item("context", &self.context)?;
+            Ok(dict.into())
+        })
+    }
+}
+
 /// Result of `analyze()` — what a script statically refers to.
 ///
 /// **Advisory only.** Static analysis cannot see through dynamic dispatch,
@@ -2693,6 +2734,9 @@ pub struct ScriptAnalysis {
     /// Every file redirect target, in source order.
     #[pyo3(get)]
     pub redirects: Vec<AnalyzedRedirect>,
+    /// Local files that `curl`, `wget`, or `scp` would send, in source order.
+    #[pyo3(get)]
+    pub uploads: Vec<AnalyzedUpload>,
     /// Function names the script defines.
     #[pyo3(get)]
     pub functions: Vec<String>,
@@ -2753,6 +2797,11 @@ impl ScriptAnalysis {
                 redirects.append(redirect.to_dict()?)?;
             }
             dict.set_item("redirects", redirects)?;
+            let uploads = pyo3::types::PyList::empty(py);
+            for upload in &self.uploads {
+                uploads.append(upload.to_dict()?)?;
+            }
+            dict.set_item("uploads", uploads)?;
             dict.set_item("functions", &self.functions)?;
             dict.set_item("command_names", &self.command_names)?;
             dict.set_item("has_dynamic_commands", self.has_dynamic_commands)?;
@@ -2774,6 +2823,16 @@ impl From<bashkit::ScriptAnalysis> for ScriptAnalysis {
                 .map(str::to_owned)
                 .collect(),
             is_opaque: analysis.is_opaque(),
+            uploads: analysis
+                .file_uploads()
+                .into_iter()
+                .map(|u| AnalyzedUpload {
+                    command: u.command,
+                    option: u.option,
+                    path: u.path,
+                    context: u.context.as_str().to_owned(),
+                })
+                .collect(),
             commands: analysis
                 .commands
                 .iter()
@@ -4827,6 +4886,31 @@ fn prepare_runtime_external_handler(
         .map(Some)
 }
 
+/// Apply `max_exec_calls` / `max_session_commands` over the profile's
+/// session limits.
+///
+/// THREAT[TM-DOS-059]: the caps stay on by default so a tenant cannot dodge
+/// per-call limits by splitting work across calls; hosts running long agent
+/// sessions raise them explicitly here instead of switching profiles.
+fn apply_session_limits(
+    builder: bashkit::BashBuilder,
+    profile: &bashkit::ExecutionProfile,
+    max_exec_calls: Option<u64>,
+    max_session_commands: Option<u64>,
+) -> bashkit::BashBuilder {
+    if max_exec_calls.is_none() && max_session_commands.is_none() {
+        return builder;
+    }
+    let mut session = profile.session_limits().clone();
+    if let Some(calls) = max_exec_calls {
+        session = session.max_exec_calls(calls);
+    }
+    if let Some(commands) = max_session_commands {
+        session = session.max_total_commands(commands);
+    }
+    builder.session_limits(session)
+}
+
 /// Embedded Python limits from the profile, with `timeout` as each run's cap.
 ///
 /// Decision: `timeout_seconds` also sets the runtimes' own time limit, see
@@ -5020,6 +5104,10 @@ pub struct PyBash {
     /// `None` means the interpreter is built without a `NetworkAllowlist`,
     /// matching the current "network disabled" default.
     network: Option<PyNetworkConfig>,
+    /// Session cap on `execute()` calls; `None` keeps the profile default.
+    max_exec_calls: Option<u64>,
+    /// Session cap on total commands across calls; `None` keeps the profile default.
+    max_session_commands: Option<u64>,
 }
 
 // THREAT[TM-PY-030]: see the equivalent Drop on ScriptedTool.
@@ -5075,6 +5163,12 @@ impl PyBash {
             limits = limits.timeout(timeout);
         }
         builder = builder.limits(limits);
+        builder = apply_session_limits(
+            builder,
+            &profile,
+            self.max_exec_calls,
+            self.max_session_commands,
+        );
 
         if let Some(max_memory) = self.max_memory {
             builder = builder.max_memory(usize::try_from(max_memory).unwrap_or(usize::MAX));
@@ -5138,6 +5232,8 @@ impl PyBash {
         custom_builtins=None,
         network=None,
         profile=PyExecutionProfile::Standard,
+        max_exec_calls=None,
+        max_session_commands=None,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -5161,6 +5257,8 @@ impl PyBash {
         custom_builtins: Option<&Bound<'_, PyDict>>,
         network: Option<&Bound<'_, PyDict>>,
         profile: PyExecutionProfile,
+        max_exec_calls: Option<u64>,
+        max_session_commands: Option<u64>,
     ) -> PyResult<Self> {
         let core_profile = profile.core();
         let mut builder = Bash::builder().profile(core_profile.clone());
@@ -5192,6 +5290,8 @@ impl PyBash {
             limits = limits.timeout(timeout);
         }
         builder = builder.limits(limits);
+        builder =
+            apply_session_limits(builder, &core_profile, max_exec_calls, max_session_commands);
 
         if let Some(mm) = max_memory {
             builder = builder.max_memory(usize::try_from(mm).unwrap_or(usize::MAX));
@@ -5278,6 +5378,8 @@ impl PyBash {
             max_memory,
             timeout_seconds,
             network,
+            max_exec_calls,
+            max_session_commands,
         })
     }
 
@@ -5774,6 +5876,8 @@ impl PyBash {
         custom_builtins=None,
         network=None,
         profile=PyExecutionProfile::Standard,
+        max_exec_calls=None,
+        max_session_commands=None,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn from_snapshot(
@@ -5798,6 +5902,8 @@ impl PyBash {
         custom_builtins: Option<&Bound<'_, PyDict>>,
         network: Option<&Bound<'_, PyDict>>,
         profile: PyExecutionProfile,
+        max_exec_calls: Option<u64>,
+        max_session_commands: Option<u64>,
     ) -> PyResult<Self> {
         let bash = Self::new(
             py,
@@ -5820,6 +5926,8 @@ impl PyBash {
             custom_builtins,
             network,
             profile,
+            max_exec_calls,
+            max_session_commands,
         )?;
         bash.restore_snapshot(py, data)?;
         Ok(bash)
@@ -5849,6 +5957,8 @@ impl PyBash {
         custom_builtins=None,
         network=None,
         profile=PyExecutionProfile::Standard,
+        max_exec_calls=None,
+        max_session_commands=None,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn from_snapshot_keyed(
@@ -5874,6 +5984,8 @@ impl PyBash {
         custom_builtins: Option<&Bound<'_, PyDict>>,
         network: Option<&Bound<'_, PyDict>>,
         profile: PyExecutionProfile,
+        max_exec_calls: Option<u64>,
+        max_session_commands: Option<u64>,
     ) -> PyResult<Self> {
         let bash = Self::new(
             py,
@@ -5896,6 +6008,8 @@ impl PyBash {
             custom_builtins,
             network,
             profile,
+            max_exec_calls,
+            max_session_commands,
         )?;
         bash.restore_snapshot_keyed(py, data, key)?;
         Ok(bash)
@@ -6182,6 +6296,10 @@ pub struct BashTool {
     timeout_seconds: Option<f64>,
     /// Outbound network config preserved across `reset()` and snapshots.
     network: Option<PyNetworkConfig>,
+    /// Session cap on `execute()` calls; `None` keeps the profile default.
+    max_exec_calls: Option<u64>,
+    /// Session cap on total commands across calls; `None` keeps the profile default.
+    max_session_commands: Option<u64>,
 }
 
 // THREAT[TM-PY-030]: see the equivalent Drop on ScriptedTool.
@@ -6276,6 +6394,12 @@ impl BashTool {
             limits = limits.timeout(timeout);
         }
         builder = builder.limits(limits);
+        builder = apply_session_limits(
+            builder,
+            &profile,
+            self.max_exec_calls,
+            self.max_session_commands,
+        );
 
         if let Some(max_memory) = self.max_memory {
             builder = builder.max_memory(usize::try_from(max_memory).unwrap_or(usize::MAX));
@@ -6381,6 +6505,8 @@ impl BashTool {
         external_handler=None,
         typescript_external_functions=None,
         typescript_external_handler=None,
+        max_exec_calls=None,
+        max_session_commands=None,
     ))]
     fn new(
         py: Python<'_>,
@@ -6405,6 +6531,8 @@ impl BashTool {
         external_handler: Option<Py<PyAny>>,
         typescript_external_functions: Option<Vec<String>>,
         typescript_external_handler: Option<Py<PyAny>>,
+        max_exec_calls: Option<u64>,
+        max_session_commands: Option<u64>,
     ) -> PyResult<Self> {
         let core_profile = profile.core();
         let mut builder = Bash::builder().profile(core_profile.clone());
@@ -6482,6 +6610,8 @@ impl BashTool {
             limits = limits.timeout(timeout);
         }
         builder = builder.limits(limits);
+        builder =
+            apply_session_limits(builder, &core_profile, max_exec_calls, max_session_commands);
 
         if let Some(mm) = max_memory {
             builder = builder.max_memory(usize::try_from(mm).unwrap_or(usize::MAX));
@@ -6544,6 +6674,8 @@ impl BashTool {
             max_memory,
             timeout_seconds,
             network,
+            max_exec_calls,
+            max_session_commands,
         })
     }
 
@@ -6941,6 +7073,8 @@ impl BashTool {
         external_handler=None,
         typescript_external_functions=None,
         typescript_external_handler=None,
+        max_exec_calls=None,
+        max_session_commands=None,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn from_snapshot(
@@ -6967,6 +7101,8 @@ impl BashTool {
         external_handler: Option<Py<PyAny>>,
         typescript_external_functions: Option<Vec<String>>,
         typescript_external_handler: Option<Py<PyAny>>,
+        max_exec_calls: Option<u64>,
+        max_session_commands: Option<u64>,
     ) -> PyResult<Self> {
         let tool = Self::new(
             py,
@@ -6991,6 +7127,8 @@ impl BashTool {
             external_handler,
             typescript_external_functions,
             typescript_external_handler,
+            max_exec_calls,
+            max_session_commands,
         )?;
         tool.restore_snapshot(py, data)?;
         Ok(tool)
@@ -7022,6 +7160,8 @@ impl BashTool {
         external_handler=None,
         typescript_external_functions=None,
         typescript_external_handler=None,
+        max_exec_calls=None,
+        max_session_commands=None,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn from_snapshot_keyed(
@@ -7049,6 +7189,8 @@ impl BashTool {
         external_handler: Option<Py<PyAny>>,
         typescript_external_functions: Option<Vec<String>>,
         typescript_external_handler: Option<Py<PyAny>>,
+        max_exec_calls: Option<u64>,
+        max_session_commands: Option<u64>,
     ) -> PyResult<Self> {
         let tool = Self::new(
             py,
@@ -7073,6 +7215,8 @@ impl BashTool {
             external_handler,
             typescript_external_functions,
             typescript_external_handler,
+            max_exec_calls,
+            max_session_commands,
         )?;
         tool.restore_snapshot_keyed(py, data, key)?;
         Ok(tool)
@@ -7797,6 +7941,7 @@ fn _bashkit(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<ScriptAnalysis>()?;
     m.add_class::<AnalyzedCommand>()?;
     m.add_class::<AnalyzedRedirect>()?;
+    m.add_class::<AnalyzedUpload>()?;
     m.add_class::<PyBuiltinContext>()?;
     #[cfg(not(target_arch = "wasm32"))]
     streaming::add_classes(m)?;

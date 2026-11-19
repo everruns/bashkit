@@ -46,6 +46,7 @@ Framework integrations::
 from bashkit._bashkit import (
     AnalyzedCommand,
     AnalyzedRedirect,
+    AnalyzedUpload,
     Bash,
     BashError,
     BashTool,
@@ -75,6 +76,7 @@ __version__ = get_version()
 __all__ = [
     "AnalyzedCommand",
     "AnalyzedRedirect",
+    "AnalyzedUpload",
     "Bash",
     "BashError",
     "ExecutionProfile",

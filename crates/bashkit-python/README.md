@@ -91,9 +91,16 @@ bash = Bash(
     max_loop_iterations=10000,
     max_memory=10 * 1024 * 1024,
     timeout_seconds=30,
+    max_exec_calls=20_000,  # session-wide execute() cap (default 1,000)
     python=False,
 )
 ```
+
+`max_commands` and the other limits apply per `execute()` call. Each `Bash`
+instance also has session-wide caps that count across calls: 1,000 `execute()`
+calls (`max_exec_calls`) and 100,000 commands (`max_session_commands`). Raise
+them for long agent sessions; snapshots carry the counts and `reset()` clears
+them.
 
 ### Embedded Python and TypeScript
 

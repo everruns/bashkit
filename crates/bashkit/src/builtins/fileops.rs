@@ -142,6 +142,7 @@ impl Builtin for Rm {
         // '--' ends option parsing; a lone '-' is a file operand.
         let mut recursive = false;
         let mut force = false;
+        let mut preserve_root = true;
         let mut files: Vec<&String> = Vec::new();
         let mut opts_done = false;
         for arg in ctx.args {
@@ -153,8 +154,9 @@ impl Builtin for Rm {
                 match long.split('=').next().unwrap_or("") {
                     "recursive" => recursive = true,
                     "force" => force = true,
-                    "dir" | "interactive" | "verbose" | "one-file-system" | "no-preserve-root"
-                    | "preserve-root" => {}
+                    "no-preserve-root" => preserve_root = false,
+                    "preserve-root" => preserve_root = true,
+                    "dir" | "interactive" | "verbose" | "one-file-system" => {}
                     _ => return Ok(super::invalid_option("rm", arg, 1)),
                 }
             } else if arg.starts_with('-') && arg.len() > 1 {
@@ -184,6 +186,19 @@ impl Builtin for Rm {
         let mut stderr = String::new();
         for file in files {
             let path = resolve_path(ctx.cwd, file);
+
+            // Decision: GNU rm's --preserve-root failsafe (on by default).
+            // `rm -rf /` used to exit 0 and silently do nothing, which reads
+            // as success to an agent. Refuse like GNU, even with -f; the
+            // check is on the resolved path, so `/tmp/..` counts too.
+            if recursive && preserve_root && path == Path::new("/") {
+                stderr.push_str(&format!(
+                    "rm: it is dangerous to operate recursively on '{}'\n\
+                     rm: use --no-preserve-root to override this failsafe\n",
+                    file
+                ));
+                continue;
+            }
 
             // lstat: rm acts on a link itself (dangling links included).
             let metadata = ctx.fs.lstat(&path).await;

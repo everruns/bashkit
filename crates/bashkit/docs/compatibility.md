@@ -418,6 +418,8 @@ Default limits (configurable):
 | Parser operations | 100,000 | Fuel-based limit |
 | Input size | 10MB | Max script size |
 | AST depth | 100 | Nesting limit |
+| `exec()` calls | 1,000 | Per `Bash` instance (session), see [session limits](../../../docs/configuration.md#session-limits) |
+| Total commands | 100,000 | Per `Bash` instance (session) |
 
 ---
 

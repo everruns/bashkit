@@ -54,6 +54,42 @@ let limits = ExecutionLimits::new()
 let mut bash = Bash::builder().limits(limits).build();
 ```
 
+## Session limits
+
+`ExecutionLimits` reset on every `exec()` call. Session limits count across all
+calls on one `Bash` instance, so a tenant cannot dodge the per-call caps by
+splitting work into many small calls:
+
+| Limit | Default | Rust | Python | Node |
+|-------|---------|------|--------|------|
+| `exec()` calls | 1,000 | `SessionLimits::max_exec_calls` | `max_exec_calls=` | `maxExecCalls` |
+| Total commands | 100,000 | `SessionLimits::max_total_commands` | `max_session_commands=` | `maxSessionCommands` |
+
+When a cap is reached, every later call fails with `session exec() call limit
+exceeded (N calls)` (or `session command limit exceeded`). Snapshots carry the
+counts, so restoring a snapshot does not reset the budget; `reset()` does, and
+also clears the filesystem. A long agent session that sends one call per step
+should raise the cap rather than rebuild the instance:
+
+```rust
+use bashkit::{Bash, SessionLimits};
+
+let mut bash = Bash::builder()
+    .session_limits(SessionLimits::new().max_exec_calls(20_000))
+    .build();
+```
+
+```python
+bash = Bash(max_exec_calls=20_000)
+```
+
+```typescript
+const bash = new Bash({ maxExecCalls: 20_000 });
+```
+
+The `Interactive` profile removes both caps along with relaxing per-call
+limits; prefer the explicit option when only the session length matters.
+
 ## The filesystem
 
 Scripts see a virtual filesystem, never the host disk. Pick a backend and pass

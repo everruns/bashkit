@@ -101,6 +101,7 @@ const bash = new Bash({
   maxLoopIterations: 10000,
   maxMemory: 10 * 1024 * 1024,
   timeoutMs: 30_000,
+  maxExecCalls: 20_000, // session-wide execute() cap (default 1,000)
   mounts: [{ path: "/workspace", root: "./src", writable: true }],
   python: false,
 });
@@ -630,6 +631,8 @@ import {
 - `env?: Record<string, string>`, initial environment variables (avoids an `export` prelude)
 - `maxCommands?: number`
 - `maxLoopIterations?: number`
+- `maxExecCalls?: number`, session-wide cap on `execute*()` calls per instance (default 1,000; snapshots carry the count, `reset()` clears it)
+- `maxSessionCommands?: number`, session-wide cap on commands across calls (default 100,000)
 - `maxMemory?: number`
 - `maxInputBytes?: number`
 - `timeoutMs?: number`

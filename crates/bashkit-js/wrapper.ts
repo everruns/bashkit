@@ -30,6 +30,7 @@ import type {
   ScriptAnalysis,
   AnalyzedCommand,
   AnalyzedRedirect,
+  AnalyzedUpload,
   ExecutionProfileName as NativeExecutionProfileName,
   Terminal as NativeTerminalType,
   TerminalOptions,
@@ -44,7 +45,12 @@ import {
   queueAsyncExecute,
 } from "./internal.js";
 
-export type { ScriptAnalysis, AnalyzedCommand, AnalyzedRedirect };
+export type {
+  ScriptAnalysis,
+  AnalyzedCommand,
+  AnalyzedRedirect,
+  AnalyzedUpload,
+};
 export { BashError };
 export type { TerminalOptions, TerminalCommandRecord, TerminalActivityInfo };
 
@@ -249,6 +255,23 @@ export interface BashOptions extends RuntimeFunctionOptions {
   maxCommands?: number;
   maxLoopIterations?: number;
   maxTotalLoopIterations?: number;
+  /**
+   * Session-wide cap on `execute*()` calls for this instance (default 1,000).
+   *
+   * Unlike `maxCommands`, this counts across calls so a tenant cannot dodge
+   * per-call limits by splitting work. Snapshots carry the count; `reset()`
+   * clears it. Raise it for long agent sessions.
+   *
+   * @example
+   * ```typescript
+   * const bash = new Bash({ maxExecCalls: 50_000 });
+   * ```
+   */
+  maxExecCalls?: number;
+  /**
+   * Session-wide cap on commands across all calls (default 100,000).
+   */
+  maxSessionCommands?: number;
   /**
    * Maximum script input size in UTF-8 bytes.
    *
@@ -585,6 +608,8 @@ function toNativeOptions(
     maxCommands: options?.maxCommands,
     maxLoopIterations: options?.maxLoopIterations,
     maxTotalLoopIterations: options?.maxTotalLoopIterations,
+    maxExecCalls: options?.maxExecCalls,
+    maxSessionCommands: options?.maxSessionCommands,
     maxMemory: options?.maxMemory,
     maxInputBytes: options?.maxInputBytes,
     timeoutMs: options?.timeoutMs,
