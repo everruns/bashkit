@@ -1,5 +1,57 @@
 # Changelog
 
+## [0.21.1] - 2026-11-19
+
+### Highlights
+
+- **Security: dependency advisories cleared.** Wasmtime moves from 48.0.8 to 49.0.6, which fixes the November Wasmtime advisories (RUSTSEC-2026-0566 to 0573). It is only built with the off-by-default `cpython` feature and only runs Bashkit's own CPython snapshot. The Monty forks no longer pull in `heapless` 0.7, which had nine unsoundness advisories (RUSTSEC-2026-0574 to 0582). The yanked `crypto-bigint` 0.7.6 in the SSH graph is replaced ([#2942](https://github.com/everruns/bashkit/pull/2942), [#2955](https://github.com/everruns/bashkit/pull/2955)).
+- **Byte-exact text tools.** `iconv` writes real bytes and gains `-o`, `-c` and `//IGNORE`. `tee`, `split`, `cut` and `xxd -r` pass non-UTF-8 bytes through unchanged. `sort -o FILE FILE` now refuses to rewrite a non-UTF-8 input in place (exit 2) ([#2937](https://github.com/everruns/bashkit/pull/2937), [#2945](https://github.com/everruns/bashkit/pull/2945)).
+- **iconv code pages.** windows-125x, iso-8859-x, koi8, macintosh and the CJK sets, through the new default-on `iconv_charsets` feature, which adds `encoding_rs` ([#2941](https://github.com/everruns/bashkit/pull/2941)).
+- **TypeScript VM work is isolated from Tokio workers.** Native ZapCode runs no longer block shared async workers. Runs wait in a process-wide queue under a default concurrency limit, which hosts can change once with `configure_typescript_vm_concurrency` ([#2954](https://github.com/everruns/bashkit/pull/2954)).
+- **Windows path fixes.** VFS paths stay slash-separated on Windows, which fixes `/dev/stderr` redirects and several path joins. The bashkit suites now run nightly on Windows ([#2936](https://github.com/everruns/bashkit/pull/2936), [#2938](https://github.com/everruns/bashkit/pull/2938)).
+
+### What's Changed
+
+* fix(ci): drop heapless from the graph, gate the byte-tools oracle off unix ([#2955](https://github.com/everruns/bashkit/pull/2955)) by @chaliy
+* chore(deps): bump the rust-dependencies group across 1 directory with 3 updates ([#2949](https://github.com/everruns/bashkit/pull/2949)) by @app/dependabot
+* chore(deps): bump the examples-npm group across 1 directory with 3 updates ([#2947](https://github.com/everruns/bashkit/pull/2947)) by @app/dependabot
+* chore(deps): bump the site-npm group across 1 directory with 4 updates ([#2948](https://github.com/everruns/bashkit/pull/2948)) by @app/dependabot
+* chore(ci): bump taiki-e/install-action from 2.90.3 to 2.90.5 in the github-actions group across 1 directory ([#2950](https://github.com/everruns/bashkit/pull/2950)) by @app/dependabot
+* fix(typescript): isolate VM work from Tokio workers ([#2954](https://github.com/everruns/bashkit/pull/2954)) by @chaliy
+* chore(docs): consolidate agent and maintenance guidance ([#2953](https://github.com/everruns/bashkit/pull/2953)) by @chaliy
+* test(python): synchronize live tenant allocations ([#2952](https://github.com/everruns/bashkit/pull/2952)) by @chaliy
+* fix(builtins): byte-exact tee, split, cut and xxd -r; sort -o refuses non-UTF-8 in place ([#2945](https://github.com/everruns/bashkit/pull/2945)) by @chaliy
+* chore(maintenance): refresh scanner and reference docs ([#2943](https://github.com/everruns/bashkit/pull/2943)) by @chaliy
+* test(compat): make GNU parity fixtures portable ([#2951](https://github.com/everruns/bashkit/pull/2951)) by @chaliy
+* fix(vfs): run bashkit suites nightly on Windows and fix what they found ([#2938](https://github.com/everruns/bashkit/pull/2938)) by @chaliy
+* fix(ci): require complete nightly and release checks ([#2939](https://github.com/everruns/bashkit/pull/2939)) by @chaliy
+* chore(deps): refresh docs-search Python lockfile ([#2944](https://github.com/everruns/bashkit/pull/2944)) by @chaliy
+* fix(deps): update Wasmtime and replace yanked crypto-bigint ([#2942](https://github.com/everruns/bashkit/pull/2942)) by @chaliy
+* fix(site): restore Astro type checking ([#2940](https://github.com/everruns/bashkit/pull/2940)) by @chaliy
+* feat(iconv): code pages via encoding_rs (iconv_charsets feature) ([#2941](https://github.com/everruns/bashkit/pull/2941)) by @chaliy
+* fix(iconv): write real bytes, add -o, -c and //IGNORE ([#2937](https://github.com/everruns/bashkit/pull/2937)) by @chaliy
+* fix(vfs): keep VFS paths slash-separated on Windows ([#2936](https://github.com/everruns/bashkit/pull/2936)) by @chaliy
+* fix(ci): suppress unpatched picomatch ReDoS advisory in the npm scan ([#2934](https://github.com/everruns/bashkit/pull/2934)) by @chaliy
+* chore(deps): bump the rust-dependencies group and record its vet audits ([#2931](https://github.com/everruns/bashkit/pull/2931)) by @chaliy
+* chore(deps): bump the examples-npm group across 2 directories with 7 updates ([#2929](https://github.com/everruns/bashkit/pull/2929)) by @app/dependabot
+* chore(deps): bump the site-npm group in /site with 3 updates ([#2926](https://github.com/everruns/bashkit/pull/2926)) by @app/dependabot
+* chore(deps): bump the js-npm group in /crates/bashkit-js with 3 updates ([#2925](https://github.com/everruns/bashkit/pull/2925)) by @app/dependabot
+* chore(ci): bump taiki-e/install-action from 2.90.2 to 2.90.3 in the github-actions group ([#2930](https://github.com/everruns/bashkit/pull/2930)) by @app/dependabot
+* chore(deps): bump the docs-grep-agent-uv group in /examples/docs-grep-agent with 3 updates ([#2927](https://github.com/everruns/bashkit/pull/2927)) by @app/dependabot
+* chore(deps): bump the example-cargo group across 1 directory with 2 updates ([#2924](https://github.com/everruns/bashkit/pull/2924)) by @app/dependabot
+* chore(deps): bump fancy-regex from 0.20.0 to 0.20.2 in /crates/bashkit/fuzz in the fuzz-dependencies group ([#2923](https://github.com/everruns/bashkit/pull/2923)) by @app/dependabot
+* docs(apidocs): refresh TypeScript reference for builtin cancellation ([#2922](https://github.com/everruns/bashkit/pull/2922)) by @chaliy
+* chore: sync uutils/coreutils argument surfaces and vendored modules ([#2921](https://github.com/everruns/bashkit/pull/2921)) by @chaliy
+* chore: sync uutils/coreutils argument surfaces and vendored modules ([#2920](https://github.com/everruns/bashkit/pull/2920)) by @chaliy
+* chore: sync uutils/coreutils argument surfaces and vendored modules ([#2918](https://github.com/everruns/bashkit/pull/2918)) by @chaliy
+* chore(rust): adopt 1.100 and guard 1.96 consumers ([#2919](https://github.com/everruns/bashkit/pull/2919)) by @chaliy
+* fix(builtins): keep printf %q bash-faithful across uutils' always_quote ([#2917](https://github.com/everruns/bashkit/pull/2917)) by @chaliy
+* fix: get CI green again - rustix RUSTSEC-2026-0486 and the ts spin tenant ([#2916](https://github.com/everruns/bashkit/pull/2916)) by @chaliy
+* chore(deps): bump the examples-npm group across 1 directory with 4 updates ([#2912](https://github.com/everruns/bashkit/pull/2912)) by @app/dependabot
+* chore(deps): bump the js-npm group across 1 directory with 2 updates ([#2911](https://github.com/everruns/bashkit/pull/2911)) by @app/dependabot
+
+**Full Changelog**: https://github.com/everruns/bashkit/compare/v0.21.0...v0.21.1
+
 ## [0.21.0] - 2026-11-10
 
 ### Highlights
