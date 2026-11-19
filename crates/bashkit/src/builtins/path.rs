@@ -2,7 +2,7 @@
 
 use super::clap_cache::cached_command;
 use async_trait::async_trait;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use super::{Builtin, Context};
 use crate::error::Result;
@@ -178,10 +178,10 @@ impl Builtin for Dirname {
 /// `generated/realpath_args.rs`. Behaviour is implemented locally
 /// against the bashkit VFS.
 ///
-/// Symlink resolution stays disabled per L-FS-001 in `knowledge/operations/limitations.md`'s
-/// "Intentionally Unimplemented" entry: bashkit's VFS does not model
-/// symlinks, so `-e`/`-m` only differ on existence checks, and
-/// `-L`/`-P`/`--strip` collapse to the same lexical canonicalisation.
+/// Symlinks are followed through the same bounded walk as `readlink -f`;
+/// `-s` keeps lexical `.`/`..` cleanup only. `..` resolves lexically
+/// (L-FS-001 in `knowledge/operations/limitations.md`), so `-L`/`-P` are
+/// the same. `-E` and `-m` both skip the existence check; `-e` requires it.
 pub struct Realpath;
 
 // Cached `realpath` arg surface: pre-built once, cloned per invocation.
@@ -253,18 +253,30 @@ impl Builtin for Realpath {
         let mut errors = String::new();
         let mut failed = false;
 
-        let base_path = match relative_to.as_ref().or(relative_base.as_ref()) {
-            Some(base) => match canonical(base).await {
-                Some(p) => Some(p),
-                None => {
-                    return Ok(ExecResult::err(
-                        format!("realpath: {base}: Too many levels of symbolic links\n"),
-                        1,
-                    ));
+        // GNU: --relative-base prints paths under DIR relative, others
+        // absolute; --relative-to prints `..`-style relative paths, unless a
+        // --relative-base is given and DIR is outside it.
+        let resolve_base =
+            async |base: &Option<String>| -> std::result::Result<Option<PathBuf>, String> {
+                match base {
+                    Some(b) => canonical(b).await.map(Some).ok_or_else(|| {
+                        format!("realpath: {b}: Too many levels of symbolic links\n")
+                    }),
+                    None => Ok(None),
                 }
-            },
-            None => None,
+            };
+        let (rel_to, rel_base) = match (
+            resolve_base(&relative_to).await,
+            resolve_base(&relative_base).await,
+        ) {
+            (Ok(to), Ok(base)) => (to, base),
+            (Err(e), _) | (_, Err(e)) => {
+                return Ok(ExecResult::err(if quiet { String::new() } else { e }, 1));
+            }
         };
+        // --relative-to outside --relative-base: every path stays absolute.
+        let all_absolute =
+            matches!((&rel_to, &rel_base), (Some(to), Some(base)) if !to.starts_with(base));
 
         for arg in &files {
             let Some(resolved) = canonical(arg).await else {
@@ -285,18 +297,13 @@ impl Builtin for Realpath {
                 continue;
             }
 
-            let mut printed = resolved.to_string_lossy().into_owned();
-            if let Some(base_path) = &base_path
-                && let Ok(rel) = std::path::Path::new(&printed)
-                    .strip_prefix(base_path.to_string_lossy().as_ref())
-            {
-                let rel_str = rel.to_string_lossy();
-                printed = if rel_str.is_empty() {
-                    ".".to_string()
-                } else {
-                    rel_str.into_owned()
-                };
-            }
+            let printed = match (&rel_to, &rel_base) {
+                _ if all_absolute => resolved,
+                (_, Some(base)) if !resolved.starts_with(base) => resolved,
+                (Some(dir), _) | (None, Some(dir)) => relative_from(&resolved, dir),
+                (None, None) => resolved,
+            };
+            let printed = printed.to_string_lossy();
             output.push_str(&printed);
             output.push(separator);
         }
@@ -308,6 +315,32 @@ impl Builtin for Realpath {
             ..Default::default()
         })
     }
+}
+
+/// `path` relative to directory `dir`, both absolute and normalized:
+/// shared prefix dropped, one `..` per remaining `dir` component.
+fn relative_from(path: &Path, dir: &Path) -> PathBuf {
+    let p: Vec<_> = path.components().collect();
+    let d: Vec<_> = dir.components().collect();
+    let common = p.iter().zip(&d).take_while(|(a, b)| a == b).count();
+    // OsString, not `Path::join`: keeps `/` on Windows and non-UTF-8 bytes.
+    let mut parts: Vec<&std::ffi::OsStr> = Vec::new();
+    parts.extend(std::iter::repeat_n(
+        std::ffi::OsStr::new(".."),
+        d.len() - common,
+    ));
+    parts.extend(p[common..].iter().map(|c| c.as_os_str()));
+    if parts.is_empty() {
+        return PathBuf::from(".");
+    }
+    let mut out = std::ffi::OsString::new();
+    for (i, part) in parts.iter().enumerate() {
+        if i > 0 {
+            out.push("/");
+        }
+        out.push(part);
+    }
+    PathBuf::from(out)
 }
 
 /// The readlink builtin - print resolved symbolic links or canonical file names.
@@ -922,6 +955,47 @@ mod tests {
         let fs = symlinked_dir_fs().await;
         let result = run_realpath_with_fs(&["--relative-to=/l", "/a/b/c"], fs).await;
         assert_eq!(result.stdout, "c\n");
+    }
+
+    #[tokio::test]
+    async fn test_realpath_relative_to_and_base_match_gnu() {
+        // Expected values from GNU coreutils `realpath -m`.
+        let fs = Arc::new(InMemoryFs::new()) as Arc<dyn FileSystem>;
+        let cases: &[(&[&str], &str)] = &[
+            (&["--relative-to=/a", "/b/c"], "../b/c\n"),
+            (&["--relative-to=/a/x", "/a/y/z"], "../y/z\n"),
+            (&["--relative-to=/", "/a"], "a\n"),
+            (
+                &["--relative-base=/a", "/a/b", "/c/d", "/a"],
+                "b\n/c/d\n.\n",
+            ),
+            (&["--relative-base=/", "/a", "/"], "a\n.\n"),
+            (
+                &["--relative-to=/a/b", "--relative-base=/a", "/a/c", "/x/y"],
+                "../c\n/x/y\n",
+            ),
+            (
+                &["--relative-to=/x", "--relative-base=/a", "/a/c"],
+                "/a/c\n",
+            ),
+        ];
+        for (args, expected) in cases {
+            let result = run_realpath_with_fs(args, fs.clone()).await;
+            assert_eq!(result.stdout, *expected, "{args:?}"); // debug-ok: test assertion
+        }
+    }
+
+    #[tokio::test]
+    async fn test_realpath_quiet_silences_base_loop() {
+        let fs = Arc::new(InMemoryFs::new()) as Arc<dyn FileSystem>;
+        fs.symlink(Path::new("/y"), Path::new("/x")).await.unwrap();
+        fs.symlink(Path::new("/x"), Path::new("/y")).await.unwrap();
+        let loud = run_realpath_with_fs(&["--relative-to=/x", "/a"], fs.clone()).await;
+        assert_eq!(loud.exit_code, 1);
+        assert!(loud.stderr.contains("Too many levels"));
+        let quiet = run_realpath_with_fs(&["-q", "--relative-to=/x", "/a"], fs).await;
+        assert_eq!(quiet.exit_code, 1);
+        assert!(quiet.stderr.is_empty());
     }
 
     #[tokio::test]

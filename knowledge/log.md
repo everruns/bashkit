@@ -2,7 +2,7 @@
 
 ## 2026-11-19
 
-* **`realpath` resolves symlinks**: `realpath` only cleaned `.`/`..` lexically, so with `/l -> /a/b`, `realpath /l/c` printed `/l/c` where bash prints `/a/b/c`; it also could not see a symlink in `--relative-to`. It now shares `readlink -f`'s bounded symlink walk (40-hop cap, path limits), on operands and the relative base. `-s` keeps the old lexical behavior, a loop reports `Too many levels of symbolic links`, and `-e` failures continue to the next operand with the operand as given, like GNU. Spec case `realpath_follows_intermediate_symlink` matches real bash. Found while writing the #2933 separator tests. See [Virtual Filesystem](foundations/vfs.md).
+* **`realpath` resolves symlinks**: `realpath` only cleaned `.`/`..` lexically, so with `/l -> /a/b`, `realpath /l/c` printed `/l/c` where bash prints `/a/b/c`; it also could not see a symlink in `--relative-to`. It now shares `readlink -f`'s bounded symlink walk (40-hop cap, path limits), on operands and the relative base; `--relative-to` now prints `..`-style paths and `--relative-base` gates it, as GNU does (both were a bare prefix strip). `-s` keeps the old lexical behavior, a loop reports `Too many levels of symbolic links`, and `-e` failures continue to the next operand with the operand as given, like GNU. Spec case `realpath_follows_intermediate_symlink` matches real bash. Found while writing the #2933 separator tests. See [Virtual Filesystem](foundations/vfs.md).
 
 ## 2026-11-18
 
