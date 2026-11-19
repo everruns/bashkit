@@ -224,6 +224,12 @@ criteria = "safe-to-deploy"
 version = "0.3.0"
 notes = "Reviewed complete crate: thin wasm-bindgen wrappers around host setTimeout/setInterval with RAII cancellation, plus futures channels. No Rust unsafe code, filesystem/network/process access, or attacker-controlled ambient capabilities; unchecked_ref casts wasm-bindgen Closure handles to the JavaScript Function type they represent."
 
+[[audits.gloo-timers]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.4.0 -> 0.4.1"
+notes = "Reviewed delta: adds CallbackUnwindSafe bound for Timeout/Interval callbacks under wasm unwind, AssertUnwindSafe around the oneshot send with documented UnsafeCell lock reasoning, workspace wasm-bindgen dependency, and unsafe extern C syntax for Rust 2024 with no semantic FFI change. No new ambient capabilities."
+
 [[audits.hermit-abi]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
@@ -550,6 +556,18 @@ criteria = "safe-to-deploy"
 delta = "3.4.0 -> 3.4.1"
 notes = "Doc-comment only: the wasi_heap_sync design-note reference moves from rolldown's internal docs to cli/docs/wasi-heap-sync-design.md. No code, FFI declaration or build-script change."
 
+[[audits.nix]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.31.3 -> 0.31.4"
+notes = "Reviewed delta: fixes recvfrom undefined behavior, propagates posix_spawn attr/file-action errors instead of ignoring them, corrects SockaddrIn/LinkAddr net feature docs, and swaps pin-utils unsafe_pinned for pin-project-lite in aio with cfg_aliases bump. No new unsafe; removes macro-generated unsafe pinning."
+
+[[audits.nix]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.31.3 -> 0.32.0"
+notes = "Reviewed delta including 0.31.4 fixes plus 0.32 breaking hardening: accept/accept4 take AsFd and return OwnedFd, vmsplice becomes unsafe with documented iov lifetime and page-alignment requirements, netlink recv avoids per-recv allocation, Haiku ioctl module, and aio pin! to Box::pin. Unsafe changes tighten ownership; no new ambient capabilities beyond existing libc bindings. Bashkit use (CLOCK_THREAD_CPUTIME_ID, ClockId with fs/time) is unaffected by the socket/vmsplice changes."
+
 [[audits.num-bigint]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
@@ -632,6 +650,12 @@ who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
 delta = "0.10.2 -> 0.10.3"
 notes = "Correctness fixes in the distribution code: WeightedIndex returns Error::Overflow instead of panicking on an infinite float weight sum, Uniform::new_inclusive no longer reports NonFinite for large finite ranges, a deserialized Uniform<char> can no longer panic when sampled, and WeightedIndex::weights reports exact remaining lengths. No new unsafe, fs, net, or ambient access; entropy sources unchanged."
+
+[[audits.rand]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.10.3 -> 0.10.4"
+notes = "Reviewed delta: fixes panic when sampling a deserialized Uniform<Duration> by validating offset below NANOS_PER_SEC and checking secs carry, mirroring the UniformChar guard; deserialization now rejects states unreachable from new_inclusive. No new unsafe, fs, net, or ambient access; entropy sources unchanged."
 
 [[audits.russh]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
