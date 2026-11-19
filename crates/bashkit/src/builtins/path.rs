@@ -218,6 +218,8 @@ impl Builtin for Realpath {
         let quiet = matches.get_flag("quiet");
         let zero = matches.get_flag("zero");
         let canonicalize_existing = matches.get_flag("canonicalize-existing");
+        // -s: lexical `.`/`..` cleanup only, symlinks kept.
+        let strip = matches.get_flag("strip");
         let relative_to = matches
             .get_one::<OsString>("relative-to")
             .map(|s| s.to_string_lossy().into_owned());
@@ -230,54 +232,81 @@ impl Builtin for Realpath {
             .map(|vs| vs.map(|v| v.to_string_lossy().into_owned()).collect())
             .unwrap_or_default();
 
+        // Decision: realpath shares readlink -f's symlink walk, so a symlink
+        // anywhere in the path resolves (`/l/c` with /l -> /a/b gives
+        // /a/b/c). Existence: -e requires the final path; -E (upstream
+        // default) and -m require nothing here, same as before.
+        let fs = ctx.fs.as_ref();
+        let canonical = |arg: &str| {
+            let resolved = super::resolve_path(ctx.cwd, arg);
+            async move {
+                if strip {
+                    Some(resolved)
+                } else {
+                    follow_readlink_symlinks(fs, resolved).await
+                }
+            }
+        };
+
         let separator = if zero { '\0' } else { '\n' };
         let mut output = String::new();
-        let mut had_error = false;
+        let mut errors = String::new();
+        let mut failed = false;
 
-        for arg in &files {
-            let resolved = super::resolve_path(ctx.cwd, arg);
-
-            // -e: every component must exist.
-            // -m (default in bashkit): no existence requirement.
-            // -E (default upstream): only the parent must exist —
-            //   without symlinks the distinction between -E and -m is
-            //   purely existence-based, so we treat them identically.
-            if canonicalize_existing && !ctx.fs.exists(&resolved).await.unwrap_or(false) {
-                had_error = true;
-                if !quiet {
+        let base_path = match relative_to.as_ref().or(relative_base.as_ref()) {
+            Some(base) => match canonical(base).await {
+                Some(p) => Some(p),
+                None => {
                     return Ok(ExecResult::err(
-                        format!(
-                            "realpath: {}: No such file or directory\n",
-                            resolved.display()
-                        ),
+                        format!("realpath: {base}: Too many levels of symbolic links\n"),
                         1,
                     ));
+                }
+            },
+            None => None,
+        };
+
+        for arg in &files {
+            let Some(resolved) = canonical(arg).await else {
+                failed = true;
+                if !quiet {
+                    errors.push_str(&format!(
+                        "realpath: {arg}: Too many levels of symbolic links\n"
+                    ));
+                }
+                continue;
+            };
+
+            if canonicalize_existing && !ctx.fs.exists(&resolved).await.unwrap_or(false) {
+                failed = true;
+                if !quiet {
+                    errors.push_str(&format!("realpath: {arg}: No such file or directory\n"));
                 }
                 continue;
             }
 
             let mut printed = resolved.to_string_lossy().into_owned();
-            if let Some(base) = relative_to.as_ref().or(relative_base.as_ref()) {
-                let base_path = super::resolve_path(ctx.cwd, base);
-                if let Ok(rel) = std::path::Path::new(&printed)
+            if let Some(base_path) = &base_path
+                && let Ok(rel) = std::path::Path::new(&printed)
                     .strip_prefix(base_path.to_string_lossy().as_ref())
-                {
-                    let rel_str = rel.to_string_lossy();
-                    printed = if rel_str.is_empty() {
-                        ".".to_string()
-                    } else {
-                        rel_str.into_owned()
-                    };
-                }
+            {
+                let rel_str = rel.to_string_lossy();
+                printed = if rel_str.is_empty() {
+                    ".".to_string()
+                } else {
+                    rel_str.into_owned()
+                };
             }
             output.push_str(&printed);
             output.push(separator);
         }
 
-        if had_error {
-            return Ok(ExecResult::err(output, 1));
-        }
-        Ok(ExecResult::ok(output))
+        Ok(ExecResult {
+            stdout: output.into(),
+            stderr: errors.into(),
+            exit_code: i32::from(failed),
+            ..Default::default()
+        })
     }
 }
 
@@ -827,6 +856,82 @@ mod tests {
 
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout, "/real/file\n");
+    }
+
+    async fn run_realpath_with_fs(args: &[&str], fs: Arc<dyn FileSystem>) -> ExecResult {
+        let mut variables = HashMap::new();
+        let env = HashMap::new();
+        let mut cwd = PathBuf::from("/");
+
+        let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+        let ctx = Context {
+            args: &args,
+            env: &env,
+            variables: &mut variables,
+            cwd: &mut cwd,
+            fs,
+            stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+            #[cfg(feature = "ssh")]
+            ssh_client: None,
+            shell: None,
+        };
+
+        Realpath.execute(ctx).await.unwrap()
+    }
+
+    async fn symlinked_dir_fs() -> Arc<dyn FileSystem> {
+        let fs = Arc::new(InMemoryFs::new()) as Arc<dyn FileSystem>;
+        fs.mkdir(Path::new("/a/b"), true).await.unwrap();
+        fs.write_file(Path::new("/a/b/c"), b"x").await.unwrap();
+        fs.symlink(Path::new("/a/b"), Path::new("/l"))
+            .await
+            .unwrap();
+        fs
+    }
+
+    #[tokio::test]
+    async fn test_realpath_follows_intermediate_symlink() {
+        let fs = symlinked_dir_fs().await;
+        let result = run_realpath_with_fs(&["/l/c", "/l", "/l/missing"], fs).await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "/a/b/c\n/a/b\n/a/b/missing\n");
+    }
+
+    #[tokio::test]
+    async fn test_realpath_e_follows_symlink_and_requires_target() {
+        let fs = symlinked_dir_fs().await;
+        let ok = run_realpath_with_fs(&["-e", "/l/c"], fs.clone()).await;
+        assert_eq!(ok.stdout, "/a/b/c\n");
+        let missing = run_realpath_with_fs(&["-e", "/l/nope"], fs).await;
+        assert_eq!(missing.exit_code, 1);
+    }
+
+    #[tokio::test]
+    async fn test_realpath_strip_keeps_symlinks() {
+        let fs = symlinked_dir_fs().await;
+        let result = run_realpath_with_fs(&["-s", "/l/./c"], fs).await;
+        assert_eq!(result.stdout, "/l/c\n");
+    }
+
+    #[tokio::test]
+    async fn test_realpath_relative_to_resolves_both_sides() {
+        let fs = symlinked_dir_fs().await;
+        let result = run_realpath_with_fs(&["--relative-to=/l", "/a/b/c"], fs).await;
+        assert_eq!(result.stdout, "c\n");
+    }
+
+    #[tokio::test]
+    async fn test_realpath_rejects_symlink_loop() {
+        let fs = Arc::new(InMemoryFs::new()) as Arc<dyn FileSystem>;
+        fs.symlink(Path::new("/y"), Path::new("/x")).await.unwrap();
+        fs.symlink(Path::new("/x"), Path::new("/y")).await.unwrap();
+        let result = run_realpath_with_fs(&["/x"], fs).await;
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("Too many levels of symbolic links"));
     }
 
     #[tokio::test]
