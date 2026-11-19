@@ -69,6 +69,26 @@ async fn run(fs: &CountingFs, bash: &mut Bash, script: &str) -> (CallCounts, Str
     (counts, r.stdout.to_string())
 }
 
+/// Blank the `YYYY-MM-DD HH:MM` columns of `ls -l` lines.
+fn without_ls_times(out: &str) -> String {
+    out.lines()
+        .map(|line| {
+            let fields: Vec<&str> = line.split_whitespace().collect();
+            let is_long = fields.len() >= 5
+                && fields[2].len() == 10
+                && fields[2].as_bytes()[4] == b'-'
+                && fields[3].len() == 5
+                && fields[3].as_bytes()[2] == b':';
+            if is_long {
+                format!("{} {} - - {}", fields[0], fields[1], fields[4..].join(" "))
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn line_count(out: &str) -> u64 {
     out.lines().count() as u64
 }
@@ -475,6 +495,9 @@ async fn ls_recursive_and_tree_output_is_the_same_with_bulk_walk() {
     ] {
         let (_, expected) = run(&plain, &mut plain_bash, script).await;
         let (c, got) = run(&bulk, &mut bulk_bash, script).await;
+        // The two trees are seeded at slightly different times, so `ls -l`
+        // mtimes can straddle a minute boundary; compare everything else.
+        let (got, expected) = (without_ls_times(&got), without_ls_times(&expected));
         assert_eq!(got, expected, "{script}");
         assert!(!expected.is_empty(), "{script}: vacuous");
         assert!(
