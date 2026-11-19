@@ -246,6 +246,7 @@ async fn iconv_code_pages_match_real_iconv() {
 }
 
 #[tokio::test]
+#[cfg_attr(not(unix), ignore = "compares against host Unix bash/tools")]
 async fn byte_tools_match_real_bash_on_non_utf8_input() {
     // tee, split and cut pass bytes through; text tools would print U+FFFD.
     let setup = "cd \"$(mktemp -d)\" && printf 'K\\366ln,\\377\\376\\000z\\nb,K\\303\\266ln\\200\\r\\n' > in.bin && ";
