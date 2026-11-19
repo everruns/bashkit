@@ -26,11 +26,13 @@ validation, pushing, PR creation, fixing CI/review findings, and squash-merging
 with every required check green. A local commit or a set of deferred issues is
 not a completed pass. Only an explicit analysis-only request narrows this outcome.
 
-The maintain skill and command implement this contract; the ship skill completes
-it. Do not stop because a fix is large, audits remain, or a build is slow. Preserve
-security contracts and audit criteria. Validate platform-specific behavior in a
-suitable environment. Proven upstream incompatibilities may require a tested,
-documented safe-version pin; they must not justify weaker execution limits.
+Use the [maintain skill](../../.agents/skills/maintain/SKILL.md) to run the pass
+and the [ship skill](../../.agents/skills/ship/SKILL.md) to land the fixes.
+Complete fixes, audits, and builds within the pass. Preserve security contracts
+and audit criteria, and validate platform-specific behavior in a suitable
+environment. If upstream breaks a required contract, validate and document a
+known-good pin. Use parallel agents for independent sections when useful and
+consistent with the requested order of work.
 
 ## When to Run
 
@@ -71,22 +73,13 @@ documented safe-version pin; they must not justify weaker execution limits.
 
 #### Automated coverage
 
-`.github/dependabot.yml` drives weekly *version* updates. It is separate from
+[Dependabot configuration](../../.github/dependabot.yml) lists the workspaces
+covered by weekly grouped *version* updates. It is separate from
 Dependabot **alerts** and **security updates**, which run off the repository
-dependency graph and need no config — an ecosystem missing from
-`dependabot.yml` still gets alerts, it just never gets routine freshness bumps,
-so it drifts until the eventual security fix is a multi-major jump.
-
-Covered, one grouped PR per entry per week:
-
-| Ecosystem | Directory |
-|---|---|
-| cargo | `/` (workspace) |
-| cargo | `/crates/bashkit/fuzz` (separate workspace + lockfile) |
-| npm | `/site` |
-| npm | `/crates/bashkit-js` |
-| npm | `/examples`, `/examples/browser`, `/examples/bashkit-pi` |
-| github-actions | `/` |
+dependency graph. [Coverage tests](../../scripts/tests/test_dependabot_coverage.py)
+check that dependency-resolving workspaces have entries. See the
+[dependency policy](dependencies.md#dependabot-rules-that-keep-its-jobs-runnable)
+for resolver constraints.
 
 Deliberately not covered, and why:
 
@@ -106,7 +99,7 @@ Deliberately not covered, and why:
 
 ##### pnpm release cooldown
 
-Every npm directory carries `minimum-release-age=4320` in its `.npmrc`. The
+Every Dependabot-managed pnpm project carries `minimum-release-age=4320` in its `.npmrc`. The
 value mirrors the `--config.minimumReleaseAge=4320` (3 days) that Dependabot
 injects into the `pnpm update` it runs for npm entries.
 
@@ -163,18 +156,10 @@ these files with it.
 - Python docstrings match behavior
 - `README.md` feature list matches implemented builtins
 - Public docs (`docs/`) match current code: CLI flags, security boundaries, feature descriptions, test counts, and examples all reflect reality
-- Relative markdown links resolve as source: `just check-doc-links` green. The
-  site rewrites link targets by *basename* (`DOC_LINKS` in
-  `site/astro.config.mjs`), so a cross-tree link written as a bare `jq.md`
-  renders correctly on bashkit.sh while 404-ing for anyone reading the markdown
-  on GitHub, `site/scripts/verify-doc-*.mjs` check the built routes and cannot
-  see it. Write cross-tree links source-relative
-  (`../crates/bashkit/docs/jq.md`); the site rewriter accepts that form too.
-  Do **not** add YAML frontmatter to `docs/` or `crates/bashkit/docs/` to carry
-  titles or descriptions: page metadata lives in `site/src/pages/docs/_meta.ts`,
-  and frontmatter in `crates/bashkit/docs/` would leak into rustdoc via
-  `include_str!`
-- Agent surfaces (`/llms.txt`, `/llms-full.txt`, Markdown routes) regenerate and pass `verify-llms` (auto-enforced in CI); refresh the agent-skills tarball/`index.json` digest if `skills/bashkit/` changed (see [Documentation Architecture](documentation.md) § Agent-facing site surfaces)
+- Run `just check-doc-links` and verify [documentation requirements](documentation.md#requirements).
+- Verify the [agent-facing site surfaces](documentation.md#agent-facing-site-surfaces)
+  build and pass their CI checks. Refresh the published skill archive and its
+  digest when the public skill changes.
 - `CONTRIBUTING.md` instructions accurate
 - `CHANGELOG.md` has entries for all changes since last release
 
@@ -260,19 +245,10 @@ See [Vendored jaq-json](../runtimes/jaq-json-vendor.md).
 
 ### Code Quality
 
-- Formatted (`cargo fmt`)
-- No clippy warnings
-- No stale TODO/WTF comments that are now resolved
-- No dead code or unused dependencies
-
-### Code Simplification
-
-- Duplicated patterns consolidated into shared helpers where it reduces total code
-- Unnecessary abstractions, indirection, or over-engineering removed
-- Complex nested logic simplified (deep nesting, long match arms)
-- Dead code removed (unused functions, unreachable branches, commented-out code)
-- Names are clear and descriptive (functions, variables, types)
-- No premature generalizations, code serves current needs, not hypothetical future ones
+- Run the formatting and Clippy gates in [ship](../../.agents/skills/ship/SKILL.md#validate).
+- Review the repository for dead code, resolved TODO/WTF comments, unused
+  dependencies, and opportunities to simplify existing code. Use the
+  [ship review guidance](../../.agents/skills/ship/SKILL.md#review-test-and-smoke-test).
 
 ### Binding Parity
 
@@ -291,10 +267,8 @@ See [Vendored jaq-json](../runtimes/jaq-json-vendor.md).
 
 ### Agent Configuration
 
-- `AGENTS.md` / `CLAUDE.md` instructions accurate
-- Spec table in `AGENTS.md` lists all current specs
-- Build/test commands work
-- Pre-PR checklist covers current tooling
+- Verify the agent entry points link to the current playbooks and knowledge
+  index. Check that the documented build, test, and shipping commands work.
 
 ### CI Health
 
@@ -338,87 +312,8 @@ Run-level green is not the same as a safe workflow definition. Audit
 
 Failures persisting **>2 consecutive days** on any workflow (CI, nightly, fuzz)
 are blocking. Inspect failing runs, fix the root cause, and verify recovery in
-this pass. Preserve evidence in the PR. If upstream breaks a required contract,
-validate and document a known-good pin. Only a genuine external blocker or an
-explicitly requested scope split warrants a follow-up issue; include the failing
-runs and concrete reason work cannot proceed.
-
-**This section is a hard gate.** Never mark maintenance complete or merge while
-required checks are red. Resolve ordinary failures rather than deferring them.
-
-## September 2026 pass
-
-The 2026-09-05 pass starts at `ab04bca2` with main CI and seven daily nightly/fuzz
-runs green. It refreshes Rust/npm dependencies and updates DeepSec to 2.3.9.
-Monty 0.0.19 and get-size2 0.10.1 are exact compatibility constraints, not an
-unimplemented upgrade: newer Monty releases remove the required per-VM tracker,
-and newer get-size2 releases conflict with the pinned Ruff AST. Isolated
-compatibility builds and 284 Python-feature tests verify the safe versions;
-see [Dependency Policy](dependencies.md) and [Python Builtin](../runtimes/python-builtin.md).
-
-DeepSec analyzed 44 files after 54 matcher hits and reported six findings.
-Fixes cover CI credentials, the aggregate WASM gate, Anthropic escaped-output
-expansion, and Deep Agents truncation metadata/grep glob filters. Credential-fetch
-steps now exit before repository execution; only scoped API keys cross the step
-boundary. Tests execute the actual workflow scripts and check process environments.
-Deep Agents now implements the current structured protocol through native VFS
-operations, with a real `create_deep_agent` integration using a deterministic model.
-A matcher scan is not a complete Rust security audit; DeepSec reported low Rust coverage.
-
-Local verification includes 5,564 workspace unit/integration tests, 167 rustdoc
-tests, 17 failpoint tests, 29 security property tests, 77 repository-script tests,
-831 Python tests (four Linux-only skips on macOS), 573 JS tests, and 63 browser
-WASM tests. The JS/Python native security suites use release builds, matching
-published artifacts and CI; debug native stack-stress builds are not interchangeable
-with that validation profile. Strict Linux/GNU Bash parity passes all 1,859 cases.
-The macOS strict comparison exposes BSD utility/path differences and is not the
-GNU compatibility baseline.
-
-The WASM bindgen installer derives its exact schema version from Cargo.lock,
-replaces stale cached CLIs, and verifies the executable on PATH in CI and
-publication. Regression tests cover cache mismatch and ambiguous lock versions.
-
-All-feature clippy/rustdoc, site build and generated-page checks, locked fuzz
-compilation/advisory checks, and standalone-workspace dependency/advisory checks
-pass. Coreutils regeneration produces no drift. CLI sort/jq/SQLite smoke tests
-pass, as do embedded Python/TypeScript external callbacks. The published 0.17.1
-browser example executes `jq` and the bundled child-shell script successfully.
-
-Unsafe-code review covers the changed dependency deltas and existing native
-FFI/callback ownership boundaries; this pass adds no Rust unsafe code. Geiger
-reports 449 packages but cannot parse two upstream files (signal-hook-registry
-and an aws-lc benchmark helper), and generated includes require source review.
-Its successful exit is not proof of complete unsafe coverage.
-
-The earlier August DeepSec tracking findings are also reproduced and fixed:
-browser persistence retains the previous complete snapshot after traversal errors;
-BashTool snapshot constructors register supplied custom builtins; SQLite setup
-installs only when absent; binary release jobs validate and build one immutable
-commit; Cargo publication verifies without registry credentials; CI grants no
-write permission or persisted checkout credential; release examples install the
-reviewed lockfile rather than resolving fresh dependencies. Regression tests cover
-failed/successful browser saves, keyed/unkeyed callbacks, SQLite present/missing
-branches, moved release tags, compiler environments, and release package links.
-
-Supply-chain validation passes with 57 individually reviewed dependency deltas
-and a non-importable jiter Rust-only baseline audit. The patched Git revision is
-explicitly audited, and `deny.toml` bans jiter's unused Python FFI feature after
-review found an unchecked allocation failure there. A negative fixture proves
-the feature ban rejects that configuration. Existing exemptions and publisher
-trust were not broadened.
-
-Performance baselines are saved in the respective Criterion and comparison
-result directories, and the site timeline is regenerated. The comparison harness
-now selects Bash from `PATH`, requires Bash >=4, and records the executable/version;
-it previously forced macOS Bash 3.2 and produced invalid oracle errors. The GNU
-Bash 5.3.15 run matches all 96 cases with zero errors. Parallel and SQLite
-Criterion runs complete successfully. These local measurements are observational,
-not a controlled before/after dependency performance claim.
-
-The aggregate CI gate must depend on every validation job, including `wasm`,
-`wasm-component`, and `wasm-web`. The maintenance security tests execute its
-condition with each dependency failing, preventing a green gate from hiding
-an omitted platform failure.
+this pass. Preserve evidence in the PR and apply the
+[external-blocker policy](#findings-and-external-blockers).
 
 ## Findings and external blockers
 
@@ -453,10 +348,6 @@ require human or agent review.
 newest runs of each Nightly and Fuzz Testing workflow on `main` to have
 completed successfully. Missing or unfinished runs and GitHub CLI errors
 block the gate. Review CI on `main` (audit, test, lint) separately.
-
-## Invocation
-
-Use `/maintain` skill to execute this checklist interactively.
 
 ## References
 

@@ -173,11 +173,11 @@ OIDC publication succeeds and their other consumers have been checked.
 
 ## Pre-Release Checklist
 
-`AGENTS.md` Pre-PR Checklist applies, plus: CI green on main, CHANGELOG.md
-has entries since last release, version consistent across all manifests
-(step 3), the core publish dry-run and CLI package check succeed, `just
-check-workflow-parity` passes, and new version > latest published on each
-registry.
+Apply the [ship checklist](../../.agents/skills/ship/SKILL.md). For a release,
+also verify green CI on main, changelog entries since the last release, a
+consistent version across all manifests (step 3), successful core publish
+dry run and CLI package check, and passing `just check-workflow-parity`.
+The new version must exceed the latest published version on every registry.
 
 ## Release and CI Parity
 

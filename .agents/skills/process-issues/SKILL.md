@@ -1,70 +1,28 @@
 ---
 name: process-issues
-description: Resolve all open GitHub issues. Each issue becomes exactly one shipped PR. Trigger when user says "process issues", "work through issues", "resolve issues", "handle open issues", "fix all issues", or asks to resolve GitHub issues end-to-end.
+description: Resolve qualifying open GitHub issues one at a time, with one shipped PR per issue. Use for process issues, work through issues, resolve issues, handle open issues, or fix all issues.
 user_invocable: true
 metadata:
   internal: true
 ---
 
-Resolve all qualifying open GitHub issues. Each issue becomes exactly one merged PR. Do not stop until every issue is resolved or explicitly deferred.
+# Process GitHub issues
 
-## Arguments
+Use the requested issue numbers or labels to scope the run. With no filter,
+consider every open issue. Qualifying issues were created or approved in a
+comment by `chaliy`. Skip other issues silently.
 
-- `$ARGUMENTS` - Optional: specific issue numbers (e.g. "42 55") or labels. If omitted, process all open issues.
+1. Work through qualifying issues in issue-number order. Identify the affected
+   behavior and start `fix/issue-{N}-{short-slug}` from current `origin/main`.
+   If an issue is unclear or cannot be reproduced, seek clarification on it
+   and continue. If the fix would exceed 500 lines, split the work into linked
+   sub-issues.
+2. Add a failing regression test for bugs or a behavior test for features.
+   Implement a focused fix for this issue.
+3. Use [ship](../ship/SKILL.md) for review, validation, pull request, CI, and
+   merge. Follow its issue-closing rules. Use one PR per issue.
+4. Refresh main after the merge before starting the next issue. Continue
+   until the qualifying issues are resolved or explicitly deferred.
 
-## Goal
-
-Every qualifying open issue has a merged PR that resolves it. **One issue = one PR. No bundling. No skipping.**
-
-## Qualifying issues
-
-Only process issues that meet ONE of:
-- Created by `chaliy`
-- Has a comment from `chaliy` approving it
-
-Skip all others silently.
-
-## Per-issue outcomes
-
-For each qualifying issue (ordered by issue number), achieve ALL of these before moving to the next:
-
-### 1. Issue is understood and scoped
-
-- Classify: bug, feat, test, chore, refactor, docs
-- Identify affected areas: parser, interpreter, builtins, vfs, network, git, python, tool, eval, security
-- Branch created from latest main: `fix/issue-{N}-{short-slug}`
-
-### 2. Failing test exists (bugs) or scaffold test exists (features)
-
-- A test that demonstrates the bug or validates the feature exists in `crates/bashkit/tests/spec_cases/` or relevant module
-- For bugs: test fails before the fix, passes after
-
-### 3. Fix or feature is implemented
-
-- Minimal, focused changes
-- Positive and negative tests pass
-- Security tests added if change touches parser, interpreter, VFS, network, git, or user input (per `knowledge/security/security-testing.md`)
-- Threat model updated if new attack surface (per `knowledge/security/threat-model.md`)
-
-### 4. Ship via `/ship`
-
-Invoke the `/ship` skill to handle all remaining steps: spec updates, artifact updates, code simplification, security review, smoke testing, quality gates, PR creation, CI, and merge.
-
-Pass context: `Closes #N — <short description of the fix/feature>`
-
-Do NOT duplicate any `/ship` steps manually — let the skill handle the full pipeline.
-
-After `/ship` completes and the PR is merged, return to main before next issue: `git checkout main && git pull origin main`
-
-## After all issues
-
-Scan for `#[ignore]` tests that may now pass. Un-ignore any that are green. Single PR for all un-ignored tests.
-
-## Rules
-
-- **One issue = one PR.** Non-negotiable. Never bundle multiple issues.
-- **Never close a half-done issue.** If the PR only implements a subset of the issue's tasks, do NOT use `Closes #N` or `Fixes #N` in the PR body. Instead use `Partial #N` or `Part of #N` and list what remains. Only use closing keywords when every task/checkbox in the issue is complete.
-- If an issue is unclear or not reproducible, comment asking for clarification and skip to next.
-- If a fix would be >500 lines, split into sub-issues and link them.
-- Never skip the failing-test-first step for bugs.
-- Always rebase on latest main between issues.
+Afterward, check whether previously ignored tests now pass. Collect any
+verified removals of `#[ignore]` in one separate PR.

@@ -50,16 +50,7 @@ uses one of them deliberately.
 
 ## Layout
 
-Concepts are grouped into domain subdirectories, each with its own `index.md`:
-
-| Directory | Holds |
-|---|---|
-| [`foundations/`](foundations/) | Interpreter architecture, parser, VFS, builtins, concurrency |
-| [`security/`](security/) | Threat model, security testing, credential/signing/HTTP boundaries |
-| [`runtimes/`](runtimes/) | Embedded language runtimes and the published language packages |
-| [`integrations/`](integrations/) | Tool contract, Git, SSH, interactive shell |
-| [`operations/`](operations/) | Testing, limitations, docs, maintenance, release, benchmarks, eval |
-| [`status/`](status/) | Machine-generated inventories |
+Find concepts through the [domain indexes](index.md#domains).
 
 Only this contract and `log.md` sit at the bundle root. A doc's directory conveys
 its domain; its `type` conveys its kind, the two are independent, so a
@@ -75,11 +66,6 @@ Type values are producer-defined. This bundle uses: `Architecture`, `Subsystem D
 
 `scripts/check_okf.py knowledge` validates the rules above. It runs in the CI lint job,
 via `just check-okf`, and from `scripts/tests/test_check_okf.py` (covered by `just check`).
-
-```console
-$ python3 scripts/check_okf.py knowledge
-knowledge: OKF v0.2 conformant (32 concepts, 7 index files, 1 log file)
-```
 
 ## Third-party OKF linters (evaluated 2026-07-26)
 
