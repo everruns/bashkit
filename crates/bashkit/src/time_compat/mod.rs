@@ -1,7 +1,7 @@
 //! Cross-platform `Instant`/`SystemTime`.
 //!
 //! `std::time::Instant`/`SystemTime` panic unconditionally on
-//! wasm32-unknown-unknown ("time not implemented on this platform" — no OS
+//! `wasm{32,64}-unknown-unknown` ("time not implemented on this platform" — no OS
 //! clock, no extension point to satisfy; see
 //! `library/std/src/sys/time/unsupported.rs` in the Rust source). `web-time`
 //! is a drop-in replacement backed by `Performance.now()`/`Date.now()` via
@@ -11,9 +11,10 @@
 //! `std::time`'s directly anywhere wall-clock time is read.
 //!
 //! `web-time` is only correct when the wasm host *is* a JS host, so it sits
-//! behind the `wasm_js` feature. Without it, `wasm32-unknown-unknown` takes
-//! [`host_clock`], where the embedder supplies the clock (and the timer, by
-//! spinning on it). See that module for the contract.
+//! behind the `wasm_js` feature. Without it, the
+//! `wasm{32,64}-unknown-unknown` targets take [`host_clock`], where the
+//! embedder supplies the clock (and the timer, by spinning on it). See that
+//! module for the contract.
 
 use std::future::Future;
 use std::time::Duration;
@@ -143,7 +144,7 @@ fn duration_millis(duration: Duration) -> u32 {
 ///
 /// `chrono` implements `From<std::time::SystemTime>` but not
 /// `From<web_time::SystemTime>` — same API shape, different type, so the
-/// blanket impl doesn't apply on wasm32. Goes through `duration_since`
+/// blanket impl doesn't apply on wasm. Goes through `duration_since`
 /// instead, which both `SystemTime`s support identically.
 pub(crate) fn to_chrono_utc(t: SystemTime) -> chrono::DateTime<chrono::Utc> {
     let epoch = || chrono::DateTime::from_timestamp(0, 0).expect("epoch is representable");
@@ -173,7 +174,7 @@ pub(crate) fn to_chrono_utc(t: SystemTime) -> chrono::DateTime<chrono::Utc> {
 /// Current wall-clock time as a `chrono::DateTime<Utc>`.
 ///
 /// Use instead of `chrono::Utc::now()`: chrono reads the clock through
-/// `std::time::SystemTime` (which panics on wasm32-unknown-unknown) or, with
+/// `std::time::SystemTime` (which panics on `wasm{32,64}-unknown-unknown`) or, with
 /// its `wasmbind` feature, through the JS `Date` — neither works for a non-JS
 /// wasm embedder. This routes through [`SystemTime`], so every target gets the
 /// clock it actually has.

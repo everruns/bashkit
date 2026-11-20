@@ -12,7 +12,7 @@
 //! segment of [`SEGMENT`] bytes (`stacker`). The depth limits still bound
 //! how many segments one execution can use, so memory stays bounded.
 //!
-//! On wasm32 `stacker` cannot switch stacks; the wrapper is a plain poll.
+//! On wasm `stacker` cannot switch stacks; the wrapper is a plain poll.
 
 use std::future::Future;
 use std::pin::Pin;
