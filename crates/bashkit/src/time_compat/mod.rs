@@ -11,9 +11,10 @@
 //! `std::time`'s directly anywhere wall-clock time is read.
 //!
 //! `web-time` is only correct when the wasm host *is* a JS host, so it sits
-//! behind the `wasm_js` feature. Without it, `wasm{32,64}-unknown-unknown` take
-//! [`host_clock`], where the embedder supplies the clock (and the timer, by
-//! spinning on it). See that module for the contract.
+//! behind the `wasm_js` feature. Without it, the
+//! `wasm{32,64}-unknown-unknown` targets take [`host_clock`], where the
+//! embedder supplies the clock (and the timer, by spinning on it). See that
+//! module for the contract.
 
 use std::future::Future;
 use std::time::Duration;
