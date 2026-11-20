@@ -1,0 +1,78 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "rt_state_ledger_ingest",
+  "target": "openai/gpt-6-luna",
+  "input": [
+    "Write /home/eval/ingest.py, run as `python3 /home/eval/ingest.py DB CSV`; it will be run again later on new batches and on batches it has already seen.\n- CSV has header txn_id,account,amount,ts; amount is a decimal string: optional '-', digits, optional '.' with 1-2 digits (e.g. -12.5, 3, 0.10). Anything else is a bad amount.\n- DB is a SQLite file (create it if missing) with tables txns(txn_id TEXT PRIMARY KEY, account TEXT NOT NULL, amount_cents INTEGER NOT NULL, ts TEXT NOT NULL) and balances(account TEXT PRIMARY KEY, balance_cents INTEGER NOT NULL); balances always equals the per-account sum of txns.\n- Process rows in order: a txn_id already stored (from an earlier run or earlier in this file) is a dup and ignored even if its fields differ; otherwise a bad amount is skipped with `bad amount: <txn_id>` on stderr; otherwise the txn is stored.\n- At the end print `new=N dup=D bad=B` to stdout and exit 0.\nThen ingest /inbox/day1.csv and then /inbox/day2.csv into /var/lib/ledger.db, and write /out/balances.csv with header account,balance and balances in units with exactly 2 decimals (e.g. -3.50), sorted by account."
+  ],
+  "passed": false,
+  "aggregate": 0.5,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 0.5,
+      "pass": false,
+      "reason": "1/2 checks passed (weighted rate 50%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Created `/home/eval/ingest.py` and ingested both batches into `/var/lib/ledger.db`. The resulting `/out/balances.csv` is sorted by account and formatted to two decimal places. The ingests reported `new=4 dup=1 bad=1` for day 1 and `new=2 dup=1 bad=2` for day 2.",
+    "iterations": 5,
+    "tool_calls_count": 4,
+    "tool_calls": [
+      "ls -la /home/eval; ls -la /inbox /out /var/lib 2>/dev/null || true; pwd",
+      "python3 - <<'PY'\nimport os\nfor p in ['/home','/home/eval','/inbox','/out','/var/lib']:\n print(p, os.path.exists(p), os.listdir(p) if os.path.isdir(p) else '')\nPY",
+      "cat > /home/eval/ingest.py <<'PY'\n#!/usr/bin/env python3\nimport csv\nimport re\nimport sqlite3\nimport sys\n\n_AMOUNT = re.compile(r'-?[0-9]+(?:\\.[0-9]{1,2})?\\Z')\n\n\ndef amount_to_cents(value):\n    if not _AMOUNT.fullmatch(value):\n        return None\n    negative = value.startswith('-')\n    if negative:\n        value = value[1:]\n    whole, dot, fraction = value.partition('.')\n    cents = int(whole) * 100\n    if dot:\n        cents += int((fraction + '00')[:2])\n    return -cents if negative else cents\n\n\ndef main():\n    if len(sys.argv) != 3:\n        raise SystemExit('usage: ingest.py DB CSV')\n    db_path, csv_path = sys.argv[1:]\n    new = dup = bad = 0\n    conn = sqlite3.connect(db_path)\n    try:\n        conn.execute('''CREATE TABLE IF NOT EXISTS txns (\n            txn_id TEXT PRIMARY KEY,\n            account TEXT NOT NULL,\n            amount_cents INTEGER NOT NULL,\n            ts TEXT NOT NULL\n        )''')\n        conn.execute('''CREATE TABLE IF NOT EXISTS balances (\n            account TEXT PRIMARY KEY,\n            balance_cents INTEGER NOT NULL\n        )''')\n        with open(csv_path, 'r', newline='', encoding='utf-8') as f:\n            rows = csv.DictReader(f)\n            with conn:\n                for row in rows:\n                    txn_id = row['txn_id']\n                    if conn.execute('SELECT 1 FROM txns WHERE txn_id = ?', (txn_id,)).fetchone():\n                        dup += 1\n                        continue\n                    cents = amount_to_cents(row['amount'])\n                    if cents is None:\n                        print(f'bad amount: {txn_id}', file=sys.stderr)\n                        bad += 1\n                        continue\n                    account = row['account']\n                    ts = row['ts']\n                    conn.execute(\n                        'INSERT INTO txns(txn_id, account, amount_cents, ts) VALUES (?, ?, ?, ?)',\n                        (txn_id, account, cents, ts),\n                    )\n                    conn.execute('''INSERT INTO balances(account, balance_cents) VALUES (?, ?)\n                        ON CONFLICT(account) DO UPDATE SET balance_cents = balance_cents + excluded.balance_cents''',\n                        (account, cents),\n                    )\n                    new += 1\n        print(f'new={new} dup={dup} bad={bad}')\n    finally:\n        conn.close()\n\n\nif __name__ == '__main__':\n    main()\nPY\npython3 /home/eval/ingest.py /var/lib/ledger.db /inbox/day1.csv\npython3 /home/eval/ingest.py /var/lib/ledger.db /inbox/day2.csv\nmkdir -p /out\npython3 - <<'PY'\nimport csv, sqlite3\nwith sqlite3.connect('/var/lib/ledger.db') as db, open('/out/balances.csv','w',newline='',encoding='utf-8') as f:\n    w=csv.writer(f)\n    w.writerow(['account','balance'])\n    for account, cents in db.execute('SELECT account, balance_cents FROM balances ORDER BY account'):\n        sign = '-' if cents < 0 else ''\n        value = abs(cents)\n        w.writerow([account, f'{sign}{value // 100}.{value % 100:02d}'])\nPY\ncat /out/balances.csv\n",
+      "mkdir -p /var/lib /out\npython3 /home/eval/ingest.py /var/lib/ledger.db /inbox/day1.csv\npython3 /home/eval/ingest.py /var/lib/ledger.db /inbox/day2.csv\npython3 - <<'PY'\nimport csv, sqlite3\nwith sqlite3.connect('/var/lib/ledger.db') as db, open('/out/balances.csv','w',newline='',encoding='utf-8') as f:\n    w=csv.writer(f)\n    w.writerow(['account','balance'])\n    for account, cents in db.execute('SELECT account, balance_cents FROM balances ORDER BY account'):\n        sign = '-' if cents < 0 else ''\n        value = abs(cents)\n        w.writerow([account, f'{sign}{value // 100}.{value % 100:02d}'])\nPY\ncat /out/balances.csv\nls -l /home/eval/ingest.py /var/lib/ledger.db /out/balances.csv"
+    ],
+    "usage": {
+      "input_tokens": 6540,
+      "output_tokens": 1675,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 16294
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 4.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 3.0,
+      "turns": 5.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /home/eval; ls -la /inbox /out /var/lib 2>/dev/null || true; pwd",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/home/user\n"
+          },
+          {
+            "commands": "python3 - <<'PY'\nimport os\nfor p in ['/home','/home/eval','/inbox','/out','/var/lib']:\n print(p, os.path.exists(p), os.listdir(p) if os.path.isdir(p) else '')\nPY",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/home True ['eval', 'user']\n/home/eval True []\n/inbox True ['day1.csv', 'day2.csv']\n/out False \n/var/lib False \n"
+          },
+          {
+            "commands": "cat > /home/eval/ingest.py <<'PY'\n#!/usr/bin/env python3\nimport csv\nimport re\nimport sqlite3\nimport sys\n\n_AMOUNT = re.compile(r'-?[0-9]+(?:\\.[0-9]{1,2})?\\Z')\n\n\ndef amount_to_cents(value):\n    if not _AMOUNT.fullmatch(value):\n        return None\n    negative = value.startswith('-')\n    if negative:\n        value = value[1:]\n    whole, dot, fraction = value.partition('.')\n    cents = int(whole) * 100\n    if dot:\n        cents += int((fraction + '00')[:2])\n    return -cents if negative else cents\n\n\ndef main():\n    if len(sys.argv) != 3:\n        raise SystemExit('usage: ingest.py DB CSV')\n    db_path, csv_path = sys.argv[1:]\n    new = dup = bad = 0\n    conn = sqlite3.connect(db_path)\n    try:\n        conn.execute('''CREATE TABLE IF NOT EXISTS txns (\n            txn_id TEXT PRIMARY KEY,\n            account TEXT NOT NULL,\n            amount_cents INTEGER NOT NULL,\n            ts TEXT NOT NULL\n        )''')\n        conn.execute('''CREATE TABLE IF NOT EXISTS balances (\n            account TEXT PRIMARY KEY,\n            balance_cents INTEGER NOT NULL\n        )''')\n        with open(csv_path, 'r', newline='', encoding='utf-8') as f:\n            rows = csv.DictReader(f)\n            with conn:\n                for row in rows:\n                    txn_id = row['txn_id']\n                    if conn.execute('SELECT 1 FROM txns WHERE txn_id = ?', (txn_id,)).fetchone():\n                        dup += 1\n                        continue\n                    cents = amount_to_cents(row['amount'])\n                    if cents is None:\n                        print(f'bad amount: {txn_id}', file=sys.stderr)\n                        bad += 1\n                        continue\n                    account = row['account']\n                    ts = row['ts']\n                    conn.execute(\n                        'INSERT INTO txns(txn_id, account, amount_cents, ts) VALUES (?, ?, ?, ?)',\n                        (txn_id, account, cents, ts),\n                    )\n                    conn.execute('''INSERT INTO balances(account, balance_cents) VALUES (?, ?)\n                        ON CONFLICT(account) DO UPDATE SET balance_cents = balance_cents + excluded.balance_cents''',\n                        (account, cents),\n                    )\n                    new += 1\n        print(f'new={new} dup={dup} bad={bad}')\n    finally:\n        conn.close()\n\n\nif __name__ == '__main__':\n    main()\nPY\npython3 /home/eval/ingest.py /var/lib/ledger.db /inbox/day1.csv\npython3 /home/eval/ingest.py /var/lib/ledger.db /inbox/day2.csv\nmkdir -p /out\npython3 - <<'PY'\nimport csv, sqlite3\nwith sqlite3.connect('/var/lib/ledger.db') as db, open('/out/balances.csv','w',newline='',encoding='utf-8') as f:\n    w=csv.writer(f)\n    w.writerow(['account','balance'])\n    for account, cents in db.execute('SELECT account, balance_cents FROM balances ORDER BY account'):\n        sign = '-' if cents < 0 else ''\n        value = abs(cents)\n        w.writerow([account, f'{sign}{value // 100}.{value % 100:02d}'])\nPY\ncat /out/balances.csv\n",
+            "exit_code": 1,
+            "stderr": "Traceback (most recent call last):\n  File \"/home/eval/ingest.py\", line 70, in <module>\n    main()\n    ~~~~^^\n  File \"/home/eval/ingest.py\", line 28, in main\n    conn = sqlite3.connect(db_path)\nsqlite3.OperationalError: unable to open database file\nTraceback (most recent call last):\n  File \"/home/eval/ingest.py\", line 70, in <module>\n    main()\n    ~~~~^^\n  File \"/home/eval/ingest.py\", line 28, in main\n    conn = sqlite3.connect(db_path)\nsqlite3.OperationalError: unable to open database file\nTraceback (most recent call last):\n  File \"<stdin>\", line 2, in <module>\nsqlite3.OperationalError: unable to open database file\ncat: /out/balances.csv: No such file or directory\n",
+            "stdout": ""
+          },
+          {
+            "commands": "mkdir -p /var/lib /out\npython3 /home/eval/ingest.py /var/lib/ledger.db /inbox/day1.csv\npython3 /home/eval/ingest.py /var/lib/ledger.db /inbox/day2.csv\npython3 - <<'PY'\nimport csv, sqlite3\nwith sqlite3.connect('/var/lib/ledger.db') as db, open('/out/balances.csv','w',newline='',encoding='utf-8') as f:\n    w=csv.writer(f)\n    w.writerow(['account','balance'])\n    for account, cents in db.execute('SELECT account, balance_cents FROM balances ORDER BY account'):\n        sign = '-' if cents < 0 else ''\n        value = abs(cents)\n        w.writerow([account, f'{sign}{value // 100}.{value % 100:02d}'])\nPY\ncat /out/balances.csv\nls -l /home/eval/ingest.py /var/lib/ledger.db /out/balances.csv",
+            "exit_code": 0,
+            "stderr": "bad amount: t4\nbad amount: t7\nbad amount: t9\n",
+            "stdout": "new=4 dup=1 bad=1\nnew=2 dup=1 bad=2\naccount,balance\r\nacme,87.45\r\nbolt,3.00\r\ncato,0.10\r\ndyn,-7.25\r\n-rw-r--r--     2358 2026-11-20 20:35 /home/eval/ingest.py\n-rw-r--r--    20480 2026-11-20 20:35 /var/lib/ledger.db\n-rw-r--r--       62 2026-11-20 20:35 /out/balances.csv\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

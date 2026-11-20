@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "rt_py_sqlite_stats",
+  "target": "openai/gpt-6-luna",
+  "input": [
+    "/data/shop.db is a SQLite database with a table orders(id, customer, category, amount_cents). Write /out/category_stats.json: a JSON object keyed by category whose values are objects with orders (count), total_cents, median_cents and top_customer. median_cents is the median amount; for an even count it is the mean of the two middle amounts rounded half up to an integer. top_customer is the customer with the largest total amount in that category (ties: alphabetically first). Format: 2-space indentation, keys sorted at every level, trailing newline (what Python's json.dumps(obj, indent=2, sort_keys=True) prints)."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "1/1 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Wrote `/out/category_stats.json` with the requested statistics and formatting.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "python3 - <<'PY'\nimport sqlite3, os\np='/data/shop.db'\nprint(os.path.exists(p))\nc=sqlite3.connect(p)\nprint(c.execute(\"select name, sql from sqlite_master where type='table'\").fetchall())\nprint(c.execute('select * from orders limit 5').fetchall())\nPY",
+      "python3 - <<'PY'\nimport sqlite3, json, os\nfrom decimal import Decimal, ROUND_HALF_UP\nconn = sqlite3.connect('/data/shop.db')\nrows = conn.execute('SELECT category, customer, amount_cents FROM orders ORDER BY category, amount_cents, customer').fetchall()\ngroups = {}\ncustomer_totals = {}\nfor category, customer, amount in rows:\n    groups.setdefault(category, []).append(amount)\n    customer_totals.setdefault(category, {}).setdefault(customer, 0)\n    customer_totals[category][customer] += amount\nresult = {}\nfor category, amounts in groups.items():\n    n = len(amounts)\n    if n % 2:\n        median = amounts[n // 2]\n    else:\n        median = int((Decimal(amounts[n//2 - 1] + amounts[n//2]) / 2).quantize(Decimal('1'), rounding=ROUND_HALF_UP))\n    totals = customer_totals[category]\n    top_customer = min(totals, key=lambda name: (-totals[name], name))\n    result[category] = {'orders': n, 'total_cents': sum(amounts), 'median_cents': median, 'top_customer': top_customer}\nos.makedirs('/out', exist_ok=True)\nwith open('/out/category_stats.json', 'w', encoding='utf-8', newline='') as f:\n    f.write(json.dumps(result, indent=2, sort_keys=True))\n    f.write('\\n')\nPY\ncat /out/category_stats.json"
+    ],
+    "usage": {
+      "input_tokens": 2471,
+      "output_tokens": 617,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 6535
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "python3 - <<'PY'\nimport sqlite3, os\np='/data/shop.db'\nprint(os.path.exists(p))\nc=sqlite3.connect(p)\nprint(c.execute(\"select name, sql from sqlite_master where type='table'\").fetchall())\nprint(c.execute('select * from orders limit 5').fetchall())\nPY",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "True\n[('orders', 'CREATE TABLE orders (id INTEGER PRIMARY KEY, customer TEXT NOT NULL, category TEXT NOT NULL, amount_cents INTEGER NOT NULL)')]\n[(1, 'kim', 'books', 1200), (2, 'lee', 'books', 800), (3, 'kim', 'books', 1500), (4, 'ann', 'books', 905), (5, 'lee', 'games', 5999)]\n"
+          },
+          {
+            "commands": "python3 - <<'PY'\nimport sqlite3, json, os\nfrom decimal import Decimal, ROUND_HALF_UP\nconn = sqlite3.connect('/data/shop.db')\nrows = conn.execute('SELECT category, customer, amount_cents FROM orders ORDER BY category, amount_cents, customer').fetchall()\ngroups = {}\ncustomer_totals = {}\nfor category, customer, amount in rows:\n    groups.setdefault(category, []).append(amount)\n    customer_totals.setdefault(category, {}).setdefault(customer, 0)\n    customer_totals[category][customer] += amount\nresult = {}\nfor category, amounts in groups.items():\n    n = len(amounts)\n    if n % 2:\n        median = amounts[n // 2]\n    else:\n        median = int((Decimal(amounts[n//2 - 1] + amounts[n//2]) / 2).quantize(Decimal('1'), rounding=ROUND_HALF_UP))\n    totals = customer_totals[category]\n    top_customer = min(totals, key=lambda name: (-totals[name], name))\n    result[category] = {'orders': n, 'total_cents': sum(amounts), 'median_cents': median, 'top_customer': top_customer}\nos.makedirs('/out', exist_ok=True)\nwith open('/out/category_stats.json', 'w', encoding='utf-8', newline='') as f:\n    f.write(json.dumps(result, indent=2, sort_keys=True))\n    f.write('\\n')\nPY\ncat /out/category_stats.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "{\n  \"books\": {\n    \"median_cents\": 1053,\n    \"orders\": 4,\n    \"top_customer\": \"kim\",\n    \"total_cents\": 4405\n  },\n  \"games\": {\n    \"median_cents\": 3500,\n    \"orders\": 4,\n    \"top_customer\": \"ann\",\n    \"total_cents\": 13000\n  },\n  \"music\": {\n    \"median_cents\": 226,\n    \"orders\": 4,\n    \"top_customer\": \"amy\",\n    \"total_cents\": 902\n  },\n  \"toys\": {\n    \"median_cents\": 777,\n    \"orders\": 1,\n    \"top_customer\": \"bob\",\n    \"total_cents\": 777\n  }\n}\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

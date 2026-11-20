@@ -1,0 +1,63 @@
+{
+  "eval": "bashkit_generate",
+  "sample": "gen_printf_report",
+  "target": "openai/gpt-6-luna",
+  "input": [
+    "Write a bash script that builds an aligned sales report.\n\nStarting files (fields are separated by a single TAB character):\n--- /home/eval/data/sales.tsv ---\nregion\tproduct\tunits\tunit_price\nnorth\twidget\t10\t2.50\nsouth\twidget\t4\t2.50\nnorth\tgadget\t3\t10.00\neast\tgizmo\t7\t1.25\nsouth\tgadget\t1\t10.00\neast\twidget\t2\t2.50\n--- end ---\n\nWrite /home/eval/data/report.txt with:\n- a header line formatted with printf `%-8s %6s %10s` and the values `REGION UNITS REVENUE`;\n- one line per region with total units and total revenue (sum of units * unit_price), formatted `%-8s %6d %10.2f`, sorted by revenue descending (ties by region name ascending);\n- a line of exactly 26 `-` characters;\n- a final line formatted `%-8s %6d %10.2f` with `TOTAL`, the total units and the total revenue.\nExit 0."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "```bash\n#!/usr/bin/env bash\nset -e\n\nreport=/home/eval/data/report.txt\n\nprintf '%-8s %6s %10s\\n' REGION UNITS REVENUE > \"$report\"\n\nawk -F '\\t' '\n    NR == 1 { next }\n    {\n        region = $1\n        units[region] += $3\n        price_cents = int($4 * 100 + 0.5)\n        revenue_cents[region] += $3 * price_cents\n        total_units += $3\n        total_revenue_cents += $3 * price_cents\n    }\n    END {\n        for (region in units)\n            regions[++count] = region\n\n        for (i = 1; i <= count; i++) {\n            for (j = i + 1; j <= count; j++) {\n                a = regions[i]\n                b = regions[j]\n                if (revenue_cents[a] < revenue_cents[b] ||\n                    (revenue_cents[a] == revenue_cents[b] && a > b)) {\n                    regions[i] = b\n                    regions[j] = a\n                }\n            }\n        }\n\n        for (i = 1; i <= count; i++) {\n            region = regions[i]\n            printf \"%-8s %6d %10.2f\\n\", region, units[region], revenue_cents[region] / 100\n        }\n        printf \"%s\\n\", \"--------------------------\"\n        printf \"%-8s %6d %10.2f\\n\", \"TOTAL\", total_units, total_revenue_cents / 100\n    }\n' /home/eval/data/sales.tsv >> \"$report\"\n```",
+    "iterations": 1,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "#!/usr/bin/env bash\nset -e\n\nreport=/home/eval/data/report.txt\n\nprintf '%-8s %6s %10s\\n' REGION UNITS REVENUE > \"$report\"\n\nawk -F '\\t' '\n    NR == 1 { next }\n    {\n        region = $1\n        units[region] += $3\n        price_cents = int($4 * 100 + 0.5)\n        revenue_cents[region] += $3 * price_cents\n        total_units += $3\n        total_revenue_cents += $3 * price_cents\n    }\n    END {\n        for (region in units)\n            regions[++count] = region\n\n        for (i = 1; i <= count; i++) {\n            for (j = i + 1; j <= count; j++) {\n                a = regions[i]\n                b = regions[j]\n                if (revenue_cents[a] < revenue_cents[b] ||\n                    (revenue_cents[a] == revenue_cents[b] && a > b)) {\n                    regions[i] = b\n                    regions[j] = a\n                }\n            }\n        }\n\n        for (i = 1; i <= count; i++) {\n            region = regions[i]\n            printf \"%-8s %6d %10.2f\\n\", region, units[region], revenue_cents[region] / 100\n        }\n        printf \"%s\\n\", \"--------------------------\"\n        printf \"%-8s %6d %10.2f\\n\", \"TOTAL\", total_units, total_revenue_cents / 100\n    }\n' /home/eval/data/sales.tsv >> \"$report\"\n"
+    ],
+    "usage": {
+      "input_tokens": 527,
+      "output_tokens": 1397,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 12842
+    },
+    "metrics": {
+      "exec_ms": 2.0,
+      "exit_code": 0.0,
+      "extracted": 1.0,
+      "generate_ms": 12840.0,
+      "script_bytes": 1208.0,
+      "script_found": 1.0,
+      "timed_out": 0.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "#!/usr/bin/env bash\nset -e\n\nreport=/home/eval/data/report.txt\n\nprintf '%-8s %6s %10s\\n' REGION UNITS REVENUE > \"$report\"\n\nawk -F '\\t' '\n    NR == 1 { next }\n    {\n        region = $1\n        units[region] += $3\n        price_cents = int($4 * 100 + 0.5)\n        revenue_cents[region] += $3 * price_cents\n        total_units += $3\n        total_revenue_cents += $3 * price_cents\n    }\n    END {\n        for (region in units)\n            regions[++count] = region\n\n        for (i = 1; i <= count; i++) {\n            for (j = i + 1; j <= count; j++) {\n                a = regions[i]\n                b = regions[j]\n                if (revenue_cents[a] < revenue_cents[b] ||\n                    (revenue_cents[a] == revenue_cents[b] && a > b)) {\n                    regions[i] = b\n                    regions[j] = a\n                }\n            }\n        }\n\n        for (i = 1; i <= count; i++) {\n            region = regions[i]\n            printf \"%-8s %6d %10.2f\\n\", region, units[region], revenue_cents[region] / 100\n        }\n        printf \"%s\\n\", \"--------------------------\"\n        printf \"%-8s %6d %10.2f\\n\", \"TOTAL\", total_units, total_revenue_cents / 100\n    }\n' /home/eval/data/sales.tsv >> \"$report\"\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          }
+        ]
+      },
+      "generate": {
+        "extraction": "fenced",
+        "timed_out": false
+      }
+    }
+  },
+  "skipped": false
+}

@@ -1,0 +1,92 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "rt_pipeline_mail_domains",
+  "target": "openai/gpt-6-luna",
+  "input": [
+    "Write a bash script /home/eval/report.sh used as `bash /home/eval/report.sh INBOX_DIR OUT_FILE` (it will be run again later on other directories). INBOX_DIR holds message files `*.json` (names may contain spaces; ignore other files). Each is a JSON object whose optional \"to\" and \"cc\" fields are email address-list header strings like `\"Doe, John\" <john@example.com>, ann@x.org` (display names may be quoted and contain commas). Count every recipient address in to and cc by its domain (the part after '@', lowercased).\nFiles that are not valid JSON are skipped and reported on stderr as `skip: <file name>` (base name), in file name order. OUT_FILE gets one line `COUNT DOMAIN` per domain, sorted by count descending then domain. Exit 0.\nRun it on /data/inbox writing /out/domains.txt."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Created `/home/eval/report.sh` and ran it on `/data/inbox`, writing `/out/domains.txt`.\n\nThe report contains:\n```text\n4 x.org\n2 corp.io\n2 example.com\n1 sub.x.org\n```\n\n`broken.json` was skipped and reported on stderr.",
+    "iterations": 7,
+    "tool_calls_count": 6,
+    "tool_calls": [
+      "ls -la /home/eval; ls -la /data/inbox 2>/dev/null || true; command -v jq || true; pwd",
+      "for f in /home/eval/*.json; do printf '\\n---%s\\n' \"$f\"; cat \"$f\"; done; ls -ld /out 2>/dev/null || true",
+      "pwd; ls -la /home/eval; find / -maxdepth 3 -type f 2>/dev/null | head -50;",
+      "ls -la /home; ls -la /data; ls -la /data/inbox; ls -la /out 2>&1 || true;",
+      "python3 - <<'PY'\nfrom email.utils import getaddresses\nfor s in ['\"Doe, John\" <john@example.com>, ann@x.org','Name <one@X>, another@Y','broken','a@x, a@x']:\n print(s, getaddresses([s]))\nPY\n",
+      "cat > /home/eval/report.sh <<'BASH'\n#!/usr/bin/env bash\nset -euo pipefail\n\nif [[ $# -ne 2 ]]; then\n  printf 'Usage: bash %s INBOX_DIR OUT_FILE\\n' \"$0\" >&2\n  exit 2\nfi\n\npython3 - \"$1\" \"$2\" <<'PY'\nimport json\nimport os\nimport sys\nfrom collections import Counter\nfrom email.utils import getaddresses\nfrom pathlib import Path\n\ninbox = Path(sys.argv[1])\noutfile = Path(sys.argv[2])\ncounts = Counter()\n\n# Sort by filename, not by a glob expansion whose order can vary by locale.\nfor path in sorted(inbox.glob('*.json'), key=lambda p: p.name):\n    try:\n        with path.open(encoding='utf-8') as f:\n            message = json.load(f)\n    except (json.JSONDecodeError, UnicodeDecodeError):\n        print(f'skip: {path.name}', file=sys.stderr)\n        continue\n\n    if not isinstance(message, dict):\n        continue\n    headers = [message.get(field) for field in ('to', 'cc')]\n    strings = [value for value in headers if isinstance(value, str)]\n    for _display_name, address in getaddresses(strings):\n        address = address.strip()\n        if '@' not in address:\n            continue\n        domain = address.rsplit('@', 1)[1].strip().lower()\n        if domain:\n            counts[domain] += 1\n\noutfile.parent.mkdir(parents=True, exist_ok=True)\nwith outfile.open('w', encoding='utf-8', newline='\\n') as f:\n    for domain, count in sorted(counts.items(), key=lambda item: (-item[1], item[0])):\n        f.write(f'{count} {domain}\\n')\nPY\nBASH\nchmod +x /home/eval/report.sh\nbash /home/eval/report.sh /data/inbox /out/domains.txt\nprintf '%s\\n' '--- output'; cat /out/domains.txt; printf '%s\\n' '--- script'; ls -l /home/eval/report.sh"
+    ],
+    "usage": {
+      "input_tokens": 8684,
+      "output_tokens": 2575,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 27970
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 6.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 6.0,
+      "turns": 7.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /home/eval; ls -la /data/inbox 2>/dev/null || true; command -v jq || true; pwd",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       87 2026-11-20 20:35 001.json\n-rw-r--r--       95 2026-11-20 20:35 002 reply.json\n-rw-r--r--       37 2026-11-20 20:35 003.json\n-rw-r--r--       99 2026-11-20 20:35 004 fwd fwd.json\n-rw-r--r--       25 2026-11-20 20:35 broken.json\n-rw-r--r--        9 2026-11-20 20:35 notes.txt\n/usr/bin/jq\n/home/user\n"
+          },
+          {
+            "commands": "for f in /home/eval/*.json; do printf '\\n---%s\\n' \"$f\"; cat \"$f\"; done; ls -ld /out 2>/dev/null || true",
+            "exit_code": 0,
+            "stderr": "cat: /home/eval/*.json: No such file or directory\n",
+            "stdout": "\n---/home/eval/*.json\n"
+          },
+          {
+            "commands": "pwd; ls -la /home/eval; find / -maxdepth 3 -type f 2>/dev/null | head -50;",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/home/user\n/bin/:\n/bin/[\n/bin/arch\n/bin/assert\n/bin/awk\n/bin/b2sum\n/bin/base32\n/bin/base64\n/bin/basename\n/bin/basenc\n/bin/bash\n/bin/bc\n/bin/bind\n/bin/bunzip2\n/bin/busybox\n/bin/bzcat\n/bin/bzip2\n/bin/cat\n/bin/chgrp\n/bin/chmod\n/bin/chown\n/bin/cksum\n/bin/clear\n/bin/cmp\n/bin/column\n/bin/comm\n/bin/complete\n/bin/compopt\n/bin/cp\n/bin/csv\n/bin/curl\n/bin/cut\n/bin/date\n/bin/dd\n/bin/df\n/bin/diff\n/bin/dirname\n/bin/dotenv\n/bin/du\n/bin/echo\n/bin/egrep\n/bin/env\n/bin/envsubst\n/bin/expand\n/bin/expr\n/bin/factor\n/bin/false\n/bin/fgrep\n/bin/file\n/bin/find\n"
+          },
+          {
+            "commands": "ls -la /home; ls -la /data; ls -la /data/inbox; ls -la /out 2>&1 || true;",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "drwxr-xr-x        0 2026-11-20 20:35 eval\ndrwxr-xr-x        0 2026-11-20 20:35 user\ndrwxr-xr-x        0 2026-11-20 20:35 inbox\n-rw-r--r--       87 2026-11-20 20:35 001.json\n-rw-r--r--       95 2026-11-20 20:35 002 reply.json\n-rw-r--r--       37 2026-11-20 20:35 003.json\n-rw-r--r--       99 2026-11-20 20:35 004 fwd fwd.json\n-rw-r--r--       25 2026-11-20 20:35 broken.json\n-rw-r--r--        9 2026-11-20 20:35 notes.txt\nls: cannot access '/out': No such file or directory\n"
+          },
+          {
+            "commands": "python3 - <<'PY'\nfrom email.utils import getaddresses\nfor s in ['\"Doe, John\" <john@example.com>, ann@x.org','Name <one@X>, another@Y','broken','a@x, a@x']:\n print(s, getaddresses([s]))\nPY\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "\"Doe, John\" <john@example.com>, ann@x.org [('Doe, John', 'john@example.com'), ('', 'ann@x.org')]\nName <one@X>, another@Y [('Name', 'one@X'), ('', 'another@Y')]\nbroken [('', 'broken')]\na@x, a@x [('', 'a@x'), ('', 'a@x')]\n"
+          },
+          {
+            "commands": "cat > /home/eval/report.sh <<'BASH'\n#!/usr/bin/env bash\nset -euo pipefail\n\nif [[ $# -ne 2 ]]; then\n  printf 'Usage: bash %s INBOX_DIR OUT_FILE\\n' \"$0\" >&2\n  exit 2\nfi\n\npython3 - \"$1\" \"$2\" <<'PY'\nimport json\nimport os\nimport sys\nfrom collections import Counter\nfrom email.utils import getaddresses\nfrom pathlib import Path\n\ninbox = Path(sys.argv[1])\noutfile = Path(sys.argv[2])\ncounts = Counter()\n\n# Sort by filename, not by a glob expansion whose order can vary by locale.\nfor path in sorted(inbox.glob('*.json'), key=lambda p: p.name):\n    try:\n        with path.open(encoding='utf-8') as f:\n            message = json.load(f)\n    except (json.JSONDecodeError, UnicodeDecodeError):\n        print(f'skip: {path.name}', file=sys.stderr)\n        continue\n\n    if not isinstance(message, dict):\n        continue\n    headers = [message.get(field) for field in ('to', 'cc')]\n    strings = [value for value in headers if isinstance(value, str)]\n    for _display_name, address in getaddresses(strings):\n        address = address.strip()\n        if '@' not in address:\n            continue\n        domain = address.rsplit('@', 1)[1].strip().lower()\n        if domain:\n            counts[domain] += 1\n\noutfile.parent.mkdir(parents=True, exist_ok=True)\nwith outfile.open('w', encoding='utf-8', newline='\\n') as f:\n    for domain, count in sorted(counts.items(), key=lambda item: (-item[1], item[0])):\n        f.write(f'{count} {domain}\\n')\nPY\nBASH\nchmod +x /home/eval/report.sh\nbash /home/eval/report.sh /data/inbox /out/domains.txt\nprintf '%s\\n' '--- output'; cat /out/domains.txt; printf '%s\\n' '--- script'; ls -l /home/eval/report.sh",
+            "exit_code": 0,
+            "stderr": "skip: broken.json\n",
+            "stdout": "--- output\n4 x.org\n2 corp.io\n2 example.com\n1 sub.x.org\n--- script\n-rwxr-xr-x     1397 2026-11-20 20:35 /home/eval/report.sh\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "rt_py_toml_render",
+  "target": "openai/gpt-6-luna",
+  "input": [
+    "Render per-environment configs: for every /config/env/*.toml file, merge it over /config/base.toml and write /out/<name>.json (dev.toml -> /out/dev.json). Merge rules: tables merge recursively; any other value (scalars, arrays, arrays of tables) in the override replaces the base value; an override value equal to the string \"__unset__\" removes that key. TOML dates and datetimes become strings via Python's isoformat(). JSON: 2-space indent, keys sorted, non-ASCII characters written as-is (not \\u escapes), trailing newline. Also write /out/index.txt listing the environment names, sorted, one per line."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "3/3 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Rendered `/out/dev.json` and `/out/prod.json` using the base config and environment overrides. Wrote the sorted environment names to `/out/index.txt`.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "ls -la /config; find /config -maxdepth 3 -type f -print; ls -la /out 2>/dev/null || true",
+      "python3 - <<'PY'\nimport json\nimport tomllib\nfrom datetime import date, datetime\nfrom pathlib import Path\n\nconfig = Path('/config')\nout = Path('/out')\nout.mkdir(parents=True, exist_ok=True)\nwith (config / 'base.toml').open('rb') as f:\n    base = tomllib.load(f)\n\ndef merge(base_value, override_value):\n    if isinstance(base_value, dict) and isinstance(override_value, dict):\n        result = dict(base_value)\n        for key, value in override_value.items():\n            if value == '__unset__' and isinstance(value, str):\n                result.pop(key, None)\n            elif key in result and isinstance(result[key], dict) and isinstance(value, dict):\n                result[key] = merge(result[key], value)\n            else:\n                result[key] = value\n        return result\n    return override_value\n\ndef json_values(value):\n    if isinstance(value, dict):\n        return {key: json_values(item) for key, item in value.items()}\n    if isinstance(value, list):\n        return [json_values(item) for item in value]\n    if isinstance(value, (datetime, date)):\n        return value.isoformat()\n    return value\n\nenvironments = sorted(config.joinpath('env').glob('*.toml'), key=lambda path: path.stem)\nfor path in environments:\n    with path.open('rb') as f:\n        override = tomllib.load(f)\n    merged = json_values(merge(base, override))\n    (out / f'{path.stem}.json').write_text(\n        json.dumps(merged, indent=2, sort_keys=True, ensure_ascii=False) + '\\n',\n        encoding='utf-8',\n    )\n(out / 'index.txt').write_text(''.join(f'{path.stem}\\n' for path in environments), encoding='utf-8')\nPY\nls -la /out; cat /out/index.txt"
+    ],
+    "usage": {
+      "input_tokens": 2363,
+      "output_tokens": 799,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 7611
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /config; find /config -maxdepth 3 -type f -print; ls -la /out 2>/dev/null || true",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--      363 2026-11-20 20:35 base.toml\ndrwxr-xr-x        0 2026-11-20 20:35 env\n/config/base.toml\n/config/env/README.md\n/config/env/dev.toml\n/config/env/prod.toml\n"
+          },
+          {
+            "commands": "python3 - <<'PY'\nimport json\nimport tomllib\nfrom datetime import date, datetime\nfrom pathlib import Path\n\nconfig = Path('/config')\nout = Path('/out')\nout.mkdir(parents=True, exist_ok=True)\nwith (config / 'base.toml').open('rb') as f:\n    base = tomllib.load(f)\n\ndef merge(base_value, override_value):\n    if isinstance(base_value, dict) and isinstance(override_value, dict):\n        result = dict(base_value)\n        for key, value in override_value.items():\n            if value == '__unset__' and isinstance(value, str):\n                result.pop(key, None)\n            elif key in result and isinstance(result[key], dict) and isinstance(value, dict):\n                result[key] = merge(result[key], value)\n            else:\n                result[key] = value\n        return result\n    return override_value\n\ndef json_values(value):\n    if isinstance(value, dict):\n        return {key: json_values(item) for key, item in value.items()}\n    if isinstance(value, list):\n        return [json_values(item) for item in value]\n    if isinstance(value, (datetime, date)):\n        return value.isoformat()\n    return value\n\nenvironments = sorted(config.joinpath('env').glob('*.toml'), key=lambda path: path.stem)\nfor path in environments:\n    with path.open('rb') as f:\n        override = tomllib.load(f)\n    merged = json_values(merge(base, override))\n    (out / f'{path.stem}.json').write_text(\n        json.dumps(merged, indent=2, sort_keys=True, ensure_ascii=False) + '\\n',\n        encoding='utf-8',\n    )\n(out / 'index.txt').write_text(''.join(f'{path.stem}\\n' for path in environments), encoding='utf-8')\nPY\nls -la /out; cat /out/index.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--      535 2026-11-20 20:35 dev.json\n-rw-r--r--        9 2026-11-20 20:35 index.txt\n-rw-r--r--      535 2026-11-20 20:35 prod.json\ndev\nprod\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

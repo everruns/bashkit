@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "rt_py_jsonl_flatten",
+  "target": "openai/gpt-6-luna",
+  "input": [
+    "Convert /data/events.jsonl (one JSON value per line) to /out/events.csv.\n- One CSV row per line that is a JSON object, in input order. Blank or whitespace-only lines are skipped silently.\n- Nested objects are flattened with '.' ({\"a\":{\"b\":1}} gives column a.b); an empty nested object adds no column. Arrays are not flattened.\n- Columns: the union of flattened keys over all rows, sorted by plain string comparison, as the header row.\n- Cells: strings verbatim; booleans true/false; null or missing key -> empty; numbers as Python's json.dumps prints the parsed value (2.50 -> 2.5, 1e3 -> 1000.0); arrays as compact JSON with no spaces and non-ASCII characters kept literally.\n- CSV uses ',' and '\\n' line endings and quotes a field only when it contains a comma, double quote or newline (embedded quotes doubled).\nWrite /out/errors.txt with one line `line N` (1-based line number) for every non-blank line that is not valid JSON or not a JSON object."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Converted `/data/events.jsonl` to `/out/events.csv` and wrote invalid-line entries to `/out/errors.txt`.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "ls -l /data/events.jsonl /out 2>/dev/null || true; python3 - <<'PY'\nfrom pathlib import Path\np=Path('/data/events.jsonl')\nprint('exists',p.exists(), 'size', p.stat().st_size if p.exists() else None)\nPY",
+      "mkdir -p /out && cat > /home/eval/convert_events.py <<'PY'\nimport json\nfrom pathlib import Path\n\nsource = Path('/data/events.jsonl')\nout_dir = Path('/out')\nrows = []\nerrors = []\n\n\ndef reject_constant(value):\n    raise ValueError(f'non-standard JSON constant: {value}')\n\n\ndef flatten(obj, prefix='', result=None):\n    if result is None:\n        result = {}\n    for key, value in obj.items():\n        full_key = f'{prefix}.{key}' if prefix else key\n        if isinstance(value, dict):\n            flatten(value, full_key, result)\n        else:\n            result[full_key] = value\n    return result\n\n\ndef cell(value):\n    if value is None:\n        return ''\n    if isinstance(value, str):\n        return value\n    if isinstance(value, bool):\n        return 'true' if value else 'false'\n    if isinstance(value, list):\n        return json.dumps(value, ensure_ascii=False, separators=(',', ':'))\n    return json.dumps(value)\n\n\ndef csv_field(value):\n    if any(ch in value for ch in (',', '\"', '\\n')):\n        return '\"' + value.replace('\"', '\"\"') + '\"'\n    return value\n\n\nwith source.open('r', encoding='utf-8') as f:\n    for line_number, line in enumerate(f, 1):\n        if not line.strip():\n            continue\n        try:\n            value = json.loads(line, parse_constant=reject_constant)\n        except (json.JSONDecodeError, ValueError):\n            errors.append(f'line {line_number}')\n            continue\n        if not isinstance(value, dict):\n            errors.append(f'line {line_number}')\n            continue\n        rows.append(flatten(value))\n\ncolumns = sorted({key for row in rows for key in row})\nwith (out_dir / 'events.csv').open('w', encoding='utf-8', newline='') as f:\n    f.write(','.join(csv_field(key) for key in columns) + '\\n')\n    for row in rows:\n        f.write(','.join(csv_field(cell(row.get(key))) for key in columns) + '\\n')\n\nwith (out_dir / 'errors.txt').open('w', encoding='utf-8', newline='') as f:\n    if errors:\n        f.write('\\n'.join(errors) + '\\n')\nPY\npython3 /home/eval/convert_events.py\nprintf '%s\\n' '--- events.csv ---'; cat /out/events.csv; printf '%s\\n' '--- errors.txt ---'; cat /out/errors.txt"
+    ],
+    "usage": {
+      "input_tokens": 2833,
+      "output_tokens": 1670,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 14942
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -l /data/events.jsonl /out 2>/dev/null || true; python3 - <<'PY'\nfrom pathlib import Path\np=Path('/data/events.jsonl')\nprint('exists',p.exists(), 'size', p.stat().st_size if p.exists() else None)\nPY",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "exists True size 568\n"
+          },
+          {
+            "commands": "mkdir -p /out && cat > /home/eval/convert_events.py <<'PY'\nimport json\nfrom pathlib import Path\n\nsource = Path('/data/events.jsonl')\nout_dir = Path('/out')\nrows = []\nerrors = []\n\n\ndef reject_constant(value):\n    raise ValueError(f'non-standard JSON constant: {value}')\n\n\ndef flatten(obj, prefix='', result=None):\n    if result is None:\n        result = {}\n    for key, value in obj.items():\n        full_key = f'{prefix}.{key}' if prefix else key\n        if isinstance(value, dict):\n            flatten(value, full_key, result)\n        else:\n            result[full_key] = value\n    return result\n\n\ndef cell(value):\n    if value is None:\n        return ''\n    if isinstance(value, str):\n        return value\n    if isinstance(value, bool):\n        return 'true' if value else 'false'\n    if isinstance(value, list):\n        return json.dumps(value, ensure_ascii=False, separators=(',', ':'))\n    return json.dumps(value)\n\n\ndef csv_field(value):\n    if any(ch in value for ch in (',', '\"', '\\n')):\n        return '\"' + value.replace('\"', '\"\"') + '\"'\n    return value\n\n\nwith source.open('r', encoding='utf-8') as f:\n    for line_number, line in enumerate(f, 1):\n        if not line.strip():\n            continue\n        try:\n            value = json.loads(line, parse_constant=reject_constant)\n        except (json.JSONDecodeError, ValueError):\n            errors.append(f'line {line_number}')\n            continue\n        if not isinstance(value, dict):\n            errors.append(f'line {line_number}')\n            continue\n        rows.append(flatten(value))\n\ncolumns = sorted({key for row in rows for key in row})\nwith (out_dir / 'events.csv').open('w', encoding='utf-8', newline='') as f:\n    f.write(','.join(csv_field(key) for key in columns) + '\\n')\n    for row in rows:\n        f.write(','.join(csv_field(cell(row.get(key))) for key in columns) + '\\n')\n\nwith (out_dir / 'errors.txt').open('w', encoding='utf-8', newline='') as f:\n    if errors:\n        f.write('\\n'.join(errors) + '\\n')\nPY\npython3 /home/eval/convert_events.py\nprintf '%s\\n' '--- events.csv ---'; cat /out/events.csv; printf '%s\\n' '--- errors.txt ---'; cat /out/errors.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "--- events.csv ---\na_b,ab,id,meta.src,note,ok,score,tags,user.geo.city,user.geo.zip,user.name\n,,1,,,true,2.5,,Kyiv,01001,Ana\n,,2,,,false,,\"[\"\"a\"\",\"\"b\"\"]\",,,\"Bo, Jr.\"\n,,3,,\"said \"\"hi\"\"\",,1000.0,,,,\n,,4,,\"line1\nline2\",,,[],,,\n,,5,,,,-0.0,\"[\"\"ü\"\",{\"\"k\"\":1}]\",,,Zoë\nx,y,6,,,,,,Lviv,,\n,,8,,007,true,10,,,,\n--- errors.txt ---\nline 5\nline 6\nline 10\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

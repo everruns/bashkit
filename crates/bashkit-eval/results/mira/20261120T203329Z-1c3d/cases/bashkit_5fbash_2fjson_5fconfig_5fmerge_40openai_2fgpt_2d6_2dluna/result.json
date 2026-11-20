@@ -1,0 +1,57 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "json_config_merge",
+  "target": "openai/gpt-6-luna",
+  "input": [
+    "Merge /config/defaults.json with /config/production.json where production values override defaults. Perform a deep merge so that keys present only in defaults are preserved while keys in production take precedence. Save the merged result to /config/merged.json and print it."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "8/8 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Merged `/config/defaults.json` with `/config/production.json`, saved the result to `/config/merged.json`, and printed it:\n\n```json\n{\n  \"app\": {\n    \"name\": \"myservice\",\n    \"port\": 8080,\n    \"debug\": false\n  },\n  \"db\": {\n    \"host\": \"db.prod.internal\",\n    \"port\": 5432,\n    \"pool_size\": 20\n  },\n  \"log\": {\n    \"level\": \"warn\",\n    \"format\": \"json\"\n  }\n}\n```",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "python3 - <<'PY'\nimport json\nfrom pathlib import Path\nbase = json.loads(Path('/config/defaults.json').read_text())\noverride = json.loads(Path('/config/production.json').read_text())\ndef merge(a, b):\n    if isinstance(a, dict) and isinstance(b, dict):\n        out = dict(a)\n        for k, v in b.items():\n            out[k] = merge(out[k], v) if k in out else v\n        return out\n    return b\nresult = merge(base, override)\ntext = json.dumps(result, indent=2, ensure_ascii=False) + '\\n'\nPath('/config/merged.json').write_text(text)\nprint(text, end='')\nPY"
+    ],
+    "usage": {
+      "input_tokens": 1124,
+      "output_tokens": 305,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 2871
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "python3 - <<'PY'\nimport json\nfrom pathlib import Path\nbase = json.loads(Path('/config/defaults.json').read_text())\noverride = json.loads(Path('/config/production.json').read_text())\ndef merge(a, b):\n    if isinstance(a, dict) and isinstance(b, dict):\n        out = dict(a)\n        for k, v in b.items():\n            out[k] = merge(out[k], v) if k in out else v\n        return out\n    return b\nresult = merge(base, override)\ntext = json.dumps(result, indent=2, ensure_ascii=False) + '\\n'\nPath('/config/merged.json').write_text(text)\nprint(text, end='')\nPY",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "{\n  \"app\": {\n    \"name\": \"myservice\",\n    \"port\": 8080,\n    \"debug\": false\n  },\n  \"db\": {\n    \"host\": \"db.prod.internal\",\n    \"port\": 5432,\n    \"pool_size\": 20\n  },\n  \"log\": {\n    \"level\": \"warn\",\n    \"format\": \"json\"\n  }\n}\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

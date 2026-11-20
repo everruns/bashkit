@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "config_ini_merge",
+  "target": "openai/gpt-6-luna",
+  "input": [
+    "Merge /config/defaults.ini and /config/custom.ini. Custom values should override defaults within the same section. Keys only in defaults should be preserved. Write the merged result to /config/merged.ini and print it. Sections are denoted by [section_name] headers."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Merged configuration written to `/config/merged.ini`:\n\n```ini\n[server]\nhost=0.0.0.0\nport=9090\nworkers=8\n\n[database]\nhost=localhost\nport=5432\npool_size=5\n\n[logging]\nlevel=debug\nformat=json\n```",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cat /config/defaults.ini; printf '\\n---CUSTOM---\\n'; cat /config/custom.ini; printf '\\n---FILES---\\n'; ls -la /config",
+      "python3 - <<'PY'\nfrom collections import OrderedDict\nfrom pathlib import Path\n\nsections = OrderedDict()\n\ndef merge_file(path):\n    current = None\n    for raw in Path(path).read_text().splitlines():\n        line = raw.strip()\n        if not line or line.startswith(('#', ';')):\n            continue\n        if line.startswith('[') and line.endswith(']'):\n            current = line[1:-1].strip()\n            sections.setdefault(current, OrderedDict())\n        elif '=' in line and current is not None:\n            key, value = line.split('=', 1)\n            sections[current][key.strip()] = value.strip()\n\nmerge_file('/config/defaults.ini')\nmerge_file('/config/custom.ini')\nlines = []\nfor section, values in sections.items():\n    if lines:\n        lines.append('')\n    lines.append(f'[{section}]')\n    lines.extend(f'{key}={value}' for key, value in values.items())\nresult = '\\n'.join(lines) + '\\n'\nPath('/config/merged.ini').write_text(result)\nprint(result, end='')\nPY"
+    ],
+    "usage": {
+      "input_tokens": 2008,
+      "output_tokens": 571,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 6329
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat /config/defaults.ini; printf '\\n---CUSTOM---\\n'; cat /config/custom.ini; printf '\\n---FILES---\\n'; ls -la /config",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "[server]\nhost=0.0.0.0\nport=8080\nworkers=4\n\n[database]\nhost=localhost\nport=5432\npool_size=5\n\n[logging]\nlevel=info\nformat=text\n\n---CUSTOM---\n[server]\nport=9090\nworkers=8\n\n[logging]\nlevel=debug\nformat=json\n\n---FILES---\n-rw-r--r--       64 2026-11-20 20:33 custom.ini\n-rw-r--r--      125 2026-11-20 20:33 defaults.ini\n"
+          },
+          {
+            "commands": "python3 - <<'PY'\nfrom collections import OrderedDict\nfrom pathlib import Path\n\nsections = OrderedDict()\n\ndef merge_file(path):\n    current = None\n    for raw in Path(path).read_text().splitlines():\n        line = raw.strip()\n        if not line or line.startswith(('#', ';')):\n            continue\n        if line.startswith('[') and line.endswith(']'):\n            current = line[1:-1].strip()\n            sections.setdefault(current, OrderedDict())\n        elif '=' in line and current is not None:\n            key, value = line.split('=', 1)\n            sections[current][key.strip()] = value.strip()\n\nmerge_file('/config/defaults.ini')\nmerge_file('/config/custom.ini')\nlines = []\nfor section, values in sections.items():\n    if lines:\n        lines.append('')\n    lines.append(f'[{section}]')\n    lines.extend(f'{key}={value}' for key, value in values.items())\nresult = '\\n'.join(lines) + '\\n'\nPath('/config/merged.ini').write_text(result)\nprint(result, end='')\nPY",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "[server]\nhost=0.0.0.0\nport=9090\nworkers=8\n\n[database]\nhost=localhost\nport=5432\npool_size=5\n\n[logging]\nlevel=debug\nformat=json\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

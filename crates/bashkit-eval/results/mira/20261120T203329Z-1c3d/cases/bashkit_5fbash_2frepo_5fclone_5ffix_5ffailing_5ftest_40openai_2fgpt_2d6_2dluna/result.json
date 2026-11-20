@@ -1,0 +1,71 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "repo_clone_fix_failing_test",
+  "target": "openai/gpt-6-luna",
+  "input": [
+    "A git repository lives at /srv/git/calc. Clone it into /home/eval/work/calc, run its test suite with `make test`, find and fix the bug in the library code that makes a test fail (do not edit the tests), re-run `make test` until it passes, and commit the fix in the clone with a commit message that starts with `fix:`. Leave /srv/git/calc unchanged."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "6/6 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Fixed `mul` in `/home/eval/work/calc/lib/calc.sh` to multiply its arguments instead of adding them. `make test` passes (2/2).\n\nCommitted as `b5ad105` with message `fix: use multiplication in mul helper`. The test-generated files in `build/` remain untracked.",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "cd /home/eval && git clone /srv/git/calc work/calc && cd work/calc && make test",
+      "cd /home/eval/work/calc && ls -la && git status --short && find . -maxdepth 3 -type f -not -path './.git/*' -print && cat Makefile && grep -R \"\" -n --exclude-dir=.git .",
+      "cd /home/eval/work/calc && python3 - <<'PY'\np='lib/calc.sh'\ns=open(p).read()\nold='mul() { echo $(( $1 + $2 )); }'\nnew='mul() { echo $(( $1 * $2 )); }'\nassert old in s\nopen(p,'w').write(s.replace(old,new))\nPY\nmake test && git status --short && git add lib/calc.sh && git commit -m 'fix: use multiplication in mul helper' && git status --short"
+    ],
+    "usage": {
+      "input_tokens": 5019,
+      "output_tokens": 396,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 5870
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 2.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cd /home/eval && git clone /srv/git/calc work/calc && cd work/calc && make test",
+            "exit_code": 2,
+            "stderr": "Cloning into 'work/calc'...\ndone.\nmake: *** [Makefile:2: test] Error 1\n",
+            "stdout": "ok   test_add_sub\nFAIL test_mul_div\n    assertion failed: mul 4 5: expected '20', got '9'\nFAIL 1/2\n"
+          },
+          {
+            "commands": "cd /home/eval/work/calc && ls -la && git status --short && find . -maxdepth 3 -type f -not -path './.git/*' -print && cat Makefile && grep -R \"\" -n --exclude-dir=.git .",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "drwxr-xr-x        0 2026-11-20 20:33 .git\n-rw-r--r--       26 2026-11-20 20:33 Makefile\n-rw-r--r--       55 2026-11-20 20:33 README.md\ndrwxr-xr-x        0 2026-11-20 20:33 build\ndrwxr-xr-x        0 2026-11-20 20:33 lib\ndrwxr-xr-x        0 2026-11-20 20:33 tests\nOn branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/test-report.txt\n\tbuild/test_add_sub.log\n\tbuild/test_mul_div.log\n./Makefile\n./README.md\n./build/test-report.txt\n./build/test_add_sub.log\n./build/test_mul_div.log\n./lib/calc.sh\n./tests/assert.sh\n./tests/run.sh\n./tests/test_add_sub.sh\n./tests/test_mul_div.sh\ntest:\n\t@bash tests/run.sh\n./Makefile:1:test:\n./Makefile:2:\t@bash tests/run.sh\n./README.md:1:# calc\n./README.md:2:\n./README.md:3:Tiny bash arithmetic library. Run `make test`.\n./build/test-report.txt:1:FAIL 1/2\n./build/test_mul_div.log:1:assertion failed: mul 4 5: expected '20', got '9'\n./lib/calc.sh:1:# calc: integer helpers\n./lib/calc.sh:2:add() { echo $(( $1 + $2 )); }\n./lib/calc.sh:3:sub() { echo $(( $1 - $2 )); }\n./lib/calc.sh:4:mul() { echo $(( $1 + $2 )); }\n./lib/calc.sh:5:div() {\n./lib/calc.sh:6:  if [ \"$2\" -eq 0 ]; then echo 'calc: division by zero' >&2; return 1; fi\n./lib/calc.sh:7:  echo $(( $1 / $2 ))\n./lib/calc.sh:8:}\n./tests/assert.sh:1:# Minimal assertion helpers for the test suite.\n./tests/assert.sh:2:assert_eq() {\n./tests/assert.sh:3:  if [ \"$1\" != \"$2\" ]; then\n./tests/assert.sh:4:    echo \"assertion failed: ${3:-values differ}: expected '$1', got '$2'\"\n./tests/assert.sh:5:    exit 1\n./tests/assert.sh:6:  fi\n./tests/assert.sh:7:}\n./tests/run.sh:1:#!/bin/bash\n./tests/run.sh:2:# Test runner: runs every tests/test_*.sh, writes build/test-report.txt.\n./tests/run.sh:3:cd \"$(dirname \"$0\")/..\" || exit 2\n./tests/run.sh:4:mkdir -p build\n./tests/run.sh:5:pass=0; fail=0; total=0\n./tests/run.sh:6:for t in tests/test_*.sh; do\n./tests/run.sh:7:  name=$(basename \"$t\" .sh)\n./tests/run.sh:8:  total=$((total + 1))\n./tests/run.sh:9:  if bash \"$t\" > \"build/$name.log\" 2>&1; then\n./tests/run.sh:10:    pass=$((pass + 1)); echo \"ok   $name\"\n./tests/run.sh:11:  else\n./tests/run.sh:12:    fail=$((fail + 1)); echo \"FAIL $name\"; sed 's/^/    /' \"build/$name.log\"\n./tests/run.sh:13:  fi\n./tests/run.sh:14:done\n./tests/run.sh:15:if [ \"$fail\" -eq 0 ]; then\n./tests/run.sh:16:  echo \"PASS $pass/$total\" | tee build/test-report.txt\n./tests/run.sh:17:else\n./tests/run.sh:18:  echo \"FAIL $fail/$total\" | tee build/test-report.txt\n./tests/run.sh:19:  exit 1\n./tests/run.sh:20:fi\n./tests/test_add_sub.sh:1:. lib/calc.sh\n./tests/test_add_sub.sh:2:. tests/assert.sh\n./tests/test_add_sub.sh:3:assert_eq 5 \"$(add 2 3)\" 'add 2 3'\n./tests/test_add_sub.sh:4:assert_eq -4 \"$(sub 3 7)\" 'sub 3 7'\n./tests/test_mul_div.sh:1:. lib/calc.sh\n./tests/test_mul_div.sh:2:. tests/assert.sh\n./tests/test_mul_div.sh:3:assert_eq 20 \"$(mul 4 5)\" 'mul 4 5'\n./tests/test_mul_div.sh:4:assert_eq 0 \"$(mul 7 0)\" 'mul 7 0'\n./tests/test_mul_div.sh:5:assert_eq 3 \"$(div 9 3)\" 'div 9 3'\n./tests/test_mul_div.sh:6:div 1 0 2>/dev/null && { echo 'div by zero must fail'; exit 1; }\n./tests/test_mul_div.sh:7:exit 0\n"
+          },
+          {
+            "commands": "cd /home/eval/work/calc && python3 - <<'PY'\np='lib/calc.sh'\ns=open(p).read()\nold='mul() { echo $(( $1 + $2 )); }'\nnew='mul() { echo $(( $1 * $2 )); }'\nassert old in s\nopen(p,'w').write(s.replace(old,new))\nPY\nmake test && git status --short && git add lib/calc.sh && git commit -m 'fix: use multiplication in mul helper' && git status --short",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "ok   test_add_sub\nok   test_mul_div\nPASS 2/2\nOn branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/test-report.txt\n\tbuild/test_add_sub.log\n\tbuild/test_mul_div.log\n[master b5ad105] fix: use multiplication in mul helper\nOn branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/test-report.txt\n\tbuild/test_add_sub.log\n\tbuild/test_mul_div.log\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}
