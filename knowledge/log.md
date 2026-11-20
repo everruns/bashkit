@@ -2,7 +2,7 @@
 
 ## 2026-11-20
 
-* **Agents never merge external contributions**: after an agent squash-merged external PR #2959 on green CI, the maintainer prohibited automatic merging of pull requests from non-maintainers and forks. Agents may review, comment and approve fork CI runs when asked, then report; a maintainer merges by hand. See [External Contributions](operations/external-contributions.md).
+* **Agent pull request rules**: after an agent squash-merged external PR #2959 on green CI with a review-bot finding still open, the maintainer set three rules for agents: never merge external contributions (non-maintainers or forks; a maintainer merges by hand), never merge while any review comment is unaddressed, and never reply on their own to human-written comments (bring them to the maintainer instead). See [Agent Pull Request Rules](operations/agent-pr-rules.md).
 
 ## 2026-11-19
 

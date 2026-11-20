@@ -4,7 +4,7 @@
 * [Known Limitations](limitations.md) - Intentional gaps, partial features, and Bash and POSIX compatibility stance.
 * [Documentation Architecture](documentation.md) - User documentation and Rustdoc guide organization, embedding, and maintenance.
 * [Maintenance](maintenance.md) - Pre-release dependency, security, compatibility, and artifact maintenance requirements.
-* [External Contributions](external-contributions.md) - Agents never merge pull requests from external contributors; a maintainer merges them by hand.
+* [Agent Pull Request Rules](agent-pr-rules.md) - When coding agents may merge pull requests and reply to review comments.
 * [Release Process](release-process.md) - Versioning, validation, tagging, and publication to crates.io, PyPI, and npm.
 * [Performance Results](performance-results.md) - Benchmark harnesses, result locations, naming, and publication contract.
 * [Dependency Policy](dependencies.md) - Which third-party crates Bashkit keeps, which it trims, and which are deliberately not reimplemented in-house.

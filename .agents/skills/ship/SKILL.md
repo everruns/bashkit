@@ -72,6 +72,7 @@ for targeted runs. Preserve the existing tests, audit policy, and hooks.
 3. Wait in bounded intervals for CI, diagnose failures, and resolve review
    findings. Squash-merge after all required checks pass and CI is green.
 4. Verify the PR actually merged and report its URL.
-5. Never merge an external contribution (a PR from a non-maintainer or a fork):
-   report it ready and stop. See
-   [external contributions](../../../knowledge/operations/external-contributions.md).
+5. Follow the [agent PR rules](../../../knowledge/operations/agent-pr-rules.md):
+   never merge an external contribution (report it ready and stop), never
+   merge while any review comment is unaddressed, and never reply on your own
+   to a human-written comment.
