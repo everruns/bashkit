@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-16T18:34:35.000Z",
+  "generatedAt": "2026-11-20T20:33:29.000Z",
   "sources": {
     "bench": "crates/bashkit-bench/results/*.json",
     "criterion": "crates/bashkit/benches/results/*.md",
@@ -9,8 +9,8 @@
   },
   "summary": {
     "benchRuns": 13,
-    "criterionRuns": 19,
-    "evalRuns": 57,
+    "criterionRuns": 21,
+    "evalRuns": 58,
     "latestBench": {
       "id": "bench-79f1c12bcc44-linux-x86_64-1792175675",
       "kind": "bashkit-bench",
@@ -125,26 +125,50 @@
       ]
     },
     "latestEval": {
-      "id": "mira-20261009T173925Z-a0a7-openrouter-moonshotai-kimi-k3",
+      "id": "mira-20261120T203329Z-1c3d-openai-gpt-6-luna",
       "kind": "llm-eval",
-      "provider": "openrouter",
-      "model": "kimi-k3",
+      "provider": "openai",
+      "model": "gpt-6-luna",
       "baseline": null,
-      "label": "openrouter/moonshotai/kimi-k3",
-      "date": "2026-10-09",
-      "timestamp": "2026-10-09T17:39:25.000Z",
-      "source": "crates/bashkit-eval/results/mira/20261009T173925Z-a0a7/report.json",
-      "reportSource": "crates/bashkit-eval/results/mira/20261009T173925Z-a0a7/report.html",
+      "label": "openai/gpt-6-luna",
+      "date": "2026-11-20",
+      "timestamp": "2026-11-20T20:33:29.000Z",
+      "source": "crates/bashkit-eval/results/mira/20261120T203329Z-1c3d/report.json",
+      "reportSource": "crates/bashkit-eval/results/mira/20261120T203329Z-1c3d/report.html",
       "tasks": 88,
-      "passed": 86,
-      "scorePct": 97.7,
-      "toolSuccessPct": 92.4,
-      "avgTurns": 5.53,
-      "avgToolCalls": 4.76,
-      "avgDurationMs": 27911,
-      "inputTokens": 974426,
-      "outputTokens": 192153,
+      "passed": 72,
+      "scorePct": 81.8,
+      "toolSuccessPct": 84.5,
+      "avgTurns": 3.85,
+      "avgToolCalls": 2.85,
+      "avgDurationMs": 10401,
+      "inputTokens": 560093,
+      "outputTokens": 85342,
       "categories": [
+        {
+          "tasks": 2,
+          "passed": 0,
+          "category": "error_handling",
+          "rate": 0
+        },
+        {
+          "tasks": 1,
+          "passed": 0,
+          "category": "multi_bug_repo",
+          "rate": 0
+        },
+        {
+          "tasks": 1,
+          "passed": 0,
+          "category": "quoting",
+          "rate": 0
+        },
+        {
+          "tasks": 1,
+          "passed": 0,
+          "category": "refactoring",
+          "rate": 0
+        },
         {
           "tasks": 1,
           "passed": 0,
@@ -152,33 +176,39 @@
           "rate": 0
         },
         {
+          "tasks": 8,
+          "passed": 2,
+          "category": "repo_workflow",
+          "rate": 25
+        },
+        {
           "tasks": 2,
           "passed": 1,
-          "category": "environment",
+          "category": "system_info",
           "rate": 50
+        },
+        {
+          "tasks": 2,
+          "passed": 1,
+          "category": "runtime_state",
+          "rate": 50
+        },
+        {
+          "tasks": 6,
+          "passed": 5,
+          "category": "text_processing",
+          "rate": 83.3
+        },
+        {
+          "tasks": 7,
+          "passed": 6,
+          "category": "scripting",
+          "rate": 85.7
         },
         {
           "tasks": 9,
           "passed": 9,
           "category": "json_processing",
-          "rate": 100
-        },
-        {
-          "tasks": 8,
-          "passed": 8,
-          "category": "repo_workflow",
-          "rate": 100
-        },
-        {
-          "tasks": 7,
-          "passed": 7,
-          "category": "scripting",
-          "rate": 100
-        },
-        {
-          "tasks": 6,
-          "passed": 6,
-          "category": "complex_tasks",
           "rate": 100
         },
         {
@@ -190,7 +220,7 @@
         {
           "tasks": 6,
           "passed": 6,
-          "category": "text_processing",
+          "category": "complex_tasks",
           "rate": 100
         },
         {
@@ -214,49 +244,13 @@
         {
           "tasks": 2,
           "passed": 2,
-          "category": "archive_operations",
-          "rate": 100
-        },
-        {
-          "tasks": 2,
-          "passed": 2,
-          "category": "build_simulation",
-          "rate": 100
-        },
-        {
-          "tasks": 2,
-          "passed": 2,
-          "category": "config_management",
-          "rate": 100
-        },
-        {
-          "tasks": 2,
-          "passed": 2,
-          "category": "database_operations",
-          "rate": 100
-        },
-        {
-          "tasks": 2,
-          "passed": 2,
           "category": "error_recovery",
           "rate": 100
         },
         {
           "tasks": 2,
           "passed": 2,
-          "category": "error_handling",
-          "rate": 100
-        },
-        {
-          "tasks": 2,
-          "passed": 2,
-          "category": "sqlite",
-          "rate": 100
-        },
-        {
-          "tasks": 2,
-          "passed": 2,
-          "category": "runtime_state",
+          "category": "archive_operations",
           "rate": 100
         },
         {
@@ -268,7 +262,31 @@
         {
           "tasks": 2,
           "passed": 2,
-          "category": "system_info",
+          "category": "environment",
+          "rate": 100
+        },
+        {
+          "tasks": 2,
+          "passed": 2,
+          "category": "database_operations",
+          "rate": 100
+        },
+        {
+          "tasks": 2,
+          "passed": 2,
+          "category": "config_management",
+          "rate": 100
+        },
+        {
+          "tasks": 2,
+          "passed": 2,
+          "category": "build_simulation",
+          "rate": 100
+        },
+        {
+          "tasks": 2,
+          "passed": 2,
+          "category": "sqlite",
           "rate": 100
         },
         {
@@ -286,25 +304,13 @@
         {
           "tasks": 1,
           "passed": 1,
-          "category": "multi_bug_repo",
-          "rate": 100
-        },
-        {
-          "tasks": 1,
-          "passed": 1,
-          "category": "quoting",
-          "rate": 100
-        },
-        {
-          "tasks": 1,
-          "passed": 1,
-          "category": "refactoring",
-          "rate": 100
-        },
-        {
-          "tasks": 1,
-          "passed": 1,
           "category": "algorithms",
+          "rate": 100
+        },
+        {
+          "tasks": 1,
+          "passed": 1,
+          "category": "python_sqlite",
           "rate": 100
         },
         {
@@ -317,12 +323,6 @@
           "tasks": 1,
           "passed": 1,
           "category": "runtime_limits",
-          "rate": 100
-        },
-        {
-          "tasks": 1,
-          "passed": 1,
-          "category": "python_sqlite",
           "rate": 100
         }
       ]
@@ -2345,6 +2345,42 @@
         "name": "single_bash_new",
         "us": 51.48
       },
+      "bestImprovement": null
+    },
+    {
+      "id": "criterion-remote_fs-linux-x86_64-1793656706",
+      "kind": "criterion",
+      "family": "remote_fs",
+      "label": "remote_fs bench, bashkit checkout (598ebb4 + this change)",
+      "date": "2026-11-02",
+      "timestamp": "2026-11-02T21:58:26.000Z",
+      "source": "crates/bashkit/benches/results/criterion-remote_fs-linux-x86_64-1793656706.md",
+      "reportSource": "crates/bashkit/benches/results/criterion-remote_fs-linux-x86_64-1793656706.md",
+      "cases": 0,
+      "medianUs": null,
+      "p95Us": null,
+      "medianChangePct": null,
+      "meanChangePct": null,
+      "bestChangePct": null,
+      "fastestCase": null,
+      "bestImprovement": null
+    },
+    {
+      "id": "criterion-remote_fs-linux-x86_64-1793662034",
+      "kind": "criterion",
+      "family": "remote_fs",
+      "label": "remote_fs bench, bashkit checkout (bounded `walk` batches)",
+      "date": "2026-11-02",
+      "timestamp": "2026-11-02T23:27:14.000Z",
+      "source": "crates/bashkit/benches/results/criterion-remote_fs-linux-x86_64-1793662034.md",
+      "reportSource": "crates/bashkit/benches/results/criterion-remote_fs-linux-x86_64-1793662034.md",
+      "cases": 0,
+      "medianUs": null,
+      "p95Us": null,
+      "medianChangePct": null,
+      "meanChangePct": null,
+      "bestChangePct": null,
+      "fastestCase": null,
       "bestImprovement": null
     }
   ],
@@ -8117,6 +8153,209 @@
           "rate": 100
         }
       ]
+    },
+    {
+      "id": "mira-20261120T203329Z-1c3d-openai-gpt-6-luna",
+      "kind": "llm-eval",
+      "provider": "openai",
+      "model": "gpt-6-luna",
+      "baseline": null,
+      "label": "openai/gpt-6-luna",
+      "date": "2026-11-20",
+      "timestamp": "2026-11-20T20:33:29.000Z",
+      "source": "crates/bashkit-eval/results/mira/20261120T203329Z-1c3d/report.json",
+      "reportSource": "crates/bashkit-eval/results/mira/20261120T203329Z-1c3d/report.html",
+      "tasks": 88,
+      "passed": 72,
+      "scorePct": 81.8,
+      "toolSuccessPct": 84.5,
+      "avgTurns": 3.85,
+      "avgToolCalls": 2.85,
+      "avgDurationMs": 10401,
+      "inputTokens": 560093,
+      "outputTokens": 85342,
+      "categories": [
+        {
+          "tasks": 2,
+          "passed": 0,
+          "category": "error_handling",
+          "rate": 0
+        },
+        {
+          "tasks": 1,
+          "passed": 0,
+          "category": "multi_bug_repo",
+          "rate": 0
+        },
+        {
+          "tasks": 1,
+          "passed": 0,
+          "category": "quoting",
+          "rate": 0
+        },
+        {
+          "tasks": 1,
+          "passed": 0,
+          "category": "refactoring",
+          "rate": 0
+        },
+        {
+          "tasks": 1,
+          "passed": 0,
+          "category": "build_system",
+          "rate": 0
+        },
+        {
+          "tasks": 8,
+          "passed": 2,
+          "category": "repo_workflow",
+          "rate": 25
+        },
+        {
+          "tasks": 2,
+          "passed": 1,
+          "category": "system_info",
+          "rate": 50
+        },
+        {
+          "tasks": 2,
+          "passed": 1,
+          "category": "runtime_state",
+          "rate": 50
+        },
+        {
+          "tasks": 6,
+          "passed": 5,
+          "category": "text_processing",
+          "rate": 83.3
+        },
+        {
+          "tasks": 7,
+          "passed": 6,
+          "category": "scripting",
+          "rate": 85.7
+        },
+        {
+          "tasks": 9,
+          "passed": 9,
+          "category": "json_processing",
+          "rate": 100
+        },
+        {
+          "tasks": 6,
+          "passed": 6,
+          "category": "data_transformation",
+          "rate": 100
+        },
+        {
+          "tasks": 6,
+          "passed": 6,
+          "category": "complex_tasks",
+          "rate": 100
+        },
+        {
+          "tasks": 5,
+          "passed": 5,
+          "category": "pipelines",
+          "rate": 100
+        },
+        {
+          "tasks": 5,
+          "passed": 5,
+          "category": "python_data",
+          "rate": 100
+        },
+        {
+          "tasks": 4,
+          "passed": 4,
+          "category": "file_operations",
+          "rate": 100
+        },
+        {
+          "tasks": 2,
+          "passed": 2,
+          "category": "error_recovery",
+          "rate": 100
+        },
+        {
+          "tasks": 2,
+          "passed": 2,
+          "category": "archive_operations",
+          "rate": 100
+        },
+        {
+          "tasks": 2,
+          "passed": 2,
+          "category": "code_search",
+          "rate": 100
+        },
+        {
+          "tasks": 2,
+          "passed": 2,
+          "category": "environment",
+          "rate": 100
+        },
+        {
+          "tasks": 2,
+          "passed": 2,
+          "category": "database_operations",
+          "rate": 100
+        },
+        {
+          "tasks": 2,
+          "passed": 2,
+          "category": "config_management",
+          "rate": 100
+        },
+        {
+          "tasks": 2,
+          "passed": 2,
+          "category": "build_simulation",
+          "rate": 100
+        },
+        {
+          "tasks": 2,
+          "passed": 2,
+          "category": "sqlite",
+          "rate": 100
+        },
+        {
+          "tasks": 1,
+          "passed": 1,
+          "category": "data_reconciliation",
+          "rate": 100
+        },
+        {
+          "tasks": 1,
+          "passed": 1,
+          "category": "log_analysis",
+          "rate": 100
+        },
+        {
+          "tasks": 1,
+          "passed": 1,
+          "category": "algorithms",
+          "rate": 100
+        },
+        {
+          "tasks": 1,
+          "passed": 1,
+          "category": "python_sqlite",
+          "rate": 100
+        },
+        {
+          "tasks": 1,
+          "passed": 1,
+          "category": "python_pipeline",
+          "rate": 100
+        },
+        {
+          "tasks": 1,
+          "passed": 1,
+          "category": "runtime_limits",
+          "rate": 100
+        }
+      ]
     }
   ],
   "pythonStartup": [
@@ -9017,6 +9256,13 @@
           "scorePct": 80.7,
           "passed": 71,
           "tasks": 88
+        },
+        {
+          "date": "2026-11-20",
+          "timestamp": "2026-11-20T20:33:29.000Z",
+          "scorePct": 81.8,
+          "passed": 72,
+          "tasks": 88
         }
       ]
     },
@@ -9870,6 +10116,33 @@
       "detail": "96 parity/perf cases on 79f1c12bcc44-linux-x86_64; output match 100%.",
       "metric": 11.6,
       "source": "crates/bashkit-bench/results/bench-79f1c12bcc44-linux-x86_64-1792175675.json"
+    },
+    {
+      "date": "2026-11-02",
+      "timestamp": "2026-11-02T21:58:26.000Z",
+      "kind": "Criterion",
+      "title": "remote_fs",
+      "detail": "0 criterion cases",
+      "metric": null,
+      "source": "crates/bashkit/benches/results/criterion-remote_fs-linux-x86_64-1793656706.md"
+    },
+    {
+      "date": "2026-11-02",
+      "timestamp": "2026-11-02T23:27:14.000Z",
+      "kind": "Criterion",
+      "title": "remote_fs",
+      "detail": "0 criterion cases",
+      "metric": null,
+      "source": "crates/bashkit/benches/results/criterion-remote_fs-linux-x86_64-1793662034.md"
+    },
+    {
+      "date": "2026-11-20",
+      "timestamp": "2026-11-20T20:33:29.000Z",
+      "kind": "Eval",
+      "title": "gpt-6-luna: 81.8%",
+      "detail": "72/88 tasks passed. Weakest category: error_handling (0%).",
+      "metric": 81.8,
+      "source": "crates/bashkit-eval/results/mira/20261120T203329Z-1c3d/report.json"
     }
   ]
 }

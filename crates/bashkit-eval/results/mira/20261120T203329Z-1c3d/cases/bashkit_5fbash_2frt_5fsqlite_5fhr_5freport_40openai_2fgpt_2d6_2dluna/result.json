@@ -1,0 +1,85 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "rt_sqlite_hr_report",
+  "target": "openai/gpt-6-luna",
+  "input": [
+    "Load /data/employees.csv and /data/departments.csv (CSV with header rows; fields may be double-quoted) into a new SQLite database /data/hr.db using the sqlite3 command, with tables:\n  departments(id INTEGER PRIMARY KEY, name TEXT NOT NULL)\n  employees(id INTEGER PRIMARY KEY, name TEXT NOT NULL, dept_id INTEGER, salary INTEGER NOT NULL, hired TEXT NOT NULL)\nEvery CSV row must be loaded with its values unchanged.\n\nThen produce /out/dept_report.csv from a query on hr.db: header department,headcount,avg_salary,top_earner; one row per department including departments with no employees (headcount 0, avg_salary and top_earner empty), plus a row named (none) for employees whose dept_id matches no department. avg_salary has exactly 2 decimals; top_earner is the highest-paid employee, ties broken by name alphabetically. Sort by headcount descending, then department name. Use standard CSV quoting (quote only fields containing a comma, quote or newline) and \\n line endings."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Loaded the CSV rows into `/data/hr.db` and created `/out/dept_report.csv` with the requested department summary.",
+    "iterations": 6,
+    "tool_calls_count": 5,
+    "tool_calls": [
+      "ls -l /data /out 2>/dev/null; head -5 /data/employees.csv; head -5 /data/departments.csv; sqlite --help | head -30",
+      "sqlite :memory: '.help'",
+      "cat /data/employees.csv; cat /data/departments.csv; ls -la /data /out",
+      "mkdir -p /out\npython3 - <<'PY'\nimport csv\nfrom pathlib import Path\n\ndef sqlstr(s):\n    if s is None: return 'NULL'\n    return \"'\" + s.replace(\"'\", \"''\") + \"'\"\ndef rows(path):\n    with open(path, newline='', encoding='utf-8') as f:\n        return list(csv.DictReader(f))\nD, E = rows('/data/departments.csv'), rows('/data/employees.csv')\ndef num(v):\n    return 'NULL' if v == '' else str(int(v))\nlines = [\n'DROP TABLE IF EXISTS employees;',\n'DROP TABLE IF EXISTS departments;',\n'CREATE TABLE departments(id INTEGER PRIMARY KEY, name TEXT NOT NULL);',\n'CREATE TABLE employees(id INTEGER PRIMARY KEY, name TEXT NOT NULL, dept_id INTEGER, salary INTEGER NOT NULL, hired TEXT NOT NULL);'\n]\nfor r in D:\n    lines.append(f\"INSERT INTO departments(id,name) VALUES ({num(r['id'])},{sqlstr(r['name'])});\")\nfor r in E:\n    lines.append(f\"INSERT INTO employees(id,name,dept_id,salary,hired) VALUES ({num(r['id'])},{sqlstr(r['name'])},{num(r['dept_id'])},{num(r['salary'])},{sqlstr(r['hired'])});\")\nPath('/data/load.sql').write_text('\\n'.join(lines)+'\\n', encoding='utf-8')\nPY\nsqlite /data/hr.db < /data/load.sql\nsqlite /data/hr.db '.schema'\ncat > /data/report.sql <<'SQL'\n.headers on\n.mode csv\n.nullvalue \"\"\nSELECT department, headcount, avg_salary, top_earner\nFROM (\n  SELECT d.name AS department,\n         COUNT(e.id) AS headcount,\n         CASE WHEN COUNT(e.id)=0 THEN NULL ELSE printf('%.2f', AVG(e.salary)) END AS avg_salary,\n         (SELECT e2.name FROM employees e2 WHERE e2.dept_id=d.id ORDER BY e2.salary DESC, e2.name COLLATE BINARY ASC LIMIT 1) AS top_earner\n  FROM departments d LEFT JOIN employees e ON e.dept_id=d.id\n  GROUP BY d.id, d.name\n  UNION ALL\n  SELECT '(none)' AS department,\n         COUNT(e.id) AS headcount,\n         CASE WHEN COUNT(e.id)=0 THEN NULL ELSE printf('%.2f', AVG(e.salary)) END AS avg_salary,\n         (SELECT e2.name FROM employees e2 LEFT JOIN departments d2 ON d2.id=e2.dept_id WHERE d2.id IS NULL ORDER BY e2.salary DESC, e2.name COLLATE BINARY ASC LIMIT 1) AS top_earner\n  FROM employees e LEFT JOIN departments d ON d.id=e.dept_id\n  HAVING COUNT(e.id)>0\n)\nORDER BY headcount DESC, department COLLATE BINARY ASC;\nSQL\nsqlite -header -csv /data/hr.db < /data/report.sql > /out/dept_report.csv\ncat /out/dept_report.csv",
+      "python3 - <<'PY'\np='/data/report.sql'\ns=open(p).read().replace('  FROM employees e LEFT JOIN departments d ON d.id=e.dept_id\\n  HAVING COUNT(e.id)>0','  FROM employees e LEFT JOIN departments d ON d.id=e.dept_id\\n  WHERE d.id IS NULL\\n  HAVING COUNT(e.id)>0')\nopen(p,'w').write(s)\nPY\nsqlite -header -csv /data/hr.db < /data/report.sql > /out/dept_report.csv\ncat /out/dept_report.csv\npython3 - <<'PY'\nimport csv\nwith open('/out/dept_report.csv', newline='') as f: print(list(csv.reader(f)))\nPY"
+    ],
+    "usage": {
+      "input_tokens": 9145,
+      "output_tokens": 1819,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 19980
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 5.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 4.0,
+      "turns": 6.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -l /data /out 2>/dev/null; head -5 /data/employees.csv; head -5 /data/departments.csv; sqlite --help | head -30",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "id,name,dept_id,salary,hired\n1,Ana Lima,10,72000,2021-04-01\n2,\"O'Brien, Pat\",10,91000,2019-11-15\n3,Chen Wei,20,64000,2022-01-10\n4,Dara Okoye,20,64000,2020-06-30\nid,name\n10,Engineering\n20,Sales\n30,Support\n40,Legal\nusage: sqlite [OPTIONS] DB [SQL ...]\n       sqlite [OPTIONS] :memory: [SQL ...]\nOptions:\n  -header, --header        Include column headers\n  -noheader, --noheader    Suppress column headers (default)\n  -csv, --csv              Output mode: CSV\n  -tabs, --tabs            Output mode: tabs\n  -line, --line            Output mode: name=value lines\n  -list, --list            Output mode: separator-joined (default)\n  -box, --box              Output mode: ASCII box table\n  -column, --column        Output mode: column-aligned\n  -json, --json            Output mode: JSON array of objects\n  -markdown, --markdown    Output mode: Markdown table\n  -separator SEP           Field separator (e.g. '|', ',', '\\t')\n  -nullvalue STR           Placeholder for NULL\n  -cmd SQL                 Run extra SQL before positional script\n  -backend memory|vfs      Pick the IO backend (default: memory)\n  --help                   Show this message\n  --version                Print engine version\nDot-commands: .help .quit .exit .tables .schema .indexes\n              .headers .mode .separator .nullvalue\n              .dump .read PATH\n"
+          },
+          {
+            "commands": "sqlite :memory: '.help'",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ".help                   Show this message\n.quit / .exit           End execution\n.tables                 List tables\n.schema [TABLE]         Show CREATE statements\n.indexes [TABLE]        List indexes\n.headers on|off         Toggle column headers\n.mode MODE              Set output mode (list, csv, tabs, line, box,\n                        column, json, markdown)\n.separator SEP          Set output separator\n.nullvalue STR          Set NULL placeholder\n.dump                   Dump schema + data as SQL\n.read PATH              Execute SQL from a VFS file\n"
+          },
+          {
+            "commands": "cat /data/employees.csv; cat /data/departments.csv; ls -la /data /out",
+            "exit_code": 2,
+            "stderr": "ls: cannot access '/out': No such file or directory\n",
+            "stdout": "id,name,dept_id,salary,hired\n1,Ana Lima,10,72000,2021-04-01\n2,\"O'Brien, Pat\",10,91000,2019-11-15\n3,Chen Wei,20,64000,2022-01-10\n4,Dara Okoye,20,64000,2020-06-30\n5,Eli Stone,10,91000,2023-02-01\n6,Farah Aziz,30,58000,2024-07-15\n7,Gus O'Neil,99,50000,2018-03-03\n8,Hana Sato,20,70500,2021-09-09\n9,Ivo Petrov,10,66000,2020-01-20\nid,name\n10,Engineering\n20,Sales\n30,Support\n40,Legal\n"
+          },
+          {
+            "commands": "mkdir -p /out\npython3 - <<'PY'\nimport csv\nfrom pathlib import Path\n\ndef sqlstr(s):\n    if s is None: return 'NULL'\n    return \"'\" + s.replace(\"'\", \"''\") + \"'\"\ndef rows(path):\n    with open(path, newline='', encoding='utf-8') as f:\n        return list(csv.DictReader(f))\nD, E = rows('/data/departments.csv'), rows('/data/employees.csv')\ndef num(v):\n    return 'NULL' if v == '' else str(int(v))\nlines = [\n'DROP TABLE IF EXISTS employees;',\n'DROP TABLE IF EXISTS departments;',\n'CREATE TABLE departments(id INTEGER PRIMARY KEY, name TEXT NOT NULL);',\n'CREATE TABLE employees(id INTEGER PRIMARY KEY, name TEXT NOT NULL, dept_id INTEGER, salary INTEGER NOT NULL, hired TEXT NOT NULL);'\n]\nfor r in D:\n    lines.append(f\"INSERT INTO departments(id,name) VALUES ({num(r['id'])},{sqlstr(r['name'])});\")\nfor r in E:\n    lines.append(f\"INSERT INTO employees(id,name,dept_id,salary,hired) VALUES ({num(r['id'])},{sqlstr(r['name'])},{num(r['dept_id'])},{num(r['salary'])},{sqlstr(r['hired'])});\")\nPath('/data/load.sql').write_text('\\n'.join(lines)+'\\n', encoding='utf-8')\nPY\nsqlite /data/hr.db < /data/load.sql\nsqlite /data/hr.db '.schema'\ncat > /data/report.sql <<'SQL'\n.headers on\n.mode csv\n.nullvalue \"\"\nSELECT department, headcount, avg_salary, top_earner\nFROM (\n  SELECT d.name AS department,\n         COUNT(e.id) AS headcount,\n         CASE WHEN COUNT(e.id)=0 THEN NULL ELSE printf('%.2f', AVG(e.salary)) END AS avg_salary,\n         (SELECT e2.name FROM employees e2 WHERE e2.dept_id=d.id ORDER BY e2.salary DESC, e2.name COLLATE BINARY ASC LIMIT 1) AS top_earner\n  FROM departments d LEFT JOIN employees e ON e.dept_id=d.id\n  GROUP BY d.id, d.name\n  UNION ALL\n  SELECT '(none)' AS department,\n         COUNT(e.id) AS headcount,\n         CASE WHEN COUNT(e.id)=0 THEN NULL ELSE printf('%.2f', AVG(e.salary)) END AS avg_salary,\n         (SELECT e2.name FROM employees e2 LEFT JOIN departments d2 ON d2.id=e2.dept_id WHERE d2.id IS NULL ORDER BY e2.salary DESC, e2.name COLLATE BINARY ASC LIMIT 1) AS top_earner\n  FROM employees e LEFT JOIN departments d ON d.id=e.dept_id\n  HAVING COUNT(e.id)>0\n)\nORDER BY headcount DESC, department COLLATE BINARY ASC;\nSQL\nsqlite -header -csv /data/hr.db < /data/report.sql > /out/dept_report.csv\ncat /out/dept_report.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "CREATE TABLE departments (id INTEGER PRIMARY KEY, name TEXT NOT NULL);\nCREATE TABLE employees (id INTEGER PRIMARY KEY, name TEXT NOT NULL, dept_id INTEGER, salary INTEGER NOT NULL, hired TEXT NOT NULL);\ndepartment,headcount,avg_salary,top_earner\n(none),9,69611.11,Gus O'Neil\nEngineering,4,80000.00,Eli Stone\nSales,3,66166.67,Hana Sato\nSupport,1,58000.00,Farah Aziz\nLegal,0,,\n"
+          },
+          {
+            "commands": "python3 - <<'PY'\np='/data/report.sql'\ns=open(p).read().replace('  FROM employees e LEFT JOIN departments d ON d.id=e.dept_id\\n  HAVING COUNT(e.id)>0','  FROM employees e LEFT JOIN departments d ON d.id=e.dept_id\\n  WHERE d.id IS NULL\\n  HAVING COUNT(e.id)>0')\nopen(p,'w').write(s)\nPY\nsqlite -header -csv /data/hr.db < /data/report.sql > /out/dept_report.csv\ncat /out/dept_report.csv\npython3 - <<'PY'\nimport csv\nwith open('/out/dept_report.csv', newline='') as f: print(list(csv.reader(f)))\nPY",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "department,headcount,avg_salary,top_earner\nEngineering,4,80000.00,Eli Stone\nSales,3,66166.67,Hana Sato\n(none),1,50000.00,Gus O'Neil\nSupport,1,58000.00,Farah Aziz\nLegal,0,,\n[['department', 'headcount', 'avg_salary', 'top_earner'], ['Engineering', '4', '80000.00', 'Eli Stone'], ['Sales', '3', '66166.67', 'Hana Sato'], ['(none)', '1', '50000.00', \"Gus O'Neil\"], ['Support', '1', '58000.00', 'Farah Aziz'], ['Legal', '0', '', '']]\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

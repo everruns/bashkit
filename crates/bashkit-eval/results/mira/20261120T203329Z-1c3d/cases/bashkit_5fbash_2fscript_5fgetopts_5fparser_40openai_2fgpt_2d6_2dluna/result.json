@@ -1,0 +1,78 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "script_getopts_parser",
+  "target": "openai/gpt-6-luna",
+  "input": [
+    "Create /scripts/report.sh that uses getopts to parse these options: -f <format> (output format: csv or json, default csv), -o <file> (output file, default stdout), -v (verbose mode flag), -h (print usage and exit). After parsing, the script should read /data/input.csv and: if format is csv, output it as-is; if format is json, convert each row to a JSON object. Run the script with: 'bash /scripts/report.sh -f json -v' to process the input in verbose mode. Verbose mode should print 'Verbose: processing N rows' before output."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Created `/scripts/report.sh` with `getopts` support for `-f`, `-o`, `-v`, and `-h`. It defaults to CSV on stdout, converts CSV rows to JSON when requested, and prints the verbose row count before output.\n\nRan `bash /scripts/report.sh -f json -v` successfully:\n\n```text\nVerbose: processing 3 rows\n[{\"name\": \"alice\", \"score\": \"95\"}, {\"name\": \"bob\", \"score\": \"87\"}, {\"name\": \"carol\", \"score\": \"92\"}]\n```",
+    "iterations": 5,
+    "tool_calls_count": 4,
+    "tool_calls": [
+      "pwd; ls -la /; ls -la /data /scripts 2>/dev/null || true; cat /data/input.csv 2>/dev/null || true",
+      "mkdir -p /scripts\ncat > /scripts/report.sh <<'EOF'\n#!/usr/bin/env bash\nset -e\n\nusage() {\n  cat <<'USAGE'\nUsage: report.sh [-f csv|json] [-o file] [-v] [-h]\n  -f format  Output format: csv (default) or json\n  -o file    Write output to file (default: stdout)\n  -v         Print verbose processing information\n  -h         Show this help and exit\nUSAGE\n}\n\nformat=csv\noutput_file=\nverbose=false\n\nwhile getopts \":f:o:vh\" opt; do\n  case \"$opt\" in\n    f) format=$OPTARG ;;\n    o) output_file=$OPTARG ;;\n    v) verbose=true ;;\n    h) usage; exit 0 ;;\n    :) echo \"Error: option -$OPTARG requires an argument\" >&2; usage >&2; exit 2 ;;\n    \\\\?) echo \"Error: invalid option -$OPTARG\" >&2; usage >&2; exit 2 ;;\n  esac\ndone\nshift $((OPTIND - 1))\n\nif [[ \"$format\" != csv && \"$format\" != json ]]; then\n  echo \"Error: format must be csv or json\" >&2\n  usage >&2\n  exit 2\nfi\nif [[ ! -f /data/input.csv ]]; then\n  echo \"Error: /data/input.csv not found\" >&2\n  exit 1\nfi\n\n# Count data records (excluding the header), using Python's CSV parser so quoted\n# fields containing newlines are counted correctly.\nrow_count=$(python3 -c 'import csv; f=open(\"/data/input.csv\", newline=\"\", encoding=\"utf-8\"); rows=csv.reader(f); next(rows, None); print(sum(1 for _ in rows))')\nif [[ \"$verbose\" == true ]]; then\n  echo \"Verbose: processing $row_count rows\"\nfi\n\nif [[ \"$format\" == csv ]]; then\n  if [[ -n \"$output_file\" ]]; then\n    cat /data/input.csv > \"$output_file\"\n  else\n    cat /data/input.csv\n  fi\nelse\n  if [[ -n \"$output_file\" ]]; then\n    python3 -c 'import csv,json; f=open(\"/data/input.csv\", newline=\"\", encoding=\"utf-8\"); r=csv.DictReader(f); print(json.dumps(list(r), ensure_ascii=False))' > \"$output_file\"\n  else\n    python3 -c 'import csv,json; f=open(\"/data/input.csv\", newline=\"\", encoding=\"utf-8\"); r=csv.DictReader(f); print(json.dumps(list(r), ensure_ascii=False))'\n  fi\nfi\nEOF\nchmod +x /scripts/report.sh\nbash /scripts/report.sh -f json -v",
+      "sed -n '1,100p' /scripts/report.sh; bash /scripts/report.sh -z >/tmp/report.out 2>/tmp/report.err; echo exit:$?; cat /tmp/report.err",
+      "python3 - <<'PY'\np='/scripts/report.sh'\ns=open(p).read().replace('    \\\\\\\\?) echo', '    \\\\?) echo')\nopen(p,'w').write(s)\nPY\nbash /scripts/report.sh -z >/tmp/report.out 2>/tmp/report.err; echo exit:$?; cat /tmp/report.err"
+    ],
+    "usage": {
+      "input_tokens": 7259,
+      "output_tokens": 1265,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 11336
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 4.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 4.0,
+      "turns": 5.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "pwd; ls -la /; ls -la /data /scripts 2>/dev/null || true; cat /data/input.csv 2>/dev/null || true",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/home/user\ndrwxr-xr-x        0 2026-11-20 20:33 bin\ndrwxr-xr-x        0 2026-11-20 20:33 data\ndrwxr-xr-x        0 2026-11-20 20:33 dev\ndrwxr-xr-x        0 2026-11-20 20:33 etc\ndrwxr-xr-x        0 2026-11-20 20:33 home\ndrwxr-xr-x        0 2026-11-20 20:33 proc\ndrwxr-xr-x        0 2026-11-20 20:33 root\ndrwxrwxrwx        0 2026-11-20 20:33 tmp\ndrwxr-xr-x        0 2026-11-20 20:33 usr\nname,score\nalice,95\nbob,87\ncarol,92\n"
+          },
+          {
+            "commands": "mkdir -p /scripts\ncat > /scripts/report.sh <<'EOF'\n#!/usr/bin/env bash\nset -e\n\nusage() {\n  cat <<'USAGE'\nUsage: report.sh [-f csv|json] [-o file] [-v] [-h]\n  -f format  Output format: csv (default) or json\n  -o file    Write output to file (default: stdout)\n  -v         Print verbose processing information\n  -h         Show this help and exit\nUSAGE\n}\n\nformat=csv\noutput_file=\nverbose=false\n\nwhile getopts \":f:o:vh\" opt; do\n  case \"$opt\" in\n    f) format=$OPTARG ;;\n    o) output_file=$OPTARG ;;\n    v) verbose=true ;;\n    h) usage; exit 0 ;;\n    :) echo \"Error: option -$OPTARG requires an argument\" >&2; usage >&2; exit 2 ;;\n    \\\\?) echo \"Error: invalid option -$OPTARG\" >&2; usage >&2; exit 2 ;;\n  esac\ndone\nshift $((OPTIND - 1))\n\nif [[ \"$format\" != csv && \"$format\" != json ]]; then\n  echo \"Error: format must be csv or json\" >&2\n  usage >&2\n  exit 2\nfi\nif [[ ! -f /data/input.csv ]]; then\n  echo \"Error: /data/input.csv not found\" >&2\n  exit 1\nfi\n\n# Count data records (excluding the header), using Python's CSV parser so quoted\n# fields containing newlines are counted correctly.\nrow_count=$(python3 -c 'import csv; f=open(\"/data/input.csv\", newline=\"\", encoding=\"utf-8\"); rows=csv.reader(f); next(rows, None); print(sum(1 for _ in rows))')\nif [[ \"$verbose\" == true ]]; then\n  echo \"Verbose: processing $row_count rows\"\nfi\n\nif [[ \"$format\" == csv ]]; then\n  if [[ -n \"$output_file\" ]]; then\n    cat /data/input.csv > \"$output_file\"\n  else\n    cat /data/input.csv\n  fi\nelse\n  if [[ -n \"$output_file\" ]]; then\n    python3 -c 'import csv,json; f=open(\"/data/input.csv\", newline=\"\", encoding=\"utf-8\"); r=csv.DictReader(f); print(json.dumps(list(r), ensure_ascii=False))' > \"$output_file\"\n  else\n    python3 -c 'import csv,json; f=open(\"/data/input.csv\", newline=\"\", encoding=\"utf-8\"); r=csv.DictReader(f); print(json.dumps(list(r), ensure_ascii=False))'\n  fi\nfi\nEOF\nchmod +x /scripts/report.sh\nbash /scripts/report.sh -f json -v",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Verbose: processing 3 rows\n[{\"name\": \"alice\", \"score\": \"95\"}, {\"name\": \"bob\", \"score\": \"87\"}, {\"name\": \"carol\", \"score\": \"92\"}]\n"
+          },
+          {
+            "commands": "sed -n '1,100p' /scripts/report.sh; bash /scripts/report.sh -z >/tmp/report.out 2>/tmp/report.err; echo exit:$?; cat /tmp/report.err",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "#!/usr/bin/env bash\nset -e\n\nusage() {\n  cat <<'USAGE'\nUsage: report.sh [-f csv|json] [-o file] [-v] [-h]\n  -f format  Output format: csv (default) or json\n  -o file    Write output to file (default: stdout)\n  -v         Print verbose processing information\n  -h         Show this help and exit\nUSAGE\n}\n\nformat=csv\noutput_file=\nverbose=false\n\nwhile getopts \":f:o:vh\" opt; do\n  case \"$opt\" in\n    f) format=$OPTARG ;;\n    o) output_file=$OPTARG ;;\n    v) verbose=true ;;\n    h) usage; exit 0 ;;\n    :) echo \"Error: option -$OPTARG requires an argument\" >&2; usage >&2; exit 2 ;;\n    \\\\?) echo \"Error: invalid option -$OPTARG\" >&2; usage >&2; exit 2 ;;\n  esac\ndone\nshift $((OPTIND - 1))\n\nif [[ \"$format\" != csv && \"$format\" != json ]]; then\n  echo \"Error: format must be csv or json\" >&2\n  usage >&2\n  exit 2\nfi\nif [[ ! -f /data/input.csv ]]; then\n  echo \"Error: /data/input.csv not found\" >&2\n  exit 1\nfi\n\n# Count data records (excluding the header), using Python's CSV parser so quoted\n# fields containing newlines are counted correctly.\nrow_count=$(python3 -c 'import csv; f=open(\"/data/input.csv\", newline=\"\", encoding=\"utf-8\"); rows=csv.reader(f); next(rows, None); print(sum(1 for _ in rows))')\nif [[ \"$verbose\" == true ]]; then\n  echo \"Verbose: processing $row_count rows\"\nfi\n\nif [[ \"$format\" == csv ]]; then\n  if [[ -n \"$output_file\" ]]; then\n    cat /data/input.csv > \"$output_file\"\n  else\n    cat /data/input.csv\n  fi\nelse\n  if [[ -n \"$output_file\" ]]; then\n    python3 -c 'import csv,json; f=open(\"/data/input.csv\", newline=\"\", encoding=\"utf-8\"); r=csv.DictReader(f); print(json.dumps(list(r), ensure_ascii=False))' > \"$output_file\"\n  else\n    python3 -c 'import csv,json; f=open(\"/data/input.csv\", newline=\"\", encoding=\"utf-8\"); r=csv.DictReader(f); print(json.dumps(list(r), ensure_ascii=False))'\n  fi\nfi\nexit:0\n"
+          },
+          {
+            "commands": "python3 - <<'PY'\np='/scripts/report.sh'\ns=open(p).read().replace('    \\\\\\\\?) echo', '    \\\\?) echo')\nopen(p,'w').write(s)\nPY\nbash /scripts/report.sh -z >/tmp/report.out 2>/tmp/report.err; echo exit:$?; cat /tmp/report.err",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "exit:2\nError: invalid option -z\nUsage: report.sh [-f csv|json] [-o file] [-v] [-h]\n  -f format  Output format: csv (default) or json\n  -o file    Write output to file (default: stdout)\n  -v         Print verbose processing information\n  -h         Show this help and exit\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

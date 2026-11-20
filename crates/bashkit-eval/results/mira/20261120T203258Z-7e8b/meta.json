@@ -1,0 +1,32 @@
+{
+  "format": 1,
+  "run_id": "20261120T203258Z-7e8b",
+  "study": "mira-eval",
+  "study_version": "0.5.0",
+  "started_unix": 1795206778,
+  "finished_unix": 1795206808,
+  "environment": {
+    "git": {
+      "commit": "9eaab5b716af8b3ae1573f0ce1e1c3b4eb767a11",
+      "branch": "claude/project-thread-jb3yab",
+      "dirty": false
+    },
+    "os": "linux",
+    "arch": "x86_64",
+    "hostname": "vm",
+    "cpus": 4,
+    "mem_total_mib": 16087,
+    "mira_version": "0.5.0"
+  },
+  "summary": {
+    "scored": 15,
+    "passed": 14,
+    "failed": 1,
+    "na": 0,
+    "skipped": 0,
+    "total_tokens": 26111,
+    "total_cost_usd": 0.0,
+    "total_tool_calls": 15,
+    "total_duration_ms": 157850
+  }
+}

@@ -1,0 +1,57 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "complex_release_notes",
+  "target": "openai/gpt-6-luna",
+  "input": [
+    "Read /data/commits.log containing conventional commit messages (one per line, format: 'type(scope): message'). Parse each line, group by type, and generate /release/CHANGELOG.md with sections: '## Features' for 'feat' commits, '## Bug Fixes' for 'fix' commits, and '## Other' for all remaining types. Under each section list items as '- scope: message'. Print the generated changelog."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "8/8 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Generated `/release/CHANGELOG.md`:\n\n```markdown\n## Features\n- auth: add OAuth2 support\n- ui: dark mode toggle\n- api: add pagination support\n- db: add connection pooling\n\n## Bug Fixes\n- api: handle null response body\n- auth: token refresh race condition\n- ui: button alignment on mobile\n- api: correct status code for 404\n\n## Other\n- deps: update lodash to 4.17.21\n- readme: update install instructions\n```",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "python3 - <<'PY'\nfrom pathlib import Path\nsrc = Path('/data/commits.log')\nsections = {'Features': [], 'Bug Fixes': [], 'Other': []}\nfor raw in src.read_text().splitlines():\n    line = raw.strip()\n    if not line:\n        continue\n    if ': ' not in line or '(' not in line or ')' not in line:\n        continue\n    head, message = line.split(': ', 1)\n    typ, scope_part = head.split('(', 1)\n    if not scope_part.endswith(')'):\n        continue\n    scope = scope_part[:-1]\n    section = 'Features' if typ == 'feat' else 'Bug Fixes' if typ == 'fix' else 'Other'\n    sections[section].append(f'- {scope}: {message}')\nresult = ''.join(f'## {name}\\n' + ('\\n'.join(items) + '\\n' if items else '') + '\\n' for name, items in sections.items())\nout = Path('/release/CHANGELOG.md')\nout.parent.mkdir(parents=True, exist_ok=True)\nout.write_text(result)\nprint(result, end='')\nPY"
+    ],
+    "usage": {
+      "input_tokens": 1319,
+      "output_tokens": 401,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 3723
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "python3 - <<'PY'\nfrom pathlib import Path\nsrc = Path('/data/commits.log')\nsections = {'Features': [], 'Bug Fixes': [], 'Other': []}\nfor raw in src.read_text().splitlines():\n    line = raw.strip()\n    if not line:\n        continue\n    if ': ' not in line or '(' not in line or ')' not in line:\n        continue\n    head, message = line.split(': ', 1)\n    typ, scope_part = head.split('(', 1)\n    if not scope_part.endswith(')'):\n        continue\n    scope = scope_part[:-1]\n    section = 'Features' if typ == 'feat' else 'Bug Fixes' if typ == 'fix' else 'Other'\n    sections[section].append(f'- {scope}: {message}')\nresult = ''.join(f'## {name}\\n' + ('\\n'.join(items) + '\\n' if items else '') + '\\n' for name, items in sections.items())\nout = Path('/release/CHANGELOG.md')\nout.parent.mkdir(parents=True, exist_ok=True)\nout.write_text(result)\nprint(result, end='')\nPY",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "## Features\n- auth: add OAuth2 support\n- ui: dark mode toggle\n- api: add pagination support\n- db: add connection pooling\n\n## Bug Fixes\n- api: handle null response body\n- auth: token refresh race condition\n- ui: button alignment on mobile\n- api: correct status code for 404\n\n## Other\n- deps: update lodash to 4.17.21\n- readme: update install instructions\n\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

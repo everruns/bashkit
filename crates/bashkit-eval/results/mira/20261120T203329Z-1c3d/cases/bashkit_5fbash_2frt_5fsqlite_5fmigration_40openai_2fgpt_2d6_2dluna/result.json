@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "rt_sqlite_migration",
+  "target": "openai/gpt-6-luna",
+  "input": [
+    "/app/app.db is a schema version 1 SQLite database created from /app/schema_v1.sql. Write the migration /app/migrations/002_users_v2.sql and apply it to /app/app.db with `sqlite3 /app/app.db < /app/migrations/002_users_v2.sql`. The file must be plain SQL that upgrades ANY version 1 database (it will also be run against other v1 databases with different rows).\n\nVersion 2:\n- users has exactly the columns (id INTEGER PRIMARY KEY, first_name TEXT NOT NULL, last_name TEXT NOT NULL, email TEXT NOT NULL UNIQUE, signup_date TEXT NOT NULL), in that order, keeping user ids.\n- From full_name with surrounding spaces trimmed: first_name is the text before the first space, last_name the rest with surrounding spaces trimmed ('' when there is no space).\n- email is trimmed and lowercased. Users whose emails are equal after that are merged: keep only the lowest id, and orders of the removed users now belong to the kept user.\n- signup (MM/DD/YYYY) becomes signup_date YYYY-MM-DD.\n- meta schema_version is '2'.\norders keeps its columns and rows (only user_id may change)."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Created `/app/migrations/002_users_v2.sql` and applied it to `/app/app.db`. The migration keeps the lowest ID for normalized duplicate emails, reassigns their orders, converts the user fields, and updates `schema_version` to `2`.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "ls -l /app && cat /app/schema_v1.sql && sqlite3 /app/app.db '.schema' && sqlite3 /app/app.db 'select * from users; select * from orders; select * from meta;'",
+      "mkdir -p /app/migrations\ncat > /app/migrations/002_users_v2.sql <<'SQL'\nBEGIN TRANSACTION;\n\n-- Redirect every order to the lowest-id user in its normalized-email group.\nUPDATE orders\nSET user_id = COALESCE(\n    (\n        SELECT MIN(other.id)\n        FROM users AS original\n        JOIN users AS other\n          ON lower(trim(other.email)) = lower(trim(original.email))\n        WHERE original.id = orders.user_id\n    ),\n    user_id\n);\n\nALTER TABLE users RENAME TO users_v1;\n\nCREATE TABLE users (\n    id INTEGER PRIMARY KEY,\n    first_name TEXT NOT NULL,\n    last_name TEXT NOT NULL,\n    email TEXT NOT NULL UNIQUE,\n    signup_date TEXT NOT NULL\n);\n\nINSERT INTO users (id, first_name, last_name, email, signup_date)\nSELECT\n    id,\n    CASE\n        WHEN instr(trim(full_name), ' ') = 0 THEN trim(full_name)\n        ELSE substr(trim(full_name), 1, instr(trim(full_name), ' ') - 1)\n    END,\n    CASE\n        WHEN instr(trim(full_name), ' ') = 0 THEN ''\n        ELSE trim(substr(trim(full_name), instr(trim(full_name), ' ') + 1))\n    END,\n    lower(trim(email)),\n    substr(signup, 7, 4) || '-' || substr(signup, 1, 2) || '-' || substr(signup, 4, 2)\nFROM users_v1 AS u\nWHERE id = (\n    SELECT MIN(other.id)\n    FROM users_v1 AS other\n    WHERE lower(trim(other.email)) = lower(trim(u.email))\n);\n\nDROP TABLE users_v1;\n\nUPDATE meta SET value = '2' WHERE key = 'schema_version';\n\nCOMMIT;\nSQL\nsqlite3 /app/app.db < /app/migrations/002_users_v2.sql\nsqlite3 /app/app.db '.schema users' '.schema orders' 'select * from users order by id;' 'select * from orders order by id;' 'select * from meta;'"
+    ],
+    "usage": {
+      "input_tokens": 3709,
+      "output_tokens": 1469,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 13601
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -l /app && cat /app/schema_v1.sql && sqlite3 /app/app.db '.schema' && sqlite3 /app/app.db 'select * from users; select * from orders; select * from meta;'",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--    20480 2026-11-20 20:34 app.db\n-rw-r--r--      924 2026-11-20 20:34 schema_v1.sql\nCREATE TABLE users(id INTEGER PRIMARY KEY, full_name TEXT NOT NULL, email TEXT NOT NULL, signup TEXT NOT NULL);\nCREATE TABLE orders(id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, total_cents INTEGER NOT NULL);\nCREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);\nINSERT INTO meta VALUES ('schema_version', '1');\nINSERT INTO users VALUES (1, 'Ada Lovelace', 'ada@example.com', '12/10/2023');\nINSERT INTO users VALUES (2, ' Grace  Brewster Hopper', 'Grace@Navy.mil ', '01/05/2024');\nINSERT INTO users VALUES (3, 'Linus', 'linus@kernel.org', '07/04/2024');\nINSERT INTO users VALUES (4, 'Ada L.', 'ADA@example.com', '02/29/2024');\nINSERT INTO users VALUES (5, 'Alan Turing', 'alan@bletchley.uk', '06/23/2024');\nINSERT INTO orders VALUES (100, 1, 1500);\nINSERT INTO orders VALUES (101, 4, 2500);\nINSERT INTO orders VALUES (102, 2, 999);\nINSERT INTO orders VALUES (103, 5, 120);\nINSERT INTO orders VALUES (104, 4, 1);\nCREATE TABLE meta (\"key\" TEXT PRIMARY KEY, value TEXT NOT NULL);\nCREATE TABLE orders (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, total_cents INTEGER NOT NULL);\nCREATE TABLE users (id INTEGER PRIMARY KEY, full_name TEXT NOT NULL, email TEXT NOT NULL, signup TEXT NOT NULL);\n1|Ada Lovelace|ada@example.com|12/10/2023\n2| Grace  Brewster Hopper|Grace@Navy.mil |01/05/2024\n3|Linus|linus@kernel.org|07/04/2024\n4|Ada L.|ADA@example.com|02/29/2024\n5|Alan Turing|alan@bletchley.uk|06/23/2024\n100|1|1500\n101|4|2500\n102|2|999\n103|5|120\n104|4|1\nschema_version|1\n"
+          },
+          {
+            "commands": "mkdir -p /app/migrations\ncat > /app/migrations/002_users_v2.sql <<'SQL'\nBEGIN TRANSACTION;\n\n-- Redirect every order to the lowest-id user in its normalized-email group.\nUPDATE orders\nSET user_id = COALESCE(\n    (\n        SELECT MIN(other.id)\n        FROM users AS original\n        JOIN users AS other\n          ON lower(trim(other.email)) = lower(trim(original.email))\n        WHERE original.id = orders.user_id\n    ),\n    user_id\n);\n\nALTER TABLE users RENAME TO users_v1;\n\nCREATE TABLE users (\n    id INTEGER PRIMARY KEY,\n    first_name TEXT NOT NULL,\n    last_name TEXT NOT NULL,\n    email TEXT NOT NULL UNIQUE,\n    signup_date TEXT NOT NULL\n);\n\nINSERT INTO users (id, first_name, last_name, email, signup_date)\nSELECT\n    id,\n    CASE\n        WHEN instr(trim(full_name), ' ') = 0 THEN trim(full_name)\n        ELSE substr(trim(full_name), 1, instr(trim(full_name), ' ') - 1)\n    END,\n    CASE\n        WHEN instr(trim(full_name), ' ') = 0 THEN ''\n        ELSE trim(substr(trim(full_name), instr(trim(full_name), ' ') + 1))\n    END,\n    lower(trim(email)),\n    substr(signup, 7, 4) || '-' || substr(signup, 1, 2) || '-' || substr(signup, 4, 2)\nFROM users_v1 AS u\nWHERE id = (\n    SELECT MIN(other.id)\n    FROM users_v1 AS other\n    WHERE lower(trim(other.email)) = lower(trim(u.email))\n);\n\nDROP TABLE users_v1;\n\nUPDATE meta SET value = '2' WHERE key = 'schema_version';\n\nCOMMIT;\nSQL\nsqlite3 /app/app.db < /app/migrations/002_users_v2.sql\nsqlite3 /app/app.db '.schema users' '.schema orders' 'select * from users order by id;' 'select * from orders order by id;' 'select * from meta;'",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "CREATE TABLE users (id INTEGER PRIMARY KEY, first_name TEXT NOT NULL, last_name TEXT NOT NULL, email TEXT NOT NULL UNIQUE, signup_date TEXT NOT NULL);\nCREATE TABLE orders (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, total_cents INTEGER NOT NULL);\n1|Ada|Lovelace|ada@example.com|2023-12-10\n2|Grace|Brewster Hopper|grace@navy.mil|2024-01-05\n3|Linus||linus@kernel.org|2024-07-04\n5|Alan|Turing|alan@bletchley.uk|2024-06-23\n100|1|1500\n101|1|2500\n102|2|999\n103|5|120\n104|1|1\nschema_version|2\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

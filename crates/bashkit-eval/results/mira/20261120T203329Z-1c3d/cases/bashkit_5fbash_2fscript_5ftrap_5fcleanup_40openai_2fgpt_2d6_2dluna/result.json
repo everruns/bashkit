@@ -1,0 +1,71 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "script_trap_cleanup",
+  "target": "openai/gpt-6-luna",
+  "input": [
+    "Write a bash script /scripts/deploy.sh that: 1) Creates a temp directory using mktemp -d and stores path in TMPDIR. 2) Sets a trap on EXIT that removes the temp directory and prints 'Cleanup: removed temp dir'. 3) Copies /app/config.json to the temp dir. 4) Simulates work by creating /app/deploy.log with the line 'deployed at TMPDIR_PATH' (using actual path). 5) Exits with code 0. Run the script. After it runs, verify the temp directory was cleaned up by checking it no longer exists, and verify /app/deploy.log exists."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Created and ran `/scripts/deploy.sh`. It copied the config, wrote `/app/deploy.log`, and printed `Cleanup: removed temp dir` on exit.\n\nVerified that the logged temp directory no longer exists and `/app/deploy.log` does.",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "pwd; ls -la /; ls -la /app /scripts 2>&1 || true; find /home/eval -maxdepth 2 -type f -print 2>/dev/null | head -50",
+      "ls -la /app; mkdir -p /scripts; if [ ! -f /app/config.json ]; then printf '{}\\n' > /app/config.json; fi; cat > /scripts/deploy.sh <<'EOF'\n#!/usr/bin/env bash\nset -e\nTMPDIR=\"$(mktemp -d)\"\ncleanup() {\n  rm -rf \"$TMPDIR\"\n  printf '%s\\n' 'Cleanup: removed temp dir'\n}\ntrap cleanup EXIT\ncp /app/config.json \"$TMPDIR/\"\nprintf 'deployed at %s\\n' \"$TMPDIR\" > /app/deploy.log\nexit 0\nEOF\nchmod +x /scripts/deploy.sh\n/scripts/deploy.sh\n",
+      "printf 'Deploy log: '; cat /app/deploy.log; temp_path=$(sed 's/^deployed at //' /app/deploy.log); if [ -e \"$temp_path\" ]; then echo 'Temp directory still exists'; exit 1; else echo \"Verified temp directory cleaned: $temp_path\"; fi; test -f /app/deploy.log && echo 'Verified /app/deploy.log exists'; ls -l /scripts/deploy.sh /app/deploy.log"
+    ],
+    "usage": {
+      "input_tokens": 3557,
+      "output_tokens": 467,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 5978
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 3.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "pwd; ls -la /; ls -la /app /scripts 2>&1 || true; find /home/eval -maxdepth 2 -type f -print 2>/dev/null | head -50",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/home/user\ndrwxr-xr-x        0 2026-11-20 20:33 app\ndrwxr-xr-x        0 2026-11-20 20:33 bin\ndrwxr-xr-x        0 2026-11-20 20:33 dev\ndrwxr-xr-x        0 2026-11-20 20:33 etc\ndrwxr-xr-x        0 2026-11-20 20:33 home\ndrwxr-xr-x        0 2026-11-20 20:33 proc\ndrwxr-xr-x        0 2026-11-20 20:33 root\ndrwxrwxrwx        0 2026-11-20 20:33 tmp\ndrwxr-xr-x        0 2026-11-20 20:33 usr\nls: cannot access '/scripts': No such file or directory\n"
+          },
+          {
+            "commands": "ls -la /app; mkdir -p /scripts; if [ ! -f /app/config.json ]; then printf '{}\\n' > /app/config.json; fi; cat > /scripts/deploy.sh <<'EOF'\n#!/usr/bin/env bash\nset -e\nTMPDIR=\"$(mktemp -d)\"\ncleanup() {\n  rm -rf \"$TMPDIR\"\n  printf '%s\\n' 'Cleanup: removed temp dir'\n}\ntrap cleanup EXIT\ncp /app/config.json \"$TMPDIR/\"\nprintf 'deployed at %s\\n' \"$TMPDIR\" > /app/deploy.log\nexit 0\nEOF\nchmod +x /scripts/deploy.sh\n/scripts/deploy.sh\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       36 2026-11-20 20:33 config.json\nCleanup: removed temp dir\n"
+          },
+          {
+            "commands": "printf 'Deploy log: '; cat /app/deploy.log; temp_path=$(sed 's/^deployed at //' /app/deploy.log); if [ -e \"$temp_path\" ]; then echo 'Temp directory still exists'; exit 1; else echo \"Verified temp directory cleaned: $temp_path\"; fi; test -f /app/deploy.log && echo 'Verified /app/deploy.log exists'; ls -l /scripts/deploy.sh /app/deploy.log",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Deploy log: deployed at /tmp/tmp.KGhc4xrSIS\nVerified temp directory cleaned: /tmp/tmp.KGhc4xrSIS\nVerified /app/deploy.log exists\n-rwxr-xr-x      236 2026-11-20 20:33 /scripts/deploy.sh\n-rw-r--r--       32 2026-11-20 20:33 /app/deploy.log\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

@@ -93,7 +93,30 @@ Smoke test dataset (`data/smoke-test.jsonl`) has 3 tasks for quick verification.
 > `results/mira/<run_id>/`). Earlier entries were produced by the original
 > (pre-mira) harness and are retained as a record.
 
-### 2026-10-09, tagged 88-task dataset + generate eval (latest)
+### 2026-11-20, GPT-6 Luna re-run (latest)
+
+`gpt-6-luna` is still OpenAI's newest Luna model (6.2 exists only for Sol and
+Astra), so this re-runs it on the same 88-task `bashkit_bash` and 15-task
+`bashkit_generate` sets. Run folders: `results/mira/20261120T203329Z-1c3d`
+(`bashkit_bash`) and `results/mira/20261120T203258Z-7e8b` (`bashkit_generate`).
+
+| Metric | 2026-10-12 | 2026-11-20 |
+|--------|------------|------------|
+| bashkit_bash (88) | 71/88 | 72/88 |
+| basic (58) | 53/58 | 55/58 |
+| repo (8) | 1/8 | 2/8 |
+| hard (10) | 5/10 | 4/10 |
+| runtime (12) | 12/12 | 11/12 |
+| bashkit_generate (15) | 14/15 | 14/15 |
+| Tool-call success | 84% | 84% |
+| Tokens (in/out) | 497K / 82K | 560K / 85K |
+| Duration | 18.8 min | 15.3 min |
+
+Scores are within run-to-run noise; repo and hard tasks remain Luna's weak
+spot. `script_array_stats` fails because the model printed the script as text
+without calling the tool. `gen_config_template` is again the one generate miss.
+
+### 2026-10-09, tagged 88-task dataset + generate eval
 
 First run of the merged, tagged `bashkit_bash` dataset (mode=agent|runtime,
 difficulty=basic|repo|hard) and of `bashkit_generate`. Run folders:

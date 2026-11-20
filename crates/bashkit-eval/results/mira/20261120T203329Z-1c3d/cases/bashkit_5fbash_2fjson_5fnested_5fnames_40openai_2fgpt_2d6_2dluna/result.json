@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "json_nested_names",
+  "target": "openai/gpt-6-luna",
+  "input": [
+    "Read /data/org.json which has a nested structure of teams with members. Extract all unique member names across all teams, sort them alphabetically, and print one per line."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "alice\nbob\ncharlie\ndave",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "python3 - <<'PY'\nimport json\np='/data/org.json'\nwith open(p) as f: data=json.load(f)\nnames=set()\ndef walk(x):\n    if isinstance(x,dict):\n        # Include names for member objects\n        if 'name' in x and isinstance(x['name'],str):\n            names.add(x['name'])\n        for v in x.values(): walk(v)\n    elif isinstance(x,list):\n        for v in x: walk(v)\nwalk(data)\nfor name in sorted(names): print(name)\nPY",
+      "cat /data/org.json"
+    ],
+    "usage": {
+      "input_tokens": 1668,
+      "output_tokens": 244,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 3555
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "python3 - <<'PY'\nimport json\np='/data/org.json'\nwith open(p) as f: data=json.load(f)\nnames=set()\ndef walk(x):\n    if isinstance(x,dict):\n        # Include names for member objects\n        if 'name' in x and isinstance(x['name'],str):\n            names.add(x['name'])\n        for v in x.values(): walk(v)\n    elif isinstance(x,list):\n        for v in x: walk(v)\nwalk(data)\nfor name in sorted(names): print(name)\nPY",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "alice\nbackend\nbob\ncharlie\ndave\ndevops\nfrontend\n"
+          },
+          {
+            "commands": "cat /data/org.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "{\"teams\":[{\"name\":\"backend\",\"members\":[{\"name\":\"alice\"},{\"name\":\"bob\"}]},{\"name\":\"frontend\",\"members\":[{\"name\":\"charlie\"},{\"name\":\"alice\"}]},{\"name\":\"devops\",\"members\":[{\"name\":\"dave\"},{\"name\":\"bob\"}]}]}"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

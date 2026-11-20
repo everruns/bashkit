@@ -1,0 +1,57 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "db_csv_join_aggregate",
+  "target": "openai/gpt-6-luna",
+  "input": [
+    "Join /data/orders.csv and /data/products.csv on product_id. For each category, compute the total revenue (quantity * price). Print 'category: total_revenue' sorted by revenue descending."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "electronics: 450\nhardware: 165",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "ls /data && python3 - <<'PY'\nimport csv\nfrom collections import defaultdict\n\nwith open('/data/orders.csv', newline='') as f:\n    orders = list(csv.DictReader(f))\nwith open('/data/products.csv', newline='') as f:\n    products = {row['product_id']: row for row in csv.DictReader(f)}\n\nrevenue = defaultdict(float)\nfor order in orders:\n    product = products.get(order['product_id'])\n    if product:\n        revenue[product['category']] += float(order['quantity']) * float(product['price'])\nfor category, total in sorted(revenue.items(), key=lambda item: item[1], reverse=True):\n    print(f'{category}: {total:g}')\nPY"
+    ],
+    "usage": {
+      "input_tokens": 1038,
+      "output_tokens": 204,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 2668
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls /data && python3 - <<'PY'\nimport csv\nfrom collections import defaultdict\n\nwith open('/data/orders.csv', newline='') as f:\n    orders = list(csv.DictReader(f))\nwith open('/data/products.csv', newline='') as f:\n    products = {row['product_id']: row for row in csv.DictReader(f)}\n\nrevenue = defaultdict(float)\nfor order in orders:\n    product = products.get(order['product_id'])\n    if product:\n        revenue[product['category']] += float(order['quantity']) * float(product['price'])\nfor category, total in sorted(revenue.items(), key=lambda item: item[1], reverse=True):\n    print(f'{category}: {total:g}')\nPY",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "orders.csv\nproducts.csv\nelectronics: 450\nhardware: 165\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

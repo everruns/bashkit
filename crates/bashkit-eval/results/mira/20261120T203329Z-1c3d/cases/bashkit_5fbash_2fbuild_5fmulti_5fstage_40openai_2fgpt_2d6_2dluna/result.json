@@ -1,0 +1,57 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "build_multi_stage",
+  "target": "openai/gpt-6-luna",
+  "input": [
+    "Simulate a build pipeline: 1) Check that /src/main.c and /src/utils.c exist, 2) 'Compile' each .c file by copying it to /build/ with a .o extension and prepending '// compiled', 3) 'Link' by concatenating all .o files into /build/program with a '// linked' header, 4) 'Package' by creating a tar.gz of /build/ at /dist/release.tar.gz. Print status for each stage. If any stage fails, stop and report the error."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "6/6 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Build pipeline completed successfully.\n\n- **Check:** `/src/main.c` and `/src/utils.c` exist.\n- **Compile:** Created `/build/main.o` and `/build/utils.o`.\n- **Link:** Created `/build/program`.\n- **Package:** Created `/dist/release.tar.gz`.",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "set -e\nstage() { printf '== %s ==\\n' \"$1\"; }\nfail() { printf 'ERROR: %s\\n' \"$1\" >&2; exit 1; }\n\nstage 'Check sources'\nfor f in /src/main.c /src/utils.c; do\n  if [ ! -f \"$f\" ]; then fail \"missing source file: $f\"; fi\ndone\nprintf 'OK: required source files exist\\n'\n\nstage 'Compile'\nmkdir -p /build || fail 'could not create /build'\nfor f in /src/main.c /src/utils.c; do\n  name=${f##*/}\n  out=\"/build/${name%.c}.o\"\n  if { printf '// compiled\\n'; cat \"$f\"; } > \"$out\"; then\n    printf 'OK: %s -> %s\\n' \"$f\" \"$out\"\n  else\n    fail \"failed to compile $f\"\n  fi\ndone\n\nstage 'Link'\nif { printf '// linked\\n'; cat /build/*.o; } > /build/program; then\n  printf 'OK: linked objects into /build/program\\n'\nelse\n  fail 'link failed'\nfi\n\nstage 'Package'\nmkdir -p /dist || fail 'could not create /dist'\nif tar -czf /dist/release.tar.gz -C /build .; then\n  printf 'OK: packaged /build/ -> /dist/release.tar.gz\\n'\nelse\n  fail 'packaging failed'\nfi\nprintf 'Build pipeline completed successfully.\\n'"
+    ],
+    "usage": {
+      "input_tokens": 1432,
+      "output_tokens": 525,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 4428
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "set -e\nstage() { printf '== %s ==\\n' \"$1\"; }\nfail() { printf 'ERROR: %s\\n' \"$1\" >&2; exit 1; }\n\nstage 'Check sources'\nfor f in /src/main.c /src/utils.c; do\n  if [ ! -f \"$f\" ]; then fail \"missing source file: $f\"; fi\ndone\nprintf 'OK: required source files exist\\n'\n\nstage 'Compile'\nmkdir -p /build || fail 'could not create /build'\nfor f in /src/main.c /src/utils.c; do\n  name=${f##*/}\n  out=\"/build/${name%.c}.o\"\n  if { printf '// compiled\\n'; cat \"$f\"; } > \"$out\"; then\n    printf 'OK: %s -> %s\\n' \"$f\" \"$out\"\n  else\n    fail \"failed to compile $f\"\n  fi\ndone\n\nstage 'Link'\nif { printf '// linked\\n'; cat /build/*.o; } > /build/program; then\n  printf 'OK: linked objects into /build/program\\n'\nelse\n  fail 'link failed'\nfi\n\nstage 'Package'\nmkdir -p /dist || fail 'could not create /dist'\nif tar -czf /dist/release.tar.gz -C /build .; then\n  printf 'OK: packaged /build/ -> /dist/release.tar.gz\\n'\nelse\n  fail 'packaging failed'\nfi\nprintf 'Build pipeline completed successfully.\\n'",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "== Check sources ==\nOK: required source files exist\n== Compile ==\nOK: /src/main.c -> /build/main.o\nOK: /src/utils.c -> /build/utils.o\n== Link ==\nOK: linked objects into /build/program\n== Package ==\nOK: packaged /build/ -> /dist/release.tar.gz\nBuild pipeline completed successfully.\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}
