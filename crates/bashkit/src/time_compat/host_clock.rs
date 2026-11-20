@@ -1,6 +1,6 @@
-//! Clock for non-JS `wasm32-unknown-unknown` embedders.
+//! Clock for non-JS `wasm{32,64}-unknown-unknown` embedders.
 //!
-//! Important decision: on `wasm32-unknown-unknown` bashkit's default clock is
+//! Important decision: on `wasm{32,64}-unknown-unknown` bashkit's default clock is
 //! `web-time`, which reads `Performance.now()`/`Date.now()` through
 //! wasm-bindgen. That is right for a JS host and impossible anywhere else — a
 //! wasm component running in a runtime with no JS engine (wasmtime with no
