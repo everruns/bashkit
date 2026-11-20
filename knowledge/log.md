@@ -1,5 +1,9 @@
 # Bashkit Knowledge Update Log
 
+## 2026-11-20
+
+* **Agent pull request rules**: after an agent squash-merged external PR #2959 on green CI with a review-bot finding still open, the maintainer set three rules for agents: never merge external contributions (non-maintainers or forks; a maintainer merges by hand), never merge while any review comment is unaddressed, and never reply on their own to human-written comments (bring them to the maintainer instead). See [Agent Pull Request Rules](operations/agent-pr-rules.md).
+
 ## 2026-11-19
 
 * **`realpath` resolves symlinks**: `realpath` only cleaned `.`/`..` lexically, so with `/l -> /a/b`, `realpath /l/c` printed `/l/c` where bash prints `/a/b/c`; it also could not see a symlink in `--relative-to`. It now shares `readlink -f`'s bounded symlink walk (40-hop cap, path limits), on operands and the relative base; `--relative-to` now prints `..`-style paths and `--relative-base` gates it, as GNU does (both were a bare prefix strip). `-s` keeps the old lexical behavior, a loop reports `Too many levels of symbolic links`, and `-e` failures continue to the next operand with the operand as given, like GNU. Spec case `realpath_follows_intermediate_symlink` matches real bash. Found while writing the #2933 separator tests. See [Virtual Filesystem](foundations/vfs.md).

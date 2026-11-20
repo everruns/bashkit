@@ -63,6 +63,16 @@ Use [Conventional Commits](https://www.conventionalcommits.org), with
 [PR template](.github/pull_request_template.md) and squash-merge. Honor
 requests for separate PRs. Keep session links out of commits and PR descriptions.
 
+[Agent PR rules](knowledge/operations/agent-pr-rules.md), binding even with
+green CI and when asked to review, watch, or ship:
+
+- **Never merge external contributions.** A maintainer merges PRs from
+  non-maintainers or forks by hand. Review, comment when asked, and report.
+- **Never merge with unaddressed review comments.** Every comment, from people
+  or bots, is fixed, answered on its thread, or deferred by a maintainer.
+- **Never auto-reply to human-written comments.** Reply on your own only to
+  bots; bring a person's comment to the maintainer with a suggested answer.
+
 ### Commit Attribution
 
 Attribute every commit, including the squash commit, to the real human

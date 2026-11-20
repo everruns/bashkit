@@ -351,6 +351,7 @@ block the gate. Review CI on `main` (audit, test, lint) separately.
 
 ## References
 
+- [Agent Pull Request Rules](agent-pr-rules.md), when agents may merge and reply to comments
 - [Release Process](release-process.md), release workflow
 - [Known Limitations](limitations.md), negative spec (intentional gaps, partial features)
 - [Threat Model](../security/threat-model.md), threat model
