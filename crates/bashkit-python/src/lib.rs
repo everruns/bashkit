@@ -12,16 +12,16 @@
 // That leaves a handful of imports and helper functions referenced only from the
 // native-gated code paths; silence the resulting dead-code/unused-import lints on
 // wasm rather than scattering per-item cfgs through shared conversion helpers.
-#![cfg_attr(target_arch = "wasm32", allow(dead_code, unused_imports))]
+#![cfg_attr(target_family = "wasm", allow(dead_code, unused_imports))]
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_family = "wasm"))]
 mod streaming;
 mod terminal;
 
 // interop (capsule FS handoff), realfs (host mounts) and the credential-injection
 // network config require threads / host FS / sockets that wasm32-unknown-emscripten
 // (Pyodide) does not provide — see knowledge/runtimes/emscripten-wheels.md. They are native-only.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_family = "wasm"))]
 use bashkit::interop::fs::{BashkitFsAbiOwnedHandleV1, export_filesystem, import_owned_filesystem};
 use bashkit::tool::VERSION;
 use bashkit::{
@@ -66,7 +66,7 @@ use bashkit::{
     CommitOptions as RustCommitOptions, ObjectId as RustObjectId,
     SnapshotGraph as RustSnapshotGraph,
 };
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_family = "wasm"))]
 use bashkit::{Credential, RealFs, RealFsMode};
 use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
@@ -79,20 +79,20 @@ use pyo3::types::{
 // multi-threaded tokio + mio sockets, which do not build on wasm. The async
 // `execute()` family and caller-loop callback scheduling are therefore native-only;
 // wasm exposes the blocking `execute_sync()` API. See knowledge/runtimes/emscripten-wheels.md.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_family = "wasm"))]
 use pyo3_async_runtimes::TaskLocals;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_family = "wasm"))]
 mod async_bridge;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_family = "wasm"))]
 use async_bridge::future_into_py;
 
 // `caller_loop_locals` is a captured asyncio-loop handle, only ever `Some` when an
 // async `execute()` ran (native). On wasm there is no such loop, so the field is
 // always `None`; aliasing the type to the uninhabited `Infallible` lets the shared
 // session structs compile while making the caller-loop branches statically dead.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_family = "wasm"))]
 type CallerLoopLocals = TaskLocals;
-#[cfg(target_arch = "wasm32")]
+#[cfg(target_family = "wasm")]
 type CallerLoopLocals = std::convert::Infallible;
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
@@ -242,9 +242,9 @@ fn interpreter_at_exit() -> bool {
 /// Registered with `atexit` at module import; not part of the public API.
 #[pyfunction]
 fn _mark_interpreter_at_exit(_py: Python<'_>) {
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(target_family = "wasm"))]
     async_bridge::shutdown(_py);
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(target_family = "wasm")]
     INTERPRETER_AT_EXIT.store(true, Ordering::Release);
 }
 
@@ -381,7 +381,7 @@ enum PyCredentialSpec {
 
 // `Credential` is a core type gated behind `http_client`; the conversion is
 // native-only (network injection is unavailable on wasm — see parse_network_config).
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_family = "wasm"))]
 impl PyCredentialSpec {
     fn into_credential(self) -> Credential {
         match self {
@@ -393,7 +393,7 @@ impl PyCredentialSpec {
 }
 
 impl PyNetworkConfig {
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(target_family = "wasm"))]
     fn to_allowlist(&self) -> NetworkAllowlist {
         let base = if self.allow_all {
             NetworkAllowlist::allow_all()
@@ -407,7 +407,7 @@ impl PyNetworkConfig {
     // core `http_client` feature, which is off on wasm (no sockets in Pyodide).
     // On wasm the whole network config is inert — `parse_network_config` rejects
     // it up front (see that fn), so this is a native-only pass-through.
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(target_family = "wasm"))]
     fn apply(&self, mut builder: bashkit::BashBuilder) -> bashkit::BashBuilder {
         builder = builder.network(self.to_allowlist());
         for inj in &self.credentials {
@@ -433,7 +433,7 @@ impl PyNetworkConfig {
 // The Pyodide/Emscripten build has no outbound HTTP client (no sockets in the
 // browser sandbox), so accepting a network allowlist would silently do nothing.
 // Fail loudly instead. See knowledge/runtimes/emscripten-wheels.md.
-#[cfg(target_arch = "wasm32")]
+#[cfg(target_family = "wasm")]
 fn parse_network_config(network: Option<&Bound<'_, PyDict>>) -> PyResult<Option<PyNetworkConfig>> {
     if network.is_some() {
         return Err(PyRuntimeError::new_err(
@@ -444,7 +444,7 @@ fn parse_network_config(network: Option<&Bound<'_, PyDict>>) -> PyResult<Option<
     Ok(None)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_family = "wasm"))]
 fn parse_network_config(network: Option<&Bound<'_, PyDict>>) -> PyResult<Option<PyNetworkConfig>> {
     let Some(dict) = network else {
         return Ok(None);
@@ -515,7 +515,7 @@ fn parse_network_config(network: Option<&Bound<'_, PyDict>>) -> PyResult<Option<
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_family = "wasm"))]
 fn parse_credential_injections(
     value: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<Vec<PyCredentialInjection>> {
@@ -540,7 +540,7 @@ fn parse_credential_injections(
     Ok(out)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_family = "wasm"))]
 fn parse_credential_placeholders(
     value: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<Vec<PyCredentialPlaceholder>> {
@@ -573,7 +573,7 @@ fn parse_credential_placeholders(
     Ok(out)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_family = "wasm"))]
 fn require_string(dict: &Bound<'_, PyDict>, key: &str, label: &str) -> PyResult<String> {
     let value = dict.get_item(key)?.ok_or_else(|| {
         PyValueError::new_err(format!("network['{label}'] missing required '{key}' key"))
@@ -583,7 +583,7 @@ fn require_string(dict: &Bound<'_, PyDict>, key: &str, label: &str) -> PyResult<
         .map_err(|_| PyValueError::new_err(format!("network['{label}']['{key}'] must be a string")))
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_family = "wasm"))]
 fn parse_credential_spec(
     dict: &Bound<'_, PyDict>,
     label: &str,
@@ -650,7 +650,7 @@ fn parse_credential_spec(
     Ok(spec)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_family = "wasm"))]
 fn extract_string_pair(item: &Bound<'_, PyAny>) -> PyResult<(String, String)> {
     if let Ok(tup) = item.cast::<PyTuple>() {
         if tup.len() != 2 {
@@ -667,14 +667,14 @@ fn extract_string_pair(item: &Bound<'_, PyAny>) -> PyResult<(String, String)> {
     Err(PyValueError::new_err("expected a 2-element pair"))
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_family = "wasm"))]
 fn build_allowed_keys(base: &[&str], extra: &[&str]) -> Vec<String> {
     let mut all: Vec<String> = base.iter().map(|s| s.to_string()).collect();
     all.extend(extra.iter().map(|s| s.to_string()));
     all
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_family = "wasm"))]
 fn reject_unknown_keys(dict: &Bound<'_, PyDict>, allowed: &[String], label: &str) -> PyResult<()> {
     for (key_obj, _) in dict.iter() {
         let key: String = key_obj.extract()?;
@@ -694,7 +694,7 @@ fn parse_mounts(mounts: Option<&Bound<'_, PyList>>) -> PyResult<Vec<RealMountCon
     };
     // Host-directory mounts need the `realfs` backend, which the wasm build omits
     // (Pyodide has no host filesystem). Reject loudly instead of silently dropping.
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(target_family = "wasm")]
     if !list.is_empty() {
         return Err(PyRuntimeError::new_err(
             "host directory mounts are not available in the WebAssembly (Pyodide) build",
@@ -1028,7 +1028,7 @@ fn apply_fs_config(
     // Host-directory mounts require the `realfs` backend (tokio::fs), unavailable
     // on wasm. `parse_mounts` already rejects a non-empty `mounts` list on wasm,
     // so this loop is native-only. See knowledge/runtimes/emscripten-wheels.md.
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(target_family = "wasm"))]
     for mount in real_mounts {
         builder = match (mount.writable, &mount.vfs_mount) {
             (false, None) => builder.mount_real_readonly(&mount.host_path),
@@ -1037,7 +1037,7 @@ fn apply_fs_config(
             (true, Some(vfs_mount)) => builder.mount_real_readwrite_at(&mount.host_path, vfs_mount),
         };
     }
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(target_family = "wasm")]
     let _ = real_mounts;
 
     Ok(builder)
@@ -2198,7 +2198,7 @@ impl PyFileSystem {
     // bridge (`from_capsule`/`to_capsule`) needs the `interop` ABI — both pull
     // threads/host-FS deps absent on wasm, so these constructors are native-only.
     // See knowledge/runtimes/emscripten-wheels.md.
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(target_family = "wasm"))]
     #[staticmethod]
     #[pyo3(signature = (host_path, writable=false))]
     #[allow(deprecated)] // Python constructors cannot await RealFs::open.
@@ -2215,7 +2215,7 @@ impl PyFileSystem {
         Ok(Self::from_static(fs, rt))
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(target_family = "wasm"))]
     #[staticmethod]
     fn from_capsule(capsule: Bound<'_, PyAny>) -> PyResult<Self> {
         let capsule = capsule
@@ -2231,7 +2231,7 @@ impl PyFileSystem {
         Ok(Self::from_static(fs, rt))
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(target_family = "wasm"))]
     fn to_capsule<'py>(&self, py: Python<'py>) -> PyResult<Py<PyCapsule>> {
         let fs = self.export_fs(py)?;
         let exported = export_filesystem(fs).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
@@ -3259,7 +3259,7 @@ impl PyPrivateAsyncLoop {
             closing: Arc::new(AtomicBool::new(false)),
             bg_thread_runner: StdMutex::new(None),
         });
-        #[cfg(not(target_arch = "wasm32"))]
+        #[cfg(not(target_family = "wasm"))]
         async_bridge::register_private_loop(&private_loop);
         private_loop
     }
@@ -3617,7 +3617,7 @@ impl PyCallbackSession {
     // Native: the caller-loop locals are a non-Copy TaskLocals, so clone out of the
     // lock. Wasm: CallerLoopLocals is uninhabited and the field is always None, so
     // return None without touching the (Copy) Option.
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(target_family = "wasm"))]
     fn current_caller_loop_locals(&self) -> Option<CallerLoopLocals> {
         self.state
             .lock()
@@ -3626,7 +3626,7 @@ impl PyCallbackSession {
             .clone()
     }
 
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(target_family = "wasm")]
     fn current_caller_loop_locals(&self) -> Option<CallerLoopLocals> {
         None
     }
@@ -3644,12 +3644,12 @@ impl PyCallbackSession {
         };
         // On wasm `locals` is `Infallible`, so this point is unreachable; the
         // caller-loop scheduling helpers it would call are native-only.
-        #[cfg(target_arch = "wasm32")]
+        #[cfg(target_family = "wasm")]
         {
             let _ = py;
             match locals {}
         }
-        #[cfg(not(target_arch = "wasm32"))]
+        #[cfg(not(target_family = "wasm"))]
         {
             let tasks = self
                 .active_caller_tasks
@@ -3707,7 +3707,7 @@ fn capture_callback_state(
     // The caller-loop path captures the running asyncio loop's TaskLocals so async
     // callbacks can be scheduled on it. That only happens under async `execute()`,
     // which is native-only — on wasm we always fall through to the private-loop path.
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(target_family = "wasm"))]
     if needs_async_callbacks && use_caller_loop {
         let locals = async_bridge::get_current_locals(py)?;
         return Ok(PyCallbackSessionState {
@@ -3715,7 +3715,7 @@ fn capture_callback_state(
             caller_loop_locals: Some(locals),
         });
     }
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(target_family = "wasm")]
     let _ = (needs_async_callbacks, use_caller_loop);
 
     Ok(PyCallbackSessionState {
@@ -3742,7 +3742,7 @@ fn asyncio_cancelled_error(py: Python<'_>) -> PyResult<PyErr> {
 }
 
 // Caller-loop task scheduling/cancellation — native-only (see CallerLoopLocals).
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_family = "wasm"))]
 fn call_soon_threadsafe_with_context(
     py: Python<'_>,
     locals: &TaskLocals,
@@ -3756,7 +3756,7 @@ fn call_soon_threadsafe_with_context(
     Ok(())
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_family = "wasm"))]
 fn cancel_python_task(py: Python<'_>, locals: &TaskLocals, task: &Py<PyAny>) -> PyResult<()> {
     let cancel = task.bind(py).getattr("cancel")?;
     call_soon_threadsafe_with_context(py, locals, &cancel)
@@ -3894,7 +3894,7 @@ fn wrap_future_with_cancel<'py>(
 // Schedules an async callback on the caller's asyncio loop and awaits its result
 // with cancellation propagation — caller-loop-only, hence native-only. On wasm,
 // async callbacks run via the private-loop fallback in `call_python_callback_async`.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_family = "wasm"))]
 struct PyCancellableLoopFuture {
     result_rx: Option<oneshot::Receiver<PyResult<Py<PyAny>>>>,
     locals: TaskLocals,
@@ -3903,7 +3903,7 @@ struct PyCancellableLoopFuture {
     completed: bool,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_family = "wasm"))]
 impl PyCancellableLoopFuture {
     fn new(
         py: Python<'_>,
@@ -3961,7 +3961,7 @@ impl PyCancellableLoopFuture {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_family = "wasm"))]
 impl Drop for PyCancellableLoopFuture {
     fn drop(&mut self) {
         if self.completed {
@@ -4065,7 +4065,7 @@ async fn call_python_callback_async(
 
     // Caller-loop scheduling is native-only; on wasm we always use the private
     // event-loop fallback (current-thread, no cross-loop bridging).
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(target_family = "wasm"))]
     let result = if session.current_caller_loop_locals().is_some() {
         let future = Python::attach(|py| PyCancellableLoopFuture::new(py, session, awaitable))
             .map_err(|e| format!("{callback_name}: {e}"))?;
@@ -4078,7 +4078,7 @@ async fn call_python_callback_async(
             .await
             .map_err(|e| format!("{callback_name}: {e}"))?
     };
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(target_family = "wasm")]
     let result =
         Python::attach(|py| session.run_awaitable_on_private_loop(py, &awaitable, Arc::default()))
             .map_err(|e| format!("{callback_name}: {e}"))?;
@@ -4086,7 +4086,7 @@ async fn call_python_callback_async(
     Ok(result)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_family = "wasm"))]
 async fn run_private_loop_awaitable_yielding(
     session: Arc<PyCallbackSession>,
     awaitable: Py<PyAny>,
@@ -4618,7 +4618,7 @@ async fn exec_bash_with_optional_output(
 // interpreter supplies a revocable request extension; no handler caches a
 // caller loop or ContextVars across execute() calls. Sync calls reuse the
 // instance's dedicated private-loop worker, including in notebooks.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_family = "wasm"))]
 fn make_external_handler(py_handler: Py<PyAny>) -> PythonExternalFnHandler {
     Arc::new(move |fn_name, args, kwargs| {
         let py_handler = Python::attach(|py| py_handler.clone_ref(py));
@@ -4668,11 +4668,11 @@ fn make_external_handler(py_handler: Py<PyAny>) -> PythonExternalFnHandler {
 }
 
 fn make_external_handler_native(py: Python<'_>, handler: &Py<PyAny>) -> PythonExternalFnHandler {
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(target_family = "wasm"))]
     {
         make_external_handler(handler.clone_ref(py))
     }
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(target_family = "wasm")]
     {
         let _ = (py, handler);
         unreachable!("external_handler rejected at construction on wasm")
@@ -4683,7 +4683,7 @@ fn make_external_handler_native(py: Python<'_>, handler: &Py<PyAny>) -> PythonEx
 // with the same nesting cap as Monty; reject functions, non-finite numbers,
 // arbitrary Python objects and out-of-range integers instead of stringifying
 // them or silently losing precision.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_family = "wasm"))]
 fn zapcode_to_py(
     py: Python<'_>,
     value: &bashkit::ZapcodeValue,
@@ -4723,7 +4723,7 @@ fn zapcode_to_py(
     })
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_family = "wasm"))]
 fn py_to_zapcode(obj: &Bound<'_, PyAny>, depth: usize) -> PyResult<bashkit::ZapcodeValue> {
     use bashkit::ZapcodeValue as V;
     if depth > MAX_NESTING_DEPTH {
@@ -4781,7 +4781,7 @@ fn make_typescript_external_handler_native(
     py: Python<'_>,
     handler: &Py<PyAny>,
 ) -> bashkit::TypeScriptExternalFnHandler {
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(target_family = "wasm"))]
     {
         let handler = handler.clone_ref(py);
         Arc::new(move |name, args| {
@@ -4818,7 +4818,7 @@ fn make_typescript_external_handler_native(
             })
         })
     }
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(target_family = "wasm")]
     {
         let _ = (py, handler);
         unreachable!("typescript_external_handler rejected at construction on wasm")
@@ -4844,7 +4844,7 @@ fn prepare_runtime_external_handler(
     runtime: &str,
     prefix: &str,
 ) -> PyResult<Option<Py<PyAny>>> {
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(target_family = "wasm")]
     if handler.is_some() {
         return Err(PyRuntimeError::new_err(format!(
             "{prefix}_handler is not available in the WebAssembly (Pyodide) build",
@@ -4949,7 +4949,7 @@ fn apply_python_config(
     // On wasm, external_handler is rejected at construction, so handler is always
     // None and the external-handler arm is native-only.
     match (python, handler) {
-        #[cfg(not(target_arch = "wasm32"))]
+        #[cfg(not(target_family = "wasm"))]
         (true, Some(h)) => {
             builder =
                 builder.python_with_external_handler(limits, fn_names, make_external_handler(h));
@@ -4957,7 +4957,7 @@ fn apply_python_config(
             // in-process Python execution; propagate that to the builtin's env gate.
             builder = builder.env("BASHKIT_ALLOW_INPROCESS_PYTHON", "1");
         }
-        #[cfg(target_arch = "wasm32")]
+        #[cfg(target_family = "wasm")]
         (true, Some(_)) => unreachable!("external_handler rejected at construction on wasm"),
         (true, None) => {
             let _ = &fn_names;
@@ -4975,19 +4975,19 @@ fn apply_python_config(
 /// explicit opt-in for in-process SQLite execution, so we register the
 /// builtin and inject the runtime gate env var. The deny-list defaults
 /// (resource/FS-shaped PRAGMAs) come from `SqliteLimits::default()`.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_family = "wasm"))]
 type ProfileSqliteLimits = bashkit::SqliteLimits;
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(target_family = "wasm")]
 type ProfileSqliteLimits = ();
 
 fn profile_sqlite_limits(profile: &bashkit::ExecutionProfile) -> ProfileSqliteLimits {
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(target_family = "wasm"))]
     {
         profile.sqlite_limits().clone()
     }
 
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(target_family = "wasm")]
     {
         let _ = profile;
     }
@@ -5003,7 +5003,7 @@ fn apply_sqlite_config(
     // The embedded SQLite (Turso) backend needs the multi-threaded tokio runtime to
     // bridge its sync IO trait back to the async VFS, so the core `sqlite` feature is
     // off on wasm. Reject `sqlite=True` loudly there. See knowledge/runtimes/emscripten-wheels.md.
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(target_family = "wasm")]
     {
         let _ = (profile_limits, timeout_seconds, max_memory);
         if sqlite {
@@ -5014,7 +5014,7 @@ fn apply_sqlite_config(
         Ok(builder)
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(target_family = "wasm"))]
     {
         let mut builder = builder;
         if sqlite {
@@ -5191,7 +5191,7 @@ impl PyBash {
         )?;
         // network (http_client) and allowed_mount_paths (realfs) are native-only;
         // both kwargs are rejected at construction on wasm. See knowledge/runtimes/emscripten-wheels.md.
-        #[cfg(not(target_arch = "wasm32"))]
+        #[cfg(not(target_family = "wasm"))]
         {
             if let Some(ref net) = self.network {
                 builder = net.apply(builder);
@@ -5329,7 +5329,7 @@ impl PyBash {
         )?;
         // network (http_client) and allowed_mount_paths (realfs) are native-only;
         // both kwargs are rejected at construction on wasm. See knowledge/runtimes/emscripten-wheels.md.
-        #[cfg(not(target_arch = "wasm32"))]
+        #[cfg(not(target_family = "wasm"))]
         {
             if let Some(ref net) = network {
                 builder = net.apply(builder);
@@ -5415,7 +5415,7 @@ impl PyBash {
     /// Native-only: the async API bridges to a Python asyncio loop via
     /// pyo3-async-runtimes, which the WebAssembly (Pyodide) build omits. On wasm,
     /// use `execute_sync()`. See knowledge/runtimes/emscripten-wheels.md.
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(target_family = "wasm"))]
     // Python keyword arguments map 1:1 onto parameters here.
     #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (commands, on_output=None, *, capture=None, stdout=None, stderr=None, timeout_seconds=None, output_file=None, max_output_file_bytes=None))]
@@ -5581,7 +5581,7 @@ impl PyBash {
     /// Execute commands asynchronously. Raises `BashError` on non-zero exit.
     ///
     /// Native-only (see `execute`). Use `execute_sync_or_throw()` on wasm.
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(target_family = "wasm"))]
     #[pyo3(signature = (commands, on_output=None, *, timeout_seconds=None))]
     fn execute_or_throw<'py>(
         &self,
@@ -5637,7 +5637,7 @@ impl PyBash {
     /// Override precedence matches `custom_builtins` at construction time:
     /// shell function > POSIX special builtin > custom builtin > baked-in
     /// builtin > `PATH`.
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(target_family = "wasm"))]
     fn add_command(&self, py: Python<'_>, name: String, callback: Py<PyAny>) -> PyResult<()> {
         streaming::register(
             py,
@@ -6407,7 +6407,7 @@ impl BashTool {
 
         // network (http_client) and allowed_mount_paths (realfs) are native-only;
         // both kwargs are rejected at construction on wasm. See knowledge/runtimes/emscripten-wheels.md.
-        #[cfg(not(target_arch = "wasm32"))]
+        #[cfg(not(target_family = "wasm"))]
         {
             if let Some(ref net) = self.network {
                 builder = net.apply(builder);
@@ -6623,7 +6623,7 @@ impl BashTool {
         let network = parse_network_config(network)?;
         // network (http_client) and allowed_mount_paths (realfs) are native-only;
         // both kwargs are rejected at construction on wasm. See knowledge/runtimes/emscripten-wheels.md.
-        #[cfg(not(target_arch = "wasm32"))]
+        #[cfg(not(target_family = "wasm"))]
         {
             if let Some(ref net) = network {
                 builder = net.apply(builder);
@@ -6704,7 +6704,7 @@ impl BashTool {
     }
 
     /// Native-only (see `Bash.execute`). Use `execute_sync()` on wasm.
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(target_family = "wasm"))]
     // Python keyword arguments map 1:1 onto parameters here.
     #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (commands, on_output=None, *, capture=None, stdout=None, stderr=None, timeout_seconds=None, output_file=None, max_output_file_bytes=None))]
@@ -6861,7 +6861,7 @@ impl BashTool {
     /// Execute commands asynchronously. Raises `BashError` on non-zero exit.
     ///
     /// Native-only (see `Bash.execute`). Use `execute_sync_or_throw()` on wasm.
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(target_family = "wasm"))]
     #[pyo3(signature = (commands, on_output=None, *, timeout_seconds=None))]
     fn execute_or_throw<'py>(
         &self,
@@ -6908,7 +6908,7 @@ impl BashTool {
 
     /// Register a Python callback as a custom bash builtin.
     /// See [`PyBash::add_builtin`] for semantics.
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(target_family = "wasm"))]
     fn add_command(&self, py: Python<'_>, name: String, callback: Py<PyAny>) -> PyResult<()> {
         streaming::register(
             py,
@@ -7684,7 +7684,7 @@ impl ScriptedTool {
     /// Execute a bash script asynchronously.
     ///
     /// Native-only (see `Bash.execute`). Use `execute_sync()` on wasm.
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(target_family = "wasm"))]
     fn execute<'py>(&self, py: Python<'py>, commands: String) -> PyResult<Bound<'py, PyAny>> {
         let session = PyCallbackSession::capture(
             py,
@@ -7943,7 +7943,7 @@ fn _bashkit(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<AnalyzedRedirect>()?;
     m.add_class::<AnalyzedUpload>()?;
     m.add_class::<PyBuiltinContext>()?;
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(target_family = "wasm"))]
     streaming::add_classes(m)?;
     m.add_class::<PyFileSystem>()?;
     m.add_class::<PyPackedCommit>()?;

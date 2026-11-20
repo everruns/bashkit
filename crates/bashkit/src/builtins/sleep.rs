@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use std::time::Duration;
 
 #[cfg(all(
-    target_arch = "wasm32",
+    target_family = "wasm",
     target_os = "unknown",
     not(feature = "wasm_js")
 ))]
@@ -68,7 +68,7 @@ impl Builtin for Sleep {
         if seconds > 0.0 {
             let duration = Duration::from_secs_f64(seconds);
             #[cfg(all(
-                target_arch = "wasm32",
+                target_family = "wasm",
                 target_os = "unknown",
                 not(feature = "wasm_js")
             ))]
@@ -109,7 +109,7 @@ fn parse_interval(arg: &str) -> Option<f64> {
 #[cfg(any(
     test,
     all(
-        target_arch = "wasm32",
+        target_family = "wasm",
         target_os = "unknown",
         not(feature = "wasm_js")
     )

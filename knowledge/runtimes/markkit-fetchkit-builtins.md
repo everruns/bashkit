@@ -93,7 +93,7 @@ startup cost: registration is a map insert, nothing is loaded until a call.
 
 ## Constraints
 
-- Native only (`not(target_arch = "wasm32")`): both CLI crates need tokio's
+- Native only (`not(target_family = "wasm")`): both CLI crates need tokio's
   multi-thread runtime.
 - Off by default everywhere (core, bashkit-cli, Python, Node) until a separate
   decision turns them on (user, 2026-11-01).

@@ -21,11 +21,11 @@ use std::task::{Context, Poll};
 /// Remaining stack below which a poll moves to a new segment. Must exceed
 /// the stack one interpreter level can use between two command polls in a
 /// debug build (measured at ~150 KiB for an `eval` level).
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_family = "wasm"))]
 const RED_ZONE: usize = 512 * 1024;
 
 /// Size of each additional stack segment.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_family = "wasm"))]
 const SEGMENT: usize = 4 * 1024 * 1024;
 
 /// Future wrapper whose `poll` runs with at least [`RED_ZONE`] bytes of stack.
@@ -42,11 +42,11 @@ impl<F: Future> Future for GrowStack<F> {
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let inner = self.0.as_mut();
-        #[cfg(not(target_arch = "wasm32"))]
+        #[cfg(not(target_family = "wasm"))]
         {
             stacker::maybe_grow(RED_ZONE, SEGMENT, || inner.poll(cx))
         }
-        #[cfg(target_arch = "wasm32")]
+        #[cfg(target_family = "wasm")]
         {
             inner.poll(cx)
         }

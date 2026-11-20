@@ -34,7 +34,7 @@ num-bigint = "^0.4.6"
 # http_client/sqlite/interop pull mio/tokio-net/rt-multi-thread/tokio::fs,
 # none of which compile on wasm32-unknown-emscripten — see the wasm block
 # below and knowledge/runtimes/emscripten-wheels.md.
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
 bashkit = { path = "../bashkit", features = ["python", "typescript", "realfs", "jq", "interop", "http_client", "sqlite", "terminal"] }
 bashkit-scripted-tool = { path = "../bashkit-scripted-tool", features = ["python", "jq"] }
 tokio = { workspace = true, features = ["rt-multi-thread"] }
@@ -49,7 +49,7 @@ pyo3-async-runtimes = { workspace = true }
 # shell plus the embedded jq and Monty Python interpreters. tokio stays on its
 # wasm-safe base features (sync, macros, io-util, rt, time) — current-thread
 # runtime only. See knowledge/runtimes/emscripten-wheels.md.
-[target.'cfg(target_arch = "wasm32")'.dependencies]
+[target.'cfg(target_family = "wasm")'.dependencies]
 bashkit = { path = "../bashkit", features = ["python", "typescript", "jq", "terminal"] }
 bashkit-scripted-tool = { path = "../bashkit-scripted-tool", features = ["python", "jq"] }
 tokio = { workspace = true }

@@ -37,7 +37,7 @@ on wasm:
 - async `execute()` bridge → `pyo3-async-runtimes` (tokio-runtime): hard-pulls `rt-multi-thread` + tokio `net` (mio).
 
 The core `bashkit` crate was already wasm-aware (gates
-`rt-multi-thread`/`fs` behind `cfg(not(target_arch = "wasm32"))`); the work
+`rt-multi-thread`/`fs` behind `cfg(not(target_family = "wasm"))`); the work
 is confined to `crates/bashkit-python`.
 
 ## Feature surface: native vs wasm
@@ -63,13 +63,13 @@ All gating lives in `crates/bashkit-python`:
 Per-target dependency split:
 
 ```toml
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
 bashkit = { path = "../bashkit", features = ["python","typescript","realfs","jq","interop","http_client","sqlite"] }
 bashkit-scripted-tool = { path = "../bashkit-scripted-tool", features = ["python","jq"] }
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 pyo3-async-runtimes = { workspace = true }
 
-[target.'cfg(target_arch = "wasm32")'.dependencies]
+[target.'cfg(target_family = "wasm")'.dependencies]
 bashkit = { path = "../bashkit", features = ["python","typescript","jq"] }
 bashkit-scripted-tool = { path = "../bashkit-scripted-tool", features = ["python","jq"] }
 tokio = { workspace = true }   # wasm-safe base features only
@@ -77,7 +77,7 @@ tokio = { workspace = true }   # wasm-safe base features only
 
 ### `src/lib.rs`
 
-- `#[cfg(not(target_arch = "wasm32"))]` on: async `execute*()` `#[pymethods]`,
+- `#[cfg(not(target_family = "wasm"))]` on: async `execute*()` `#[pymethods]`,
   `pyo3-async-runtimes` imports, `make_external_handler`, caller-loop callback
   machinery (`PyCancellableLoopFuture`, `call_soon_threadsafe_with_context`,
   `cancel_python_task`), network/credential parsing + `apply`,
@@ -86,7 +86,7 @@ tokio = { workspace = true }   # wasm-safe base features only
   `std::convert::Infallible` (wasm); `caller_loop_locals` is always `None`
   on wasm, so caller-loop branches are statically dead.
 - Construction-time `RuntimeError` guards for the four gated kwargs.
-- Wasm-scoped `#![cfg_attr(target_arch = "wasm32", allow(dead_code, unused_imports))]`
+- Wasm-scoped `#![cfg_attr(target_family = "wasm", allow(dead_code, unused_imports))]`
   silences lints from native-only helpers.
 
 Decision comments are inline at each gate; this spec is the index.

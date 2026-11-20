@@ -19,33 +19,33 @@ use std::future::Future;
 use std::time::Duration;
 
 #[cfg(all(
-    target_arch = "wasm32",
+    target_family = "wasm",
     target_os = "unknown",
     not(feature = "wasm_js")
 ))]
 pub mod host_clock;
 
 #[cfg(all(
-    target_arch = "wasm32",
+    target_family = "wasm",
     target_os = "unknown",
     not(feature = "wasm_js")
 ))]
 pub use host_clock::{Instant, SystemTime, UNIX_EPOCH};
 
-#[cfg(all(target_arch = "wasm32", target_os = "unknown", feature = "wasm_js"))]
+#[cfg(all(target_family = "wasm", target_os = "unknown", feature = "wasm_js"))]
 pub use web_time::{Instant, SystemTime, UNIX_EPOCH};
 
 // WASI targets (wasip1, wasip2, wasip1-threads) have real clocks in std, and
 // no tokio timer driver worth routing `Instant` through.
-#[cfg(all(target_arch = "wasm32", not(target_os = "unknown")))]
+#[cfg(all(target_family = "wasm", not(target_os = "unknown")))]
 pub use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_family = "wasm"))]
 pub use std::time::{SystemTime, UNIX_EPOCH};
 
 // Tokio's instant follows the runtime's paused/advanced monotonic clock. This
 // makes shell deadlines and `time` deterministic under virtual-time runtimes.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_family = "wasm"))]
 pub use tokio::time::Instant;
 
 /// Portable timer future. JS-host wasm uses `setTimeout`; native targets keep
@@ -53,7 +53,7 @@ pub use tokio::time::Instant;
 /// target is deliberately single-threaded (the same invariant as JS builtins).
 pub async fn sleep(duration: Duration) {
     #[cfg(all(
-        target_arch = "wasm32",
+        target_family = "wasm",
         target_os = "unknown",
         not(feature = "wasm_js")
     ))]
@@ -67,13 +67,13 @@ pub async fn sleep(duration: Duration) {
         }
     }
 
-    #[cfg(all(target_arch = "wasm32", target_os = "unknown", feature = "wasm_js"))]
+    #[cfg(all(target_family = "wasm", target_os = "unknown", feature = "wasm_js"))]
     send_wrapper::SendWrapper::new(gloo_timers::future::TimeoutFuture::new(duration_millis(
         duration,
     )))
     .await;
 
-    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+    #[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
     tokio::time::sleep(duration).await;
 }
 
@@ -86,7 +86,7 @@ pub async fn timeout<F: Future>(
     future: F,
 ) -> Result<F::Output, TimeoutElapsed> {
     #[cfg(all(
-        target_arch = "wasm32",
+        target_family = "wasm",
         target_os = "unknown",
         not(feature = "wasm_js")
     ))]
@@ -113,7 +113,7 @@ pub async fn timeout<F: Future>(
         .await;
     }
 
-    #[cfg(all(target_arch = "wasm32", target_os = "unknown", feature = "wasm_js"))]
+    #[cfg(all(target_family = "wasm", target_os = "unknown", feature = "wasm_js"))]
     {
         use futures_util::future::{Either, select};
         let timer = send_wrapper::SendWrapper::new(gloo_timers::future::TimeoutFuture::new(
@@ -126,13 +126,13 @@ pub async fn timeout<F: Future>(
         }
     }
 
-    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+    #[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
     tokio::time::timeout(duration, future)
         .await
         .map_err(|_| TimeoutElapsed)
 }
 
-#[cfg(all(target_arch = "wasm32", target_os = "unknown", feature = "wasm_js"))]
+#[cfg(all(target_family = "wasm", target_os = "unknown", feature = "wasm_js"))]
 fn duration_millis(duration: Duration) -> u32 {
     (duration.as_secs_f64() * 1000.0)
         .ceil()
