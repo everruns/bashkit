@@ -438,7 +438,7 @@ name = "markkit_fetchkit"
 required-features = ["markkit", "fetchkit"]
 
 # Additional tokio features needed only on native (not WASM)
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "fs"] }
 # Grows the native stack on demand while polling nested interpreter
 # futures, so deep (but limit-bounded) nesting cannot abort the process
@@ -460,10 +460,10 @@ fetchkit = { version = "0.7.2", default-features = false, features = ["docs-pdf"
 # pulled in by `wasm_js`. A non-JS wasm embedder gets time_compat::host_clock
 # instead and links none of them: their imports would be unresolvable in a
 # runtime with no JS engine.
-[target.'cfg(target_arch = "wasm32")'.dependencies]
+[target.'cfg(target_family = "wasm")'.dependencies]
 web-time = { workspace = true, optional = true }
 
-[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+[target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
 gloo-timers = { version = "0.4", features = ["futures"], optional = true }
 send_wrapper = { version = "0.6", features = ["futures"], optional = true }
 # Task spawner for the host-call execution driver (see host_call.rs). JS-backed
@@ -482,6 +482,6 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("i18n-deci
 
 # The process feature is native test infrastructure only; keep WASM builds
 # on the workspace Tokio feature set without changing versions or the lock.
-[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+[target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
 tokio = { workspace = true, features = ["process"] }
 

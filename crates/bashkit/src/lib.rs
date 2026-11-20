@@ -4323,7 +4323,7 @@ pub mod sqlite_guide {}
 /// **Related:** `BashBuilder::network`, `NetworkAllowlist`, [`threat_model`]
 #[cfg(all(
     any(feature = "markkit", feature = "fetchkit"),
-    not(target_arch = "wasm32")
+    not(target_family = "wasm")
 ))]
 #[doc = include_str!("../docs/markkit-fetchkit.md")]
 pub mod markkit_fetchkit_guide {}

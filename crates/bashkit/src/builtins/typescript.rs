@@ -22,7 +22,7 @@ use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_family = "wasm"))]
 use std::sync::OnceLock;
 use std::time::Duration;
 use zapcode_core::{ResourceLimits, RunResult, Value, VmState, ZapcodeRun};
@@ -51,13 +51,13 @@ const TS_CALL_WORK_UNITS: u64 = 4096;
 /// in debug builds (32 MiB was the smallest that passed
 /// `deep_nesting_at_the_limit_does_not_overflow` in a debug build; 128 MiB
 /// gives 4x). The memory is reserved, not committed, until used.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_family = "wasm"))]
 const TS_VM_STACK_BYTES: usize = 128 * 1024 * 1024;
 
 /// Upper bound used when the host does not configure TypeScript VM admission.
 /// Four active 128 MiB stack reservations are a deliberate process-wide cap,
 /// while smaller hosts default to their available CPU parallelism.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_family = "wasm"))]
 const DEFAULT_MAX_ACTIVE_TS_VMS: usize = 4;
 
 /// Error returned by [`configure_typescript_vm_concurrency`].
@@ -110,7 +110,7 @@ pub fn configure_typescript_vm_concurrency(
             maximum: tokio::sync::Semaphore::MAX_PERMITS,
         });
     }
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(target_family = "wasm"))]
     {
         TS_VM_ADMISSION
             .set(VmAdmission::new(max_active))
@@ -121,14 +121,14 @@ pub fn configure_typescript_vm_concurrency(
     Ok(())
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_family = "wasm"))]
 #[derive(Clone)]
 struct VmAdmission {
     semaphore: Arc<tokio::sync::Semaphore>,
     limit: usize,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_family = "wasm"))]
 impl VmAdmission {
     fn new(limit: usize) -> Self {
         Self {
@@ -155,10 +155,10 @@ impl VmAdmission {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_family = "wasm"))]
 static TS_VM_ADMISSION: OnceLock<VmAdmission> = OnceLock::new();
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_family = "wasm"))]
 fn vm_admission() -> &'static VmAdmission {
     TS_VM_ADMISSION.get_or_init(|| {
         let parallelism = std::thread::available_parallelism().map_or(1, usize::from);
@@ -1024,7 +1024,7 @@ async fn run_typescript(
 
     // Per-run heap meter (vm_meter.rs); ZapCode itself never enforces
     // max_memory, so without the metered allocator `ts` fails closed.
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(target_family = "wasm"))]
     if !crate::vm_meter::allocator_installed() {
         return Ok(ExecResult::err(METER_MISSING_ERROR.to_string(), 1));
     }
@@ -1090,11 +1090,11 @@ async fn run_typescript(
 const VM_THREAD_ERROR: &str = "ts: cannot start execution thread\n";
 
 /// Message when `MeteredAllocator` is not the global allocator.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_family = "wasm"))]
 const METER_MISSING_ERROR: &str =
     "ts: TypeScript memory limits need bashkit::MeteredAllocator as the global allocator\n";
 
-#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+#[cfg_attr(target_family = "wasm", allow(dead_code))]
 enum VmStepResult<T> {
     Complete(T),
     TimedOut,
@@ -1108,7 +1108,7 @@ enum VmStepResult<T> {
 /// blocking pool. The permit lives inside that blocking task, so a caller
 /// whose deadline expires cannot release the slot while its abandoned VM
 /// thread is still winding down.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_family = "wasm"))]
 async fn run_vm_step<T: Send + 'static>(
     meter: Arc<crate::vm_meter::VmMeter>,
     deadline: Option<Instant>,
@@ -1117,7 +1117,7 @@ async fn run_vm_step<T: Send + 'static>(
     run_vm_step_with_admission(vm_admission().clone(), meter, deadline, step).await
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_family = "wasm"))]
 async fn run_vm_step_with_admission<T: Send + 'static>(
     admission: VmAdmission,
     meter: Arc<crate::vm_meter::VmMeter>,
@@ -1161,7 +1161,7 @@ async fn run_vm_step_with_admission<T: Send + 'static>(
 /// Run one synchronous ZapCode step (parse/compile/run, or a resume) inside
 /// `meter`'s window on a dedicated [`TS_VM_STACK_BYTES`] stack. `None` means
 /// no thread could be started.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_family = "wasm"))]
 fn on_vm_stack<T: Send + 'static>(
     meter: &crate::vm_meter::VmMeter,
     step: impl FnOnce() -> T + Send + 'static,
@@ -1184,7 +1184,7 @@ fn on_vm_stack<T: Send + 'static>(
 
 /// wasm32 has no threads: run on the current stack. The nesting cap still
 /// applies; see the zapcode-runtime knowledge page for the residual risk.
-#[cfg(target_arch = "wasm32")]
+#[cfg(target_family = "wasm")]
 async fn run_vm_step<T>(
     meter: Arc<crate::vm_meter::VmMeter>,
     _deadline: Option<Instant>,
@@ -1919,7 +1919,7 @@ mod tests {
         ));
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(target_family = "wasm"))]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn vm_admission_caps_active_threads_and_times_out_queued_steps() {
         use std::sync::atomic::{AtomicUsize, Ordering};

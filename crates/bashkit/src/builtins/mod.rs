@@ -59,7 +59,7 @@ mod export;
 mod expr;
 mod factor;
 mod fc;
-#[cfg(all(feature = "fetchkit", not(target_arch = "wasm32")))]
+#[cfg(all(feature = "fetchkit", not(target_family = "wasm")))]
 mod fetchkit;
 mod fileops;
 mod find;
@@ -88,7 +88,7 @@ mod ls;
 mod make;
 mod man;
 mod mapfile;
-#[cfg(all(feature = "markkit", not(target_arch = "wasm32")))]
+#[cfg(all(feature = "markkit", not(target_family = "wasm")))]
 mod markkit;
 mod mkfifo;
 #[cfg(feature = "terminal")]
@@ -202,7 +202,7 @@ pub use export::Export;
 pub use expr::Expr;
 pub use factor::Factor;
 pub use fc::Fc;
-#[cfg(all(feature = "fetchkit", not(target_arch = "wasm32")))]
+#[cfg(all(feature = "fetchkit", not(target_family = "wasm")))]
 pub use fetchkit::Fetchkit;
 pub use fileops::{Chmod, Chown, Cp, Ln, Mkdir, Mktemp, Mv, Rm, Touch};
 pub use find::Find;
@@ -231,7 +231,7 @@ pub(crate) use ls::{fnmatch, glob_match};
 pub use make::Make;
 pub use man::Man;
 pub use mapfile::Mapfile;
-#[cfg(all(feature = "markkit", not(target_arch = "wasm32")))]
+#[cfg(all(feature = "markkit", not(target_family = "wasm")))]
 pub use markkit::Markkit;
 pub use mkfifo::Mkfifo;
 pub use navigation::{Cd, Pwd};

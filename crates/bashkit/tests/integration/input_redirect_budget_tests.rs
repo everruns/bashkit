@@ -538,12 +538,12 @@ async fn stdin_clone_trip_recovers() {
 // Reuses reviewed primitives (`drain_capped`, `reap_with_grace`) with a
 // job-specific launcher. Shared defaults for other products are untouched.
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_family = "wasm"))]
 use crate::threat_model_tests::resource_exhaustion::bashkit_cli_path;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_family = "wasm"))]
 use std::process::Stdio;
 use std::time::Duration;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_family = "wasm"))]
 use tokio::process::Command;
 
 /// File-size backstop for the bash `ulimit -f` knob, in the shell's blocks.
@@ -556,13 +556,13 @@ const IR_FILE_BLOCKS: u64 = 131_072;
 /// Active RSS cutoff in KiB (`ps -o rss=` reports KiB on Linux and macOS):
 /// Sampled observations trigger termination on exceedance. This is not a
 /// hard OS memory cap or proof that no between-sample peak occurred.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_family = "wasm"))]
 const IR_RSS_CAP_KIB: u64 = 1_048_576; // 1GiB
 /// Explicit allowance for one short instrumented run's coverage artifact.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_family = "wasm"))]
 const IR_ARTIFACT_BOUND: u64 = 64 * 1024 * 1024; // 64MiB
 /// Per-stream kept bytes for concurrent diagnostic drains.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_family = "wasm"))]
 const PIPE_CAP: usize = 256 * 1024;
 
 /// Opt-in launcher for the input-redirect job: shared CPU/stack caps plus a
@@ -733,7 +733,7 @@ fn file_size_unit_factor(blocks: u64, bytes: u64) -> Result<u64, String> {
 /// Outcome of one opt-in bounded input-shape run: the reviewed verdict plus
 /// job-specific receipts. Setup faults panic with context (fail-closed);
 /// runtime observations are flags for the caller to assert on.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_family = "wasm"))]
 struct InputShapeRun {
     exit_code: Option<i32>,
     wall_limit_seconds: u64,
@@ -842,7 +842,7 @@ struct SampleError {
 /// One lifecycle owns wait, captures and the optional RSS sampler. Errors
 /// request kill once, then retain all futures through finite completion.
 /// Drop remains a best-effort backstop, never a completion receipt.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_family = "wasm"))]
 struct ChildCompletion {
     status: Option<std::process::ExitStatus>,
     out: (Vec<u8>, usize, bool),
@@ -858,7 +858,7 @@ struct ChildCompletion {
     exited_fast: bool,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_family = "wasm"))]
 async fn complete_owned_child(
     child: &mut OwnedChild,
     cap: usize,
@@ -1072,7 +1072,7 @@ async fn complete_owned_child(
 
 /// RSS sampling uses the same finite owned lifecycle as the main child.
 /// Sampling failure and incomplete reap/capture are distinct verdicts.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_family = "wasm"))]
 async fn sample_child_rss(pid: u32) -> Result<u64, SampleError> {
     let ps = Command::new("ps")
         .arg("-o")
@@ -1231,7 +1231,7 @@ async fn ir_helper_terminal_sampler_completion() {
     );
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_family = "wasm"))]
 async fn run_input_shape_bounded(script: &str, wall_secs: u64, tag: &str) -> InputShapeRun {
     let sink = TempWorkdir::create(&format!("{tag}-sink")).expect("artifact sink setup");
     let work = TempWorkdir::create(&format!("{tag}-work")).expect("producer workdir setup");
@@ -1331,7 +1331,7 @@ async fn run_input_shape_bounded(script: &str, wall_secs: u64, tag: &str) -> Inp
 /// (fail-closed on any unit surprise); RSS policing receipts (a real pid,
 /// no observed exceedance, sampled maximum under the cutoff, samples taken unless the child
 /// exited before the first poll).
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_family = "wasm"))]
 fn assert_effective_bounds(r: &InputShapeRun) {
     use std::io::Write as _;
 
@@ -1430,7 +1430,7 @@ fn assert_effective_bounds(r: &InputShapeRun) {
 /// (no exit code) and from pre-fix success (exit 0).
 /// NOT EXECUTED in this environment (hostile-fixture ban); kept as the
 /// blocked-verification target with full harness assertions intact.
-#[cfg(all(unix, not(target_arch = "wasm32")))]
+#[cfg(all(unix, not(target_family = "wasm")))]
 #[tokio::test]
 async fn original_shape_bounded_child_default_limits() {
     let r =
@@ -1549,7 +1549,7 @@ fn ir_helper_workdir_drop_cleans() {
 /// Finite normal child completion through the full opt-in wrapper with an
 /// ordinary harmless script: proves the harness itself works end to end.
 /// NOT vulnerability proof: `true` exercises no budget path.
-#[cfg(all(unix, not(target_arch = "wasm32")))]
+#[cfg(all(unix, not(target_family = "wasm")))]
 #[tokio::test]
 async fn ir_helper_normal_child_completes() {
     let r = run_input_shape_bounded("true", 30, "ir-true").await;
@@ -1620,12 +1620,12 @@ fn ir_helper_ps_parse_cases() {
 /// explicitly with a finite deadline and then drop the guard; Drop sends
 /// SIGKILL best-effort via sync `start_kill` (documented backstop, never the
 /// primary path) but never waits, so Drop cannot block.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_family = "wasm"))]
 struct OwnedChild {
     inner: Option<tokio::process::Child>,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_family = "wasm"))]
 impl OwnedChild {
     fn new(child: tokio::process::Child) -> Self {
         Self { inner: Some(child) }
@@ -1672,7 +1672,7 @@ impl OwnedChild {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_family = "wasm"))]
 impl Drop for OwnedChild {
     fn drop(&mut self) {
         if let Some(child) = self.inner.as_mut() {

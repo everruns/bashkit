@@ -365,7 +365,7 @@ impl Drop for ExecutionHandle {
 /// Hand the execution to an independent task so its deadline keeps running
 /// while the host is parked. Returns the future back when this target has no
 /// task spawner, leaving `next_event` as its only driver.
-#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+#[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
 fn spawn_execution(future: ExecutionFuture) -> Option<ExecutionFuture> {
     // Not every embedder polls `next_event` from inside a Tokio runtime, and
     // `start_execution` must not start panicking on the ones that don't.
@@ -378,7 +378,7 @@ fn spawn_execution(future: ExecutionFuture) -> Option<ExecutionFuture> {
     }
 }
 
-#[cfg(all(target_arch = "wasm32", target_os = "unknown", feature = "wasm_js"))]
+#[cfg(all(target_family = "wasm", target_os = "unknown", feature = "wasm_js"))]
 fn spawn_execution(future: ExecutionFuture) -> Option<ExecutionFuture> {
     wasm_bindgen_futures::spawn_local(future);
     None
@@ -389,7 +389,7 @@ fn spawn_execution(future: ExecutionFuture) -> Option<ExecutionFuture> {
 // still enforced, just on the host's next poll. See
 // knowledge/runtimes/non-js-wasm.md.
 #[cfg(all(
-    target_arch = "wasm32",
+    target_family = "wasm",
     target_os = "unknown",
     not(feature = "wasm_js")
 ))]
