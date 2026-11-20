@@ -63,6 +63,11 @@ Use [Conventional Commits](https://www.conventionalcommits.org), with
 [PR template](.github/pull_request_template.md) and squash-merge. Honor
 requests for separate PRs. Keep session links out of commits and PR descriptions.
 
+**Never merge external contributions.** Pull requests from non-maintainers or
+forks are merged by a maintainer by hand, even with green CI and when asked to
+review, watch, or ship them. Review, comment, and report instead. See
+[external contributions](knowledge/operations/external-contributions.md).
+
 ### Commit Attribution
 
 Attribute every commit, including the squash commit, to the real human
