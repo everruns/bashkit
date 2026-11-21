@@ -136,15 +136,11 @@ impl ToolDefExtensionBuilder {
     /// [`ToolDefExtension::invocation_trace`] before registration when a caller
     /// intentionally wants a handle for this extension's trace.
     pub fn build(&self) -> ToolDefExtension {
-        let trace = ToolDefInvocationTrace::new();
-        ToolDefExtension {
-            registry: ToolRegistry::from_registered(
-                self.tools.clone(),
-                self.sanitize_errors,
-                trace.clone(),
-            ),
-            invocation_log: trace.invocation_log,
-        }
+        ToolDefExtension::from_registered_tools(
+            Arc::from(self.tools.clone()),
+            self.sanitize_errors,
+            ToolDefInvocationTrace::new().invocation_log,
+        )
     }
 }
 
@@ -215,11 +211,20 @@ impl ToolDefExtension {
         ToolDefExtensionBuilder::default()
     }
 
-    pub(crate) fn from_registered_tools(tools: Vec<RegisteredTool>) -> Self {
-        let trace = ToolDefInvocationTrace::new();
+    pub(crate) fn from_registered_tools(
+        tools: Arc<[RegisteredTool]>,
+        sanitize_errors: bool,
+        log: InvocationLog,
+    ) -> Self {
         Self {
-            registry: ToolRegistry::from_registered(tools, true, trace.clone()),
-            invocation_log: trace.invocation_log,
+            registry: ToolRegistry::from_registered(
+                tools,
+                sanitize_errors,
+                ToolDefInvocationTrace {
+                    invocation_log: Arc::clone(&log),
+                },
+            ),
+            invocation_log: log,
         }
     }
 
@@ -231,22 +236,10 @@ impl ToolDefExtension {
         }
     }
 
-    pub(crate) fn with_invocation_log(mut self, log: InvocationLog) -> Self {
-        self.invocation_log = log;
-        self.registry = ToolRegistry::from_registered(
-            self.registry.tools().to_vec(),
-            self.registry.sanitize_errors(),
-            ToolDefInvocationTrace {
-                invocation_log: Arc::clone(&self.invocation_log),
-            },
-        );
-        self
-    }
-
     /// Control whether callback errors are sanitized.
     pub fn sanitize_errors(mut self, sanitize: bool) -> Self {
         self.registry = ToolRegistry::from_registered(
-            self.registry.tools().to_vec(),
+            self.registry.shared_tools(),
             sanitize,
             ToolDefInvocationTrace {
                 invocation_log: Arc::clone(&self.invocation_log),

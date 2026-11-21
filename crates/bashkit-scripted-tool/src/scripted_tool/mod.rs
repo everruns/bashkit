@@ -457,7 +457,7 @@ impl ScriptedToolBuilder {
                 ),
                 tool_names
             ),
-            tools: self.tools.clone(),
+            tools: Arc::from(self.tools.clone()),
             builtins: self.builtins.clone(),
             limits: self.limits.clone(),
             profile: self.profile.clone(),
@@ -529,7 +529,7 @@ pub struct ScriptedTool {
     pub(crate) display_name: String,
     pub(crate) short_desc: String,
     pub(crate) description: String,
-    pub(crate) tools: Vec<RegisteredTool>,
+    pub(crate) tools: Arc<[RegisteredTool]>,
     pub(crate) builtins: Vec<(String, Arc<dyn Builtin>)>,
     pub(crate) limits: Option<ExecutionLimits>,
     pub(crate) profile: Option<ExecutionProfile>,

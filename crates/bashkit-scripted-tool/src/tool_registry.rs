@@ -163,7 +163,7 @@ pub struct ToolRegistry {
 }
 
 struct ToolRegistryInner {
-    tools: Vec<RegisteredTool>,
+    tools: Arc<[RegisteredTool]>,
     policy: PolicyHook,
     sanitize_errors: bool,
     default_trace: ToolDefInvocationTrace,
@@ -239,7 +239,7 @@ impl ToolRegistryBuilder {
         }
         ToolRegistry {
             inner: Arc::new(ToolRegistryInner {
-                tools: self.tools.clone(),
+                tools: Arc::from(self.tools.clone()),
                 policy: self.policy.clone(),
                 sanitize_errors: self.sanitize_errors,
                 default_trace: ToolDefInvocationTrace::new(),
@@ -314,7 +314,7 @@ impl ToolRegistry {
     }
 
     pub(crate) fn from_registered(
-        tools: Vec<RegisteredTool>,
+        tools: Arc<[RegisteredTool]>,
         sanitize_errors: bool,
         trace: ToolDefInvocationTrace,
     ) -> Self {
@@ -331,7 +331,7 @@ impl ToolRegistry {
     pub(crate) fn with_fresh_default_trace(&self) -> Self {
         Self {
             inner: Arc::new(ToolRegistryInner {
-                tools: self.inner.tools.clone(),
+                tools: self.shared_tools(),
                 policy: self.inner.policy.clone(),
                 sanitize_errors: self.inner.sanitize_errors,
                 default_trace: ToolDefInvocationTrace::new(),
@@ -346,6 +346,10 @@ impl ToolRegistry {
 
     pub(crate) fn tools(&self) -> &[RegisteredTool] {
         &self.inner.tools
+    }
+
+    pub(crate) fn shared_tools(&self) -> Arc<[RegisteredTool]> {
+        Arc::clone(&self.inner.tools)
     }
 
     pub(crate) fn sanitize_errors(&self) -> bool {
