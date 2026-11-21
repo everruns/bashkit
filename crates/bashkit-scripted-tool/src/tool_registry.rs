@@ -679,7 +679,7 @@ impl ToolRegistry {
     #[cfg(feature = "python")]
     pub(crate) fn python_prelude(&self) -> String {
         let mut root = serde_json::Map::new();
-        for tool in &self.inner.tools {
+        for tool in self.tools() {
             insert_runtime_tree(&mut root, &tool.def.name);
         }
         let mut classes = String::new();
