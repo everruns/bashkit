@@ -93,11 +93,11 @@ impl ScriptedTool {
                 }),
             );
         }
-        builder = builder.extension(
-            ToolDefExtension::from_registered_tools(self.tools.clone())
-                .sanitize_errors(self.sanitize_errors)
-                .with_invocation_log(log),
-        );
+        builder = builder.extension(ToolDefExtension::from_registered_tools(
+            Arc::clone(&self.tools),
+            self.sanitize_errors,
+            log,
+        ));
 
         builder.build()
     }
@@ -108,7 +108,7 @@ impl ScriptedTool {
             self.display_name, self.description, VERSION, self.name, self.locale
         );
 
-        for t in &self.tools {
+        for t in self.tools.iter() {
             let usage = usage_from_schema(&t.def.input_schema)
                 .map(|u| format!("`{} {}`", t.def.name, u))
                 .unwrap_or_else(|| format!("`{}`", t.def.name));

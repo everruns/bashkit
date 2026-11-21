@@ -173,6 +173,11 @@ Implementation and per-syntax precedence: `parse_flags` in `crates/bashkit-scrip
 
 Two arguments per tool: definition + callback. `.tool_fn()` sync, `.async_tool_fn()` async; plus `.locale()`, `.short_description()`, `.env()`, `.limits()`, `.compact_prompt()`. Full example: `crates/bashkit-scripted-tool/examples/scripted_tool.rs`.
 
+Each execution starts a fresh shell and invocation log. Registries share the
+immutable registered-tool catalog across executions and extension clones.
+Each shell still builds its command adapters and help data from that catalog.
+Invocation traces remain scoped to each execution or extension clone.
+
 `.builtin(name, Box<dyn Builtin>)` registers a raw-argv builtin alongside the `ToolDef` tools, mirroring `BashBuilder::builtin` and `BashToolBuilder::builtin`. Stored as `Arc<dyn Builtin>` so one instance is reused by the fresh shell each `execute()` builds.
 
 Why it exists: `parse_flags` is schema-driven and only understands `--key value`. Commands that need positionals, short flags, `--`, or parse-time required-argument checking cannot be expressed as a `ToolDef`, and before this the only workaround was to rebuild the shell on `Bash::builder()` downstream, which was not possible while the logic-only switch was `pub(crate)` (core now exposes the generic `BashBuilder::shell_features` / `builtin_filter` switches it is built from). Registering the builtin gives it `ctx.args` unparsed, so it can use [`ClapBuiltin`](../foundations/builtins.md) — the house parser for `Bash` builtins — inside a `ScriptedTool`. Example: `crates/bashkit-scripted-tool/examples/scripted_tool_clap_builtin.rs`.
