@@ -57,6 +57,8 @@ mod prompt;
 mod readline_bind;
 mod readline_defaults;
 mod redirection;
+#[cfg(feature = "experimental_execution_plan")]
+mod script_plan;
 mod state;
 mod time_command;
 mod xtrace;
@@ -4288,6 +4290,8 @@ impl Interpreter {
         run_exit_trap: bool,
         fire_exit_hook: bool,
     ) -> Result<ExecResult> {
+        #[cfg(feature = "experimental_execution_plan")]
+        let plan = script_plan::ScriptPlan::compile(script, &self.execution_budget)?;
         let mut stdout = crate::StreamData::new();
         let mut stderr = crate::StreamData::new();
         let mut exit_code = 0;
@@ -4344,6 +4348,18 @@ impl Interpreter {
             );
             self.route_top_list = top_level && matches!(command, Command::List(_));
             self.top_list_routed = None;
+            #[cfg(feature = "experimental_execution_plan")]
+            let result = self
+                .execute_command_with_program(
+                    command,
+                    if matches!(view, ScriptView::Parsed(_)) {
+                        plan.as_ref().and_then(|p| p.commands[index].as_ref())
+                    } else {
+                        None
+                    },
+                )
+                .await;
+            #[cfg(not(feature = "experimental_execution_plan"))]
             let result = self.execute_command(command).await;
             self.route_top_list = false;
             let list_routed = self.top_list_routed.take();
@@ -4706,6 +4722,20 @@ impl Interpreter {
         &'a mut self,
         command: &'a Command,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ExecResult>> + Send + 'a>> {
+        self.execute_command_with_program(
+            command,
+            #[cfg(feature = "experimental_execution_plan")]
+            None,
+        )
+    }
+
+    fn execute_command_with_program<'a>(
+        &'a mut self,
+        command: &'a Command,
+        #[cfg(feature = "experimental_execution_plan")] program: Option<
+            &'a script_plan::Program<'a>,
+        >,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ExecResult>> + Send + 'a>> {
         // THREAT[TM-DOS-142]: every nesting level passes through here, so
         // each poll gets enough native stack (see grow_stack.rs).
         Box::pin(grow_stack::GrowStack::new(async move {
@@ -4769,75 +4799,88 @@ impl Interpreter {
                 return Ok(killed);
             }
 
-            let result = match command {
-                Command::Simple(simple) => {
-                    // One Result local (not `?` + a second ExecResult copy):
-                    // this frame repeats per `$(...)` nesting level.
-                    let result = self.execute_simple_command(simple, None).await;
-                    if let Ok(r) = &result {
-                        self.set_simple_pipestatus(r.exit_code);
-                    }
-                    result
+            let result = 'dispatch: {
+                #[cfg(feature = "experimental_execution_plan")]
+                if let Some(program) = program.filter(|p| p.eligible(self)) {
+                    break 'dispatch Box::pin(self.execute_program(program)).await;
                 }
-                Command::Pipeline(pipeline) if pipeline.negated => {
-                    // `! cmd` is an errexit-ignored context, inside too. bash
-                    // does it by clearing `set -e` for the pipeline, so a
-                    // `set -e` run inside (`f() { set -e; false; }; ! f`)
-                    // is live again.
-                    let ignore = usize::from(self.is_errexit_enabled());
-                    self.condition_sequence_depth += ignore;
-                    self.errexit_fired = false;
-                    let result = self.execute_pipeline(pipeline).await;
-                    self.condition_sequence_depth -= ignore;
-                    // Still on afterwards: not a subshell's own `set -e`.
-                    let fired = std::mem::take(&mut self.errexit_fired)
-                        && ignore == 0
-                        && self.is_errexit_enabled();
-                    result.map(|mut r| {
-                        r.errexit_suppressed = true;
-                        if fired {
-                            // The failure that stopped the body ends the shell.
-                            r.control_flow = ControlFlow::Exit(1 - r.exit_code.min(1));
-                            r.exit_code = 1 - r.exit_code.min(1);
+                break 'dispatch match command {
+                    Command::Simple(simple) => {
+                        // One Result local (not `?` + a second ExecResult copy):
+                        // this frame repeats per `$(...)` nesting level.
+                        let result = self.execute_simple_command(simple, None).await;
+                        if let Ok(r) = &result {
+                            self.set_simple_pipestatus(r.exit_code);
                         }
-                        r
-                    })
-                }
-                Command::Pipeline(pipeline) => self.execute_pipeline(pipeline).await,
-                Command::List(list) => {
-                    let route = std::mem::take(&mut self.route_top_list);
-                    let result = self.execute_list(list, route).await;
-                    if route && let Ok(r) = &result {
-                        self.top_list_routed = Some((r.stdout.len(), r.stderr.len()));
+                        result
                     }
-                    result
-                }
-                Command::Compound(compound, redirects) => {
-                    // Substitutions in its words or redirects (`for x in
-                    // <(a)`, `done < <(b)`, `[[ -e <(c) ]]`) close with it.
-                    let proc_sub_fds = self.proc_subs.open_count();
-                    // Own frame: keeps this arm's temporaries off the stack
-                    // of every `$(...)`/function nesting level.
-                    let result = self
-                        .execute_compound_with_redirects(compound, redirects)
-                        .await;
-                    self.proc_subs.close_from(proc_sub_fds);
-                    // `( )`, `[[ ]]` and `(( ))` set PIPESTATUS to their own
-                    // status like a simple command; other compounds leave
-                    // the last inner command's (bash).
-                    if let Ok(r) = &result
-                        && matches!(
-                            compound,
-                            CompoundCommand::Subshell(_)
-                                | CompoundCommand::Conditional(_)
-                                | CompoundCommand::Arithmetic(_)
-                        )
-                    {
-                        self.set_simple_pipestatus(r.exit_code);
+                    Command::Pipeline(pipeline) if pipeline.negated => {
+                        // `! cmd` is an errexit-ignored context, inside too. bash
+                        // does it by clearing `set -e` for the pipeline, so a
+                        // `set -e` run inside (`f() { set -e; false; }; ! f`)
+                        // is live again.
+                        let ignore = usize::from(self.is_errexit_enabled());
+                        self.condition_sequence_depth += ignore;
+                        self.errexit_fired = false;
+                        let result = self.execute_pipeline(pipeline).await;
+                        self.condition_sequence_depth -= ignore;
+                        // Still on afterwards: not a subshell's own `set -e`.
+                        let fired = std::mem::take(&mut self.errexit_fired)
+                            && ignore == 0
+                            && self.is_errexit_enabled();
+                        result.map(|mut r| {
+                            r.errexit_suppressed = true;
+                            if fired {
+                                // The failure that stopped the body ends the shell.
+                                r.control_flow = ControlFlow::Exit(1 - r.exit_code.min(1));
+                                r.exit_code = 1 - r.exit_code.min(1);
+                            }
+                            r
+                        })
                     }
-                    result
-                }
-                Command::Function(func_def) => Ok(self.define_function(func_def)),
+                    Command::Pipeline(pipeline) => self.execute_pipeline(pipeline).await,
+                    Command::List(list) => {
+                        let route = std::mem::take(&mut self.route_top_list);
+                        let result = self
+                            .execute_list(
+                                list,
+                                route,
+                                #[cfg(feature = "experimental_execution_plan")]
+                                None,
+                            )
+                            .await;
+                        if route && let Ok(r) = &result {
+                            self.top_list_routed = Some((r.stdout.len(), r.stderr.len()));
+                        }
+                        result
+                    }
+                    Command::Compound(compound, redirects) => {
+                        // Substitutions in its words or redirects (`for x in
+                        // <(a)`, `done < <(b)`, `[[ -e <(c) ]]`) close with it.
+                        let proc_sub_fds = self.proc_subs.open_count();
+                        // Own frame: keeps this arm's temporaries off the stack
+                        // of every `$(...)`/function nesting level.
+                        let result = self
+                            .execute_compound_with_redirects(compound, redirects)
+                            .await;
+                        self.proc_subs.close_from(proc_sub_fds);
+                        // `( )`, `[[ ]]` and `(( ))` set PIPESTATUS to their own
+                        // status like a simple command; other compounds leave
+                        // the last inner command's (bash).
+                        if let Ok(r) = &result
+                            && matches!(
+                                compound,
+                                CompoundCommand::Subshell(_)
+                                    | CompoundCommand::Conditional(_)
+                                    | CompoundCommand::Arithmetic(_)
+                            )
+                        {
+                            self.set_simple_pipestatus(r.exit_code);
+                        }
+                        result
+                    }
+                    Command::Function(func_def) => Ok(self.define_function(func_def)),
+                };
             };
             let mut result = result;
             self.settle_pending_subst_stderr(&mut result);
@@ -8494,7 +8537,14 @@ impl Interpreter {
     #[allow(unused_assignments)] // control_flow may be set but overwritten
     /// `route`: this list is a top-level command; route each element's output
     /// through the `exec` fd table as it finishes (see `route_top_list`).
-    async fn execute_list(&mut self, list: &CommandList, route: bool) -> Result<ExecResult> {
+    async fn execute_list(
+        &mut self,
+        list: &CommandList,
+        route: bool,
+        #[cfg(feature = "experimental_execution_plan")] prepared: Option<
+            &[Option<script_plan::Program<'_>>],
+        >,
+    ) -> Result<ExecResult> {
         let mut stdout = crate::StreamData::new();
         let mut stderr = crate::StreamData::new();
         let mut exit_code;
@@ -8525,6 +8575,11 @@ impl Interpreter {
                 .first()
                 .is_some_and(|(op, _)| matches!(op, ListOperator::And | ListOperator::Or));
             self.condition_sequence_depth += usize::from(conditional);
+            #[cfg(feature = "experimental_execution_plan")]
+            let result = self
+                .execute_command_with_program(&list.first, prepared.and_then(|p| p[0].as_ref()))
+                .await;
+            #[cfg(not(feature = "experimental_execution_plan"))]
             let result = self.execute_command(&list.first).await;
             self.condition_sequence_depth -= usize::from(conditional);
             let mut result = result?;
@@ -8634,6 +8689,11 @@ impl Interpreter {
                                 && matches!(op, ListOperator::And | ListOperator::Or)
                         });
                     self.condition_sequence_depth += usize::from(followed_by_conditional_op);
+                    #[cfg(feature = "experimental_execution_plan")]
+                    let result = self
+                        .execute_command_with_program(cmd, prepared.and_then(|p| p[i + 1].as_ref()))
+                        .await;
+                    #[cfg(not(feature = "experimental_execution_plan"))]
                     let result = self.execute_command(cmd).await;
                     self.condition_sequence_depth -= usize::from(followed_by_conditional_op);
                     let mut result = result?;

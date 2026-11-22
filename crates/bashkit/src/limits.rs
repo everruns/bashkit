@@ -993,6 +993,23 @@ impl ExecutionBudget {
         })
     }
 
+    /// Optional experiment storage may decline without poisoning the request.
+    #[cfg(feature = "experimental_execution_plan")]
+    pub(crate) fn try_lease_plan(
+        &self,
+        bytes: usize,
+    ) -> Result<Option<ExecutionBudgetLease>, LimitExceeded> {
+        self.check()?;
+        let bytes = u64::try_from(bytes).unwrap_or(u64::MAX);
+        if self.reserve_live_bytes(bytes).is_err() {
+            return Ok(None);
+        }
+        Ok(Some(ExecutionBudgetLease {
+            budget: self.clone(),
+            bytes,
+        }))
+    }
+
     fn reserve_live_bytes(&self, bytes: u64) -> Result<(), u64> {
         reserve_atomic(&self.inner.live_bytes, bytes, self.inner.max_live_bytes).map(|_| ())
     }
