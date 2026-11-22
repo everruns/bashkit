@@ -950,7 +950,7 @@ async fn execute_curl_request(
             .await?;
 
         match result {
-            Ok(response) => {
+            Ok(mut response) => {
                 if verbose {
                     verbose_output.push_str(&format!("< HTTP/1.1 {}\r\n", response.status));
                     for (name, value) in &response.headers {
@@ -1038,11 +1038,14 @@ async fn execute_curl_request(
                         Some("deflate") => {
                             decompress_deflate(&response.body, http_client.max_response_bytes())?
                         }
-                        _ => response.body.clone(),
+                        _ => std::mem::take(&mut response.body),
                     }
                 } else {
-                    response.body.clone()
+                    std::mem::take(&mut response.body)
                 };
+                // The compressed input is no longer needed after decoding;
+                // uncompressed bodies have already moved out without copying.
+                response.body = Vec::new();
 
                 // Keep response bytes canonical for files, redirects, and
                 // pipelines. Only text consumers may decode invalid UTF-8.
@@ -1076,12 +1079,17 @@ async fn execute_curl_request(
                 }
 
                 // Append write-out format if specified
-                let mut final_output = verbose_output.into_bytes();
-                final_output.extend_from_slice(&output);
-                if let Some(fmt) = write_out {
-                    final_output.extend_from_slice(
-                        format_write_out(fmt, &response, output.len()).as_bytes(),
-                    );
+                let write_out_text =
+                    write_out.map(|fmt| format_write_out(fmt, &response, output.len()));
+                let mut final_output = if verbose_output.is_empty() {
+                    output
+                } else {
+                    let mut prefixed = verbose_output.into_bytes();
+                    prefixed.extend_from_slice(&output);
+                    prefixed
+                };
+                if let Some(text) = write_out_text {
+                    final_output.extend_from_slice(text.as_bytes());
                 }
 
                 return Ok(ExecResult::ok(final_output));

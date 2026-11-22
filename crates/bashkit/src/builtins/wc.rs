@@ -2,7 +2,7 @@
 
 use async_trait::async_trait;
 
-use super::{Builtin, Context, read_stream_file};
+use super::{Builtin, Context};
 use crate::error::Result;
 use crate::fs::vfs_join;
 use crate::interpreter::ExecResult;
@@ -132,7 +132,7 @@ impl Builtin for Wc {
         if files.is_empty() {
             // Read from stdin
             if let Some(stdin) = ctx.stdin {
-                let counts = count_data(stdin.as_bytes());
+                let counts = count_data(stdin.as_bytes(), &flags);
                 // Real bash: no padding for single-value stdin, padded for multiple values
                 let width = if flags.active_count() > 1 { 7 } else { 1 };
                 output.push_str(&format_counts(&counts, &flags, None, width));
@@ -152,11 +152,19 @@ impl Builtin for Wc {
                     .stat(&path)
                     .await
                     .is_ok_and(|m| m.file_type.is_file());
-                match read_stream_file(&*ctx.fs, &path, "wc").await {
-                    Ok(data) => {
-                        counted.push((count_data(data.as_bytes()), regular && *file != "-"))
+                // Counting bytes/lines needs no decoded StreamData cache.
+                match ctx.fs.read_file(&path).await {
+                    Ok(data) => counted.push((count_data(&data, &flags), regular && *file != "-")),
+                    Err(e) => {
+                        return Ok(ExecResult::err(
+                            format!(
+                                "wc: {}: {}\n",
+                                path.display(),
+                                crate::error::io_error_reason(&e)
+                            ),
+                            1,
+                        ));
                     }
-                    Err(e) => return Ok(*e),
                 }
             }
             let width = number_width(&counted, flags.active_count());
@@ -205,16 +213,38 @@ struct TextCounts {
 
 /// Count stream data. Invalid UTF-8 is one character per byte, matching the
 /// byte-oriented C locale instead of inventing Unicode replacement characters.
-fn count_data(bytes: &[u8]) -> TextCounts {
-    let text = String::from_utf8_lossy(bytes);
+fn count_data(bytes: &[u8], flags: &WcFlags) -> TextCounts {
+    // Decode only for counts that require text. In particular, `-c` is an
+    // O(1) length query over the borrowed bytes, even for invalid UTF-8.
+    let text = if flags.words || flags.max_line_length {
+        String::from_utf8_lossy(bytes)
+    } else {
+        std::borrow::Cow::Borrowed("")
+    };
     // wc -l counts newline characters, not logical lines
-    let lines = bytes.iter().filter(|&&byte| byte == b'\n').count();
-    let words = text.split_whitespace().count();
+    let lines = if flags.lines {
+        bytes.iter().filter(|&&byte| byte == b'\n').count()
+    } else {
+        0
+    };
+    let words = if flags.words {
+        text.split_whitespace().count()
+    } else {
+        0
+    };
     let byte_count = bytes.len();
-    let chars = std::str::from_utf8(bytes)
-        .map(|valid| valid.chars().count())
-        .unwrap_or(byte_count);
-    let max_line_length = text.lines().map(|l| l.chars().count()).max().unwrap_or(0);
+    let chars = if flags.chars {
+        std::str::from_utf8(bytes)
+            .map(|valid| valid.chars().count())
+            .unwrap_or(byte_count)
+    } else {
+        0
+    };
+    let max_line_length = if flags.max_line_length {
+        text.lines().map(|l| l.chars().count()).max().unwrap_or(0)
+    } else {
+        0
+    };
     TextCounts {
         lines,
         words,

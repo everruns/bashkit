@@ -498,7 +498,16 @@ impl HttpClient {
     async fn read_body_with_limit(&self, response: reqwest::Response) -> Result<Vec<u8>> {
         use futures_util::StreamExt;
 
-        let mut body = Vec::new();
+        // The caller has already rejected Content-Length above the response
+        // cap. Reserve a bounded prefix to reduce growth and spare capacity.
+        // A large advertised length alone must not force a large allocation.
+        let capacity = response
+            .content_length()
+            .and_then(|n| usize::try_from(n).ok())
+            .filter(|&n| n <= self.max_response_bytes)
+            .unwrap_or(0)
+            .min(1 << 20);
+        let mut body = Vec::with_capacity(capacity);
         let mut stream = response.bytes_stream();
 
         while let Some(chunk_result) = stream.next().await {

@@ -54,6 +54,19 @@ output bytes rather than a replacement-expanded text representation.
 pipelines, compressed responses, gzip extraction, byte counts, and HTTP error
 handling without live network dependencies.
 
+Uncompressed curl responses move their body buffer into output rather than
+cloning it; the usual stdout path reuses it too. Compressed input is released
+after decoding, before the VFS write. Write-out status/header metadata remains
+available after moving the body. Native response collection reserves a prefix
+of a known, already size-checked body length (at most 1 MiB), reducing growth
+and spare capacity in curl/wget file downloads without letting an advertised
+large length force an equally large allocation. Unknown-length/chunked bodies still
+check the cap before appending every chunk. Downloads and VFS writes remain
+buffered; the filesystem's borrowed write interface still copies into storage.
+`large_file_stress_tests` measures both custom and native transports and checks
+binary integrity, allocation bounds, exact-cap success and over-cap preservation
+of existing files.
+
 ```
 1. Allowlist check              ← security gate
 2. Private IP / SSRF check      ← SSRF protection, produces pinned_addrs

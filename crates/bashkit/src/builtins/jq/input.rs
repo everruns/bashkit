@@ -6,7 +6,14 @@
 
 use std::borrow::Cow;
 
+use super::{Context, Val};
 use crate::limits::{ExecutionBudget, ExecutionBudgetLease};
+
+/// JSON has four whitespace bytes. ASCII whitespace also includes form-feed,
+/// which must remain part of an invalid scalar rather than split it in two.
+pub(super) fn is_json_whitespace(byte: u8) -> bool {
+    matches!(byte, b' ' | b'\t' | b'\n' | b'\r')
+}
 
 #[derive(Debug)]
 pub(super) struct NormalizedInput<'a> {
@@ -30,6 +37,60 @@ impl From<crate::limits::LimitExceeded> for NormalizeError {
     fn from(error: crate::limits::LimitExceeded) -> Self {
         Self::Resource(error.into())
     }
+}
+
+impl From<crate::Error> for NormalizeError {
+    fn from(error: crate::Error) -> Self {
+        Self::Resource(error)
+    }
+}
+
+/// Cache the end of the last line inspected, so many values on one long line
+/// never rescan its suffix quadratically.
+#[derive(Default)]
+pub(super) struct Lines {
+    counted: usize,
+    lines: usize,
+}
+
+impl Lines {
+    pub(super) fn at(&mut self, text: &str, end: usize, ctx: &Context<'_>) -> crate::Result<usize> {
+        if end > self.counted {
+            let last = end.saturating_sub(1);
+            let mut eol = text.len();
+            for (i, chunk) in text.as_bytes()[last..].chunks(1024).enumerate() {
+                if let Some(p) = chunk.iter().position(|&c| c == b'\n') {
+                    ctx.consume_budget_work((p + 1) as u64)?;
+                    eol = last + i * 1024 + p + 1;
+                    break;
+                }
+                ctx.consume_budget_work(chunk.len() as u64)?;
+            }
+            for chunk in text.as_bytes()[self.counted..eol].chunks(1024) {
+                ctx.consume_budget_work(chunk.len() as u64)?;
+                self.lines += chunk.iter().filter(|&&c| c == b'\n').count();
+            }
+            self.counted = eol;
+        }
+        Ok(self.lines)
+    }
+}
+
+/// Only one input tree exists at a time. Conversion occurs under the jq meter,
+/// then the temporary tree is dropped before the evaluator requests more input.
+pub(super) fn values<'a, 'shell>(
+    text: &'a str,
+    ctx: &'a Context<'shell>,
+) -> impl Iterator<Item = std::result::Result<(Val, usize), NormalizeError>> + 'a {
+    let mut lines = Lines::default();
+    checked_value_spans(text, |n| ctx.consume_budget_work(n)).map(move |span| {
+        let (start, end) = span?;
+        ctx.consume_budget_work(1)?;
+        let value = super::parse_jq_json_value(ctx, &text[start..end])?
+            .map_err(NormalizeError::InvalidJson)?;
+        let value = super::convert::jq_into_val(value);
+        Ok((value, lines.at(text, end, ctx)?))
+    })
 }
 
 /// THREAT[TM-DOS-100]: Normalize in one bounded pass. Work is charged before
@@ -112,87 +173,95 @@ pub(super) fn normalize<'a>(
 /// jq tokenizes: strings, bracketed values, and literal tokens that run to
 /// the next whitespace or structural character. The parser validates each
 /// span; this only finds boundaries.
-pub(super) fn value_spans(text: &str) -> Vec<(usize, usize)> {
-    let b = text.as_bytes();
-    let mut out = Vec::new();
-    let mut i = 0usize;
-    loop {
-        while i < b.len() && b[i].is_ascii_whitespace() {
-            i += 1;
-        }
-        if i >= b.len() {
-            break;
-        }
-        let start = i;
-        let scalar = !matches!(b[i], b'[' | b'{' | b'"');
-        let (mut depth, mut in_str, mut esc) = (0usize, false, false);
-        while i < b.len() {
-            let c = b[i];
-            i += 1;
-            if in_str {
-                if esc {
-                    esc = false;
-                } else if c == b'\\' {
-                    esc = true;
-                } else if c == b'"' {
-                    in_str = false;
-                    if depth == 0 {
-                        break;
-                    }
-                }
-                continue;
-            }
-            if scalar {
-                if c.is_ascii_whitespace()
-                    || matches!(c, b'[' | b'{' | b'"' | b']' | b'}' | b',' | b':')
-                {
-                    i -= 1;
-                    if i == start {
-                        // A stray structural character: its own (invalid) span.
-                        i += 1;
-                    }
-                    break;
-                }
-                continue;
-            }
-            match c {
-                b'"' => in_str = true,
-                b'[' | b'{' => depth += 1,
-                b']' | b'}' => {
-                    depth = depth.saturating_sub(1);
-                    if depth == 0 {
-                        break;
-                    }
-                }
-                _ => {}
-            }
-        }
-        out.push((start, i));
-    }
-    out
+pub(super) fn value_spans(text: &str) -> impl Iterator<Item = (usize, usize)> + '_ {
+    checked_value_spans(text, |_| Ok(())).map(|span| span.expect("infallible span scan"))
 }
 
-/// Line number jq reports for each top-level value of `text`: jq reads
-/// input a line at a time, so a value counts every newline up to the end
-/// of the line it ends on.
-pub(super) fn value_lines(text: &str) -> Vec<usize> {
+fn checked_value_spans<'a>(
+    text: &'a str,
+    mut checkpoint: impl FnMut(u64) -> crate::Result<()> + 'a,
+) -> impl Iterator<Item = crate::Result<(usize, usize)>> + 'a {
     let b = text.as_bytes();
-    let (mut counted, mut lines) = (0usize, 0usize);
-    value_spans(text)
-        .into_iter()
-        .map(|(_, end)| {
-            let last = end.saturating_sub(1);
-            let eol = b[last..]
-                .iter()
-                .position(|&c| c == b'\n')
-                .map_or(b.len(), |p| last + p + 1);
-            if eol > counted {
-                lines += b[counted..eol].iter().filter(|&&c| c == b'\n').count();
-                counted = eol;
+    let mut i = 0usize;
+    let mut done = false;
+    std::iter::from_fn(move || {
+        if done {
+            return None;
+        }
+        let result = (|| -> crate::Result<Option<(usize, usize)>> {
+            while i < b.len() && is_json_whitespace(b[i]) {
+                i += 1;
+                if i.is_multiple_of(1024) {
+                    checkpoint(1024)?;
+                }
             }
-            lines
-        })
-        .collect()
+            if i >= b.len() {
+                return Ok(None);
+            }
+            let start = i;
+            let scalar = !matches!(b[i], b'[' | b'{' | b'"');
+            let (mut depth, mut in_str, mut esc) = (0usize, false, false);
+            while i < b.len() {
+                let c = b[i];
+                i += 1;
+                if i.is_multiple_of(1024) {
+                    checkpoint(1024)?;
+                }
+                if in_str {
+                    if esc {
+                        esc = false;
+                    } else if c == b'\\' {
+                        esc = true;
+                    } else if c == b'"' {
+                        in_str = false;
+                        if depth == 0 {
+                            break;
+                        }
+                    }
+                    continue;
+                }
+                if scalar {
+                    if is_json_whitespace(c)
+                        || matches!(c, b'[' | b'{' | b'"' | b']' | b'}' | b',' | b':')
+                    {
+                        i -= 1;
+                        if i == start {
+                            // A stray structural character: its own (invalid) span.
+                            i += 1;
+                            if i.is_multiple_of(1024) {
+                                checkpoint(1024)?;
+                            }
+                        }
+                        break;
+                    }
+                    continue;
+                }
+                match c {
+                    b'"' => in_str = true,
+                    b'[' | b'{' => depth += 1,
+                    b']' | b'}' => {
+                        depth = depth.saturating_sub(1);
+                        if depth == 0 {
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Ok(Some((start, i)))
+        })();
+        match result {
+            Ok(Some(span)) => Some(Ok(span)),
+            Ok(None) => {
+                done = true;
+                None
+            }
+            Err(error) => {
+                done = true;
+                Some(Err(error))
+            }
+        }
+    })
 }
 
 #[cfg(test)]
@@ -264,22 +333,35 @@ mod tests {
     #[test]
     fn value_spans_split_like_jq() {
         let text = "1 \"a b\" [1, [2]] {\"k\": \"}\"}2[3]";
-        let parts: Vec<&str> = super::value_spans(text)
-            .into_iter()
-            .map(|(a, b)| &text[a..b])
-            .collect();
+        let parts: Vec<&str> = super::value_spans(text).map(|(a, b)| &text[a..b]).collect();
         assert_eq!(
             parts,
             ["1", "\"a b\"", "[1, [2]]", "{\"k\": \"}\"}", "2", "[3]"]
         );
         let glued = "1\u{1}2";
-        assert_eq!(super::value_spans(glued), [(0, glued.len())]);
+        assert_eq!(
+            super::value_spans(glued).collect::<Vec<_>>(),
+            [(0, glued.len())]
+        );
     }
 
-    #[test]
-    fn value_lines_count_lines_read() {
-        assert_eq!(super::value_lines("1\n2\n3"), [1, 2, 2]);
-        assert_eq!(super::value_lines("[\n1\n]\n2"), [3, 3]);
-        assert_eq!(super::value_lines("1 2"), [0, 0]);
+    #[tokio::test]
+    async fn value_lines_count_lines_read() {
+        for (text, expected) in [
+            ("1\n2\n3", "1\n2\n2\n"),
+            ("[\n1\n]\n2", "3\n3\n"),
+            ("1 2", "0\n0\n"),
+        ] {
+            let mut bash = crate::Bash::builder().build();
+            let result = bash
+                .exec_with_options(
+                    "jq input_line_number",
+                    crate::ExecOptions::new().stdin(text),
+                )
+                .await
+                .unwrap();
+            assert_eq!(result.exit_code, 0, "{}", result.stderr);
+            assert_eq!(result.stdout, expected);
+        }
     }
 }

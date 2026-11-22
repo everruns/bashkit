@@ -203,6 +203,35 @@ pub(super) fn jq_to_val(v: &JqJson) -> Val {
     }
 }
 
+/// Transfer a parsed input into the evaluator. Input trees are single-use;
+/// moving their strings avoids retaining a second full decoded copy.
+pub(super) fn jq_into_val(value: JqJson) -> Val {
+    match value {
+        JqJson::Null => Val::Null,
+        JqJson::Bool(b) => Val::from(b),
+        JqJson::Number(s) => {
+            if let Ok(i) = s.parse::<i64>()
+                && let Ok(i) = isize::try_from(i)
+            {
+                return Val::from(i);
+            }
+            if s.parse::<f64>().is_ok() {
+                Val::Num(super::jaq_json::Num::Dec(super::jaq_json::Rc::new(s)))
+            } else {
+                Val::from(0isize)
+            }
+        }
+        JqJson::String(s) => Val::from(s),
+        JqJson::Array(values) => values.into_iter().map(jq_into_val).collect(),
+        JqJson::Object(entries) => Val::obj(
+            entries
+                .into_iter()
+                .map(|(key, value)| (Val::from(key), jq_into_val(value)))
+                .collect(),
+        ),
+    }
+}
+
 /// Convert jaq Val back to JqJson for output formatting. Captures number
 /// representation via Val's Display (jaq preserves the original token).
 /// Convert a result for output. `None` when the value would render to more

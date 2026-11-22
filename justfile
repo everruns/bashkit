@@ -290,6 +290,10 @@ bench-parallel:
 stress files="2000000":
     BASHKIT_STRESS_FILES={{files}} cargo test --release -p bashkit --test large_tree_stress_tests -- --nocapture
 
+# Large binary/JSONL files: integrity, heap growth, and resource-limit rejection
+stress-files mib="64":
+    BASHKIT_STRESS_MIB={{mib}} cargo test --locked --release -p bashkit --test large_file_stress_tests --features http_client,jq -- --nocapture
+
 # Run Criterion sqlite builtin benchmark and save results
 bench-sqlite:
     ./scripts/bench-sqlite.sh

@@ -34,6 +34,18 @@ All external-style builtins support `--help` and `--version` flags via the
 flags `-h`/`-V` have different meanings in many tools). Tools where `-h`/`-V`
 genuinely mean help/version handle them directly in `execute()`.
 
+### Large-file counting
+
+`wc` counts only the requested statistics. Byte counts use the borrowed buffer
+length and newline counts scan raw bytes; neither decodes text. File operands
+read bytes directly, bypassing `StreamData`'s cached lossy text. Character-only
+counts validate UTF-8 without allocating; words and maximum line length retain
+their existing text semantics. Bytes remain available for GNU column widths
+even when `-c` is not selected. Allocation regressions in
+`large_file_stress_tests` cover invalid UTF-8, alongside the jq and HTTP paths;
+see [Vendored jaq-json](../runtimes/jaq-json-vendor.md) and
+[HTTP Transport](../security/http-transport.md).
+
 ### GNU Option Parsing
 
 Hand-written coreutils-style builtins parse options with
