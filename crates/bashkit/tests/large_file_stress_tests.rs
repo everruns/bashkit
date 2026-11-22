@@ -327,6 +327,9 @@ async fn large_files_preserve_bytes_and_finish_with_linear_heap() {
         }
     }
     server.abort();
+    // Release the server's fixture before this runtime unlocks the allocator
+    // measurement guard; a later test must not inherit its deferred cleanup.
+    let _ = server.await;
 
     // One byte over the HTTP cap: no output-file replacement, no poisoned shell.
     let mut limited = shell(bytes - 1, binary);
