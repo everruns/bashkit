@@ -55,6 +55,26 @@ current normalized size from the live-intermediate budget before allocation;
 each later five-byte expansion grows that lease before the buffer grows. The
 lease remains live until strict parsing finishes (TM-DOS-100).
 
+## Filter compilation
+
+One `Bash::exec` can reuse up to four compiled inline filters. A key combines
+the filter source and ordered global binding names because compilation assigns
+variable slots in that order. Each call supplies its current inputs, binding
+values, environment, and evaluation limits. On insertion at capacity, the
+least recently used plan is evicted. Each cached source can contain up to
+1 KiB and bind up to 16 names totaling up to 1 KiB. The execution scope
+drops the cache when the request completes or is cancelled. File filters
+are read and compiled on every call. The cache lock covers only lookup
+and replacement.
+
+The fixed jaq library and Bashkit compatibility definitions are parsed once
+per process and cloned into the loader when a filter needs compilation. The
+helpers that read invocation globals stay in the main expression, preserving
+the grammar that rejects module directives in user filters. The compiler
+resolves and compiles each uncached filter independently. Benchmark repeated,
+interleaved, distinct, and one-off filters through
+`cargo bench -p bashkit --features jq --bench jq`.
+
 ## Verification
 
 `builtins::jq::tests` covers all 32 controls, newline/tab/CR, adjacent existing

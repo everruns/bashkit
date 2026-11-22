@@ -8,7 +8,8 @@
 //!  - `convert`: order-preserving JSON reader -> JqJson <-> jaq Val, depth check
 //!  - `stream`: incremental, metered path events with shared ancestor keys
 //!  - `format`: indent-aware output rendering (custom `--indent N`)
-//!  - `compat`: prepended jq-compat definitions and global var names
+//!  - `compat`: jq compatibility definitions and global variable names
+//!  - `filter`: compile and reuse filters within a request
 //!  - `errors`: jq-style error formatting (no Debug-shape leaks)
 //!
 //! Important decisions are documented at the top of each submodule.
@@ -21,9 +22,9 @@
 
 use self::jaq_json::Val;
 use async_trait::async_trait;
-use jaq_core::load::{Arena, File, Loader};
-use jaq_core::{Compiler, Ctx, Vars, data};
+use jaq_core::{Ctx, Vars, data};
 use jaq_std::input::{HasInputs, Inputs, RcIter};
+use std::sync::Arc;
 
 use super::{Builtin, Context, ExecutionDeadline, read_text_file, resolve_path};
 use crate::error::Result;
@@ -35,6 +36,7 @@ mod args;
 mod compat;
 mod convert;
 mod errors;
+mod filter;
 mod format;
 mod input;
 mod loc;
@@ -65,12 +67,9 @@ mod stream;
 mod tests;
 
 use args::{FileVarKind, JqArgs, MAX_FILE_VAR_BYTES, ParseOutcome};
-use compat::{
-    ARGS_VAR_NAME, ENV_VAR_NAME, FILENAME_VAR_NAME, LINENO_VAR_NAME, PUBLIC_ENV_VAR_NAME,
-    build_compat_prefix,
-};
 use convert::{JqJson, jq_to_val, parse_json_stream, val_to_jq_capped};
-use errors::{format_compile_errors, format_load_errors, format_runtime_error_at};
+use errors::format_runtime_error_at;
+pub(crate) use filter::JqFilterCache;
 use format::{render, sort_keys as sort_jq_keys};
 
 /// Custom DataT that holds both the LUT and a shared input iterator.
@@ -246,8 +245,6 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
         JqJson::Object(map.into_iter().collect())
     };
 
-    // Compose the filter: prepend compat defs, the env def, etc.
-    let prefix = build_compat_prefix();
     let filter_text = match parsed.filter_file {
         Some(file) => {
             let path = resolve_path(ctx.cwd, file);
@@ -266,137 +263,33 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
         }
         None => std::borrow::Cow::Borrowed(parsed.filter),
     };
-    let filter_text = loc::expand_loc(&filter_text);
-    let filter_text = altpat::expand_alternatives(&filter_text);
-    let compat_filter = format!("{prefix}\n{filter_text}");
-    let filter_src = compat_filter.as_str();
-
-    // Set up loader.
-    let defs = jaq_core::defs()
-        .chain(jaq_std::defs())
-        .chain(self::jaq_json::defs());
-    let loader = Loader::new(defs);
-    let arena = Arena::default();
-
-    let program = File {
-        code: filter_src,
-        path: (),
-    };
-
-    let modules = match loader.load(&arena, program) {
-        Ok(m) => m,
-        Err(errs) => {
-            return Ok(ExecResult::err(format_load_errors(errs), 3));
-        }
-    };
-
-    // Names of all globals: --arg/--argjson/--slurpfile/--rawfile, then the
-    // four internal ones (env, ENV, filename, lineno), then $ARGS.
-    let mut var_names: Vec<&str> = all_var_bindings.iter().map(|(n, _)| n.as_str()).collect();
-    var_names.push(ENV_VAR_NAME);
-    var_names.push(PUBLIC_ENV_VAR_NAME);
-    var_names.push(FILENAME_VAR_NAME);
-    var_names.push(LINENO_VAR_NAME);
-    var_names.push(ARGS_VAR_NAME);
-
-    type D = InputData<Val>;
-    // jq's `input` fails with "No more inputs" when the stream is
-    // exhausted; jaq-std's yields nothing.
-    let input_run: jaq_core::RunPtr<D> = |cv| {
-        let next = cv.0.data().inputs().next();
-        Box::new(std::iter::once(match next {
-            Some(r) => r.map_err(|e| jaq_core::Exn::from(jaq_core::Error::str(e))),
-            None => Err(jaq_core::Exn::from(jaq_core::Error::str("No more inputs"))),
-        }))
-    };
-    let input_funs: Vec<jaq_core::native::Fun<D>> = jaq_std::input::funs::<D>()
-        .into_vec()
-        .into_iter()
-        .filter(|(name, _, _)| *name != "input")
-        .chain(std::iter::once((
-            "input",
-            jaq_core::native::v(0),
-            input_run,
-        )))
-        .map(|(name, arity, run)| (name, arity, jaq_core::Native::<D>::new(run)))
+    let var_names: Vec<&str> = all_var_bindings
+        .iter()
+        .map(|(name, _)| name.as_str())
         .collect();
-    // Replace jaq-std's `regex`-crate-backed natives (matches/split_matches/
-    // split_) with our fancy-regex backed versions so patterns with
-    // lookahead/lookbehind/atomic groups/backrefs work.
-    let regex_funs: Vec<jaq_core::native::Fun<D>> = regex_compat::funs::<D>()
-        .into_vec()
-        .into_iter()
-        .map(|(name, arity, run)| (name, arity, jaq_core::Native::<D>::new(run)))
-        .collect();
-    // SECURITY (TM-INF-023, #1571): jaq-std's `halt` native only raises
-    // `Exn::halt`; it is `jaq_core::unwrap_valr` that turns that into
-    // `std::process::exit`. The run loop below never calls `unwrap_valr`:
-    // it ends the jq command with the halt code instead, so `halt` and
-    // `halt_error` behave like jq without touching the host process.
-    //
-    // jaq-std's `stderr_empty`/`debug_empty` write to the host (`log`);
-    // ours buffer the text for this command's stderr (see `messages`).
-    let message_funs: Vec<jaq_core::native::Fun<D>> = vec![
-        (
-            "stderr_empty",
-            jaq_core::native::v(0),
-            jaq_core::Native::<D>::new(|cv| {
-                messages::stderr(&cv.1);
-                Box::new(std::iter::empty())
-            }),
-        ),
-        // jq accepts base64 with non-zero trailing bits ("YW" is "a").
-        (
-            "decode_base64",
-            jaq_core::native::v(0),
-            jaq_core::Native::<D>::new(|cv| {
-                use base64::Engine;
-                use base64::engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig};
-                use jaq_std::ValT;
-                const LENIENT: GeneralPurpose = GeneralPurpose::new(
-                    &base64::alphabet::STANDARD,
-                    GeneralPurposeConfig::new()
-                        .with_decode_allow_trailing_bits(true)
-                        .with_decode_padding_mode(DecodePaddingMode::Indifferent),
-                );
-                jaq_core::native::bome(cv.1.try_as_utf8_bytes().and_then(|s| {
-                    LENIENT
-                        .decode(s)
-                        .map_err(|e| jaq_core::Error::str(e.to_string()))
-                        .map(Val::from_utf8_bytes)
-                }))
-            }),
-        ),
-        (
-            "debug_empty",
-            jaq_core::native::v(0),
-            jaq_core::Native::<D>::new(|cv| {
-                messages::debug(&cv.1);
-                Box::new(std::iter::empty())
-            }),
-        ),
-    ];
-    let native_funs = jaq_core::funs::<D>()
-        .chain(jaq_std::funs::<D>().filter(|(name, _, _)| {
-            !matches!(
-                *name,
-                "env" | "stderr_empty" | "debug_empty" | "decode_base64"
-            ) && !regex_compat::SHADOWED_NATIVE_NAMES.contains(name)
-        }))
-        .chain(message_funs)
-        .chain(input_funs)
-        .chain(regex_funs)
-        .chain(self::jaq_json::funs::<D>());
-
-    let compiler = Compiler::default()
-        .with_funs(native_funs)
-        .with_global_vars(var_names.iter().copied());
-
-    let filter = match compiler.compile(modules) {
-        Ok(f) => f,
-        Err(errs) => {
-            return Ok(ExecResult::err(format_compile_errors(errs), 3));
+    let cache = if parsed.filter_file.is_none() && JqFilterCache::accepts(&filter_text, &var_names)
+    {
+        ctx.execution_extension::<JqFilterCache>()
+    } else {
+        None
+    };
+    let cached = cache.as_ref().and_then(|cache| {
+        cache
+            .try_with(|cache| cache.get(&filter_text, &var_names))
+            .ok()
+            .flatten()
+    });
+    let filter = if let Some(filter) = cached {
+        filter
+    } else {
+        let filter = match filter::compile(&filter_text, &var_names) {
+            Ok(filter) => Arc::new(filter),
+            Err(stderr) => return Ok(ExecResult::err(stderr, 3)),
+        };
+        if let Some(cache) = cache {
+            let _ = cache.try_with(|cache| cache.insert(&filter_text, &var_names, &filter));
         }
+        filter
     };
 
     // Keep parsed input trees, not expanded events. Conversion and streaming

@@ -13,6 +13,66 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+#[tokio::test]
+async fn jq_compiled_filter_uses_current_values_and_input() {
+    let mut bash = crate::Bash::new();
+    let result = bash
+        .exec(
+            r#"
+            set -e
+            export BENCH_ENV=first
+            jq -r --arg x a --arg y b '$x + $y + env.BENCH_ENV + .value' <<< '{"value":"1"}'
+            export BENCH_ENV=second
+            jq -r --arg x c --arg y d '$x + $y + env.BENCH_ENV + .value' <<< '{"value":"2"}'
+            jq -r --arg y e --arg x f '$x + $y + env.BENCH_ENV + .value' <<< '{"value":"3"}'
+            "#,
+        )
+        .await
+        .unwrap();
+    assert_eq!(result.exit_code, 0, "{}", result.stderr);
+    assert!(result.stderr.is_empty());
+    assert_eq!(result.stdout, "abfirst1\ncdsecond2\nfesecond3\n");
+}
+
+#[tokio::test]
+async fn jq_filter_file_is_read_again_on_each_call() {
+    let mut bash = crate::Bash::new();
+    let result = bash
+        .exec(
+            r#"
+            set -e
+            printf '%s\n' '.first' > /filter.jq
+            jq -r -f /filter.jq <<< '{"first":"one","second":"two"}'
+            printf '%s\n' '.second' > /filter.jq
+            jq -r -f /filter.jq <<< '{"first":"one","second":"two"}'
+            "#,
+        )
+        .await
+        .unwrap();
+    assert_eq!(result.exit_code, 0, "{}", result.stderr);
+    assert!(result.stderr.is_empty());
+    assert_eq!(result.stdout, "one\ntwo\n");
+}
+
+#[tokio::test]
+async fn jq_user_definition_can_shadow_a_compatibility_helper() {
+    let filter = r#"def prior: join("-"); def join($sep): $sep; prior, join("user")"#;
+    let result = run_jq_result_with_args(&["-r", filter], r#"["a","b"]"#)
+        .await
+        .unwrap();
+    assert_eq!(result.exit_code, 0, "{}", result.stderr);
+    assert_eq!(result.stdout, "a-b\nuser\n");
+}
+
+#[tokio::test]
+async fn jq_filter_rejects_module_directives() {
+    for filter in [r#"include "example"; ."#, r#"import "data" as $x; $x"#] {
+        let result = run_jq_result(filter, "null").await.unwrap();
+        assert_eq!(result.exit_code, 3);
+        assert!(result.stdout.is_empty());
+    }
+}
+
 async fn run_jq(filter: &str, input: &str) -> Result<String> {
     run_jq_with_args(&[filter], input).await
 }

@@ -224,6 +224,8 @@ pub(crate) use jobctl::signal_name;
 pub use join::Join;
 #[cfg(feature = "jq")]
 pub use jq::Jq;
+#[cfg(feature = "jq")]
+pub(crate) use jq::JqFilterCache;
 pub use json::Json;
 pub use log::Log;
 pub use ls::{Ls, Rmdir};
