@@ -30,7 +30,7 @@ export interface BuiltinRequest {
   readonly fs: FileSystem;
 }
 
-/** Buffered command result. Omitted streams are empty. */
+/** Buffered command result. Omitted streams are empty; extra host properties are ignored. */
 export interface BuiltinResult {
   readonly stdout?: string;
   readonly stderr?: string;
@@ -85,7 +85,11 @@ export declare const ExecutionProfile: Readonly<{
 /** Entry kind reported by a {@link HostFileSystem}. */
 export type HostFileType = "file" | "dir" | "directory" | "symlink" | "fifo";
 
-/** Metadata a {@link HostFileSystem} reports for one entry. */
+/**
+ * Metadata a {@link HostFileSystem} reports for one entry. Omitting uid/gid
+ * preserves the single-user model (1000); malformed supplied IDs fail the
+ * metadata operation. IDs must be integers from 0 through 4294967295.
+ */
 export interface HostStat {
   readonly type: HostFileType;
   /** Size in bytes. Defaults to 0. */

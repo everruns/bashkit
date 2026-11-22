@@ -217,7 +217,7 @@ struct BuiltinRequest<'a> {
 }
 
 #[derive(Deserialize, Default)]
-#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
+#[serde(rename_all = "camelCase", default)]
 struct BuiltinResult {
     stdout: Option<String>,
     stderr: Option<String>,

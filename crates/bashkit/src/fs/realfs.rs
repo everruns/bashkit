@@ -23,6 +23,14 @@
 //!   and checking it stays under the root.
 //! - Readonly mode rejects all write operations at the backend level.
 //!
+//! # Ownership
+//!
+//! On Unix, metadata reports the host file's UID/GID. The shell still uses
+//! sandbox UID/GID 1000 (`id`, `UID`, `EUID`); `-O`/`-G` compare against those
+//! sandbox IDs, not the embedding process's effective IDs. Thus a host file
+//! owned by another account can fail these tests even when that account runs
+//! the process. This does not impersonate users or change host permissions.
+//!
 //! # Modes
 //!
 //! | Mode | Reads | Writes | Use case |

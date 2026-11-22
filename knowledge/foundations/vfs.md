@@ -18,6 +18,9 @@ enforcement. Existing backends that do not report owners retain the single-user
 model. Rust backends constructing `Metadata` literals must supply the new fields
 or use `..Metadata::default()`. The v1 filesystem ABI retains its existing layout
 and uses sandbox ownership when converting metadata.
+Unix `RealFs` reports real file owners, but tests still compare against the
+sandbox identity, not the embedding process's effective IDs. This deliberate
+divergence is recorded as L-FS-006 in [Limitations](../operations/limitations.md).
 
 ## Status
 Implemented

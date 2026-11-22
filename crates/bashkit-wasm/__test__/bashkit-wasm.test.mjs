@@ -33,7 +33,7 @@ test("compat: bracket function overrides the builtin", () => {
 
 test("compat: structured builtin results preserve output and status", async () => {
   for (const asyncCallback of [false, true]) {
-    const result = { stdout: "out\n", stderr: "err\n", exitCode: 7 };
+    const result = { stdout: "out\n", stderr: "err\n", exitCode: 7, extra: "host metadata" };
     const bash = new Bash({
       customBuiltins: { probe: asyncCallback ? async () => result : () => result },
     });

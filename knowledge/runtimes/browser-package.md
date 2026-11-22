@@ -194,7 +194,8 @@ Custom builtins return a stdout string or a `BuiltinResult` object with optional
 `stdout`, `stderr`, and `exitCode` fields (empty streams and status 0 by default),
 directly or via a Promise. Explicit nonzero status reaches `$?`, conditionals,
 AND/OR lists and errexit without throwing or generating a diagnostic. Throwing
-still produces stderr and status 1. Invalid result shapes fail with a plain
+still produces stderr and status 1. Extra host properties on result objects
+are ignored. Invalid result shapes fail with a plain
 diagnostic rather than silently succeeding. Live `commands` continue to accept
 numeric statuses and `{ exitCode }`.
 

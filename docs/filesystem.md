@@ -17,6 +17,10 @@ user/group 1000. `[ -O path ]` and `[ -G path ]` (also inside `[[ ... ]]`)
 compare the reported owner or group against that sandbox identity. Host-backed
 filesystems can supply different owners; Unix `RealFs` reports the host values.
 Ownership metadata does not enable permission enforcement.
+The shell identity remains 1000 even with `RealFs`: a file owned by a different
+host account fails `-O`/`-G`, including when that account owns the embedding
+process. These tests describe ownership relative to the sandbox identity, not
+the host process's effective UID/GID.
 
 Rust custom filesystems constructing `Metadata` literals must include `uid` and
 `gid` or use `..Metadata::default()` for the sandbox defaults. Browser host
