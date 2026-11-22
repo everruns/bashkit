@@ -10186,7 +10186,9 @@ impl Interpreter {
                     shell: Some(shell_ref),
                 };
 
-                let plan_result = AssertUnwindSafe(builtin.execution_plan(&plan_ctx))
+                // Call the trait object directly so Arc forwarding does not
+                // allocate and poll an additional async wrapper.
+                let plan_result = AssertUnwindSafe(builtin.as_ref().execution_plan(&plan_ctx))
                     .catch_unwind()
                     .await;
 
@@ -10306,7 +10308,9 @@ impl Interpreter {
             };
 
             // THREAT[TM-INT-001]: Execute builtin with panic catching for security
-            let result = AssertUnwindSafe(builtin.execute(ctx)).catch_unwind().await;
+            let result = AssertUnwindSafe(builtin.as_ref().execute(ctx))
+                .catch_unwind()
+                .await;
 
             let mut result = match result {
                 Ok(Ok(exec_result)) => exec_result,
