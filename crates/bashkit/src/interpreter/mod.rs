@@ -10188,9 +10188,11 @@ impl Interpreter {
 
                 // Call the trait object directly so Arc forwarding does not
                 // allocate and poll an additional async wrapper.
-                let plan_result = AssertUnwindSafe(builtin.as_ref().execution_plan(&plan_ctx))
-                    .catch_unwind()
-                    .await;
+                // Construct the future inside the catch boundary as well.
+                let plan_result =
+                    AssertUnwindSafe(async { builtin.as_ref().execution_plan(&plan_ctx).await })
+                        .catch_unwind()
+                        .await;
 
                 match plan_result {
                     Ok(Ok(Some(plan))) => {
@@ -10308,7 +10310,7 @@ impl Interpreter {
             };
 
             // THREAT[TM-INT-001]: Execute builtin with panic catching for security
-            let result = AssertUnwindSafe(builtin.as_ref().execute(ctx))
+            let result = AssertUnwindSafe(async { builtin.as_ref().execute(ctx).await })
                 .catch_unwind()
                 .await;
 
