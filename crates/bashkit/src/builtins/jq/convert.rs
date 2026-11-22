@@ -60,6 +60,25 @@ struct JqSeed<'a> {
     depth: usize,
     max: usize,
     too_deep: &'a std::cell::Cell<Option<String>>,
+    /// Whether to interpret the private-token single-entry map as a number.
+    /// True only when `serde_json` was built with `arbitrary_precision` (see
+    /// `serde_json_has_arbitrary_precision`); otherwise a real object with
+    /// that key must stay an object.
+    handle_token: bool,
+}
+
+/// Whether the current build enabled `serde_json/arbitrary_precision` (often
+/// via feature unification from another crate). Without it, floats arrive via
+/// `visit_f64`; with it, non-integers arrive as a single-entry map. Detected
+/// at runtime once: `"2.50"` normalizes to `"2.5"` via `f64` without the
+/// feature but keeps `"2.50"` with it.
+fn serde_json_has_arbitrary_precision() -> bool {
+    static CACHE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *CACHE.get_or_init(|| {
+        serde_json::from_str::<serde_json::Number>("2.50")
+            .map(|n| n.to_string() == "2.50")
+            .unwrap_or(false)
+    })
 }
 
 impl<'a> JqSeed<'a> {
@@ -68,6 +87,7 @@ impl<'a> JqSeed<'a> {
             depth: self.depth + 1,
             max: self.max,
             too_deep: self.too_deep,
+            handle_token: self.handle_token,
         }
     }
 }
@@ -140,7 +160,8 @@ impl<'de> serde::de::Visitor<'de> for JqSeed<'_> {
             return Ok(JqJson::Object(Vec::new()));
         };
         let first_value = map.next_value_seed(self.child())?;
-        if first_key == ARBITRARY_PRECISION_NUMBER_TOKEN
+        if self.handle_token
+            && first_key == ARBITRARY_PRECISION_NUMBER_TOKEN
             && let JqJson::String(text) = &first_value
         {
             // `NumberDeserializer` yields exactly one entry, so no second key
@@ -198,6 +219,7 @@ pub(super) fn parse_json_value(input: &str) -> std::result::Result<JqJson, JsonP
         depth: 0,
         max: MAX_JQ_JSON_DEPTH,
         too_deep: &too_deep,
+        handle_token: serde_json_has_arbitrary_precision(),
     };
     let result = seed.deserialize(&mut de).and_then(|v| de.end().map(|()| v));
     result.map_err(|e| match too_deep.take() {
@@ -356,6 +378,7 @@ pub(super) fn parse_json_stream_partial(input: &str) -> (Vec<JqJson>, Option<Str
             depth: 0,
             max: MAX_JQ_JSON_DEPTH,
             too_deep: &too_deep,
+            handle_token: serde_json_has_arbitrary_precision(),
         };
         match seed.deserialize(&mut de).and_then(|v| de.end().map(|()| v)) {
             Ok(v) => vals.push(v),
@@ -534,6 +557,9 @@ mod tests {
             depth: 0,
             max: MAX_JQ_JSON_DEPTH,
             too_deep: &too_deep,
+            // Force handling on: this simulates the number shape regardless of
+            // how the current build enabled serde_json.
+            handle_token: true,
         };
         let value: JqJson = serde::de::DeserializeSeed::deserialize(seed, TokenDeserializer)
             .expect("token map should deserialize");
@@ -558,6 +584,30 @@ mod tests {
                 assert_eq!(entries[1].0, "b");
             }
             _ => panic!("expected Object"),
+        }
+    }
+
+    /// Single-entry private-token object: without `arbitrary_precision` it
+    /// must stay an `Object` (real user data); with it, it is
+    /// indistinguishable from a number and becomes `Number`, matching
+    /// `serde_json::Value` parity.
+    #[test]
+    fn single_entry_token_object_matches_build_mode() {
+        let value = parse_json_value(r#"{"$serde_json::private::Number":"1.5"}"#)
+            .expect("object should parse");
+        if serde_json_has_arbitrary_precision() {
+            assert!(
+                matches!(value, JqJson::Number(ref s) if s == "1.5"),
+                "expected Number(1.5)"
+            );
+        } else {
+            match value {
+                JqJson::Object(entries) => {
+                    assert_eq!(entries.len(), 1, "expected one entry");
+                    assert_eq!(entries[0].0, "$serde_json::private::Number");
+                }
+                _ => panic!("expected Object"),
+            }
         }
     }
 }
