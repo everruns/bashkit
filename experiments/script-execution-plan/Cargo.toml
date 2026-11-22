@@ -11,6 +11,8 @@ serde_json = "1"
 tokio = { version = "1", features = ["macros", "rt", "time"] }
 
 [features]
+allocation_profile = []
+same_binary = ["bashkit/experimental_plan_benchmark_control"]
 planned = ["bashkit/experimental_execution_plan"]
 
 [profile.release]

@@ -4293,7 +4293,26 @@ impl Interpreter {
         fire_exit_hook: bool,
     ) -> Result<ExecResult> {
         #[cfg(feature = "experimental_execution_plan")]
-        let plan = script_plan::ScriptPlan::compile(script, &self.execution_budget)?;
+        let plan = {
+            #[cfg(feature = "experimental_plan_benchmark_control")]
+            let enabled = self
+                .current_execution_extensions()
+                .get::<crate::ExperimentalPlanBenchmarkControl>()
+                .and_then(|mode| {
+                    mode.try_with(|mode| {
+                        matches!(mode, crate::ExperimentalPlanBenchmarkControl::Auto)
+                    })
+                    .ok()
+                })
+                .unwrap_or(true);
+            #[cfg(not(feature = "experimental_plan_benchmark_control"))]
+            let enabled = true;
+            if enabled {
+                script_plan::ScriptPlan::compile(script, &self.execution_budget)?
+            } else {
+                None
+            }
+        };
         let mut stdout = crate::StreamData::new();
         let mut stderr = crate::StreamData::new();
         let mut exit_code = 0;
