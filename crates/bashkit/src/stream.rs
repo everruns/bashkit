@@ -127,13 +127,26 @@ impl StreamData {
         }
     }
     pub(crate) fn append_text(&mut self, text: &str) {
-        self.append(&Self::from(text));
+        // Valid UTF-8 starts at a scalar boundary, so it cannot complete an
+        // incomplete scalar at the end of the existing byte buffer.
+        self.bytes.extend_from_slice(text.as_bytes());
+        self.text.push_str(text);
     }
     pub(crate) fn push_str(&mut self, text: &str) {
         self.append_text(text);
     }
     pub(crate) fn push_byte(&mut self, byte: u8) {
-        self.append(&Self::from(vec![byte]));
+        let boundary = self.bytes.len();
+        self.bytes.push(byte);
+        if lossy_decode_changes_at_boundary(&self.bytes, boundary) {
+            self.refresh_text();
+        } else {
+            self.text.push(if byte.is_ascii() {
+                char::from(byte)
+            } else {
+                '\u{fffd}'
+            });
+        }
     }
     pub(crate) fn prefix(&self, limit: usize) -> Self {
         Self::from(self.bytes[..self.bytes.len().min(limit)].to_vec())
@@ -158,6 +171,11 @@ impl StreamData {
 }
 
 fn lossy_decode_changes_at_boundary(bytes: &[u8], boundary: usize) -> bool {
+    // A scalar can span the join only when the new chunk begins with a
+    // continuation byte. Empty chunks and ordinary text need no decoding.
+    if boundary == 0 || boundary == bytes.len() || bytes[boundary] & 0xc0 != 0x80 {
+        return false;
+    }
     let start = boundary.saturating_sub(3);
     let end = bytes.len().min(boundary.saturating_add(3));
     let mut split = String::from_utf8_lossy(&bytes[start..boundary]).into_owned();
@@ -260,6 +278,37 @@ impl serde::Serialize for StreamData {
 #[cfg(test)]
 mod tests {
     use super::StreamData;
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn appending_chunks_preserves_the_combined_lossy_view(
+            left in proptest::collection::vec(any::<u8>(), 0..64),
+            right in proptest::collection::vec(any::<u8>(), 0..64),
+        ) {
+            let mut stream = StreamData::from(left.clone());
+            stream.append(&StreamData::from(right.clone()));
+            let joined: Vec<u8> = left.into_iter().chain(right).collect();
+            prop_assert_eq!(stream.as_bytes(), joined.as_slice());
+            prop_assert_eq!(stream.text_lossy(), String::from_utf8_lossy(&joined));
+        }
+
+        #[test]
+        fn appending_text_and_individual_bytes_preserves_decoding(
+            left in proptest::collection::vec(any::<u8>(), 0..64),
+            right in any::<String>(),
+            byte in any::<u8>(),
+        ) {
+            let mut stream = StreamData::from(left.clone());
+            stream.append_text(&right);
+            stream.push_byte(byte);
+            let mut joined = left;
+            joined.extend_from_slice(right.as_bytes());
+            joined.push(byte);
+            prop_assert_eq!(stream.as_bytes(), joined.as_slice());
+            prop_assert_eq!(stream.text_lossy(), String::from_utf8_lossy(&joined));
+        }
+    }
 
     #[test]
     fn admitted_bytes_preserve_lossy_text_and_lease() {
@@ -365,5 +414,27 @@ mod tests {
 
         assert_eq!(stream.as_bytes(), "é".as_bytes());
         assert_eq!(stream.text_lossy(), "é");
+    }
+
+    #[test]
+    fn append_handles_all_splits_of_valid_and_invalid_utf8() {
+        for bytes in [
+            "aé€🦀z".as_bytes(),
+            b"\xf0\x90\x80",
+            b"\xe2\x82x\xff\xc3\xa9",
+            b"\xed\xa0\x80\0\xf4\x90\x80\x80",
+        ] {
+            for split in 0..=bytes.len() {
+                let mut stream = StreamData::from(&bytes[..split]);
+                stream.append(&StreamData::from(&bytes[split..]));
+                assert_eq!(stream.text_lossy(), String::from_utf8_lossy(bytes));
+            }
+            let mut stream = StreamData::new();
+            for byte in bytes {
+                stream.push_byte(*byte);
+            }
+            assert_eq!(stream.as_bytes(), bytes);
+            assert_eq!(stream.text_lossy(), String::from_utf8_lossy(bytes));
+        }
     }
 }

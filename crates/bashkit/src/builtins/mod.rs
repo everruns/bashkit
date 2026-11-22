@@ -1847,6 +1847,61 @@ mod tests {
     use super::*;
     use crate::fs::{FileSystem, InMemoryFs};
 
+    struct PanicWhileCreatingFuture {
+        plan: bool,
+    }
+
+    type TestBuiltinFuture<'future, T> =
+        std::pin::Pin<Box<dyn std::future::Future<Output = Result<T>> + Send + 'future>>;
+
+    impl Builtin for PanicWhileCreatingFuture {
+        fn execute<'receiver, 'context, 'future>(
+            &'receiver self,
+            _ctx: Context<'context>,
+        ) -> TestBuiltinFuture<'future, ExecResult>
+        where
+            'receiver: 'future,
+            'context: 'future,
+            Self: 'future,
+        {
+            panic!("custom future construction failed")
+        }
+
+        fn execution_plan<'receiver, 'context, 'inner, 'future>(
+            &'receiver self,
+            _ctx: &'context Context<'inner>,
+        ) -> TestBuiltinFuture<'future, Option<ExecutionPlan>>
+        where
+            'receiver: 'future,
+            'context: 'future,
+            'inner: 'future,
+            Self: 'future,
+        {
+            if self.plan {
+                panic!("custom plan construction failed");
+            }
+            Box::pin(async { Ok(None) })
+        }
+    }
+
+    #[tokio::test]
+    async fn builtin_future_construction_panics_are_contained() {
+        for plan in [false, true] {
+            let mut bash = crate::Bash::builder()
+                .builtin("broken", Box::new(PanicWhileCreatingFuture { plan }))
+                .build();
+            let output = bash.exec("broken 2>/err; echo $?; cat /err").await.unwrap();
+            assert_eq!(output.exit_code, 0);
+            assert!(output.stdout.starts_with("1\n"));
+            assert!(
+                output
+                    .stdout
+                    .contains("broken: builtin failed unexpectedly\n")
+            );
+            assert!(output.stderr.is_empty());
+        }
+    }
+
     #[test]
     fn test_resolve_path_absolute() {
         let cwd = PathBuf::from("/home/user");

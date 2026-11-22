@@ -75,6 +75,13 @@ explicit UTF-8 boundary with `text()` or `text_lossy()`.
 Line-oriented consumers locate delimiters and split the authoritative byte buffer
 before lossy decoding; offsets into the cached lossy view are never byte offsets.
 
+Appending valid text extends both owned representations directly. Stream joins
+only inspect split UTF-8 decoding when the appended bytes begin with a
+continuation byte. Appending an individual byte extends the existing buffers
+and refreshes the text view when it completes a split sequence. These paths
+avoid temporary stream values and keep byte transport and lossy decoding
+consistent without adding cache state.
+
 `Execution::output_file(path, max_bytes)` tees combined stdout+stderr, in
 arrival order, into a VFS file created/truncated before the script runs. The
 file is bounded by its own `max_bytes` and `FsLimits`, not by
