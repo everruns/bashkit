@@ -1,0 +1,20 @@
+[package]
+name = "bashkit-script-plan-pilot"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+bashkit = { path = "../../crates/bashkit", features = ["jq"] }
+async-trait = "0.1"
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt", "time"] }
+
+[features]
+planned = ["bashkit/experimental_execution_plan"]
+
+[profile.release]
+codegen-units = 16
+lto = false
+
+[workspace]

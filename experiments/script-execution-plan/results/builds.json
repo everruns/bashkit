@@ -1,0 +1,27 @@
+{
+  "baseline_commit": "782a4c55b932258e77453622e891fe3cec70aca6",
+  "candidate_code_commit": "7b7225e7",
+  "benchmark_commit": "258b364ed8c3281667149f7beed69b3d28c1e1b3",
+  "rust": "1.100.0",
+  "profile": {
+    "opt_level": 3,
+    "codegen_units": 16,
+    "lto": false
+  },
+  "features": {
+    "baseline": [
+      "default",
+      "jq"
+    ],
+    "candidate": [
+      "default",
+      "jq",
+      "experimental_execution_plan"
+    ]
+  },
+  "sha256": {
+    "baseline": "8f422ce9985d837441d6cbe17fc0ed6ce478786dee77242467865b40487e118b",
+    "candidate": "4452cae7b9df1c26c9a7110a78cc66625453561aebe84eb04dc8dc06b9b14670",
+    "Cargo.lock": "aa588bf3ca37c8d9d3cf9974844b0526cca218a8bf9a47c03244a2a8aca192c7"
+  }
+}

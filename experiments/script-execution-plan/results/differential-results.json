@@ -1,0 +1,3397 @@
+{
+  "cases": [
+    {
+      "script": "total=0; for ((i=0;i<0;i++)); do ((total+=i)); done; printf \"%s:%s\\n\" \"$total\" \"$i\""
+    },
+    {
+      "script": "a=0; while ((a<0)); do ((a++)); done; printf \"%s:%s\\n\" \"$a\" \"$?\""
+    },
+    {
+      "script": "a=0; until ((a==0)); do ((a++)); done; printf \"%s:%s\\n\" \"$a\" \"$?\""
+    },
+    {
+      "script": "total=0; for ((i=0;i<1;i++)); do ((total+=i)); done; printf \"%s:%s\\n\" \"$total\" \"$i\""
+    },
+    {
+      "script": "a=0; while ((a<1)); do ((a++)); done; printf \"%s:%s\\n\" \"$a\" \"$?\""
+    },
+    {
+      "script": "a=0; until ((a==1)); do ((a++)); done; printf \"%s:%s\\n\" \"$a\" \"$?\""
+    },
+    {
+      "script": "total=0; for ((i=0;i<2;i++)); do ((total+=i)); done; printf \"%s:%s\\n\" \"$total\" \"$i\""
+    },
+    {
+      "script": "a=0; while ((a<2)); do ((a++)); done; printf \"%s:%s\\n\" \"$a\" \"$?\""
+    },
+    {
+      "script": "a=0; until ((a==2)); do ((a++)); done; printf \"%s:%s\\n\" \"$a\" \"$?\""
+    },
+    {
+      "script": "total=0; for ((i=0;i<7;i++)); do ((total+=i)); done; printf \"%s:%s\\n\" \"$total\" \"$i\""
+    },
+    {
+      "script": "a=0; while ((a<7)); do ((a++)); done; printf \"%s:%s\\n\" \"$a\" \"$?\""
+    },
+    {
+      "script": "a=0; until ((a==7)); do ((a++)); done; printf \"%s:%s\\n\" \"$a\" \"$?\""
+    },
+    {
+      "script": "total=0; for ((i=0;i<30;i++)); do ((total+=i)); done; printf \"%s:%s\\n\" \"$total\" \"$i\""
+    },
+    {
+      "script": "a=0; while ((a<30)); do ((a++)); done; printf \"%s:%s\\n\" \"$a\" \"$?\""
+    },
+    {
+      "script": "a=0; until ((a==30)); do ((a++)); done; printf \"%s:%s\\n\" \"$a\" \"$?\""
+    },
+    {
+      "script": "a=2; ((a+=3)); if ((a<10)); then ((a*=2)); else a=0; fi; echo \"$a:$?\""
+    },
+    {
+      "script": "a=0; if ((a)); then a=2; elif ((1)); then a=3; else a=4; fi; echo \"$a:$?\""
+    },
+    {
+      "script": "if ((0)); then a=1; fi; echo \"$?:${a-unset}\""
+    },
+    {
+      "script": "a=0; { ((a++)); ((a+=7)); }; echo \"$a:$?\""
+    },
+    {
+      "script": "total=0; for ((i=0;i<5;i++)); do for ((j=0;j<3;j++)); do ((total+=i+j)); done; done; echo \"$total:$i:$j:$?\""
+    },
+    {
+      "script": "limit=6; for ((i=0;i<limit;i++)); do ((limit--)); done; echo \"$i:$limit:$?\""
+    },
+    {
+      "script": "a=0; for ((i=0,j=2;i<5;i++,j+=2)); do ((a+=j)); done; echo \"$a:$i:$j:$?\""
+    },
+    {
+      "script": "i=0; for ((;i<3;)); do ((i++)); done; echo \"$i:$?\""
+    },
+    {
+      "script": "for ((i=0;i<4;i++)); do ((0)); done; echo \"$?:$i:${PIPESTATUS[*]}\""
+    },
+    {
+      "script": "while ((0)); do ((1)); done; echo \"$?:${PIPESTATUS[*]}\""
+    },
+    {
+      "script": "a=0; while ((a++<3)); do ((a+=1)); done; echo \"$a:$?\""
+    },
+    {
+      "script": "a=0; ((a=1, a++, a*4)); echo \"$a:$?\""
+    },
+    {
+      "script": "a=0; ((a++)) || ((a+=3)); echo \"$a:$?\""
+    },
+    {
+      "script": "a=1; ((a++)) && ((a+=3)); echo \"$a:$?\""
+    },
+    {
+      "script": "x=9223372036854775807; ((x++)); echo \"$x:$?\""
+    },
+    {
+      "script": "x=0x10; ((x+=1)); echo \"$x:$?\""
+    },
+    {
+      "script": "x=010; ((x+=1)); echo \"$x:$?\""
+    },
+    {
+      "script": "x=-5; ((x=x*2-1)); echo \"$x:$?\""
+    },
+    {
+      "script": "((missing+=3)); echo \"$missing:$?\""
+    },
+    {
+      "script": "a=0; for ((i=0;i<4;i++)); do if ((i&1)); then ((a+=2)); else ((a+=i)); fi; done; echo \"$a:$?\""
+    },
+    {
+      "script": "a=1; ((a<<=2)); echo \"$a:$?\""
+    },
+    {
+      "script": "a=0; for ((i=0;i<6;i+=2)); do ((a+=i)); done; echo \"$a:$?\""
+    },
+    {
+      "script": "a=0; for ((i=0;i<4;i++)); do printf \"%s\\n\" \"$i\"; ((a+=i)); done; echo \"$a:$?\""
+    },
+    {
+      "script": "for ((i=0;i<6;i++)); do if ((i==2)); then continue; fi; if ((i==4)); then break; fi; echo \"$i\"; done; echo \"$i:$?\""
+    },
+    {
+      "script": "a=0; for ((i=0;i<$(printf 3);i++)); do ((a+=i)); done; echo \"$a:$?\""
+    },
+    {
+      "script": "x=\"2+3\"; ((x+=2)); echo \"$x:$?\""
+    },
+    {
+      "script": "x=08; ((x+=2)); echo \"$x:$?\""
+    },
+    {
+      "script": "declare -i x=2; ((x+=2)); echo \"$x:$?\""
+    },
+    {
+      "script": "readonly x=2; ((x+=2)); echo \"$x:$?\""
+    },
+    {
+      "script": "declare -n x=actual; actual=2; ((x+=2)); echo \"$x:$actual:$?\""
+    },
+    {
+      "script": "a=(1 2); ((a[0]++)); echo \"${a[*]}:$?\""
+    },
+    {
+      "script": "a=(1 2); ((a++)); echo \"${a[*]}:$?\""
+    },
+    {
+      "script": "a=1; ((a+=3)); echo \"$((a*2)):$a:$?\""
+    },
+    {
+      "script": "a=1; ((a && a++)); echo \"$a:$?\""
+    },
+    {
+      "script": "a=0; ((a ? 3 : a++)); echo \"$a:$?\""
+    },
+    {
+      "script": "((1/0)); echo after:$?"
+    },
+    {
+      "script": "((2**5)); echo after:$?"
+    },
+    {
+      "script": "set -e; a=0; for ((i=0;i<4;i++)); do ((a+=i)); done; echo after"
+    },
+    {
+      "script": "set -u; ((missing+=1)); echo after"
+    },
+    {
+      "script": "set -x; a=0; for ((i=0;i<2;i++)); do ((a++)); done; echo \"$a\""
+    },
+    {
+      "script": "set -n; a=0; for ((i=0;i<2;i++)); do ((a++)); done; echo \"$a\""
+    },
+    {
+      "script": "trap 'echo debug' DEBUG; a=0; for ((i=0;i<2;i++)); do ((a++)); done; echo $a"
+    },
+    {
+      "script": "trap 'echo err' ERR; ((0)); echo after"
+    },
+    {
+      "script": "trap 'echo exit:$a' EXIT; a=0; for ((i=0;i<3;i++)); do ((a++)); done"
+    },
+    {
+      "script": "a=0; trap 'echo debug' DEBUG; ((a++)); echo $a"
+    },
+    {
+      "script": "a=0; eval 'for ((i=0;i<3;i++)); do ((a++)); done'; echo $a:$i"
+    },
+    {
+      "script": "a=0; f() { local a=10; for ((i=0;i<3;i++)); do ((a++)); done; echo $a; }; f; echo $a:$i"
+    },
+    {
+      "script": "printf 'for ((i=0;i<3;i++)); do ((a++)); done\\n' > /code; a=0; source /code; echo $a:$i"
+    },
+    {
+      "script": "shopt -s expand_aliases\nalias hi='echo ok'\na=0\n((a++))\nhi\necho $a"
+    },
+    {
+      "script": "a=0; ((a++)); exit 7; ((a++))"
+    },
+    {
+      "script": "a=0; ((a++)) > /out; echo \"$a:$?\"; cat /out"
+    },
+    {
+      "script": "exec > /out; a=0; ((a++)); printf \"%s\\n\" \"$a\"; cat /out >&2"
+    },
+    {
+      "script": "a=0; ((a++)); printf \"%s\\n\" \"$a\" | cat; v=$(printf hello); echo \"$v:$a\""
+    },
+    {
+      "script": "a=0\nfor ((i=0;i<3;i+=LINENO)); do\n ((a++))\ndone\nprintf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$LINENO\""
+    },
+    {
+      "script": "a=0\nwhile ((a<3)); do\n ((a++))\ndone\nprintf \"%s:%s\\n\" \"$a\" \"$LINENO\""
+    },
+    {
+      "script": "a=0; ( ((a++)); echo \"$a\" ); echo \"$a\""
+    },
+    {
+      "script": "a=0; ((a++)) & wait; echo \"$a\""
+    },
+    {
+      "script": "label=hello\na=0\nfor ((i=0;i<4;i++)); do ((a+=i)); done\necho \"$label:$a\""
+    },
+    {
+      "script": "a=-10; for ((i=0;i<3;i++)); do if ((i&1)); then ((a-=5)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=2; for ((i=0;i<15;i++)); do if ((i&1)); then ((a+=0)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=1; for ((i=0;i<7;i++)); do if ((i&1)); then ((a+=-3)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=-10; for ((i=0;i<12;i++)); do if ((i&1)); then ((a-=7)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=-25; for ((i=0;i<2;i++)); do if ((i&1)); then ((a-=5)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=4; for ((i=0;i<12;i++)); do if ((i&1)); then ((a+=10)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=6; for ((i=0;i<12;i++)); do if ((i&1)); then ((a*=-6)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=13; for ((i=0;i<6;i++)); do if ((i&1)); then ((a+=7)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=-19; for ((i=0;i<7;i++)); do if ((i&1)); then ((a-=-3)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=14; for ((i=0;i<1;i++)); do if ((i&1)); then ((a*=2)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=-7; for ((i=0;i<18;i++)); do if ((i&1)); then ((a-=-4)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=-4; for ((i=0;i<17;i++)); do if ((i&1)); then ((a+=-8)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=-9; for ((i=0;i<6;i++)); do if ((i&1)); then ((a+=8)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=23; for ((i=0;i<21;i++)); do if ((i&1)); then ((a*=-7)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=6; for ((i=0;i<2;i++)); do if ((i&1)); then ((a-=7)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=25; for ((i=0;i<11;i++)); do if ((i&1)); then ((a*=3)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=-8; for ((i=0;i<17;i++)); do if ((i&1)); then ((a*=9)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=-22; for ((i=0;i<9;i++)); do if ((i&1)); then ((a*=-2)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=-26; for ((i=0;i<11;i++)); do if ((i&1)); then ((a-=1)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=26; for ((i=0;i<20;i++)); do if ((i&1)); then ((a+=1)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=-18; for ((i=0;i<17;i++)); do if ((i&1)); then ((a*=7)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=-15; for ((i=0;i<11;i++)); do if ((i&1)); then ((a+=2)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=10; for ((i=0;i<11;i++)); do if ((i&1)); then ((a-=4)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=-23; for ((i=0;i<22;i++)); do if ((i&1)); then ((a-=5)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=15; for ((i=0;i<19;i++)); do if ((i&1)); then ((a*=-10)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=-7; for ((i=0;i<5;i++)); do if ((i&1)); then ((a*=-9)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=-16; for ((i=0;i<2;i++)); do if ((i&1)); then ((a-=-1)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=23; for ((i=0;i<9;i++)); do if ((i&1)); then ((a-=4)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=-4; for ((i=0;i<9;i++)); do if ((i&1)); then ((a+=4)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=-17; for ((i=0;i<1;i++)); do if ((i&1)); then ((a+=5)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=4; for ((i=0;i<21;i++)); do if ((i&1)); then ((a*=4)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=-19; for ((i=0;i<22;i++)); do if ((i&1)); then ((a+=-9)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=-20; for ((i=0;i<14;i++)); do if ((i&1)); then ((a*=7)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=-15; for ((i=0;i<7;i++)); do if ((i&1)); then ((a-=-7)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=-24; for ((i=0;i<2;i++)); do if ((i&1)); then ((a*=-10)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=-30; for ((i=0;i<24;i++)); do if ((i&1)); then ((a-=-6)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=-26; for ((i=0;i<21;i++)); do if ((i&1)); then ((a-=2)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=9; for ((i=0;i<11;i++)); do if ((i&1)); then ((a-=8)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=8; for ((i=0;i<4;i++)); do if ((i&1)); then ((a+=1)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=-25; for ((i=0;i<0;i++)); do if ((i&1)); then ((a*=1)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=19; for ((i=0;i<4;i++)); do if ((i&1)); then ((a-=3)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=22; for ((i=0;i<18;i++)); do if ((i&1)); then ((a*=-1)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=11; for ((i=0;i<12;i++)); do if ((i&1)); then ((a+=8)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=-13; for ((i=0;i<8;i++)); do if ((i&1)); then ((a+=10)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=18; for ((i=0;i<19;i++)); do if ((i&1)); then ((a+=4)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=11; for ((i=0;i<1;i++)); do if ((i&1)); then ((a*=-6)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=4; for ((i=0;i<9;i++)); do if ((i&1)); then ((a-=-8)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=-30; for ((i=0;i<17;i++)); do if ((i&1)); then ((a-=7)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=-17; for ((i=0;i<24;i++)); do if ((i&1)); then ((a+=-1)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=-25; for ((i=0;i<18;i++)); do if ((i&1)); then ((a+=-2)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=-21; for ((i=0;i<2;i++)); do if ((i&1)); then ((a*=6)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=-7; for ((i=0;i<4;i++)); do if ((i&1)); then ((a+=5)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=-21; for ((i=0;i<21;i++)); do if ((i&1)); then ((a*=-1)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=-19; for ((i=0;i<9;i++)); do if ((i&1)); then ((a+=6)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=27; for ((i=0;i<1;i++)); do if ((i&1)); then ((a+=7)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=-2; for ((i=0;i<9;i++)); do if ((i&1)); then ((a*=-6)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=-14; for ((i=0;i<13;i++)); do if ((i&1)); then ((a-=-2)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=12; for ((i=0;i<18;i++)); do if ((i&1)); then ((a+=-5)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=-20; for ((i=0;i<12;i++)); do if ((i&1)); then ((a*=-4)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=-5; for ((i=0;i<18;i++)); do if ((i&1)); then ((a*=-10)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=-11; for ((i=0;i<5;i++)); do if ((i&1)); then ((a-=6)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=27; for ((i=0;i<1;i++)); do if ((i&1)); then ((a+=4)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=-1; for ((i=0;i<21;i++)); do if ((i&1)); then ((a*=8)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=29; for ((i=0;i<24;i++)); do if ((i&1)); then ((a-=6)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=-12; for ((i=0;i<3;i++)); do if ((i&1)); then ((a+=-1)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=20; for ((i=0;i<16;i++)); do if ((i&1)); then ((a+=1)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=0; for ((i=0;i<17;i++)); do if ((i&1)); then ((a-=-6)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=-20; for ((i=0;i<7;i++)); do if ((i&1)); then ((a-=-5)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=-15; for ((i=0;i<3;i++)); do if ((i&1)); then ((a*=4)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=-3; for ((i=0;i<6;i++)); do if ((i&1)); then ((a+=5)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=11; for ((i=0;i<17;i++)); do if ((i&1)); then ((a+=2)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=-28; for ((i=0;i<2;i++)); do if ((i&1)); then ((a*=5)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=6; for ((i=0;i<8;i++)); do if ((i&1)); then ((a-=5)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=-18; for ((i=0;i<11;i++)); do if ((i&1)); then ((a-=4)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=-20; for ((i=0;i<12;i++)); do if ((i&1)); then ((a+=-1)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=6; for ((i=0;i<2;i++)); do if ((i&1)); then ((a-=4)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=6; for ((i=0;i<7;i++)); do if ((i&1)); then ((a-=-9)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=9; for ((i=0;i<15;i++)); do if ((i&1)); then ((a*=-9)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=-26; for ((i=0;i<2;i++)); do if ((i&1)); then ((a-=-2)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=-1; for ((i=0;i<9;i++)); do if ((i&1)); then ((a-=-9)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=0; for ((i=0;i<3;i++)); do if ((i&1)); then ((a*=4)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=1; for ((i=0;i<16;i++)); do if ((i&1)); then ((a-=6)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=-2; for ((i=0;i<10;i++)); do if ((i&1)); then ((a*=-9)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=-17; for ((i=0;i<18;i++)); do if ((i&1)); then ((a+=-1)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=-3; for ((i=0;i<3;i++)); do if ((i&1)); then ((a-=-3)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=-29; for ((i=0;i<8;i++)); do if ((i&1)); then ((a*=8)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=-1; for ((i=0;i<8;i++)); do if ((i&1)); then ((a*=6)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=-3; for ((i=0;i<21;i++)); do if ((i&1)); then ((a-=-3)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=-10; for ((i=0;i<15;i++)); do if ((i&1)); then ((a*=2)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=-9; for ((i=0;i<19;i++)); do if ((i&1)); then ((a+=9)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=21; for ((i=0;i<22;i++)); do if ((i&1)); then ((a+=-8)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=-16; for ((i=0;i<22;i++)); do if ((i&1)); then ((a+=-10)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=-20; for ((i=0;i<7;i++)); do if ((i&1)); then ((a+=-5)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=-21; for ((i=0;i<11;i++)); do if ((i&1)); then ((a-=-2)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=-12; for ((i=0;i<9;i++)); do if ((i&1)); then ((a-=-2)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=16; for ((i=0;i<1;i++)); do if ((i&1)); then ((a+=1)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=7; for ((i=0;i<5;i++)); do if ((i&1)); then ((a*=7)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=-25; for ((i=0;i<11;i++)); do if ((i&1)); then ((a+=9)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=-1; for ((i=0;i<17;i++)); do if ((i&1)); then ((a*=0)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=6; for ((i=0;i<3;i++)); do if ((i&1)); then ((a+=9)); else ((a+=i)); fi; done; printf \"%s:%s:%s\\n\" \"$a\" \"$i\" \"$?\""
+    },
+    {
+      "script": "a=0; for ((i=0;i<100;i++)); do ((a+=i)); done",
+      "commands": 0
+    },
+    {
+      "script": "a=0; for ((i=0;i<100;i++)); do ((a+=i)); done",
+      "commands": 1
+    },
+    {
+      "script": "a=0; for ((i=0;i<100;i++)); do ((a+=i)); done",
+      "commands": 5
+    },
+    {
+      "script": "a=0; for ((i=0;i<100;i++)); do ((a+=i)); done",
+      "commands": 100
+    },
+    {
+      "script": "a=0; for ((i=0;i<100;i++)); do ((a+=i)); done",
+      "iterations": 0
+    },
+    {
+      "script": "a=0; for ((i=0;i<100;i++)); do ((a+=i)); done",
+      "iterations": 1
+    },
+    {
+      "script": "a=0; for ((i=0;i<100;i++)); do ((a+=i)); done",
+      "iterations": 5
+    },
+    {
+      "script": "a=0; for ((i=0;i<100;i++)); do ((a+=i)); done",
+      "iterations": 100
+    },
+    {
+      "script": "a=0; for ((i=0;i<100;i++)); do ((a+=i)); done",
+      "work": 0
+    },
+    {
+      "script": "a=0; for ((i=0;i<100;i++)); do ((a+=i)); done",
+      "work": 1
+    },
+    {
+      "script": "a=0; for ((i=0;i<100;i++)); do ((a+=i)); done",
+      "work": 5
+    },
+    {
+      "script": "a=0; for ((i=0;i<100;i++)); do ((a+=i)); done",
+      "work": 100
+    },
+    {
+      "script": "for ((i=0;i<3;i++)); do ((a+=i)); done; echo \"$a\"",
+      "live": 0
+    },
+    {
+      "script": "for ((i=0;i<3;i++)); do ((a+=i)); done; echo \"$a\"",
+      "live": 128
+    },
+    {
+      "script": "for ((i=0;i<3;i++)); do ((a+=i)); done; echo \"$a\"",
+      "live": 256
+    },
+    {
+      "script": "for ((i=0;i<3;i++)); do ((a+=i)); done; echo \"$a\"",
+      "live": 512
+    },
+    {
+      "script": "for ((i=0;i<3;i++)); do ((a+=i)); done; echo \"$a\"",
+      "live": 1024
+    },
+    {
+      "script": "for ((i=0;i<3;i++)); do ((a+=i)); done; echo \"$a\"",
+      "live": 4096
+    },
+    {
+      "script": "for ((i=0;i<3;i++)); do ((a+=i)); done; echo \"$a\"",
+      "live": 16384
+    },
+    {
+      "script": "for ((i=0;i<3;i++)); do ((a+=i)); done; echo \"$a\"",
+      "live": 65536
+    },
+    {
+      "script": "for ((i=0;i<3;i++)); do ((a+=i)); done; echo \"$a\"",
+      "live": 1048576
+    },
+    {
+      "script": "for ((;;)); do ((a++)); done",
+      "cancelled": true
+    },
+    {
+      "script": "for ((;;)); do ((a++)); done",
+      "timeout_ms": 1,
+      "iterations": 100000000
+    },
+    {
+      "scripts": [
+        "a=0; for ((i=0;i<4;i++)); do ((a+=i)); done",
+        "echo \"$a:$i\"; ((a+=7)); echo \"$a\""
+      ]
+    },
+    {
+      "scripts": [
+        "readonly a=2",
+        "((a++)); echo \"$a:$?\""
+      ]
+    },
+    {
+      "scripts": [
+        "a=\"2+3\"",
+        "((a++)); echo \"$a:$?\""
+      ]
+    }
+  ],
+  "outputs": {
+    "baseline": [
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "0:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "0:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "0:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "0:1\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "1:1\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "1:1\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "1:2\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "2:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "2:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "21:7\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "7:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "7:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "435:30\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "30:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "30:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "10:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "3:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "0:unset\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "8:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "45:5:3:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "3:3:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "30:5:12:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "3:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "1:4:1\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "0:1\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "5:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "2:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "4:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "5:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-9223372036854775808:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "17:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "11:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-11:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "3:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "6:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "4:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "6:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "0\n1\n2\n3\n6:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "0\n1\n3\n4:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "3:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "7:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "10:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "4:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "2:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "4:4:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "2 2:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "2 2:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "8:4:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "2:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "1:1\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "bash: line 1: ((: 1/0: division by 0 (error token is \"0\")\n",
+          "stdout": "after:1\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "after:0\n"
+        }
+      ],
+      [
+        {
+          "code": 1,
+          "stderr": "",
+          "stdout": ""
+        }
+      ],
+      [
+        {
+          "code": 1,
+          "stderr": "bash: line 1: missing: unbound variable\n",
+          "stdout": ""
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "+ a=0\n+ (( a++ ))\n+ (( a++ ))\n+ echo 2\n",
+          "stdout": "2\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": ""
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "debug\ndebug\ndebug\ndebug\ndebug\ndebug\ndebug\ndebug\ndebug\ndebug\n2\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "err\nafter\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "exit:3\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "debug\ndebug\n1\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "3:3\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "13\n0:3\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "3:3\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "ok\n1\n"
+        }
+      ],
+      [
+        {
+          "code": 7,
+          "stderr": "",
+          "stdout": ""
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "1:1\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "1\n",
+          "stdout": ""
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "1\nhello:1\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "2:4:5\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "3:5\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "1\n0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "hello:6\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-13:3:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "58:15:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "4:7:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-22:12:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-30:2:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "94:12:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "268500:12:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "40:6:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "2:7:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "14:1:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "101:18:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "4:17:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "21:6:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "6435139269:21:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-1:2:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "6433:11:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-332266880:17:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-356:9:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-1:11:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "126:20:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-101524554:17:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "25:11:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "20:11:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "32:22:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-14834710742:19:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-581:5:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-15:2:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "27:9:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "32:9:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-17:1:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "5126364:21:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-8:22:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-16150610:14:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "18:7:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "240:2:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "174:24:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "64:21:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-1:11:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "12:4:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-25:0:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "15:4:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-30:18:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "89:12:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "39:8:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "144:19:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "11:1:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "56:9:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-14:17:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "103:24:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "29:18:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-126:2:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "5:4:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-11:21:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "25:9:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "27:1:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-2908:9:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "40:13:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "39:18:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-83240:12:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "5165289240:18:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-17:5:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "27:1:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-723132252:21:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "89:24:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-11:3:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "84:16:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "120:17:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "7:7:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-58:3:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "18:6:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "99:17:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-140:2:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-2:8:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-8:11:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "4:12:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "2:2:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "45:7:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-42185785:15:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-24:2:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "55:9:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "2:3:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "9:16:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "128718:10:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "46:18:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "2:3:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-117456:8:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-684:8:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "137:21:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-786:15:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "162:19:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "43:22:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-16:22:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-23:7:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "19:11:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "16:9:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "16:1:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "361:5:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "50:11:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "16:17:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "17:3:0\n"
+        }
+      ],
+      [
+        {
+          "error": "resource limit exceeded: maximum command count exceeded (0)"
+        }
+      ],
+      [
+        {
+          "error": "resource limit exceeded: maximum command count exceeded (1)"
+        }
+      ],
+      [
+        {
+          "error": "resource limit exceeded: maximum command count exceeded (5)"
+        }
+      ],
+      [
+        {
+          "error": "resource limit exceeded: maximum command count exceeded (100)"
+        }
+      ],
+      [
+        {
+          "error": "resource limit exceeded: maximum loop iterations exceeded (0)"
+        }
+      ],
+      [
+        {
+          "error": "resource limit exceeded: maximum loop iterations exceeded (1)"
+        }
+      ],
+      [
+        {
+          "error": "resource limit exceeded: maximum loop iterations exceeded (5)"
+        }
+      ],
+      [
+        {
+          "error": "resource limit exceeded: maximum loop iterations exceeded (100)"
+        }
+      ],
+      [
+        {
+          "error": "resource limit exceeded: execution budget exhausted: work units (1 used, max 0)"
+        }
+      ],
+      [
+        {
+          "error": "resource limit exceeded: execution budget exhausted: work units (2 used, max 1)"
+        }
+      ],
+      [
+        {
+          "error": "resource limit exceeded: execution budget exhausted: work units (6 used, max 5)"
+        }
+      ],
+      [
+        {
+          "error": "resource limit exceeded: execution budget exhausted: work units (101 used, max 100)"
+        }
+      ],
+      [
+        {
+          "error": "resource limit exceeded: execution budget exhausted: live intermediate bytes (1 requested, max 0)"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "3\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "3\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "3\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "3\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "3\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "3\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "3\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "3\n"
+        }
+      ],
+      [
+        {
+          "error": "execution cancelled"
+        }
+      ],
+      [
+        {
+          "error": "resource limit exceeded: maximum command count exceeded (10000)"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": ""
+        },
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "6:4\n13\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": ""
+        },
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "2:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": ""
+        },
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "6:0\n"
+        }
+      ]
+    ],
+    "candidate": [
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "0:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "0:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "0:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "0:1\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "1:1\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "1:1\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "1:2\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "2:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "2:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "21:7\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "7:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "7:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "435:30\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "30:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "30:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "10:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "3:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "0:unset\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "8:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "45:5:3:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "3:3:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "30:5:12:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "3:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "1:4:1\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "0:1\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "5:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "2:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "4:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "5:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-9223372036854775808:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "17:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "11:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-11:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "3:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "6:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "4:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "6:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "0\n1\n2\n3\n6:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "0\n1\n3\n4:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "3:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "7:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "10:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "4:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "2:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "4:4:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "2 2:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "2 2:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "8:4:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "2:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "1:1\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "bash: line 1: ((: 1/0: division by 0 (error token is \"0\")\n",
+          "stdout": "after:1\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "after:0\n"
+        }
+      ],
+      [
+        {
+          "code": 1,
+          "stderr": "",
+          "stdout": ""
+        }
+      ],
+      [
+        {
+          "code": 1,
+          "stderr": "bash: line 1: missing: unbound variable\n",
+          "stdout": ""
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "+ a=0\n+ (( a++ ))\n+ (( a++ ))\n+ echo 2\n",
+          "stdout": "2\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": ""
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "debug\ndebug\ndebug\ndebug\ndebug\ndebug\ndebug\ndebug\ndebug\ndebug\n2\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "err\nafter\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "exit:3\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "debug\ndebug\n1\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "3:3\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "13\n0:3\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "3:3\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "ok\n1\n"
+        }
+      ],
+      [
+        {
+          "code": 7,
+          "stderr": "",
+          "stdout": ""
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "1:1\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "1\n",
+          "stdout": ""
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "1\nhello:1\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "2:4:5\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "3:5\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "1\n0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "hello:6\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-13:3:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "58:15:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "4:7:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-22:12:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-30:2:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "94:12:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "268500:12:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "40:6:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "2:7:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "14:1:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "101:18:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "4:17:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "21:6:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "6435139269:21:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-1:2:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "6433:11:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-332266880:17:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-356:9:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-1:11:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "126:20:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-101524554:17:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "25:11:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "20:11:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "32:22:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-14834710742:19:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-581:5:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-15:2:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "27:9:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "32:9:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-17:1:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "5126364:21:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-8:22:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-16150610:14:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "18:7:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "240:2:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "174:24:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "64:21:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-1:11:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "12:4:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-25:0:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "15:4:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-30:18:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "89:12:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "39:8:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "144:19:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "11:1:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "56:9:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-14:17:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "103:24:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "29:18:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-126:2:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "5:4:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-11:21:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "25:9:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "27:1:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-2908:9:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "40:13:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "39:18:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-83240:12:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "5165289240:18:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-17:5:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "27:1:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-723132252:21:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "89:24:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-11:3:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "84:16:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "120:17:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "7:7:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-58:3:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "18:6:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "99:17:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-140:2:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-2:8:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-8:11:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "4:12:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "2:2:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "45:7:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-42185785:15:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-24:2:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "55:9:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "2:3:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "9:16:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "128718:10:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "46:18:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "2:3:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-117456:8:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-684:8:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "137:21:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-786:15:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "162:19:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "43:22:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-16:22:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "-23:7:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "19:11:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "16:9:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "16:1:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "361:5:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "50:11:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "16:17:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "17:3:0\n"
+        }
+      ],
+      [
+        {
+          "error": "resource limit exceeded: maximum command count exceeded (0)"
+        }
+      ],
+      [
+        {
+          "error": "resource limit exceeded: maximum command count exceeded (1)"
+        }
+      ],
+      [
+        {
+          "error": "resource limit exceeded: maximum command count exceeded (5)"
+        }
+      ],
+      [
+        {
+          "error": "resource limit exceeded: maximum command count exceeded (100)"
+        }
+      ],
+      [
+        {
+          "error": "resource limit exceeded: maximum loop iterations exceeded (0)"
+        }
+      ],
+      [
+        {
+          "error": "resource limit exceeded: maximum loop iterations exceeded (1)"
+        }
+      ],
+      [
+        {
+          "error": "resource limit exceeded: maximum loop iterations exceeded (5)"
+        }
+      ],
+      [
+        {
+          "error": "resource limit exceeded: maximum loop iterations exceeded (100)"
+        }
+      ],
+      [
+        {
+          "error": "resource limit exceeded: execution budget exhausted: work units (1 used, max 0)"
+        }
+      ],
+      [
+        {
+          "error": "resource limit exceeded: execution budget exhausted: work units (2 used, max 1)"
+        }
+      ],
+      [
+        {
+          "error": "resource limit exceeded: execution budget exhausted: work units (597 used, max 5)"
+        }
+      ],
+      [
+        {
+          "error": "resource limit exceeded: execution budget exhausted: work units (597 used, max 100)"
+        }
+      ],
+      [
+        {
+          "error": "resource limit exceeded: execution budget exhausted: live intermediate bytes (1 requested, max 0)"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "3\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "3\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "3\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "3\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "3\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "3\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "3\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "3\n"
+        }
+      ],
+      [
+        {
+          "error": "execution cancelled"
+        }
+      ],
+      [
+        {
+          "error": "resource limit exceeded: execution timeout (1ms)"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": ""
+        },
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "6:4\n13\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": ""
+        },
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "2:0\n"
+        }
+      ],
+      [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": ""
+        },
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "6:0\n"
+        }
+      ]
+    ]
+  },
+  "failures": []
+}

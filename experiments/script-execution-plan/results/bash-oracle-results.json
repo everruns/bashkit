@@ -1,0 +1,31 @@
+{
+  "checked": 163,
+  "matched": 162,
+  "baseline_gaps": [
+    {
+      "index": 31,
+      "case": {
+        "script": "x=010; ((x+=1)); echo \"$x:$?\""
+      },
+      "bash": {
+        "stdout": "9:0\n",
+        "stderr": "",
+        "code": 0
+      },
+      "candidate": [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "11:0\n"
+        }
+      ],
+      "baseline": [
+        {
+          "code": 0,
+          "stderr": "",
+          "stdout": "11:0\n"
+        }
+      ]
+    }
+  ]
+}
