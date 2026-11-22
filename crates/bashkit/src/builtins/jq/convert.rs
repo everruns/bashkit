@@ -154,9 +154,14 @@ impl<'de> serde::de::Visitor<'de> for JqSeed<'_> {
             }
             let second_key = second_key.unwrap_or_default();
             let second_value = map.next_value_seed(self.child())?;
-            let mut out = Vec::with_capacity(2);
-            out.push((first_key, first_value));
-            out.push((second_key, second_value));
+            let mut out = vec![(first_key, first_value)];
+            // Same last-wins/first-position rule as the normal path, so a
+            // duplicate private token in second position collapses.
+            if let Some(slot) = out.iter_mut().find(|(k, _)| *k == second_key) {
+                slot.1 = second_value;
+            } else {
+                out.push((second_key, second_value));
+            }
             while let Some(key) = map.next_key::<String>()? {
                 let value = map.next_value_seed(self.child())?;
                 // Duplicate keys: last value wins in its first position, as in jq.
@@ -536,5 +541,23 @@ mod tests {
             matches!(value, JqJson::Number(ref s) if s == "1.5"),
             "expected Number(1.5)"
         );
+    }
+
+    /// Companion for #2964: a real object that happens to start with the
+    /// private token plus another key must stay an `Object`, not become a
+    /// `Number`. Pins the two-entry fall-through (including duplicate-key
+    /// collapse) with or without `arbitrary_precision`.
+    #[test]
+    fn token_led_object_with_second_key_stays_object() {
+        let value = parse_json_value(r#"{"$serde_json::private::Number":"1.5","b":2}"#)
+            .expect("object should parse");
+        match value {
+            JqJson::Object(entries) => {
+                assert_eq!(entries.len(), 2, "expected two entries");
+                assert_eq!(entries[0].0, "$serde_json::private::Number");
+                assert_eq!(entries[1].0, "b");
+            }
+            _ => panic!("expected Object"),
+        }
     }
 }
