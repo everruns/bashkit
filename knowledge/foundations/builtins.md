@@ -21,6 +21,11 @@ hook restrictions, bindings, tests and explicitly buffered roadmap boundaries.
 ## Status
 Implemented
 
+Builtin dispatch calls the `dyn Builtin` object inside its `Arc` directly for
+execution-plan lookup and execution. Calling the forwarding implementation
+on `Arc<dyn Builtin>` creates an additional boxed future at each boundary.
+The direct call keeps the existing hooks, budgets, and panic handling.
+
 ## Decision
 
 Bashkit provides built-in commands for script execution in a virtual environment.
