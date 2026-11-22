@@ -17,6 +17,12 @@ use super::jaq_json::Val;
 /// like `[[[[...]]]]` or `{"a":{"a":{"a":...}}}`.
 pub(super) const MAX_JQ_JSON_DEPTH: usize = 100;
 
+/// Private token serde_json uses when `arbitrary_precision` is on.
+/// Non-integer numbers arrive as a single-entry map `{TOKEN: "1.5"}`
+/// instead of `visit_f64`. Cargo feature unification can enable this even
+/// when bashkit did not request it (see #2964), so `visit_map` handles it.
+const ARBITRARY_PRECISION_NUMBER_TOKEN: &str = "$serde_json::private::Number";
+
 /// Tagged JSON value used internally by the jq builtin so we can preserve
 /// the original numeric representation through filter execution and
 /// output formatting. Real jq prints `1.0` as `1.0`; the stock
@@ -129,7 +135,40 @@ impl<'de> serde::de::Visitor<'de> for JqSeed<'_> {
     }
 
     fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> Result<JqJson, A::Error> {
-        let mut out: Vec<(String, JqJson)> = Vec::new();
+        let first_key: Option<String> = map.next_key()?;
+        let Some(first_key) = first_key else {
+            return Ok(JqJson::Object(Vec::new()));
+        };
+        let first_value = map.next_value_seed(self.child())?;
+        if first_key == ARBITRARY_PRECISION_NUMBER_TOKEN
+            && let JqJson::String(text) = &first_value
+        {
+            // `NumberDeserializer` yields exactly one entry, so no second key
+            // means this was a number. A real object that happens to start
+            // with the private token plus more keys falls through as an
+            // object below (serde_json's own Value treats the single-entry
+            // case as a number too).
+            let second_key: Option<String> = map.next_key()?;
+            if second_key.is_none() {
+                return Ok(JqJson::Number(text.clone()));
+            }
+            let second_key = second_key.unwrap_or_default();
+            let second_value = map.next_value_seed(self.child())?;
+            let mut out = Vec::with_capacity(2);
+            out.push((first_key, first_value));
+            out.push((second_key, second_value));
+            while let Some(key) = map.next_key::<String>()? {
+                let value = map.next_value_seed(self.child())?;
+                // Duplicate keys: last value wins in its first position, as in jq.
+                if let Some(slot) = out.iter_mut().find(|(k, _)| *k == key) {
+                    slot.1 = value;
+                } else {
+                    out.push((key, value));
+                }
+            }
+            return Ok(JqJson::Object(out));
+        }
+        let mut out: Vec<(String, JqJson)> = vec![(first_key, first_value)];
         while let Some(key) = map.next_key::<String>()? {
             let value = map.next_value_seed(self.child())?;
             // Duplicate keys: last value wins in its first position, as in jq.
@@ -429,5 +468,73 @@ mod tests {
         // serde_json itself caps at ~128, so either error path is acceptable.
         let result = parse_json_stream(&s);
         assert!(result.is_err());
+    }
+
+    /// Regression for #2964: with `serde_json/arbitrary_precision` enabled
+    /// (via feature unification), non-integers arrive as a single-entry map
+    /// `{ "$serde_json::private::Number": "1.5" }` instead of `visit_f64`.
+    /// This simulates that shape without requiring the feature, so the test
+    /// fails before the `visit_map` fix and passes after, in any build.
+    #[test]
+    fn arbitrary_precision_number_shape_becomes_number() {
+        use serde::de::{MapAccess, Visitor};
+        use std::cell::Cell;
+
+        struct TokenMap {
+            done_key: bool,
+            done_value: bool,
+        }
+        impl<'de> MapAccess<'de> for TokenMap {
+            type Error = serde::de::value::Error;
+            fn next_key_seed<K: serde::de::DeserializeSeed<'de>>(
+                &mut self,
+                seed: K,
+            ) -> Result<Option<K::Value>, Self::Error> {
+                if self.done_key {
+                    return Ok(None);
+                }
+                self.done_key = true;
+                seed.deserialize(serde::de::value::BorrowedStrDeserializer::new(
+                    "$serde_json::private::Number",
+                ))
+                .map(Some)
+            }
+            fn next_value_seed<V: serde::de::DeserializeSeed<'de>>(
+                &mut self,
+                seed: V,
+            ) -> Result<V::Value, Self::Error> {
+                self.done_value = true;
+                seed.deserialize(serde::de::value::BorrowedStrDeserializer::new("1.5"))
+            }
+        }
+
+        struct TokenDeserializer;
+        impl<'de> serde::de::Deserializer<'de> for TokenDeserializer {
+            type Error = serde::de::value::Error;
+            fn deserialize_any<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
+                visitor.visit_map(TokenMap {
+                    done_key: false,
+                    done_value: false,
+                })
+            }
+            serde::forward_to_deserialize_any! {
+                bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str
+                string bytes byte_buf option unit unit_struct newtype_struct
+                seq tuple tuple_struct map struct enum identifier ignored_any
+            }
+        }
+
+        let too_deep = Cell::new(None);
+        let seed = JqSeed {
+            depth: 0,
+            max: MAX_JQ_JSON_DEPTH,
+            too_deep: &too_deep,
+        };
+        let value: JqJson = serde::de::DeserializeSeed::deserialize(seed, TokenDeserializer)
+            .expect("token map should deserialize");
+        assert!(
+            matches!(value, JqJson::Number(ref s) if s == "1.5"),
+            "expected Number(1.5)"
+        );
     }
 }
