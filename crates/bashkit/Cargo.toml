@@ -352,6 +352,11 @@ name = "awk_regex"
 harness = false
 
 [[bench]]
+name = "jq"
+harness = false
+required-features = ["jq"]
+
+[[bench]]
 name = "snapshot_history"
 harness = false
 

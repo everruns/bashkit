@@ -1047,6 +1047,8 @@ impl Bash {
         let _ = extensions.insert(active_limits.clone());
         let _ = extensions.insert(self.interpreter.execution_budget().clone());
         let _ = extensions.insert(builtins::ExecutionDeadline::new(active_limits.timeout));
+        #[cfg(feature = "jq")]
+        let _ = extensions.insert(builtins::JqFilterCache::default());
         #[cfg(feature = "python")]
         let _ = extensions.insert(builtins::PythonInprocessOptIn(self.python_inprocess_opt_in));
         #[cfg(feature = "sqlite")]

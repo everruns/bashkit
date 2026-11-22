@@ -59,9 +59,8 @@ pub(super) const LINENO_VAR_NAME: &str = "$__bashkit_lineno__";
 /// `$ARGS` global, populated from `--args` / `--jsonargs` / `--arg` / `--argjson`.
 pub(super) const ARGS_VAR_NAME: &str = "$ARGS";
 
-/// Compat definitions prepended to every user filter. Order matters: each
-/// def must precede any other def that references it (jaq resolves
-/// top-down). The trailing `;` after every def is required.
+/// Compatibility definitions appended to jaq's prelude. Each definition
+/// comes before the ones that use it because jaq resolves in source order.
 pub(super) const JQ_COMPAT_DEFS: &str = r#"
 def setpath(p; v):
   p as $p | v as $v |
@@ -192,12 +191,13 @@ def @csv:
   ] | join(",");
 "#;
 
-/// Build the prepended-defs prefix that wires `env`, `$ENV`,
-/// `input_filename`, and `input_line_number` to internal globals.
-pub(super) fn build_compat_prefix() -> String {
+/// Start the main expression with the helpers that read invocation globals.
+/// Keeping a definition prefix also preserves the existing grammar for user
+/// filters. `module`, `include`, and `import` directives can only occur
+/// before the definitions in jaq's parser.
+pub(super) fn build_global_defs() -> String {
     format!(
-        "{JQ_COMPAT_DEFS}\n\
-         def env: {ENV_VAR_NAME};\n\
+        "def env: {ENV_VAR_NAME};\n\
          def input_filename: {FILENAME_VAR_NAME};\n\
          def input_line_number: {LINENO_VAR_NAME};\n"
     )
@@ -208,26 +208,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn build_compat_prefix_includes_setpath() {
-        let prefix = build_compat_prefix();
-        assert!(prefix.contains("def setpath"));
+    fn prelude_includes_setpath() {
+        let defs = jaq_core::load::parse(JQ_COMPAT_DEFS, |parser| parser.defs()).unwrap();
+        assert!(defs.iter().any(|def| def.name == "setpath"));
     }
 
     #[test]
-    fn build_compat_prefix_includes_env_def() {
-        let prefix = build_compat_prefix();
+    fn build_global_defs_includes_env_def() {
+        let prefix = build_global_defs();
         assert!(prefix.contains("def env: $__bashkit_env__"));
     }
 
     #[test]
-    fn build_compat_prefix_includes_filename_def() {
-        let prefix = build_compat_prefix();
+    fn build_global_defs_includes_filename_def() {
+        let prefix = build_global_defs();
         assert!(prefix.contains("def input_filename: $__bashkit_filename__"));
     }
 
     #[test]
-    fn build_compat_prefix_includes_lineno_def() {
-        let prefix = build_compat_prefix();
+    fn build_global_defs_includes_lineno_def() {
+        let prefix = build_global_defs();
         assert!(prefix.contains("def input_line_number: $__bashkit_lineno__"));
     }
 
