@@ -221,6 +221,8 @@ impl FileSystem for SessionFileSystemAdapter {
         if let Some(content) = files.get(&path) {
             let is_dir = content.is_empty() && self.store.is_directory(&path);
             Ok(Metadata {
+                uid: 1000,
+                gid: 1000,
                 file_type: if is_dir {
                     FileType::Directory
                 } else {
@@ -271,6 +273,8 @@ impl FileSystem for SessionFileSystemAdapter {
                         entries.push(DirEntry {
                             name: name.to_string(),
                             metadata: Metadata {
+                                uid: 1000,
+                                gid: 1000,
                                 file_type: FileType::Directory,
                                 size: 0,
                                 mode: 0o755,
@@ -284,6 +288,8 @@ impl FileSystem for SessionFileSystemAdapter {
                     entries.push(DirEntry {
                         name: remainder.to_string(),
                         metadata: Metadata {
+                            uid: 1000,
+                            gid: 1000,
                             file_type: if is_dir {
                                 FileType::Directory
                             } else {

@@ -30,12 +30,22 @@ export interface BuiltinRequest {
   readonly fs: FileSystem;
 }
 
+/** Buffered command result. Omitted streams are empty; extra host properties are ignored. */
+export interface BuiltinResult {
+  readonly stdout?: string;
+  readonly stderr?: string;
+  /** Command status; defaults to 0. */
+  readonly exitCode?: number;
+}
 /**
- * A JS callback registered as a bash builtin. Return the builtin's stdout, or a
- * `Promise` of it. Async callbacks are only awaited by {@link Bash.execute}
- * (not `executeSync`). Throwing / rejecting becomes stderr with exit code 1.
+ * A JS callback registered as a bash builtin. Return stdout or a structured
+ * result, directly or via `Promise`. Async callbacks are only awaited by
+ * {@link Bash.execute} (not `executeSync`). Throwing / rejecting becomes
+ * stderr with exit code 1.
  */
-export type CustomBuiltin = (ctx: BuiltinRequest) => string | Promise<string>;
+export type CustomBuiltin = (
+  ctx: BuiltinRequest,
+) => string | BuiltinResult | Promise<string | BuiltinResult>;
 
 /** Live byte I/O; handles are revoked when their execution ends. */
 export interface CommandContext {
@@ -75,13 +85,21 @@ export declare const ExecutionProfile: Readonly<{
 /** Entry kind reported by a {@link HostFileSystem}. */
 export type HostFileType = "file" | "dir" | "directory" | "symlink" | "fifo";
 
-/** Metadata a {@link HostFileSystem} reports for one entry. */
+/**
+ * Metadata a {@link HostFileSystem} reports for one entry. Omitting uid/gid
+ * preserves the single-user model (1000); malformed supplied IDs fail the
+ * metadata operation. IDs must be integers from 0 through 4294967295.
+ */
 export interface HostStat {
   readonly type: HostFileType;
   /** Size in bytes. Defaults to 0. */
   readonly size?: number;
   /** Unix permission bits. Defaults to 0o644 for files, 0o755 for directories. */
   readonly mode?: number;
+  /** Owner user ID. Defaults to the sandbox user (1000). */
+  readonly uid?: number;
+  /** Owner group ID. Defaults to the sandbox group (1000). */
+  readonly gid?: number;
   /** Last modification time, ms since the epoch. Defaults to now. */
   readonly mtimeMs?: number;
 }

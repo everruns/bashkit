@@ -2870,6 +2870,11 @@ impl<'a> Lexer<'a> {
                 }
                 continue;
             }
+            // Parentheses delimit words outside extglobs. In particular,
+            // `[()` is a function definition, not one bracket-pattern word.
+            if matches!(ch, '(' | ')') {
+                break;
+            }
             word.push(ch);
             self.advance();
             if ch == ']' {

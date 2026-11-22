@@ -640,6 +640,8 @@ impl FileSystem for MountableFs {
         };
         for (name, mfs) in children {
             let metadata = mfs.stat(Path::new("/")).await.unwrap_or_else(|_| Metadata {
+                uid: 1000,
+                gid: 1000,
                 file_type: FileType::Directory,
                 size: 0,
                 mode: 0o755,

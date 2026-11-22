@@ -156,6 +156,8 @@ impl FsBackend for SimpleStorage {
 
         match entries.get(&path) {
             Some(StorageEntry::File(content)) => Ok(Metadata {
+                uid: 1000,
+                gid: 1000,
                 file_type: FileType::File,
                 size: content.len() as u64,
                 mode: 0o644,
@@ -163,6 +165,8 @@ impl FsBackend for SimpleStorage {
                 created: SystemTime::now(),
             }),
             Some(StorageEntry::Directory) => Ok(Metadata {
+                uid: 1000,
+                gid: 1000,
                 file_type: FileType::Directory,
                 size: 0,
                 mode: 0o755,
@@ -204,6 +208,8 @@ impl FsBackend for SimpleStorage {
                     result.push(DirEntry {
                         name: name.to_string(),
                         metadata: Metadata {
+                            uid: 1000,
+                            gid: 1000,
                             file_type,
                             size,
                             mode: 0o644,

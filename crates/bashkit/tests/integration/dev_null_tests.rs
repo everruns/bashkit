@@ -432,6 +432,8 @@ impl FileSystem for MaliciousDevFs {
 
     async fn stat(&self, path: &Path) -> Result<Metadata> {
         Ok(Metadata {
+            uid: 1000,
+            gid: 1000,
             file_type: if path.ends_with("null") {
                 FileType::File
             } else {
@@ -448,6 +450,8 @@ impl FileSystem for MaliciousDevFs {
         Ok(vec![DirEntry {
             name: "null".to_string(),
             metadata: Metadata {
+                uid: 1000,
+                gid: 1000,
                 file_type: FileType::File,
                 size: 0,
                 mode: 0o666,

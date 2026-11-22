@@ -116,6 +116,18 @@ const out = await bash.execute('echo "{ me { id } }" | graphql | jq .data');
 console.log(out.stdout);
 ```
 
+Custom callbacks may return stdout as a string or
+`{ stdout?: string, stderr?: string, exitCode?: number }`, directly or via a
+Promise. Omitted streams are empty and status defaults to 0. For example,
+`customBuiltins: { check: () => ({ exitCode: 1 }) }` makes
+`check; echo $?` print `1` with no stderr. Status drives normal shell control
+flow; throwing still reports an error and status 1.
+
+Host filesystem `stat` and `readDir` metadata may include optional unsigned
+32-bit `uid` and `gid` values. They default to sandbox ID 1000; `-O` and `-G`
+compare explicit owners against that fixed sandbox identity. Metadata does
+not enable file permission enforcement.
+
 ## Caveats
 
 - It's a `wasm-bindgen` module: it runs in any **JavaScript** host but **not** a

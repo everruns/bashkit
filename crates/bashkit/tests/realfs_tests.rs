@@ -9,6 +9,40 @@
 use bashkit::{Bash, BashBuilder};
 use std::path::Path;
 
+#[cfg(unix)]
+#[tokio::test]
+async fn realfs_reports_host_ownership() {
+    use bashkit::{FileSystem, PosixFs, RealFs, RealFsMode};
+    use std::os::unix::fs::MetadataExt;
+    use std::sync::Arc;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("file");
+    std::fs::write(&path, b"data").unwrap();
+    let expected = std::fs::metadata(path).unwrap();
+    let fs = Arc::new(PosixFs::new(
+        RealFs::open(dir.path(), RealFsMode::ReadOnly)
+            .await
+            .unwrap(),
+    ));
+    let meta = fs.stat(Path::new("/file")).await.unwrap();
+    assert_eq!((meta.uid, meta.gid), (expected.uid(), expected.gid()));
+    let owner = i32::from(meta.uid != 1000);
+    let group = i32::from(meta.gid != 1000);
+    let mut bash = Bash::builder().fs(fs).build();
+    let result = bash
+        .exec(
+            "id -u; [ -O /file ]; echo $?; [ -G /file ]; echo $?; \
+         [[ -O /file ]]; echo $?; [[ -G /file ]]; echo $?",
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        result.stdout,
+        format!("1000\n{owner}\n{group}\n{owner}\n{group}\n")
+    );
+    assert!(result.stderr.is_empty());
+}
+
 #[cfg(windows)]
 mod windows_containment {
     use super::*;

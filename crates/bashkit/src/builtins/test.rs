@@ -456,11 +456,15 @@ async fn evaluate_unary(op: &str, arg: &str, env: &Env<'_>) -> TestResult {
             let path = resolve_file_path(cwd, arg);
             Ok(fs.stat(&path).await.is_ok_and(|meta| meta.mode & bit != 0))
         }
-        // Owned by the effective user / group: the sandbox user owns every
-        // file, so this is "exists".
         "-O" | "-G" => {
             let path = resolve_file_path(cwd, arg);
-            Ok(fs.exists(&path).await.unwrap_or(false))
+            Ok(fs.stat(&path).await.is_ok_and(|meta| {
+                if op == "-O" {
+                    meta.uid == super::system::SANDBOX_UID
+                } else {
+                    meta.gid == super::system::SANDBOX_GID
+                }
+            }))
         }
         "-S" => Ok(false), // socket (not supported)
         "-b" => Ok(false), // block device (not supported)

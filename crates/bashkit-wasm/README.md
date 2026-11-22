@@ -79,8 +79,25 @@ const out = await bash.execute('echo "{ me { id } }" | graphql | jq .data');
 console.log(out.stdout);
 ```
 
-`ctx` is `{ name, argv, stdin, env, cwd, fs }`. Return the builtin's stdout as a
-string (or a `Promise<string>`); throwing becomes stderr with exit code 1.
+`ctx` is `{ name, argv, stdin, env, cwd, fs }`. Return stdout as a string, or
+`{ stdout, stderr, exitCode }` with optional fields defaulting to empty streams
+and status 0. Either result can be returned via a Promise. Nonzero status drives
+`$?`, `if`, `&&`/`||`, and `set -e` without generating a diagnostic; throwing
+still becomes stderr with exit code 1.
+
+```js
+const bash = new Bash({
+  customBuiltins: { check: () => ({ exitCode: 1 }) },
+});
+await bash.execute('check; echo $?'); // stdout: "1\n", stderr: ""
+```
+
+Host filesystem `stat` and `readDir` entries may also report `uid` and `gid`
+(unsigned 32-bit integers, default 1000). Ownership tests `-O` and `-G` compare
+them against sandbox user/group 1000; this does not enable permission enforcement.
+Omitting these fields preserves the single-user model. Supplying a negative,
+fractional, non-finite, non-numeric or out-of-range ID fails the metadata operation.
+Extra properties on a structured custom-builtin result are ignored.
 
 `ctx.fs` is a live handle to the **same** virtual filesystem the script sees, so
 a builtin can read inputs and write outputs that later commands pick up:

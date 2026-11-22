@@ -292,6 +292,8 @@ fn parse_metadata(value: &JsValue) -> Option<Metadata> {
     let default_mode = if file_type.is_dir() { 0o755 } else { 0o644 };
     Some(Metadata {
         file_type,
+        uid: owner_id(value, "uid")?,
+        gid: owner_id(value, "gid")?,
         size: get(value, "size").and_then(|v| v.as_f64()).unwrap_or(0.0) as u64,
         mode: get(value, "mode")
             .and_then(|v| v.as_f64())
@@ -301,6 +303,16 @@ fn parse_metadata(value: &JsValue) -> Option<Metadata> {
             .map_or_else(SystemTime::now, from_epoch_ms),
         created: SystemTime::now(),
     })
+}
+
+fn owner_id(value: &JsValue, key: &str) -> Option<u32> {
+    let value = get(value, key)?;
+    if value.is_undefined() {
+        return Some(1000);
+    }
+    let id = value.as_f64()?;
+    (id.is_finite() && id.fract() == 0.0 && (0.0..=u32::MAX as f64).contains(&id))
+        .then_some(id as u32)
 }
 
 fn from_epoch_ms(ms: f64) -> SystemTime {

@@ -144,6 +144,8 @@ impl NamespaceFsBuilder {
             mounts,
             synthetic_dirs,
             synthetic_metadata: Metadata {
+                uid: 1000,
+                gid: 1000,
                 file_type: FileType::Directory,
                 size: 0,
                 mode: 0o755,

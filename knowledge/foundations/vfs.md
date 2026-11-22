@@ -10,6 +10,18 @@ tags:
 
 # Virtual Filesystem Design
 
+`Metadata.uid` and `Metadata.gid` describe entry ownership; both default to the
+sandbox identity 1000. `test -O` / `-G` and `[[ -O ... ]]` / `[[ -G ... ]]`
+compare that metadata with the fixed sandbox user/group, rather than treating
+every existing host entry as owned. Ownership is descriptive, not permission
+enforcement. Existing backends that do not report owners retain the single-user
+model. Rust backends constructing `Metadata` literals must supply the new fields
+or use `..Metadata::default()`. The v1 filesystem ABI retains its existing layout
+and uses sandbox ownership when converting metadata.
+Unix `RealFs` reports real file owners, but tests still compare against the
+sandbox identity, not the embedding process's effective IDs. This deliberate
+divergence is recorded as L-FS-006 in [Limitations](../operations/limitations.md).
+
 ## Status
 Implemented
 

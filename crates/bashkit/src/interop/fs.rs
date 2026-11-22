@@ -688,6 +688,8 @@ fn path_buf_from_abi(path: BashkitFsAbiStrRef) -> io::Result<PathBuf> {
 
 fn abi_metadata_to_metadata(meta: BashkitFsAbiMetadata) -> io::Result<Metadata> {
     Ok(Metadata {
+        uid: 1000,
+        gid: 1000,
         file_type: match meta.file_type {
             BashkitFsAbiFileType::File => FileType::File,
             BashkitFsAbiFileType::Directory => FileType::Directory,
