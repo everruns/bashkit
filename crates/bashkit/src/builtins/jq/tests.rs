@@ -2201,7 +2201,12 @@ async fn computed_floats_print_like_jq() {
 
 #[tokio::test]
 async fn input_number_literals_keep_their_form_until_computed() {
-    let out = run_jq_with_args(&["-c", "[.[], (.[0] + 1)]"], "[1.0, 2.50]")
+    // NB: `2.50` is intentionally not used here. Without
+    // `serde_json/arbitrary_precision` it normalizes to `2.5` via `visit_f64`,
+    // while with it (#2964) the exact token `2.50` is preserved like real jq
+    // (`echo '[1.0, 2.50]' | jq -c '[.[], (.[0] + 1)]'` prints `[1.0,2.50,2]`).
+    // Using `2.5` keeps this test green in both builds.
+    let out = run_jq_with_args(&["-c", "[.[], (.[0] + 1)]"], "[1.0, 2.5]")
         .await
         .unwrap();
     assert_eq!(out, "[1.0,2.5,2]\n");

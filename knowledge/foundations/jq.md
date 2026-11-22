@@ -52,6 +52,23 @@ reported verbatim, not as a generic parse error.
 `--stream` emits keys and duplicate-key events in encounter order directly from
 tokens, without constructing an object tree.
 
+## Number precision
+
+We do not enable `serde_json/arbitrary_precision` because it changes `Number`
+semantics crate-wide. Cargo feature unification can still turn it on when
+another crate in the build enables it. With it on, non-integer numbers no
+longer arrive via `visit_f64`; they arrive as a single-entry map with the
+private key `$serde_json::private::Number` whose value is the number text.
+`JqSeed::visit_map` detects that shape only when the build actually enabled
+the feature (detected once at runtime via `"2.50"` round-trip) and returns
+`JqJson::Number` with the exact text, so `jq` input, `--argjson`, `--jsonargs`,
+and streams keep working in either build. A real single-entry object with that
+private key stays an `Object` when the feature is off; with it on, the two are
+indistinguishable (same as `serde_json::Value`) and it becomes a `Number`.
+With the feature on, the exact token is preserved (for
+example `2.50` stays `2.50`, matching real jq); without it, floats normalize
+through `f64` (for example `2.50` becomes `2.5`).
+
 ## Resource accounting
 
 Normalization is a bounded single pass per requested value/token. It charges input length to the shared
@@ -89,6 +106,12 @@ stdin/file/slurpfile paths, exact work/live-memory boundaries, debug-leak
 invariants, and differential filter/output semantics against real jq.
 `spec_cases/jq/jq.test.sh` `jq_object_key_order_*` cases pin key order for
 input, `del`, duplicate keys, `-S`, `--argjson` and `--slurpfile`.
+`builtins::jq::convert::tests::arbitrary_precision_number_shape_becomes_number`
+pins the private-token map shape (forced on, so green in any build),
+`token_led_object_with_second_key_stays_object` pins the two-entry fall-through,
+and `single_entry_token_object_matches_build_mode` pins that a single-entry
+private-token object stays an `Object` without the feature and becomes a
+`Number` with it.
 `builtins::json::tests::literal_control_in_string_remains_invalid_json` proves
 the exception does not cross into the strict `json` builtin.
 
