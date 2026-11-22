@@ -44,7 +44,6 @@
 mod arithmetic;
 #[macro_use]
 mod command_dispatch;
-use command_dispatch::{ListCommands, PlainCommands};
 mod brace_expansion;
 mod completion;
 mod coproc;
@@ -8448,232 +8447,19 @@ impl Interpreter {
     #[allow(unused_assignments)] // control_flow may be set but overwritten
     /// `route`: this list is a top-level command; route each element's output
     /// through the `exec` fd table as it finishes (see `route_top_list`).
-    fn execute_list<'a>(
-        &'a mut self,
-        list: &'a CommandList,
-        route: bool,
-    ) -> impl std::future::Future<Output = Result<ExecResult>> + Send + 'a {
-        self.execute_list_with_commands(list, route, PlainCommands)
+    async fn execute_list(&mut self, list: &CommandList, route: bool) -> Result<ExecResult> {
+        list_body!(plain, self, list, route)
     }
 
+    #[cfg(feature = "experimental_execution_plan")]
     #[allow(unused_assignments)]
-    async fn execute_list_with_commands<R: ListCommands + Send>(
+    async fn execute_prepared_list(
         &mut self,
         list: &CommandList,
         route: bool,
-        commands: R,
+        commands: script_plan::PreparedCommands<'_, '_>,
     ) -> Result<ExecResult> {
-        let mut stdout = crate::StreamData::new();
-        let mut stderr = crate::StreamData::new();
-        let mut exit_code;
-        let mut control_flow;
-        let mut exit_code_from_conditional_context = false;
-
-        // Determine if the first command should run in the background.
-        // The `&` terminator for first appears as rest[0].op == Background.
-        let first_is_bg = matches!(list.rest.first(), Some((ListOperator::Background, _)));
-
-        if first_is_bg {
-            // Boxed: the job path holds a forked Interpreter across an await,
-            // which would otherwise bloat every recursive execute_list frame.
-            Box::pin(self.spawn_in_background(&list.first, &mut stdout, &mut stderr)).await?;
-            exit_code = 0;
-            control_flow = ControlFlow::None;
-            exit_code_from_conditional_context = false;
-        } else {
-            let emit_before = self.output_emit_count;
-            let emitted_before = (
-                self.output_stream_stdout_bytes,
-                self.output_stream_stderr_bytes,
-            );
-            self.sequence_accum = (0, 0);
-            // A non-final `&&`/`||` element runs with errexit ignored.
-            let conditional = list
-                .rest
-                .first()
-                .is_some_and(|(op, _)| matches!(op, ListOperator::And | ListOperator::Or));
-            self.condition_sequence_depth += usize::from(conditional);
-            let result = commands.execute(self, &list.first, 0).await;
-            self.condition_sequence_depth -= usize::from(conditional);
-            let mut result = result?;
-            if route {
-                Box::pin(self.route_exec_output(
-                    &mut result,
-                    emitted_before,
-                    (0, 0),
-                    Self::command_name(&list.first),
-                ))
-                .await?;
-            }
-            if self.merge_stderr {
-                Self::merge_stderr_into_stdout(&mut result);
-            }
-            self.maybe_emit_output(&result.stdout, &result.stderr, emit_before)
-                .await?;
-            if route {
-                Box::pin(self.flush_exec_passthrough(&mut result)).await?;
-            }
-            if self.retain_streamed_output() {
-                stdout.append(&result.stdout);
-                stderr.append(&result.stderr);
-            }
-            exit_code = result.exit_code;
-            self.last_exit_code = exit_code;
-            control_flow = result.control_flow;
-            exit_code_from_conditional_context = result.errexit_suppressed
-                || list
-                    .rest
-                    .first()
-                    .is_some_and(|(op, _)| matches!(op, ListOperator::And | ListOperator::Or));
-
-            // If first command signaled control flow, return immediately
-            if control_flow != ControlFlow::None {
-                return Ok(ExecResult {
-                    stdout,
-                    stderr,
-                    exit_code,
-                    control_flow,
-                    ..Default::default()
-                });
-            }
-        }
-
-        for (i, (op, cmd)) in list.rest.iter().enumerate() {
-            // Skip empty sentinel commands (produced by trailing `&`)
-            if Self::is_empty_sentinel(cmd) {
-                continue;
-            }
-
-            // Check if this command is followed by another && / || operator.
-            // POSIX `errexit` suppression applies to non-final commands in an
-            // AND-OR list; the final executed command can still abort on failure.
-            let current_is_conditional = matches!(op, ListOperator::And | ListOperator::Or);
-
-            // Determine if THIS command should be backgrounded.
-            // A command is backgrounded when the NEXT separator is Background
-            // (the `&` terminates the current command).
-            let should_background =
-                matches!(list.rest.get(i + 1), Some((ListOperator::Background, _)));
-
-            // Check errexit before executing next semicolon-separated command:
-            // if previous command failed outside conditional context, exit now.
-            let should_check_errexit = matches!(op, ListOperator::Semicolon)
-                && self.errexit_active()
-                && exit_code != 0
-                && !exit_code_from_conditional_context;
-
-            if should_check_errexit {
-                return Ok(ExecResult {
-                    stdout,
-                    stderr,
-                    exit_code,
-                    control_flow: ControlFlow::None,
-                    ..Default::default()
-                });
-            }
-
-            let should_execute = match op {
-                ListOperator::And => exit_code == 0,
-                ListOperator::Or => exit_code != 0,
-                ListOperator::Semicolon | ListOperator::Background => true,
-            };
-
-            if !should_execute && current_is_conditional {
-                // Short-circuited && / ||: the carried exit code came from
-                // a conditional chain, so errexit must not fire on it.
-                exit_code_from_conditional_context = true;
-            }
-
-            if should_execute {
-                if should_background {
-                    Box::pin(self.spawn_in_background(cmd, &mut stdout, &mut stderr)).await?;
-                    exit_code = 0;
-                    exit_code_from_conditional_context = false;
-                } else {
-                    let emit_before = self.output_emit_count;
-                    let emitted_before = (
-                        self.output_stream_stdout_bytes,
-                        self.output_stream_stderr_bytes,
-                    );
-                    self.sequence_accum = (stdout.len(), stderr.len());
-                    let followed_by_conditional_op =
-                        list.rest.get(i + 1).is_some_and(|(op, cmd)| {
-                            !Self::is_empty_sentinel(cmd)
-                                && matches!(op, ListOperator::And | ListOperator::Or)
-                        });
-                    self.condition_sequence_depth += usize::from(followed_by_conditional_op);
-                    let result = commands.execute(self, cmd, i + 1).await;
-                    self.condition_sequence_depth -= usize::from(followed_by_conditional_op);
-                    let mut result = result?;
-                    if route {
-                        Box::pin(self.route_exec_output(
-                            &mut result,
-                            emitted_before,
-                            (0, 0),
-                            Self::command_name(cmd),
-                        ))
-                        .await?;
-                    }
-                    if self.merge_stderr {
-                        Self::merge_stderr_into_stdout(&mut result);
-                    }
-                    self.maybe_emit_output(&result.stdout, &result.stderr, emit_before)
-                        .await?;
-                    if route {
-                        Box::pin(self.flush_exec_passthrough(&mut result)).await?;
-                    }
-                    if self.retain_streamed_output() {
-                        stdout.append(&result.stdout);
-                        stderr.append(&result.stderr);
-                    }
-                    exit_code = result.exit_code;
-                    self.last_exit_code = exit_code;
-                    control_flow = result.control_flow;
-                    // Bash suppresses errexit for AND-OR list elements except the
-                    // command following the final &&/|| operator.
-                    exit_code_from_conditional_context =
-                        followed_by_conditional_op || result.errexit_suppressed;
-
-                    // If command signaled control flow, return immediately
-                    if control_flow != ControlFlow::None {
-                        return Ok(ExecResult {
-                            stdout,
-                            stderr,
-                            exit_code,
-                            control_flow,
-                            ..Default::default()
-                        });
-                    }
-                }
-            }
-        }
-
-        // Final errexit check for the last command. A non-zero status only
-        // remains suppressed when it was carried from a short-circuited or
-        // non-final AND-OR list element; a failing final &&/|| command exits.
-        let should_final_errexit_check = self.errexit_active()
-            && exit_code != 0
-            && !exit_code_from_conditional_context
-            && !self.is_in_condition_sequence();
-
-        if should_final_errexit_check {
-            return Ok(ExecResult {
-                stdout,
-                stderr,
-                exit_code,
-                control_flow: ControlFlow::None,
-                ..Default::default()
-            });
-        }
-
-        Ok(ExecResult {
-            stdout,
-            stderr,
-            exit_code,
-            control_flow: ControlFlow::None,
-            errexit_suppressed: exit_code_from_conditional_context && exit_code != 0,
-            ..Default::default()
-        })
+        list_body!(prepared, self, list, route, commands)
     }
 
     /// Process variable assignments from a command's prefix (e.g. `VAR=val cmd`).

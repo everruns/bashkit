@@ -34,10 +34,25 @@ pub(super) struct ProgramRef<'p, 's> {
 
 struct Builder<'b, 's> {
     budget: &'b crate::limits::ExecutionBudget,
-    storage: crate::limits::ExecutionBudgetLease,
     used: usize,
     admitted: usize,
     ops: Vec<Instruction<'s>>,
+    #[cfg(test)]
+    _after_buffers: Option<AfterBuffers>,
+    // Rust drops fields in declaration order: release admission only after
+    // all owning buffers (including partially lowered regions) are destroyed.
+    storage: crate::limits::ExecutionBudgetLease,
+}
+
+#[cfg(test)]
+struct AfterBuffers(Option<Box<dyn FnOnce() + Send>>);
+#[cfg(test)]
+impl Drop for AfterBuffers {
+    fn drop(&mut self) {
+        if let Some(check) = self.0.take() {
+            check();
+        }
+    }
 }
 impl Builder<'_, '_> {
     fn reserve(&mut self, bytes: usize) -> Result<bool> {
@@ -218,6 +233,8 @@ impl<'s> ScriptPlan<'s> {
             used: bytes,
             admitted: bytes,
             ops: Vec::with_capacity(capacity),
+            #[cfg(test)]
+            _after_buffers: None,
         };
         let commands = script
             .commands
@@ -454,7 +471,7 @@ impl Interpreter {
             };
             let route = std::mem::take(&mut self.route_top_list);
             let result = self
-                .execute_list_with_commands(
+                .execute_prepared_list(
                     list,
                     route,
                     PreparedCommands {
@@ -594,6 +611,33 @@ impl Interpreter {
 #[cfg(all(test, not(feature = "failpoints")))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn builder_reservation_outlives_buffer_destruction() {
+        let budget = crate::limits::ExecutionBudget::new(
+            &ExecutionLimits::new(),
+            Arc::new(AtomicBool::new(false)),
+        );
+        let observed = Arc::new(std::sync::atomic::AtomicU64::new(u64::MAX));
+        let observer = observed.clone();
+        let shared = budget.clone();
+        let builder = Builder {
+            budget: &budget,
+            storage: budget.try_lease_plan(1024).unwrap().unwrap(),
+            used: 1024,
+            admitted: 1024,
+            ops: Vec::with_capacity(8),
+            _after_buffers: Some(AfterBuffers(Some(Box::new(move || {
+                observer.store(shared.live_bytes_for_test(), Ordering::Relaxed);
+            })))),
+        };
+        drop(builder);
+        assert!(
+            observed.load(Ordering::Relaxed) > 0,
+            "buffers must be released before their admission lease"
+        );
+        assert_eq!(budget.live_bytes_for_test(), 0);
+    }
 
     #[test]
     fn automatic_policy_skips_short_scripts_and_keeps_general_regions() {
@@ -768,14 +812,14 @@ mod tests {
     }
 }
 
-// A borrowed selector exists only in prepared lists. Ordinary lists use a
-// zero-sized PlainCommands selector and carry no plan reference in their future.
-struct PreparedCommands<'p, 's> {
+// A borrowed selector exists only in prepared lists. Ordinary list futures use
+// the original direct command calls and carry no selector or plan reference.
+pub(super) struct PreparedCommands<'p, 's> {
     children: &'p [Option<Program<'s>>],
     ops: &'p [Instruction<'s>],
 }
-impl ListCommands for PreparedCommands<'_, '_> {
-    fn execute<'a>(
+impl PreparedCommands<'_, '_> {
+    pub(super) fn execute<'a>(
         &'a self,
         shell: &'a mut Interpreter,
         command: &'a Command,
