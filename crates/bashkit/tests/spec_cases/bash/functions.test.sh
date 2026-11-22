@@ -239,3 +239,13 @@ f
 ### expect
 1 main main
 ### end
+
+### func_bracket_overrides_builtin
+[() { echo override; return 7; }; [ x ]; echo status=$?
+unset -f '['
+[ x ]; echo builtin=$?
+### expect
+override
+status=7
+builtin=0
+### end

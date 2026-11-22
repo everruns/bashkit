@@ -472,6 +472,13 @@ fn file_type_from_std(ft: std::fs::FileType) -> FileType {
 }
 
 fn metadata_from_std(m: &std::fs::Metadata) -> Metadata {
+    #[cfg(unix)]
+    let (uid, gid) = {
+        use std::os::unix::fs::MetadataExt;
+        (m.uid(), m.gid())
+    };
+    #[cfg(not(unix))]
+    let (uid, gid) = (1000, 1000);
     let file_type = file_type_from_std(m.file_type());
     let size = if file_type.is_dir() { 0 } else { m.len() };
     #[cfg(unix)]
@@ -486,6 +493,8 @@ fn metadata_from_std(m: &std::fs::Metadata) -> Metadata {
         0o644
     };
     Metadata {
+        uid,
+        gid,
         file_type,
         size,
         mode,

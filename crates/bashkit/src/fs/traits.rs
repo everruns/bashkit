@@ -592,6 +592,10 @@ pub struct Metadata {
     pub size: u64,
     /// Unix permission mode (e.g., `0o644` for files, `0o755` for directories).
     pub mode: u32,
+    /// Owner user ID. Defaults to the sandbox user (1000).
+    pub uid: u32,
+    /// Owner group ID. Defaults to the sandbox group (1000).
+    pub gid: u32,
     /// Last modification time.
     pub modified: SystemTime,
     /// Creation time.
@@ -604,6 +608,8 @@ impl Default for Metadata {
             file_type: FileType::File,
             size: 0,
             mode: 0o644,
+            uid: 1000,
+            gid: 1000,
             modified: SystemTime::now(),
             created: SystemTime::now(),
         }
@@ -819,6 +825,8 @@ mod tests {
     fn metadata_custom_fields() {
         let now = SystemTime::now();
         let m = Metadata {
+            uid: 1000,
+            gid: 1000,
             file_type: FileType::Directory,
             size: 4096,
             mode: 0o755,
@@ -857,6 +865,8 @@ mod tests {
         let entry = DirEntry {
             name: "subdir".into(),
             metadata: Metadata {
+                uid: 1000,
+                gid: 1000,
                 file_type: FileType::Directory,
                 size: 0,
                 mode: 0o755,

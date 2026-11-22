@@ -95,6 +95,8 @@ impl FileSystem for MinimalFs {
         if let Some(content) = files.get(&path) {
             let is_dir = content.is_empty();
             Ok(Metadata {
+                uid: 1000,
+                gid: 1000,
                 file_type: if is_dir {
                     FileType::Directory
                 } else {
@@ -157,6 +159,8 @@ impl FileSystem for MinimalFs {
                     entries.push(DirEntry {
                         name: name.to_string(),
                         metadata: Metadata {
+                            uid: 1000,
+                            gid: 1000,
                             file_type: if is_dir {
                                 FileType::Directory
                             } else {
@@ -251,6 +255,8 @@ async fn test_custom_fs_exports_available() {
     let _: fn() -> FileType = || FileType::Symlink;
 
     let metadata = Metadata {
+        uid: 1000,
+        gid: 1000,
         file_type: FileType::File,
         size: 0,
         mode: 0o644,

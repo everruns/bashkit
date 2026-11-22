@@ -269,7 +269,9 @@ pub use split::Split;
 pub use strings::Strings;
 pub use sysextra::{Arch, Free, Getconf, Hostid, RunAs, SyncCmd, Tty, Uptime, UserInfo};
 pub use system::{DEFAULT_HOSTNAME, DEFAULT_USERNAME, Hostname, Id, Nproc, Uname, Whoami};
-pub(crate) use system::{VIRTUAL_KERNEL_RELEASE, VIRTUAL_KERNEL_VERSION, VIRTUAL_NPROC};
+pub(crate) use system::{
+    SANDBOX_GID, SANDBOX_UID, VIRTUAL_KERNEL_RELEASE, VIRTUAL_KERNEL_VERSION, VIRTUAL_NPROC,
+};
 pub use template::Template;
 pub use test::{Bracket, Test};
 pub use textrev::{Rev, Tac};

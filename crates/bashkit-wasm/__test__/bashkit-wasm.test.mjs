@@ -24,6 +24,37 @@ await initBashkit(wasmBytes);
 
 // --- Sync execution --------------------------------------------------------
 
+test("compat: bracket function overrides the builtin", () => {
+  const bash = new Bash();
+  const r = bash.executeSync('[() { echo override; return 7; }; [ x ]; echo status=$?');
+  assert.equal(r.stdout, "override\nstatus=7\n");
+  assert.equal(r.stderr, "");
+});
+
+test("compat: structured builtin results preserve output and status", async () => {
+  for (const asyncCallback of [false, true]) {
+    const result = { stdout: "out\n", stderr: "err\n", exitCode: 7 };
+    const bash = new Bash({
+      customBuiltins: { probe: asyncCallback ? async () => result : () => result },
+    });
+    const r = await bash.execute('probe; echo status=$?; probe && echo wrong || echo failed');
+    assert.equal(r.stdout, "out\nstatus=7\nout\nfailed\n");
+    assert.equal(r.stderr, "err\nerr\n");
+    assert.equal((await bash.execute('probe')).exitCode, 7);
+    if (!asyncCallback) assert.equal(bash.executeSync('probe').exitCode, 7);
+    const stopped = await bash.execute('set -e; probe; echo unreachable');
+    assert.equal(stopped.exitCode, 7);
+    assert.equal(stopped.stdout, "out\n");
+  }
+});
+
+test("compat: false custom test is silent and drives shell control flow", async () => {
+  const bash = new Bash({ customBuiltins: { '[': () => ({ stdout: undefined, stderr: undefined, exitCode: 1 }) } });
+  const r = await bash.execute('[ x ]; echo status=$?; if [ x ]; then echo wrong; else echo false; fi');
+  assert.equal(r.stdout, "status=1\nfalse\n");
+  assert.equal(r.stderr, "");
+});
+
 test("sync: pipes and text tools", () => {
   const bash = new Bash();
   const r = bash.executeSync('echo "hello world" | tr a-z A-Z');
@@ -68,6 +99,15 @@ test("sync: binary stdout bytes are exact", () => {
 });
 
 // --- Child shell (bash / sh builtin) ---------------------------------------
+test("compat: invalid builtin results fail with a plain diagnostic", async () => {
+  for (const result of [null, 7, { exitCode: 1.5 }, { exitCode: NaN }, { stdout: 7 }]) {
+    const bash = new Bash({ customBuiltins: { probe: () => result } });
+    const r = await bash.execute('probe');
+    assert.equal(r.exitCode, 1);
+    assert.match(r.stderr, /^probe: expected a stdout string or/);
+  }
+});
+
 // Regression: the bash/sh builtin re-parses its child script. On
 // wasm32-unknown-unknown that parse must run inline — the native path wraps it
 // in tokio::time::timeout + spawn_blocking, whose timer calls std::time, which

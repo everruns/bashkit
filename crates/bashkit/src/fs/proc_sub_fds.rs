@@ -172,6 +172,8 @@ impl ProcSubFs {
 
     fn pipe_metadata() -> Metadata {
         Metadata {
+            uid: 1000,
+            gid: 1000,
             file_type: FileType::Fifo,
             size: 0,
             mode: 0o600,

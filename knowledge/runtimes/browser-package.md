@@ -190,6 +190,20 @@ a later microtask so the suspend/resume path is the one under test.
 
 ## Execution model
 
+Custom builtins return a stdout string or a `BuiltinResult` object with optional
+`stdout`, `stderr`, and `exitCode` fields (empty streams and status 0 by default),
+directly or via a Promise. Explicit nonzero status reaches `$?`, conditionals,
+AND/OR lists and errexit without throwing or generating a diagnostic. Throwing
+still produces stderr and status 1. Invalid result shapes fail with a plain
+diagnostic rather than silently succeeding. Live `commands` continue to accept
+numeric statuses and `{ exitCode }`.
+
+Host `stat` and directory metadata accept optional integer `uid`/`gid` in the
+unsigned 32-bit range. Omitted values default to sandbox ID 1000; malformed
+values reject the metadata instead of truncating or implying ownership.
+The async host-filesystem suite covers independent owner/group comparisons,
+missing entries and omitted/invalid IDs.
+
 `wasm32-unknown-unknown` is single-threaded; the whole future chain runs on the
 browser's one event loop. Two entry points:
 

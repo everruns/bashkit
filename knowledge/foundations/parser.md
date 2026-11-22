@@ -66,6 +66,11 @@ Bash/POSIX `-p` plus `--` and the practical GNU report flags `-f/--format`,
 
 ### Context-Aware Lexing
 
+**Bracket command functions.** Unquoted parentheses terminate a bracket-prefixed
+word outside extglobs, so `[() { ...; }` defines the `[` function just like
+`function [ { ...; }`. Normal function lookup overrides the test builtin;
+`unset -f '['` restores it. The functions spec covers both dispatch and status.
+
 **Parameter subscript boundaries.** Parameter parsing, preliminary braced-name
 validation, and indirect-target admission use one subscript scanner. Quotes,
 ordinary and lexer-sentinel escapes, nested brackets, and braced expansions

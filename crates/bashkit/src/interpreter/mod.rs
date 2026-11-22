@@ -6094,6 +6094,13 @@ impl Interpreter {
                         "-r" | "-w" | "-x" => {
                             self.fs.exists(&resolve(&args[1])).await.unwrap_or(false)
                         }
+                        "-O" | "-G" => self.fs.stat(&resolve(&args[1])).await.is_ok_and(|meta| {
+                            if args[0] == "-O" {
+                                meta.uid == builtins::SANDBOX_UID
+                            } else {
+                                meta.gid == builtins::SANDBOX_GID
+                            }
+                        }),
                         "-s" => self
                             .fs
                             .stat(&resolve(&args[1]))

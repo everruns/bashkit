@@ -452,6 +452,8 @@ impl InMemoryFs {
             PathBuf::from("/"),
             FsEntry::Directory {
                 metadata: Metadata {
+                    uid: 1000,
+                    gid: 1000,
                     file_type: FileType::Directory,
                     size: 0,
                     mode: 0o755,
@@ -467,6 +469,8 @@ impl InMemoryFs {
                 PathBuf::from(dir),
                 FsEntry::Directory {
                     metadata: Metadata {
+                        uid: 1000,
+                        gid: 1000,
                         file_type: FileType::Directory,
                         size: 0,
                         // `/tmp` is world-writable and sticky, as on Linux.
@@ -485,6 +489,8 @@ impl InMemoryFs {
             FsEntry::File {
                 content: Vec::new(),
                 metadata: Metadata {
+                    uid: 1000,
+                    gid: 1000,
                     file_type: FileType::File,
                     size: 0,
                     mode: 0o666,
@@ -501,6 +507,8 @@ impl InMemoryFs {
                 FsEntry::File {
                     content: Vec::new(),
                     metadata: Metadata {
+                        uid: 1000,
+                        gid: 1000,
                         file_type: FileType::File,
                         size: 0,
                         mode: 0o666,
@@ -516,6 +524,8 @@ impl InMemoryFs {
             PathBuf::from("/dev/fd"),
             FsEntry::Directory {
                 metadata: Metadata {
+                    uid: 1000,
+                    gid: 1000,
                     file_type: FileType::Directory,
                     size: 0,
                     mode: 0o755,
@@ -818,6 +828,8 @@ impl InMemoryFs {
                         FsEntry::File {
                             content: content.clone(),
                             metadata: Metadata {
+                                uid: 1000,
+                                gid: 1000,
                                 file_type: FileType::File,
                                 size: content.len() as u64,
                                 mode: entry.mode,
@@ -832,6 +844,8 @@ impl InMemoryFs {
                         entry.path.clone(),
                         FsEntry::Directory {
                             metadata: Metadata {
+                                uid: 1000,
+                                gid: 1000,
                                 file_type: FileType::Directory,
                                 size: 0,
                                 mode: entry.mode,
@@ -847,6 +861,8 @@ impl InMemoryFs {
                         FsEntry::Symlink {
                             target: target.clone(),
                             metadata: Metadata {
+                                uid: 1000,
+                                gid: 1000,
                                 file_type: FileType::Symlink,
                                 size: 0,
                                 mode: entry.mode,
@@ -862,6 +878,8 @@ impl InMemoryFs {
                         FsEntry::Fifo {
                             content: Vec::new(),
                             metadata: Metadata {
+                                uid: 1000,
+                                gid: 1000,
                                 file_type: FileType::Fifo,
                                 size: 0,
                                 mode: entry.mode,
@@ -938,6 +956,8 @@ impl InMemoryFs {
                         current.clone(),
                         FsEntry::Directory {
                             metadata: Metadata {
+                                uid: 1000,
+                                gid: 1000,
                                 file_type: FileType::Directory,
                                 size: 0,
                                 mode: 0o755,
@@ -955,6 +975,8 @@ impl InMemoryFs {
             FsEntry::File {
                 content: content.to_vec(),
                 metadata: Metadata {
+                    uid: 1000,
+                    gid: 1000,
                     file_type: FileType::File,
                     size: content.len() as u64,
                     mode,
@@ -977,6 +999,8 @@ impl InMemoryFs {
             FsEntry::Symlink {
                 target,
                 metadata: Metadata {
+                    uid: 1000,
+                    gid: 1000,
                     file_type: FileType::Symlink,
                     size,
                     mode: 0o777,
@@ -1039,6 +1063,8 @@ impl InMemoryFs {
                 current.clone(),
                 FsEntry::Directory {
                     metadata: Metadata {
+                        uid: 1000,
+                        gid: 1000,
                         file_type: FileType::Directory,
                         size: 0,
                         mode,
@@ -1104,6 +1130,8 @@ impl InMemoryFs {
                         current.clone(),
                         FsEntry::Directory {
                             metadata: Metadata {
+                                uid: 1000,
+                                gid: 1000,
                                 file_type: FileType::Directory,
                                 size: 0,
                                 mode: 0o755,
@@ -1121,6 +1149,8 @@ impl InMemoryFs {
             FsEntry::LazyFile {
                 loader,
                 metadata: Metadata {
+                    uid: 1000,
+                    gid: 1000,
                     file_type: FileType::File,
                     size: size_hint,
                     mode,
@@ -1301,6 +1331,8 @@ impl FileSystem for InMemoryFs {
                 FsEntry::Fifo {
                     content: content.to_vec(),
                     metadata: Metadata {
+                        uid: 1000,
+                        gid: 1000,
                         file_type: FileType::Fifo,
                         size: content.len() as u64,
                         mode: 0o644,
@@ -1315,6 +1347,8 @@ impl FileSystem for InMemoryFs {
                 FsEntry::File {
                     content: content.to_vec(),
                     metadata: Metadata {
+                        uid: 1000,
+                        gid: 1000,
                         file_type: FileType::File,
                         size: content.len() as u64,
                         mode: 0o644,
@@ -1370,6 +1404,8 @@ impl FileSystem for InMemoryFs {
                     FsEntry::File {
                         content: content.to_vec(),
                         metadata: Metadata {
+                            uid: 1000,
+                            gid: 1000,
                             file_type: FileType::File,
                             size: content.len() as u64,
                             mode: 0o644,
@@ -1512,6 +1548,8 @@ impl FileSystem for InMemoryFs {
                             current.clone(),
                             FsEntry::Directory {
                                 metadata: Metadata {
+                                    uid: 1000,
+                                    gid: 1000,
                                     file_type: FileType::Directory,
                                     size: 0,
                                     mode: 0o755,
@@ -1551,6 +1589,8 @@ impl FileSystem for InMemoryFs {
                 path,
                 FsEntry::Directory {
                     metadata: Metadata {
+                        uid: 1000,
+                        gid: 1000,
                         file_type: FileType::Directory,
                         size: 0,
                         mode: 0o755,
@@ -1837,6 +1877,8 @@ impl FileSystem for InMemoryFs {
             FsEntry::Symlink {
                 target: target.to_path_buf(),
                 metadata: Metadata {
+                    uid: 1000,
+                    gid: 1000,
                     file_type: FileType::Symlink,
                     size: target_size as u64,
                     mode: 0o777,
@@ -1952,6 +1994,8 @@ impl FileSystemExt for InMemoryFs {
             FsEntry::Fifo {
                 content: Vec::new(),
                 metadata: Metadata {
+                    uid: 1000,
+                    gid: 1000,
                     file_type: FileType::Fifo,
                     size: 0,
                     mode,

@@ -10,6 +10,18 @@ default; you grant access deliberately, never by accident.
 This is the foundation of the [security model](security.md): there is no real
 filesystem to escape to unless you mount one.
 
+## Ownership metadata
+
+File metadata carries numeric `uid` and `gid` ownership, defaulting to sandbox
+user/group 1000. `[ -O path ]` and `[ -G path ]` (also inside `[[ ... ]]`)
+compare the reported owner or group against that sandbox identity. Host-backed
+filesystems can supply different owners; Unix `RealFs` reports the host values.
+Ownership metadata does not enable permission enforcement.
+
+Rust custom filesystems constructing `Metadata` literals must include `uid` and
+`gid` or use `..Metadata::default()` for the sandbox defaults. Browser host
+`stat` objects accept optional `uid` and `gid` fields.
+
 ## Copying directory contents
 
 Use `cp -r source/. destination` to merge a directory's contents into an existing

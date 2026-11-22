@@ -160,6 +160,8 @@ impl StdStreamsFs {
 
     fn stream_metadata(&self) -> Metadata {
         Metadata {
+            uid: 1000,
+            gid: 1000,
             file_type: FileType::Fifo,
             size: 0,
             mode: 0o620,

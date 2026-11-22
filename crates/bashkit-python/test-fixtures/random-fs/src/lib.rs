@@ -51,6 +51,8 @@ impl SeededRandomFs {
         };
         let timestamp = UNIX_EPOCH + Duration::from_secs(self.seed % 86_400);
         Some(Metadata {
+            uid: 1000,
+            gid: 1000,
             file_type,
             size,
             mode: if file_type.is_dir() { 0o755 } else { 0o644 },

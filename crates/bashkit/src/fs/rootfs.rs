@@ -303,6 +303,8 @@ impl RootFs {
 
     fn stub_metadata(&self, name: &str) -> Metadata {
         Metadata {
+            uid: 1000,
+            gid: 1000,
             file_type: super::traits::FileType::File,
             size: stub(name).len() as u64,
             mode: 0o755,

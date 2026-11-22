@@ -149,7 +149,33 @@ class FakeHost {
 const hostBash = (host, options = {}) =>
   new Bash({ fs: host, cwd: "/workspace", ...options });
 
+test("compat: host ownership controls -O and -G independently", async () => {
+  const host = new FakeHost({ '/workspace/f': 'data' });
+  const originalStat = host.stat.bind(host);
+  for (const [uid, gid, expected] of [
+    [0, 0, '1:1'], [1000, 0, '0:1'], [0, 1000, '1:0'], [1000, 1000, '0:0'],
+    [undefined, undefined, '0:0'],
+  ]) {
+    host.stat = async (path) => ({ ...await originalStat(path), uid, gid });
+    const r = await hostBash(host).execute('[ -O f ]; o=$?; [ -G f ]; echo "$o:$?"; [[ -O f ]]; o=$?; [[ -G f ]]; echo "$o:$?"');
+    assert.equal(r.stdout, `${expected}\n${expected}\n`);
+    assert.equal(r.stderr, '');
+  }
+  const missing = await hostBash(host).execute('[ -O absent ]; echo $?; [ -G absent ]; echo $?; [[ -O absent ]]; echo $?; [[ -G absent ]]; echo $?');
+  assert.equal(missing.stdout, '1\n1\n1\n1\n');
+});
+
 // --- Reads and writes ------------------------------------------------------
+test("compat: invalid host owner IDs are rejected instead of truncated", async () => {
+  for (const uid of [-1, 0.5, NaN, Infinity, 2 ** 32, '1000', null]) {
+    const host = new FakeHost({ '/workspace/f': 'data' });
+    const stat = host.stat.bind(host);
+    host.stat = async (path) => ({ ...await stat(path), uid });
+    const r = await hostBash(host).execute('stat f');
+    assert.notEqual(r.exitCode, 0);
+  }
+});
+
 
 test("host fs: a redirect lands in the host store", async () => {
   const host = new FakeHost();

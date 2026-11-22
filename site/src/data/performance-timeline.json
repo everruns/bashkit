@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-20T20:33:29.000Z",
+  "generatedAt": "2026-11-22T02:07:33.000Z",
   "sources": {
     "bench": "crates/bashkit-bench/results/*.json",
     "criterion": "crates/bashkit/benches/results/*.md",
@@ -9,7 +9,7 @@
   },
   "summary": {
     "benchRuns": 13,
-    "criterionRuns": 21,
+    "criterionRuns": 22,
     "evalRuns": 58,
     "latestBench": {
       "id": "bench-79f1c12bcc44-linux-x86_64-1792175675",
@@ -2382,6 +2382,30 @@
       "bestChangePct": null,
       "fastestCase": null,
       "bestImprovement": null
+    },
+    {
+      "id": "criterion-parallel-shell-compat-macos-arm64-1795313253",
+      "kind": "criterion",
+      "family": "parallel",
+      "label": "Host shell compatibility: filesystem overhead",
+      "date": "2026-11-22",
+      "timestamp": "2026-11-22T02:07:33.000Z",
+      "source": "crates/bashkit/benches/results/criterion-parallel-shell-compat-macos-arm64-1795313253.md",
+      "reportSource": "crates/bashkit/benches/results/criterion-parallel-shell-compat-macos-arm64-1795313253.md",
+      "cases": 1,
+      "medianUs": 42.35,
+      "p95Us": 42.35,
+      "medianChangePct": 0.6,
+      "meanChangePct": 0.6,
+      "bestChangePct": 0.6,
+      "fastestCase": {
+        "name": "single_file_write_read",
+        "us": 42.35
+      },
+      "bestImprovement": {
+        "name": "single_file_write_read",
+        "changePct": 0.6
+      }
     }
   ],
   "evalRuns": [
@@ -10143,6 +10167,15 @@
       "detail": "72/88 tasks passed. Weakest category: error_handling (0%).",
       "metric": 81.8,
       "source": "crates/bashkit-eval/results/mira/20261120T203329Z-1c3d/report.json"
+    },
+    {
+      "date": "2026-11-22",
+      "timestamp": "2026-11-22T02:07:33.000Z",
+      "kind": "Criterion",
+      "title": "parallel",
+      "detail": "0.6% faster in single_file_write_read",
+      "metric": 0.6,
+      "source": "crates/bashkit/benches/results/criterion-parallel-shell-compat-macos-arm64-1795313253.md"
     }
   ]
 }

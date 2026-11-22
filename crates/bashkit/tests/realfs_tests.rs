@@ -9,6 +9,24 @@
 use bashkit::{Bash, BashBuilder};
 use std::path::Path;
 
+#[cfg(unix)]
+#[tokio::test]
+async fn realfs_reports_host_ownership() {
+    use bashkit::{FileSystem, PosixFs, RealFs, RealFsMode};
+    use std::os::unix::fs::MetadataExt;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("file");
+    std::fs::write(&path, b"data").unwrap();
+    let expected = std::fs::metadata(path).unwrap();
+    let fs = PosixFs::new(
+        RealFs::open(dir.path(), RealFsMode::ReadOnly)
+            .await
+            .unwrap(),
+    );
+    let meta = fs.stat(Path::new("/file")).await.unwrap();
+    assert_eq!((meta.uid, meta.gid), (expected.uid(), expected.gid()));
+}
+
 #[cfg(windows)]
 mod windows_containment {
     use super::*;

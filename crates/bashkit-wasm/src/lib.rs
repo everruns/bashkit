@@ -31,7 +31,7 @@ use bashkit::{
 };
 use futures_util::future::FutureExt;
 use send_wrapper::SendWrapper;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::{JsFuture, future_to_promise};
 
@@ -216,10 +216,18 @@ struct BuiltinRequest<'a> {
     cwd: String,
 }
 
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
+struct BuiltinResult {
+    stdout: Option<String>,
+    stderr: Option<String>,
+    exit_code: Option<i32>,
+}
+
 /// Adapts a JS callback into a bash `Builtin`.
 ///
 /// The callback receives one argument (a `BuiltinRequest` object) and returns
-/// either a `string` or a `Promise<string>` resolving to the builtin's stdout.
+/// a stdout string or `{ stdout?, stderr?, exitCode? }`, directly or via Promise.
 /// Throwing / rejecting becomes stderr with exit code 1.
 struct JsBuiltin {
     name: String,
@@ -302,7 +310,24 @@ impl Builtin for JsBuiltin {
             Err(v) => v,
         };
 
-        Ok(CoreExecResult::ok(resolved.as_string().unwrap_or_default()))
+        if let Some(stdout) = resolved.as_string() {
+            return Ok(CoreExecResult::ok(stdout));
+        }
+        match serde_wasm_bindgen::from_value::<BuiltinResult>(resolved) {
+            Ok(result) => Ok(CoreExecResult {
+                stdout: result.stdout.unwrap_or_default().into(),
+                stderr: result.stderr.unwrap_or_default().into(),
+                exit_code: result.exit_code.unwrap_or_default(),
+                ..CoreExecResult::default()
+            }),
+            Err(_) => Ok(CoreExecResult::err(
+                format!(
+                    "{}: expected a stdout string or {{ stdout?, stderr?, exitCode? }} result\n",
+                    self.name
+                ),
+                1,
+            )),
+        }
     }
 }
 
