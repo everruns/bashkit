@@ -1082,6 +1082,22 @@ impl Drop for ExecutionBudgetCompletionGuard {
 }
 
 impl ExecutionBudgetLease {
+    /// Grow an optional plan reservation without poisoning the request when
+    /// compilation should decline and fall back to ordinary execution.
+    #[cfg(feature = "experimental_execution_plan")]
+    pub(crate) fn try_grow_plan_to(&mut self, bytes: usize) -> Result<bool, LimitExceeded> {
+        self.budget.check()?;
+        let bytes = u64::try_from(bytes).unwrap_or(u64::MAX);
+        if bytes <= self.bytes {
+            return Ok(true);
+        }
+        if self.budget.reserve_live_bytes(bytes - self.bytes).is_err() {
+            return Ok(false);
+        }
+        self.bytes = bytes;
+        Ok(true)
+    }
+
     fn try_grow_to(&mut self, bytes: u64) -> Result<(), LimitExceeded> {
         self.budget.check()?;
         if bytes <= self.bytes {
@@ -2100,6 +2116,21 @@ mod tests {
         budget.record_function_insert(1, false, usize::MAX);
         assert_eq!(budget.function_body_bytes, 1);
         assert_eq!(budget.function_count, 1);
+    }
+
+    #[test]
+    #[cfg(feature = "experimental_execution_plan")]
+    fn optional_plan_growth_declines_without_poisoning_or_leaking_bytes() {
+        let limits = ExecutionLimits::new().max_live_intermediate_bytes(32);
+        let budget = ExecutionBudget::new(&limits, Arc::new(AtomicBool::new(false)));
+        let mut storage = budget.try_lease_plan(8).unwrap().unwrap();
+        assert!(storage.try_grow_plan_to(16).unwrap());
+        assert_eq!(budget.live_bytes_for_test(), 16);
+        assert!(!storage.try_grow_plan_to(64).unwrap());
+        assert_eq!(budget.live_bytes_for_test(), 16);
+        assert!(budget.check().is_ok());
+        drop(storage);
+        assert_eq!(budget.live_bytes_for_test(), 0);
     }
 
     #[test]

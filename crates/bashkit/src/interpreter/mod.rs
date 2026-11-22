@@ -4356,7 +4356,7 @@ impl Interpreter {
                 .execute_command_with_program(
                     command,
                     if matches!(view, ScriptView::Parsed(_)) {
-                        plan.as_ref().and_then(|p| p.commands[index].as_ref())
+                        plan.as_ref().and_then(|p| p.command(index))
                     } else {
                         None
                     },
@@ -4803,7 +4803,7 @@ impl Interpreter {
     fn execute_command_with_program<'a>(
         &'a mut self,
         command: &'a Command,
-        program: Option<&'a script_plan::Program<'a>>,
+        program: Option<script_plan::ProgramRef<'a, 'a>>,
     ) -> command_dispatch::CommandFuture<'a> {
         let Some(program) = program.filter(|p| p.eligible(self)) else {
             return self.execute_command(command);

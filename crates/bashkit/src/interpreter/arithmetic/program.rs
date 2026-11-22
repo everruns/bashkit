@@ -13,8 +13,8 @@ enum Op {
     Drop,
 }
 
-pub(in crate::interpreter) struct Expression {
-    pub source: String,
+pub(in crate::interpreter) struct Expression<'s> {
+    pub source: std::borrow::Cow<'s, str>,
     ops: Vec<Op>,
 }
 
@@ -29,7 +29,7 @@ impl Compiler {
         &self.tokens[self.at].0
     }
     fn next(&mut self) -> Tok {
-        let token = self.tokens[self.at].0.clone();
+        let token = std::mem::replace(&mut self.tokens[self.at].0, Tok::Eof);
         if self.at + 1 < self.tokens.len() {
             self.at += 1;
         }
@@ -92,12 +92,18 @@ impl Compiler {
         Some(())
     }
     fn assignment(&mut self) -> Option<()> {
-        if let (Tok::Ident(name, None), Some((Tok::Op(op @ ("=" | "+=" | "-=" | "*=")), _))) =
-            (self.peek(), self.tokens.get(self.at + 1))
-        {
-            let name = name.clone();
-            let op = *op;
-            self.next();
+        let op = if matches!(self.peek(), Tok::Ident(_, None)) {
+            match self.tokens.get(self.at + 1) {
+                Some((Tok::Op(op @ ("=" | "+=" | "-=" | "*=")), _)) => Some(*op),
+                _ => None,
+            }
+        } else {
+            None
+        };
+        if let Some(op) = op {
+            let Tok::Ident(name, None) = self.next() else {
+                unreachable!()
+            };
             self.next();
             if op != "=" {
                 self.ops.push(Op::Load(name.clone()));
@@ -118,12 +124,13 @@ impl Compiler {
     }
 }
 
-impl Expression {
-    pub fn compile(source: &str) -> Option<Self> {
+impl<'s> Expression<'s> {
+    pub fn compile(source: impl Into<std::borrow::Cow<'s, str>>) -> Option<Self> {
+        let source = source.into();
         if source.len() > 1024 || source.contains(['$', '"', '`']) {
             return None;
         }
-        let tokens = tokenize(source).ok()?;
+        let tokens = tokenize(&source).ok()?;
         if tokens.len() > 256 {
             return None;
         }
@@ -159,10 +166,7 @@ impl Expression {
         if stack != 1 {
             return None;
         }
-        Some(Self {
-            source: source.into(),
-            ops: c.ops,
-        })
+        Some(Self { source, ops: c.ops })
     }
     pub fn names(&self) -> impl Iterator<Item = &str> {
         self.ops.iter().filter_map(|op| match op {
@@ -175,7 +179,7 @@ impl Expression {
 impl Interpreter {
     pub(in crate::interpreter) fn evaluate_program_expression(
         &mut self,
-        expr: &Expression,
+        expr: &Expression<'_>,
         writes: bool,
     ) -> ArithResult<i64> {
         let mut budget = ArithmeticBudget::new();

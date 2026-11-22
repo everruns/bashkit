@@ -9,29 +9,58 @@ use super::*;
 use arithmetic::program::Expression;
 
 pub(super) struct ScriptPlan<'s> {
-    pub commands: Vec<Option<Program<'s>>>,
+    commands: Vec<Option<Program<'s>>>,
+    ops: Vec<Instruction<'s>>,
     _storage: crate::limits::ExecutionBudgetLease,
 }
 
 pub(super) enum Program<'s> {
-    Native(NativeProgram<'s>),
+    Native(NativeProgram),
     List {
         list: &'s CommandList,
         children: Vec<Option<Program<'s>>>,
-        _storage: crate::limits::ExecutionBudgetLease,
     },
 }
 
-pub(super) struct NativeProgram<'s> {
+pub(super) struct NativeProgram {
+    range: std::ops::Range<usize>,
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct ProgramRef<'p, 's> {
+    program: &'p Program<'s>,
+    ops: &'p [Instruction<'s>],
+}
+
+struct Builder<'b, 's> {
+    budget: &'b crate::limits::ExecutionBudget,
+    storage: crate::limits::ExecutionBudgetLease,
+    used: usize,
+    admitted: usize,
     ops: Vec<Instruction<'s>>,
-    _storage: crate::limits::ExecutionBudgetLease,
+}
+impl Builder<'_, '_> {
+    fn reserve(&mut self, bytes: usize) -> Result<bool> {
+        let Some(used) = self.used.checked_add(bytes) else {
+            return Ok(false);
+        };
+        if used > self.admitted {
+            let capacity = used.checked_next_power_of_two().unwrap_or(used);
+            if !self.storage.try_grow_plan_to(capacity)? {
+                return Ok(false);
+            }
+            self.admitted = capacity;
+        }
+        self.used = used;
+        Ok(true)
+    }
 }
 
 enum Instruction<'s> {
     Enter(&'s Command, bool),
     Leave(&'s Command),
     Assign(&'s SimpleCommand),
-    Arithmetic(Expression, Mode),
+    Arithmetic(Expression<'s>, Mode),
     Status(i32),
     Jump(usize),
     BranchStatus(usize, bool),
@@ -111,95 +140,159 @@ fn size(command: &Command, depth: usize) -> Option<usize> {
     (total <= 32768).then_some(total)
 }
 
+// A small cold statement rarely recovers the cost of lowering it. The cheap
+// probe stays inline; full lowering is outlined away from ordinary tool calls.
+#[inline]
+fn worthwhile(command: &Command, weight: &mut usize, depth: usize) -> bool {
+    if depth > 64 {
+        return false;
+    }
+    match command {
+        Command::Simple(s) => {
+            if assignments(s) {
+                *weight = weight.saturating_add(1);
+            }
+        }
+        Command::Compound(CompoundCommand::Arithmetic(_), r) if r.is_empty() => {
+            *weight = weight.saturating_add(1);
+        }
+        Command::Compound(
+            CompoundCommand::ArithmeticFor(_)
+            | CompoundCommand::While(_)
+            | CompoundCommand::Until(_),
+            r,
+        ) if r.is_empty() => {
+            return size(command, 0).is_some();
+        }
+        Command::Compound(_, _) => {
+            if let Some(bytes) = size(command, 0) {
+                *weight = weight.saturating_add(bytes / 128);
+            }
+        }
+        Command::List(list) => return worthwhile_list(list, weight, depth),
+        _ => {}
+    }
+    *weight >= 8
+}
+fn worthwhile_list(list: &CommandList, weight: &mut usize, depth: usize) -> bool {
+    std::iter::once(list.first.as_ref())
+        .chain(list.rest.iter().map(|(_, c)| c))
+        .any(|c| worthwhile(c, weight, depth + 1))
+}
+
 impl<'s> ScriptPlan<'s> {
+    #[inline]
     pub fn compile(
         script: &'s Script,
         budget: &crate::limits::ExecutionBudget,
     ) -> Result<Option<Box<Self>>> {
-        fn candidate(command: &Command, depth: usize) -> bool {
-            if depth > 64 {
-                return false;
-            }
-            if let Command::List(list) = command {
-                candidate(&list.first, depth + 1)
-                    || list.rest.iter().any(|(_, c)| candidate(c, depth + 1))
-            } else {
-                size(command, 0).is_some()
-            }
-        }
-        if !script.commands.iter().any(|c| candidate(c, 0)) {
+        let mut weight = 0;
+        if !script
+            .commands
+            .iter()
+            .any(|c| worthwhile(c, &mut weight, 0))
+        {
             return Ok(None);
         }
-        let Some(storage) = budget.try_lease_plan(
-            script
-                .commands
-                .len()
-                .saturating_mul(std::mem::size_of::<Option<Program<'s>>>())
-                .saturating_add(std::mem::size_of::<Self>()),
-        )?
-        else {
+        Self::lower_script(script, budget)
+    }
+
+    #[cold]
+    fn lower_script(
+        script: &'s Script,
+        budget: &crate::limits::ExecutionBudget,
+    ) -> Result<Option<Box<Self>>> {
+        let capacity = script.commands.len().saturating_mul(4).clamp(8, 256);
+        let bytes = script
+            .commands
+            .len()
+            .saturating_mul(std::mem::size_of::<Option<Program<'s>>>())
+            .saturating_add(std::mem::size_of::<Self>())
+            .saturating_add(capacity.saturating_mul(std::mem::size_of::<Instruction<'s>>()));
+        let Some(storage) = budget.try_lease_plan(bytes)? else {
             return Ok(None);
+        };
+        let mut builder = Builder {
+            budget,
+            storage,
+            used: bytes,
+            admitted: bytes,
+            ops: Vec::with_capacity(capacity),
         };
         let commands = script
             .commands
             .iter()
-            .map(|c| Program::compile(c, budget, 0))
+            .map(|c| Program::compile(c, &mut builder, 0))
             .collect::<Result<Vec<_>>>()?;
         if commands.iter().all(Option::is_none) {
             return Ok(None);
         }
         Ok(Some(Box::new(Self {
             commands,
-            _storage: storage,
+            ops: builder.ops,
+            _storage: builder.storage,
         })))
+    }
+    pub fn command(&self, index: usize) -> Option<ProgramRef<'_, 's>> {
+        self.commands[index].as_ref().map(|program| ProgramRef {
+            program,
+            ops: &self.ops,
+        })
     }
 }
 
 impl<'s> Program<'s> {
     fn compile(
         command: &'s Command,
-        budget: &crate::limits::ExecutionBudget,
+        builder: &mut Builder<'_, 's>,
         depth: usize,
     ) -> Result<Option<Self>> {
         if depth > 64 {
             return Ok(None);
         }
         if let Some(bytes) = size(command, 0) {
-            budget.consume_work(bytes as u64)?;
-            if let Some(storage) = budget.try_lease_plan(bytes * 64 + 4096)? {
-                let mut ops = Vec::new();
-                if lower(command, &mut ops, true).is_some() {
-                    return Ok(Some(Self::Native(NativeProgram {
-                        ops,
-                        _storage: storage,
-                    })));
-                }
+            builder.budget.consume_work(bytes as u64)?;
+            let used = builder.used;
+            let capacity = builder.ops.capacity();
+            if !builder.reserve(bytes * 64 + 4096)? {
+                return Ok(None);
             }
+            let start = builder.ops.len();
+            if lower(command, &mut builder.ops, true).is_some() {
+                return Ok(Some(Self::Native(NativeProgram {
+                    range: start..builder.ops.len(),
+                })));
+            }
+            builder.ops.truncate(start);
+            // Failed lowering drops expression buffers, but retains the shared
+            // vector capacity. Keep those actual retained bytes admitted.
+            builder.used = used.saturating_add(
+                (builder.ops.capacity() - capacity)
+                    .saturating_mul(std::mem::size_of::<Instruction<'s>>()),
+            );
         }
         if let Command::List(list) = command {
-            let Some(storage) = budget.try_lease_plan(
+            if !builder.reserve(
                 (list.rest.len() + 1).saturating_mul(std::mem::size_of::<Option<Program<'s>>>()),
-            )?
-            else {
+            )? {
                 return Ok(None);
-            };
+            }
             let children = std::iter::once(list.first.as_ref())
                 .chain(list.rest.iter().map(|(_, c)| c))
-                .map(|c| Self::compile(c, budget, depth + 1))
+                .map(|c| Self::compile(c, builder, depth + 1))
                 .collect::<Result<Vec<_>>>()?;
             if children.iter().all(Option::is_none) {
                 return Ok(None);
             }
-            return Ok(Some(Self::List {
-                list,
-                children,
-                _storage: storage,
-            }));
+            return Ok(Some(Self::List { list, children }));
         }
         Ok(None)
     }
+}
+
+impl ProgramRef<'_, '_> {
     pub fn eligible(&self, shell: &Interpreter) -> bool {
-        let Self::Native(program) = self else {
+        let Program::Native(program) = self.program else {
             return true;
         };
         // TODO(experiment): lower these contexts only after their boundary
@@ -226,7 +319,7 @@ impl<'s> Program<'s> {
                 && shell.resolve_nameref(name) == name
                 && shell.lookup_regular_variable_ref(name).is_none_or(numeric)
         };
-        program.ops.iter().all(|op| match op {
+        self.ops[program.range.clone()].iter().all(|op| match op {
             Instruction::Arithmetic(e, _) => e.names().all(plain),
             Instruction::Assign(s) => s.assignments.iter().all(|a| plain(&a.name)),
             _ => true,
@@ -234,7 +327,11 @@ impl<'s> Program<'s> {
     }
 }
 
-fn expression<'s>(source: &str, mode: Mode, ops: &mut Vec<Instruction<'s>>) -> Option<()> {
+fn expression<'s>(
+    source: std::borrow::Cow<'s, str>,
+    mode: Mode,
+    ops: &mut Vec<Instruction<'s>>,
+) -> Option<()> {
     ops.push(Instruction::Arithmetic(Expression::compile(source)?, mode));
     Some(())
 }
@@ -265,7 +362,12 @@ fn lower<'s>(command: &'s Command, ops: &mut Vec<Instruction<'s>>, root: bool) -
         }
         Command::Compound(c, r) if r.is_empty() => match c {
             CompoundCommand::Arithmetic(e) => {
-                expression(&crate::parser::arith_exec_text(e), Mode::Command, ops)?
+                let source = if e.contains('"') {
+                    std::borrow::Cow::Owned(crate::parser::arith_exec_text(e))
+                } else {
+                    std::borrow::Cow::Borrowed(e.trim())
+                };
+                expression(source, Mode::Command, ops)?
             }
             CompoundCommand::BraceGroup(b) => sequence(b, ops)?,
             CompoundCommand::If(i) => {
@@ -290,14 +392,14 @@ fn lower<'s>(command: &'s Command, ops: &mut Vec<Instruction<'s>>, root: bool) -
             }
             CompoundCommand::ArithmeticFor(f) => {
                 if !f.init.is_empty() {
-                    expression(&f.init, Mode::Clause, ops)?;
+                    expression(f.init.as_str().into(), Mode::Clause, ops)?;
                 }
                 ops.push(Instruction::LoopStart);
                 let start = ops.len();
                 ops.push(Instruction::Iteration(Some(f.span.line())));
                 let mut branch = None;
                 if !f.condition.is_empty() {
-                    expression(&f.condition, Mode::Condition, ops)?;
+                    expression(f.condition.as_str().into(), Mode::Condition, ops)?;
                     branch = Some(ops.len());
                     ops.push(Instruction::BranchTest(0));
                 }
@@ -305,7 +407,7 @@ fn lower<'s>(command: &'s Command, ops: &mut Vec<Instruction<'s>>, root: bool) -
                 ops.push(Instruction::RememberBody);
                 if !f.step.is_empty() {
                     ops.push(Instruction::Line(f.span.line()));
-                    expression(&f.step, Mode::Clause, ops)?;
+                    expression(f.step.as_str().into(), Mode::Clause, ops)?;
                 }
                 ops.push(Instruction::Jump(start));
                 let end = ops.len();
@@ -342,14 +444,24 @@ fn lower<'s>(command: &'s Command, ops: &mut Vec<Instruction<'s>>, root: bool) -
 }
 
 impl Interpreter {
-    pub(super) async fn execute_program(&mut self, program: &Program<'_>) -> Result<ExecResult> {
-        let Program::Native(program) = program else {
-            let Program::List { list, children, .. } = program else {
+    pub(super) async fn execute_program(
+        &mut self,
+        program: ProgramRef<'_, '_>,
+    ) -> Result<ExecResult> {
+        let Program::Native(native) = program.program else {
+            let Program::List { list, children } = program.program else {
                 unreachable!()
             };
             let route = std::mem::take(&mut self.route_top_list);
             let result = self
-                .execute_list_with_commands(list, route, PreparedCommands(children))
+                .execute_list_with_commands(
+                    list,
+                    route,
+                    PreparedCommands {
+                        children,
+                        ops: program.ops,
+                    },
+                )
                 .await;
             if route && let Ok(r) = &result {
                 self.top_list_routed = Some((r.stdout.len(), r.stderr.len()));
@@ -361,10 +473,11 @@ impl Interpreter {
         let mut loops = [0i32; 128];
         let mut loop_count = 0;
         let result = async {
-            let mut pc = 0;
+            let mut pc = native.range.start;
             let mut status = 0;
             let mut test = false;
-            while let Some(op) = program.ops.get(pc) {
+            while pc < native.range.end {
+                let op = &program.ops[pc];
                 self.check_cancelled()?;
                 pc += 1;
                 match op {
@@ -477,9 +590,77 @@ impl Interpreter {
     }
 }
 
-#[cfg(test)]
+// Failpoint builds deliberately use the AST backend.
+#[cfg(all(test, not(feature = "failpoints")))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn automatic_policy_skips_short_scripts_and_keeps_general_regions() {
+        let budget = crate::limits::ExecutionBudget::new(
+            &ExecutionLimits::new(),
+            Arc::new(AtomicBool::new(false)),
+        );
+        for source in ["printf hello", "a=2; ((a+=3)); printf '%s' \"$a\""] {
+            let ast = Parser::new(source).parse().unwrap();
+            assert!(ScriptPlan::compile(&ast, &budget).unwrap().is_none());
+        }
+        for source in [
+            "a=0; while ((a<4)); do ((a++)); done".to_string(),
+            format!("a=0\n{}", "((a+=1))\n".repeat(16)),
+        ] {
+            let ast = Parser::new(&source).parse().unwrap();
+            assert!(ScriptPlan::compile(&ast, &budget).unwrap().is_some());
+        }
+    }
+
+    #[tokio::test]
+    async fn arena_offsets_and_failed_regions_preserve_later_branches() {
+        let source = "a=1\nif ((a<3)); then ((a+=2)); else a=9; fi\n((a/0))\nfor ((i=0;i<3;i++)); do ((a+=i)); done\n((a+=4))";
+        let ast = Parser::new(source).parse().unwrap();
+        let mut before = Interpreter::new(Arc::new(crate::InMemoryFs::new()));
+        let mut after = Interpreter::new(Arc::new(crate::InMemoryFs::new()));
+        let plan = ScriptPlan::lower_script(&ast, &after.execution_budget)
+            .unwrap()
+            .unwrap();
+        assert!(plan.command(2).is_none(), "division must use AST fallback");
+        let mut end = 0;
+        for (index, command) in ast.commands.iter().enumerate() {
+            if let Some(program) = plan.command(index) {
+                let Program::Native(native) = program.program else {
+                    panic!("expected native region")
+                };
+                assert!(native.range.start >= end);
+                end = native.range.end;
+            }
+            let expected = before.execute_command(command).await.unwrap();
+            let actual = after
+                .execute_command_with_program(command, plan.command(index))
+                .await
+                .unwrap();
+            assert_eq!(
+                (
+                    expected.stdout,
+                    expected.stderr,
+                    expected.exit_code,
+                    expected.control_flow
+                ),
+                (
+                    actual.stdout,
+                    actual.stderr,
+                    actual.exit_code,
+                    actual.control_flow
+                )
+            );
+        }
+        for name in ["a", "i"] {
+            assert_eq!(
+                before.lookup_regular_variable(name),
+                after.lookup_regular_variable(name)
+            );
+        }
+        assert_eq!(before.counters.commands, after.counters.commands);
+    }
 
     #[tokio::test]
     async fn native_regions_match_ast_execution_and_command_charges() {
@@ -497,13 +678,13 @@ mod tests {
             let ast = Parser::new(source).parse().unwrap();
             let mut expected = Interpreter::new(Arc::new(crate::InMemoryFs::new()));
             let mut actual = Interpreter::new(Arc::new(crate::InMemoryFs::new()));
-            let plan = ScriptPlan::compile(&ast, &actual.execution_budget)
+            let plan = ScriptPlan::lower_script(&ast, &actual.execution_budget)
                 .unwrap()
                 .unwrap();
             for (index, command) in ast.commands.iter().enumerate() {
-                let program = plan.commands[index].as_ref().expect("test must compile");
+                let program = plan.command(index).expect("test must compile");
                 assert!(
-                    matches!(program, Program::Native(_)),
+                    matches!(program.program, Program::Native(_)),
                     "must exercise flat instructions: {source}"
                 );
                 assert!(program.eligible(&actual), "must exercise VM: {source}");
@@ -559,11 +740,11 @@ mod tests {
         ] {
             let mut interp = Interpreter::new(Arc::new(crate::InMemoryFs::new()));
             interp.limits = limits;
-            let plan = ScriptPlan::compile(&ast, &interp.execution_budget)
+            let plan = ScriptPlan::lower_script(&ast, &interp.execution_budget)
                 .unwrap()
                 .unwrap();
             let result = interp
-                .execute_command_with_program(&ast.commands[0], plan.commands[0].as_ref())
+                .execute_command_with_program(&ast.commands[0], plan.command(0))
                 .await;
             assert!(result.is_err());
             assert_eq!(interp.loop_depth, 0);
@@ -574,10 +755,10 @@ mod tests {
     fn dynamic_and_instrumented_contexts_decline_native_execution() {
         let ast = Parser::new("((a+=1))").parse().unwrap();
         let mut interp = Interpreter::new(Arc::new(crate::InMemoryFs::new()));
-        let plan = ScriptPlan::compile(&ast, &interp.execution_budget)
+        let plan = ScriptPlan::lower_script(&ast, &interp.execution_budget)
             .unwrap()
             .unwrap();
-        let program = plan.commands[0].as_ref().unwrap();
+        let program = plan.command(0).unwrap();
         assert!(program.eligible(&interp));
         interp.set_variable("a".into(), "1+2".into());
         assert!(!program.eligible(&interp));
@@ -589,7 +770,10 @@ mod tests {
 
 // A borrowed selector exists only in prepared lists. Ordinary lists use a
 // zero-sized PlainCommands selector and carry no plan reference in their future.
-struct PreparedCommands<'p, 's>(&'p [Option<Program<'s>>]);
+struct PreparedCommands<'p, 's> {
+    children: &'p [Option<Program<'s>>],
+    ops: &'p [Instruction<'s>],
+}
 impl ListCommands for PreparedCommands<'_, '_> {
     fn execute<'a>(
         &'a self,
@@ -597,6 +781,12 @@ impl ListCommands for PreparedCommands<'_, '_> {
         command: &'a Command,
         index: usize,
     ) -> command_dispatch::CommandFuture<'a> {
-        shell.execute_command_with_program(command, self.0[index].as_ref())
+        shell.execute_command_with_program(
+            command,
+            self.children[index].as_ref().map(|program| ProgramRef {
+                program,
+                ops: self.ops,
+            }),
+        )
     }
 }
