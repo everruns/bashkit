@@ -1604,6 +1604,35 @@ mod differential {
 
     use super::*;
 
+    #[tokio::test]
+    async fn diff_stream_token_events_and_partial_errors() {
+        for text in [
+            r#"{"a":[1,{"b":null}],"c":"d"}"#,
+            r#"[{},[],[[]],{"a":{}},true,false,null,-1.25,"a\\\"b"]"#,
+            r#"{"a":1,"a":2,"\u00e9":["\ud83d\ude00"]}"#,
+            "1 [] {} [1,2] {\"a\":3}\n",
+            "[1,]",
+            "[1",
+            "{\"a\":1,}",
+            "{\"a\" 1}",
+            "[}",
+            "[1] junk",
+            "1\u{1}2",
+            "[1\u{c},2]",
+            "\u{c}1",
+            "\"unterminated",
+        ] {
+            assert_matches(&["-c", "--stream", "."], text).await;
+        }
+        for text in [
+            "[\n1,\n{\"x\":2},\n[]\n]\n",
+            "{\"x\":1,\n\"y\":[\n2\n]}\n",
+            "1\n2\n3",
+        ] {
+            assert_matches(&["-c", "--stream", "[input_line_number,.]"], text).await;
+        }
+    }
+
     fn real_jq_available() -> bool {
         real_jq_version().is_some()
     }
@@ -2476,6 +2505,58 @@ async fn stream_flag_feeds_path_events() {
 }
 
 #[tokio::test]
+async fn lazy_input_stops_before_malformed_tail_and_slurp_rejects_it() {
+    for flags in [vec!["-nc", "input"], vec!["-nc", "--stream", "input"]] {
+        let result = run_jq_result_with_args(&flags, "1 \"unterminated")
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, 0, "{}", result.stderr);
+        assert!(result.stderr.is_empty());
+        assert_eq!(
+            result.stdout,
+            if flags.contains(&"--stream") {
+                "[[],1]\n"
+            } else {
+                "1\n"
+            }
+        );
+    }
+    for flags in [vec!["-sc", "."], vec!["-sc", "--stream", "."]] {
+        let result = run_jq_result_with_args(&flags, "1 [2,").await.unwrap();
+        assert_eq!(result.exit_code, 5);
+        assert_eq!(result.stdout, "");
+        assert!(result.stderr.contains("invalid JSON"), "{}", result.stderr);
+    }
+    for flags in [vec!["-nsc", "42"], vec!["-nsc", "--stream", "42"]] {
+        let result = run_jq_result_with_args(&flags, "1 [2,").await.unwrap();
+        assert_eq!(result.exit_code, 0, "{}", result.stderr);
+        assert!(result.stderr.is_empty());
+        assert_eq!(result.stdout, "42\n");
+    }
+}
+
+#[tokio::test]
+async fn stream_parser_rejects_depth_and_retains_control_normalization() {
+    let deep = format!("{}0{}", "[".repeat(102), "]".repeat(102));
+    let result = run_jq_result_with_args(&["--stream", "empty"], &deep)
+        .await
+        .unwrap();
+    assert_eq!(result.exit_code, 5);
+    assert!(
+        result.stderr.contains("JSON nesting too deep"),
+        "{}",
+        result.stderr
+    );
+    let out = run_jq_with_args(&["--stream", "-c", "."], "{\"a\n\":[\"b\t\"]}")
+        .await
+        .unwrap();
+    assert_eq!(
+        out,
+        "[[\"a\\n\",0],\"b\\t\"]\n[[\"a\\n\",0]]\n[[\"a\\n\"]]\n"
+    );
+}
+
+#[tokio::test]
 async fn stream_slurp_and_metadata_preserve_event_order() {
     let result = run_jq_with_files(
         &[
@@ -2509,6 +2590,26 @@ async fn seq_flag_uses_record_separators() {
         .await
         .unwrap();
     assert_eq!(out, "\x1e[1]\n\x1e2\n");
+}
+
+#[tokio::test]
+async fn raw_sequence_input_preserves_record_separator_characters() {
+    let text = "\x1eone\n\x1etwo\n";
+    for (flags, expected) in [
+        (
+            vec!["-Rc", "--seq", "."],
+            "\x1e\"\\u001eone\"\n\x1e\"\\u001etwo\"\n",
+        ),
+        (
+            vec!["-Rsc", "--seq", "."],
+            "\x1e\"\\u001eone\\n\\u001etwo\\n\"\n",
+        ),
+    ] {
+        let result = run_jq_result_with_args(&flags, text).await.unwrap();
+        assert_eq!(result.exit_code, 0, "{}", result.stderr);
+        assert!(result.stderr.is_empty());
+        assert_eq!(result.stdout, expected);
+    }
 }
 
 #[tokio::test]

@@ -180,6 +180,28 @@ The bounded production request uses a 1 KiB header and 256 empty lines.
 It also checks 256 empty file operands with a 4 KiB date format: no pages
 means no retained per-file date strings.
 
+`large_file_stress_tests.rs` uses its own counting allocator and serialized
+current-thread tests. `just stress-files 64` exercises 64 MiB binary and JSONL
+fixtures through curl/wget, redirection/pipelines, jq reduction/slurp/stream,
+giant JSON strings, cp, cat, checksums, base64, gzip, wc, grep, rg, sed, awk,
+cut, head, tail, sort, and uniq.
+The ordinary test uses 1 MiB; `BASHKIT_STRESS_MIB` accepts 1..=256.
+Fixtures are allocated before measurement; the reported peak is incremental
+command heap including retained VFS output, with conservative realloc overlap.
+SHA-256 and exact counts verify results; a generous linear heap ceiling catches
+gross allocation regressions, while timings are diagnostic. HTTP uses a custom
+transport plus a loopback server with content-length and chunked framing,
+covering reqwest as well as the host boundary without external networks or TLS.
+Successful stress cases explicitly raise VFS, HTTP, work, input, and live-value
+limits. Separate boundary cases reject oversized HTTP bodies while preserving
+existing output files, and reject jq slurping under a small live-value budget;
+both verify subsequent session use.
+Five allocation regressions additionally enforce tight bounds for raw `wc -c`
+file reads, jq JSONL input reduction, token-driven streaming of a large single
+array, curl's body move with write-out metadata, and native wget downloads with
+a known response length. They run at a fixed small scale independently of the
+stress setting; a process-wide async mutex excludes concurrent measurements.
+
 Filtering still works as usual: `cargo test --test integration -- foo`
 matches `integration::*::foo*` test paths.
 

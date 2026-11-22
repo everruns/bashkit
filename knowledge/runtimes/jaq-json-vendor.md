@@ -101,12 +101,27 @@ same rewrite applies to every release:
 - Growth operations check the meter *before* allocating and fail with the jq
   error `value size limit (N bytes) exceeded` (exit 5). The limit is
   `ExecutionLimits::max_live_intermediate_bytes` (default 32 MB).
-- `--stream` traverses the depth-bounded parsed tree incrementally inside
-  the metered evaluation. Ancestor keys are shared `Val` strings; cursor,
-  path, event arrays and `--slurp` retention are charged before capacity
-  growth. Each traversal step consumes shared execution work, checking
-  cancellation and deadlines even for `empty`. Parsed input trees remain
-  subject to the existing input and JSON-depth restrictions.
+- Ordinary inputs parse one top-level value on demand and drop its temporary
+  tree after conversion. `input`/`inputs` and the outer loop share that cursor;
+  an unread malformed tail is not parsed. `--slurp` retains converted values,
+  but never a second collection of all parsed trees. Raw input lines are lazy
+  too; `--seq` normalizes separators only for JSON input and preserves them
+  in raw modes. Span scanning and line-number bookkeeping poll shared work/cancellation
+  in bounded chunks, without per-value offset tables.
+- `--stream` tokenizes the source directly into path events inside the metered
+  evaluation. It never builds a top-level JSON tree or event list. Ancestor
+  keys are shared `Val` strings; container cursors, path and event arrays are
+  admitted before growth. Tokens retain normalization and depth validation;
+  scanners and traversal check shared work/cancellation/deadlines even for
+  `empty`. A container's scalar is emitted only after its separator validates,
+  matching jq's partial output on syntax errors. `--slurp` runs its filter only
+  after all input parses successfully, and retains events against the meter.
+
+  VFS input sources remain buffered; incremental parsing does not imply
+  streaming filesystem reads. UTF-8 files transfer their buffers into source
+  text without a second byte/text cache. `just stress-files 64` measures these
+  paths; allocation regressions also cover a large single JSON array, JSONL,
+  and giant strings using explicitly raised execution/VFS/HTTP limits.
 - The meter is sticky: once tripped, `try ... catch` cannot keep a loop going.
 - Where there is no error channel (infallible `FromIterator`, `From<String>`)
   and for loops that never emit a value (`until(false; .)`), the run is
