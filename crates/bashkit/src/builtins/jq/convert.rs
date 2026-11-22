@@ -585,6 +585,22 @@ mod tests {
             }
             _ => panic!("expected Object"),
         }
+        // Duplicate private token collapses last-wins in first position.
+        let dup = parse_json_value(
+            r#"{"$serde_json::private::Number":"1","$serde_json::private::Number":"2"}"#,
+        )
+        .expect("duplicate object should parse");
+        match dup {
+            JqJson::Object(entries) => {
+                assert_eq!(entries.len(), 1, "expected collapsed entry");
+                assert_eq!(entries[0].0, "$serde_json::private::Number");
+                assert!(
+                    matches!(entries[0].1, JqJson::String(ref s) if s == "2"),
+                    "expected last value to win"
+                );
+            }
+            _ => panic!("expected Object"),
+        }
     }
 
     /// Single-entry private-token object: without `arbitrary_precision` it

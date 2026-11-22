@@ -426,6 +426,12 @@ jobs:
           cargo test -p bashkit --features markkit --test integration -- markkit_builtin_tests
           cargo test -p bashkit --features markkit,fetchkit --doc -- markkit_fetchkit_guide
 
+      # jq must keep working when another crate unifies serde_json's
+      # arbitrary_precision on (issue #2964): non-integers then arrive via
+      # visit_map with the private token instead of visit_f64.
+      - name: Run jq tests with arbitrary_precision unified on
+        run: "cargo test -p bashkit --lib --features jq,serde_json/arbitrary_precision -- builtins::jq::"
+
       - name: Run fail-point tests (single-threaded)
         run: cargo test --features failpoints --test security_failpoint_tests -- --test-threads=1
 
