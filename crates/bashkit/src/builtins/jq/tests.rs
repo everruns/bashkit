@@ -1633,6 +1633,20 @@ mod differential {
         }
     }
 
+    #[tokio::test]
+    async fn diff_scalar_controls_are_not_json_whitespace() {
+        // jq 1.7 may truncate stdin at NUL. The non-oracle regression below
+        // still requires rejecting NUL under Bashkit's strict-boundary policy.
+        for byte in 1u8..32 {
+            if [9, 10, 13].contains(&byte) {
+                continue;
+            }
+            let input = format!("1{}2", char::from(byte));
+            assert_matches(&["-c", "."], &input).await;
+            assert_matches(&["-c", "--stream", "."], &input).await;
+        }
+    }
+
     fn real_jq_available() -> bool {
         real_jq_version().is_some()
     }
@@ -2609,6 +2623,26 @@ async fn raw_sequence_input_preserves_record_separator_characters() {
         assert_eq!(result.exit_code, 0, "{}", result.stderr);
         assert!(result.stderr.is_empty());
         assert_eq!(result.stdout, expected);
+    }
+}
+
+#[tokio::test]
+async fn scalar_control_characters_are_rejected_before_output() {
+    for byte in 0u8..32 {
+        if [9, 10, 13].contains(&byte) {
+            continue;
+        }
+        let input = format!("1{}2", char::from(byte));
+        for flags in [vec!["-c", "."], vec!["-c", "--stream", "."]] {
+            let result = run_jq_result_with_args(&flags, &input).await.unwrap();
+            assert_eq!(result.exit_code, 5, "control byte {byte}");
+            assert!(
+                result.stdout.is_empty(),
+                "control byte {byte}: {}",
+                result.stdout
+            );
+            assert!(result.stderr.contains("invalid JSON"), "{}", result.stderr);
+        }
     }
 }
 

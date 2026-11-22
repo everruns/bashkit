@@ -100,10 +100,7 @@ impl<'a, 'shell> Parser<'a, 'shell> {
     }
 
     fn whitespace(&mut self) -> ReadResult<()> {
-        while self
-            .peek()
-            .is_some_and(|b| matches!(b, b' ' | b'\t' | b'\n' | b'\r'))
-        {
+        while self.peek().is_some_and(input::is_json_whitespace) {
             self.advance()?;
         }
         Ok(())
@@ -129,7 +126,7 @@ impl<'a, 'shell> Parser<'a, 'shell> {
             }
         } else {
             while self.peek().is_some_and(|b| {
-                !b.is_ascii_whitespace()
+                !input::is_json_whitespace(b)
                     && !matches!(b, b'[' | b'{' | b'"' | b']' | b'}' | b',' | b':')
             }) {
                 self.advance()?;

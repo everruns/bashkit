@@ -9,6 +9,12 @@ use std::borrow::Cow;
 use super::{Context, Val};
 use crate::limits::{ExecutionBudget, ExecutionBudgetLease};
 
+/// JSON has four whitespace bytes. ASCII whitespace also includes form-feed,
+/// which must remain part of an invalid scalar rather than split it in two.
+pub(super) fn is_json_whitespace(byte: u8) -> bool {
+    matches!(byte, b' ' | b'\t' | b'\n' | b'\r')
+}
+
 #[derive(Debug)]
 pub(super) struct NormalizedInput<'a> {
     text: Cow<'a, str>,
@@ -183,7 +189,7 @@ fn checked_value_spans<'a>(
             return None;
         }
         let result = (|| -> crate::Result<Option<(usize, usize)>> {
-            while i < b.len() && b[i].is_ascii_whitespace() {
+            while i < b.len() && is_json_whitespace(b[i]) {
                 i += 1;
                 if i.is_multiple_of(1024) {
                     checkpoint(1024)?;
@@ -215,7 +221,7 @@ fn checked_value_spans<'a>(
                     continue;
                 }
                 if scalar {
-                    if c.is_ascii_whitespace()
+                    if is_json_whitespace(c)
                         || matches!(c, b'[' | b'{' | b'"' | b']' | b'}' | b',' | b':')
                     {
                         i -= 1;

@@ -18,9 +18,9 @@ Implemented.
 
 The `jq` builtin accepts literal U+0000 through U+001F controls inside JSON
 strings. A jq-only input-boundary pass rewrites each such byte to its `\u00XX`
-form before the strict serde stream parser sees it. The pass tracks JSON string
+form before strict serde validation of the requested value or token. The pass tracks JSON string
 and escape state, preserves existing escapes and structural whitespace, and
-handles NDJSON and concatenated JSON values without splitting the stream.
+handles NDJSON and concatenated JSON values without line-based splitting.
 
 This is intentionally not a general JSON policy. The `json` builtin,
 `serde_json` defaults, tool request/response contracts, `--argjson`, and
@@ -31,6 +31,10 @@ do not normalize their bytes. Main jq input from stdin or files and
 Malformed quoting is rejected by the boundary with a stable jq-shaped error.
 Controls outside strings remain untouched, so only JSON whitespace is accepted
 there by the strict parser.
+The ordinary value splitter and streaming token reader share that four-byte
+whitespace definition. Other controls, including form-feed, stay in an invalid
+scalar token so they cannot split a bad number into multiple valid inputs or
+produce partial scalar output before rejection.
 
 ## Object key order
 
@@ -45,10 +49,12 @@ value, matching jq. This covers main input, `--slurpfile`, `--argjson`,
 `--jsonargs` and `$ARGS`. `$ENV`/`env` stay sorted by name for determinism.
 The nesting cap (TM-DOS-027) is enforced while reading; a depth violation is
 reported verbatim, not as a generic parse error.
+`--stream` emits keys and duplicate-key events in encounter order directly from
+tokens, without constructing an object tree.
 
 ## Resource accounting
 
-Normalization is a bounded single pass. It charges input length to the shared
+Normalization is a bounded single pass per requested value/token. It charges input length to the shared
 request work budget before scanning. Inputs without affected controls remain
 borrowed and allocate nothing. On the first rewrite it reserves the exact
 current normalized size from the live-intermediate budget before allocation;
