@@ -115,7 +115,7 @@ impl<'s> ScriptPlan<'s> {
     pub fn compile(
         script: &'s Script,
         budget: &crate::limits::ExecutionBudget,
-    ) -> Result<Option<Self>> {
+    ) -> Result<Option<Box<Self>>> {
         fn candidate(command: &Command, depth: usize) -> bool {
             if depth > 64 {
                 return false;
@@ -134,7 +134,8 @@ impl<'s> ScriptPlan<'s> {
             script
                 .commands
                 .len()
-                .saturating_mul(std::mem::size_of::<Option<Program<'s>>>()),
+                .saturating_mul(std::mem::size_of::<Option<Program<'s>>>())
+                .saturating_add(std::mem::size_of::<Self>()),
         )?
         else {
             return Ok(None);
@@ -147,10 +148,10 @@ impl<'s> ScriptPlan<'s> {
         if commands.iter().all(Option::is_none) {
             return Ok(None);
         }
-        Ok(Some(Self {
+        Ok(Some(Box::new(Self {
             commands,
             _storage: storage,
-        }))
+        })))
     }
 }
 
@@ -347,7 +348,9 @@ impl Interpreter {
                 unreachable!()
             };
             let route = std::mem::take(&mut self.route_top_list);
-            let result = self.execute_list(list, route, Some(children)).await;
+            let result = self
+                .execute_list_with_commands(list, route, PreparedCommands(children))
+                .await;
             if route && let Ok(r) = &result {
                 self.top_list_routed = Some((r.stdout.len(), r.stderr.len()));
             }
@@ -581,5 +584,19 @@ mod tests {
         interp.set_variable("a".into(), "2".into());
         interp.flags.insert(BashFlags::NOUNSET);
         assert!(!program.eligible(&interp));
+    }
+}
+
+// A borrowed selector exists only in prepared lists. Ordinary lists use a
+// zero-sized PlainCommands selector and carry no plan reference in their future.
+struct PreparedCommands<'p, 's>(&'p [Option<Program<'s>>]);
+impl ListCommands for PreparedCommands<'_, '_> {
+    fn execute<'a>(
+        &'a self,
+        shell: &'a mut Interpreter,
+        command: &'a Command,
+        index: usize,
+    ) -> command_dispatch::CommandFuture<'a> {
+        shell.execute_command_with_program(command, self.0[index].as_ref())
     }
 }
