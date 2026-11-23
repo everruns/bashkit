@@ -152,6 +152,10 @@ turso_core = { workspace = true, optional = true }
 branches = { workspace = true, optional = true }
 
 [features]
+# Isolated experiment. No production entry point enables this by default.
+experimental_execution_plan = []
+# Diagnostic only: compare AST/plan execution in one binary using request data.
+experimental_plan_benchmark_control = ["experimental_execution_plan"]
 default = ["bash_tool", "ring", "tzdata", "iconv_charsets"]
 # Named IANA timezone support for the `date` builtin's `TZ=` handling, via the
 # chrono-tz database. On by default.

@@ -29,6 +29,18 @@ test:
     cargo test --features http_client
     cargo test --features failpoints --test security_failpoint_tests -- --test-threads=1
 
+# Full workspace/doc suites plus serialized native/security fault injection.
+# Uses the same broad feature slice as CI; optional runtime slices remain in CI.
+test-execution-plan:
+    cargo test --workspace --lib --bins --tests --features http_client,ssh,sqlite,bashkit/experimental_execution_plan
+    cargo test --workspace --doc --features http_client,ssh,sqlite,bashkit/experimental_execution_plan
+    cargo test -p bashkit --features failpoints,experimental_execution_plan --lib --test security_failpoint_tests -- --test-threads=1
+
+# Discover and smoke every fuzz target with the optional compiler enabled.
+# Requires the pinned nightly and cargo-fuzz (see scripts/fuzz-smoke.py).
+fuzz-execution-plan:
+    python3 scripts/fuzz-smoke.py --execution-plan
+
 # Run fail-point tests only (single-threaded, requires failpoints feature)
 test-failpoints:
     cargo test --features failpoints --test security_failpoint_tests -- --test-threads=1

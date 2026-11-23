@@ -19,6 +19,8 @@ categories.workspace = true
 readme = "README.md"
 
 [features]
+# Opt-in script compiler; preserves ordinary Bash syntax and AST fallback.
+experimental_execution_plan = ["bashkit/experimental_execution_plan"]
 default = []
 # Expose registry tools to embedded Python (`python`/`python3` builtins).
 python = ["bashkit/python"]

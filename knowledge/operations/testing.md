@@ -86,6 +86,30 @@ intermediate-artifact layout; scripts must not depend on internal build/deps
 paths. The consumer's own lockfile is used after fresh resolution, so this
 check catches dependency-floor drift hidden by the workspace's locked graph.
 
+## Experimental execution-plan coverage
+
+The normal CI test job has interpreter and execution-plan matrix rows. The latter
+adds `bashkit/experimental_execution_plan` to every existing feature slice;
+required `Check` waits for both rows. Binding wheels/binaries use separate matrix
+artifacts, so a feature-on test cannot accidentally load the default build.
+Windows, browser, host-Bash oracle and nightly sanitizer/soak suites retain both
+rows as well. `scripts/tests/test_execution_plan_ci.py` guards the critical gates.
+
+Run `just test-execution-plan` for the broad workspace/doc and serialized
+fault-injection slices, or add `--features experimental_execution_plan` to
+individual commands above. `just fuzz-execution-plan` runs all fuzz smoke targets. For native failpoint proof, run:
+
+```bash
+cargo test -p bashkit --features experimental_execution_plan,failpoints --lib script_plan::tests -- --test-threads=1
+python3 scripts/fuzz-smoke.py --execution-plan
+```
+
+The smoke runner discovers targets and required runtime features from the fuzz
+manifest; it runs 256 inputs or 15 seconds per target. Scheduled fuzzing uses the
+same discovered matrix with a longer duration. The compiler/AST differential
+target additionally enables the diagnostic selector, without shared switch
+state. See [Execution Plans](../foundations/script-execution-plan.md).
+
 ## Spec Test Framework
 
 ### Test File Format
@@ -292,7 +316,8 @@ them is scoped proof, not a claim that the unchanged full/coverage suites ran.
 
 ## Coverage
 
-Uploaded to Codecov from three sources: Rust unit/integration coverage via
+Rust coverage is collected in both execution-plan modes, with distinct XML
+paths/artifacts merged by the token-isolated upload job. Uploaded to Codecov from three sources: Rust unit/integration coverage via
 `cargo tarpaulin`; Rust coverage exercised through Python and Node binding
 tests via `cargo llvm-cov`.
 

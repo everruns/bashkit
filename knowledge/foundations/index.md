@@ -1,6 +1,7 @@
 # Foundations
 
 * [Bashkit Architecture](architecture.md) - Core interpreter architecture, module boundaries, execution flow, and design principles.
+* [Script Execution Plan Experiment](script-execution-plan.md) - Execution-owned compilation of supported Bash command trees with interpreter fallback.
 * [Parser](parser.md) - Bash syntax parser and lexer architecture and compatibility decisions.
 * [Virtual Filesystem](vfs.md) - Filesystem abstraction, path safety, implementations, and sandbox invariants.
 * [Builtin Commands](builtins.md) - Builtin command trait, execution planning, registration, and implementation conventions.

@@ -23,6 +23,18 @@ Fail points are disabled by default, zero runtime overhead when disabled.
 cargo test --features failpoints security_ -- --test-threads=1
 ```
 
+## Execution-plan coverage
+
+Security suites run with the experimental compiler enabled as well as disabled.
+Resource failpoints are honored inside native regions. Only an active
+`interp::execute_command` injector forces AST admission, preserving its
+whole-command early-error semantics. Native unit tests assert admission before
+injecting a loop-counter reset and verify that the command budget still stops
+the loop. Separate tests cover dropped futures, reuse, optional-memory decline,
+work-budget failure and reservation refunds. `script_plan_fuzz` compares bounded
+native arithmetic/branch loops with the AST executor; structured proptest cases
+also compare with real Bash. See [Execution Plans](../foundations/script-execution-plan.md).
+
 ## Available Fail Points
 
 ### Resource Limits (`limits.rs`)

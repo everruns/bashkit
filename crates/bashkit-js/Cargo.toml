@@ -24,3 +24,7 @@ tokio = { version = "1", features = ["sync", "macros", "io-util", "rt", "time"] 
 
 [build-dependencies]
 napi-build = { workspace = true }
+
+[features]
+# Opt-in script compiler; preserves ordinary Bash syntax and AST fallback.
+experimental_execution_plan = ["bashkit/experimental_execution_plan"]

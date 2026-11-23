@@ -516,6 +516,21 @@ pub use error::{Error, Result};
 pub use execution_capability::{
     CapabilityCleanupReport, ExecutionCapability, ExecutionCapabilityError, ExecutionExtensions,
 };
+
+/// Diagnostic execution selector for benchmarks and differential fuzzing,
+/// passed through [`ExecOptions::extensions`].
+///
+/// Both modes must attach this same type for a matched, same-binary comparison.
+/// It adds no lookup to ordinary builds of the execution-plan experiment.
+#[cfg(feature = "experimental_plan_benchmark_control")]
+#[doc(hidden)]
+#[derive(Clone, Copy)]
+pub enum ExperimentalPlanBenchmarkControl {
+    /// Apply the experiment's ordinary admission policy.
+    Auto,
+    /// Use the AST executor, skipping optional plan construction.
+    InterpreterOnly,
+}
 pub use fs::{
     DirEntry, DirListing, FileSystem, FileSystemExt, FileType, FsBackend, FsLimitExceeded,
     FsLimits, FsUsage, InMemoryFs, LazyLoader, Metadata, MountableFs, NamespaceAccess, NamespaceFs,

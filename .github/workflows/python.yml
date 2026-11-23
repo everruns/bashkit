@@ -67,7 +67,7 @@ jobs:
   # the random-fs fixture — a separate, non-abi3 extension — is still built per
   # version. Covers 3.9–3.14 (the full abi3 support range).
   test:
-    name: Test (Python ${{ matrix.python-version }})
+    name: Test (Python ${{ matrix.python-version }}) (${{ matrix.execution_plan && 'execution-plan' || 'interpreter' }})
     needs: [build-wheel]
     # Pinned, not `ubuntu-latest`: Ubuntu 26.04 ships no hosted 3.9 build, and
     # `setup-python` has no fallback, so the 3.9 leg died the moment
@@ -82,6 +82,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        execution_plan: [false, true]
         python-version: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -96,7 +97,7 @@ jobs:
       # version to prove one wheel runs across the whole 3.9–3.14 range.
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
-          name: python-wheel
+          name: python-wheel-${{ matrix.execution_plan }}
           path: crates/bashkit-python/dist
 
       - name: Install Rust toolchain
@@ -121,7 +122,7 @@ jobs:
       # abi3-py39), so it must be built against each interpreter.
       - name: Build random filesystem fixture
         run: |
-          python -m maturin build --release --out /tmp/bashkit-random-fs \
+          python -m maturin build --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" --release --out /tmp/bashkit-random-fs \
             -m crates/bashkit-python/test-fixtures/random-fs/Cargo.toml \
             -i python${{ matrix.python-version }}
           pip install bashkit-random-fs --no-index --find-links /tmp/bashkit-random-fs --force-reinstall
@@ -134,11 +135,12 @@ jobs:
   # Test the native callback bridge on each platform instead of relying only
   # on the Linux abi3 wheel matrix above. No random-FS fixture is needed here.
   callback-platforms:
-    name: Callback loops (${{ matrix.os }})
+    name: Callback loops (${{ matrix.os }}) (${{ matrix.execution_plan && 'execution-plan' || 'interpreter' }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        execution_plan: [false, true]
         os: [macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -152,7 +154,7 @@ jobs:
       - name: Build and install native wheel
         run: |
           python -m pip install "maturin${{ env.MATURIN_VERSION }}"
-          python -m maturin build -m crates/bashkit-python/Cargo.toml --out dist
+          python -m maturin build --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" -m crates/bashkit-python/Cargo.toml --out dist
           python -m pip install bashkit --no-index --find-links dist
           python -m pip install pytest pytest-asyncio pytest-timeout langchain-core deepagents fastapi httpx
       - name: Install uvloop on Unix
@@ -169,8 +171,12 @@ jobs:
           crates/bashkit-python/tests/test_teardown_determinism.py
 
   examples:
-    name: Examples
+    name: Examples (${{ matrix.execution_plan && 'execution-plan' || 'interpreter' }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        execution_plan: [false, true]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -192,7 +198,7 @@ jobs:
 
       - name: Build wheel
         working-directory: crates/bashkit-python
-        run: python -m maturin build --release --out dist -i python3.12
+        run: python -m maturin build --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" --release --out dist -i python3.12
 
       - name: Install local wheel
         run: |
@@ -201,7 +207,7 @@ jobs:
 
       - name: Build random filesystem fixture
         run: |
-          python -m maturin build --release --out /tmp/bashkit-random-fs \
+          python -m maturin build --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" --release --out /tmp/bashkit-random-fs \
             -m crates/bashkit-python/test-fixtures/random-fs/Cargo.toml \
             -i python3.12
           pip install bashkit-random-fs --no-index --find-links /tmp/bashkit-random-fs --force-reinstall
@@ -225,8 +231,12 @@ jobs:
 
   # Verify wheel builds and passes twine check
   build-wheel:
-    name: Build wheel
+    name: Build wheel (${{ matrix.execution_plan && 'execution-plan' || 'interpreter' }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        execution_plan: [false, true]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -241,7 +251,7 @@ jobs:
 
       - name: Build wheel
         working-directory: crates/bashkit-python
-        run: python -m maturin build --release --out dist
+        run: python -m maturin build --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" --release --out dist
 
       - name: Verify wheel metadata
         run: |
@@ -250,7 +260,7 @@ jobs:
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: python-wheel
+          name: python-wheel-${{ matrix.execution_plan }}
           path: crates/bashkit-python/dist
           retention-days: 5
 

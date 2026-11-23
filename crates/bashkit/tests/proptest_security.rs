@@ -766,3 +766,36 @@ proptest! {
         );
     }
 }
+
+// Unlike arbitrary shell text, these bounded scalar programs reliably reach
+// the execution-plan backend when enabled. Keep the real Bash oracle as well
+// as the in-process compiler/AST libFuzzer oracle.
+#[cfg(unix)]
+proptest! {
+    #[test]
+    fn scalar_loops_match_real_bash(
+        seed in -100i64..100,
+        trips in 0usize..16,
+        body in prop::collection::vec((0usize..3, -9i64..10), 1..16),
+    ) {
+        let mut script = format!("a={seed}; for ((i=0;i<{trips};i++)); do\n");
+        for (op, value) in body {
+            let op = ["+=", "-=", "*="][op];
+            script.push_str(&format!("((a{op}({value})));\n"));
+        }
+        script.push_str("done; printf '%s %s\\n' \"$a\" \"$i\"");
+        let expected = std::process::Command::new("bash")
+            .env_clear()
+            .arg("--noprofile").arg("--norc").arg("-c").arg(&script)
+            .output().expect("Bash oracle is required on Unix");
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let actual = rt.block_on(async {
+            fuzz_init();
+            Bash::new().exec(&script).await.unwrap()
+        });
+        assert_fuzz_invariants(&actual, &script, "scalar_loop_property", &[]);
+        prop_assert_eq!(actual.stdout.as_bytes(), expected.stdout.as_slice(), "{}", script);
+        prop_assert_eq!(actual.stderr.as_bytes(), expected.stderr.as_slice(), "{}", script);
+        prop_assert_eq!(Some(actual.exit_code), expected.status.code(), "{}", script);
+    }
+}

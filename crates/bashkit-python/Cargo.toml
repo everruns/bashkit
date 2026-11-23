@@ -53,3 +53,7 @@ pyo3-async-runtimes = { workspace = true }
 bashkit = { path = "../bashkit", features = ["python", "typescript", "jq", "terminal"] }
 bashkit-scripted-tool = { path = "../bashkit-scripted-tool", features = ["python", "jq"] }
 tokio = { workspace = true }
+
+[features]
+# Opt-in script compiler; preserves ordinary Bash syntax and AST fallback.
+experimental_execution_plan = ["bashkit/experimental_execution_plan"]

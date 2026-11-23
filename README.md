@@ -28,6 +28,7 @@ Awesomely fast virtual sandbox with bash and file system. Written in Rust.
 - **Experimental: Git support** - Virtual git operations on the virtual filesystem (`git` feature)
 - **Experimental: Python support** - Embedded Python interpreter via [Monty](https://github.com/pydantic/monty) (`python` feature), or real CPython 3.14 in a WebAssembly sandbox (`cpython` feature)
 - **Experimental: TypeScript support** - Embedded TypeScript interpreter via [ZapCode](https://github.com/TheUncharted/zapcode) (`typescript` feature)
+- **Experimental: script execution plans** - Opt-in compilation of scalar arithmetic and control flow, with interpreter fallback (`experimental_execution_plan` feature; [details](crates/bashkit/docs/compatibility.md#experimental-execution-plans))
 - **Experimental: SQLite support** - Embedded SQLite-compatible engine via [Turso](https://github.com/tursodatabase/turso) (`sqlite` feature)
 
 ## Install

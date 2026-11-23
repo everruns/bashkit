@@ -179,13 +179,17 @@ jobs:
     # COOP/COEP headers and that sync + async execution both work. See
     # knowledge/runtimes/browser-package.md. Keep wasm-bindgen-cli in lockstep with the
     # wasm-bindgen version in Cargo.lock.
-    name: WASM web package
+    name: WASM web package (${{ matrix.execution_plan && 'execution-plan' || 'interpreter' }})
     runs-on: ubuntu-latest
     # A hung install step here took `main` red twice by burning the 6-hour job
     # ceiling (see scripts/install-binaryen.sh). This job's slowest healthy run
     # is well under 10 minutes, so anything past 30 is stuck, not slow — fail
     # fast and leave a re-runnable red instead of a cancelled run.
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        execution_plan: [false, true]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -205,7 +209,7 @@ jobs:
         run: sudo ./scripts/install-binaryen.sh
 
       - name: Build web bundle
-        run: bash crates/bashkit-wasm/scripts/build.sh release
+        run: BASHKIT_WASM_FEATURES="terminal,${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" bash crates/bashkit-wasm/scripts/build.sh release
 
       - name: Integration tests (headless Node)
         run: node --test "crates/bashkit-wasm/__test__/*.test.mjs"
@@ -219,7 +223,7 @@ jobs:
           node crates/bashkit-wasm/scripts/test-streaming-browser.mjs
 
       - name: Build optional runtime bundle
-        run: BASHKIT_WASM_VARIANT=runtimes BASHKIT_WASM_FEATURES=terminal,python,typescript bash crates/bashkit-wasm/scripts/build.sh release
+        run: BASHKIT_WASM_VARIANT=runtimes BASHKIT_WASM_FEATURES="terminal,python,typescript,${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" bash crates/bashkit-wasm/scripts/build.sh release
 
       - name: Embedded runtime callback tests
         run: BASHKIT_WASM_VARIANT=runtimes node --test crates/bashkit-wasm/__test__/runtime-functions.test.mjs
@@ -296,7 +300,7 @@ jobs:
         run: cargo vet --locked
 
   test:
-    name: Test
+    name: Test (${{ matrix.execution_plan && 'execution-plan' || 'interpreter' }})
     # Pinned, not `ubuntu-latest`: this job's `*_match_gnu` differential tests
     # need real GNU coreutils as the oracle, and 24.04 is the last image that
     # ships it as the default. Ubuntu 26.04 installs uutils as `coreutils`
@@ -305,6 +309,10 @@ jobs:
     # GNU oracle is installed explicitly, the way `rg` and `jq` already are;
     # see "Pinned External Oracles" in knowledge/operations/testing.md.
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        execution_plan: [false, true]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -358,12 +366,12 @@ jobs:
       # Examples have a dedicated job below; skipping them here avoids
       # duplicated example links that can exhaust runner disk on main.
       - name: Run tests
-        run: cargo test --workspace --lib --bins --tests --features http_client,ssh,sqlite
+        run: cargo test --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" --workspace --lib --bins --tests --features http_client,ssh,sqlite
 
       # The registry's Python/TypeScript surfaces sit behind the crate's own
       # features, which no workspace member turns on together.
       - name: Run scripted tool tests (shell, Python, TypeScript surfaces)
-        run: cargo test -p bashkit-scripted-tool --features python,typescript,jq
+        run: cargo test --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" -p bashkit-scripted-tool --features python,typescript,jq
 
       # All three differential gates (bash, sed, grep), not just bash: each is
       # the only thing checking that its spec expectations still describe the
@@ -375,19 +383,19 @@ jobs:
       # workflow file out of service.
       - name: Run strict host-tool parity gates (bash, sed, grep)
         run: |
-          cargo test -p bashkit --test integration --features http_client,ssh -- spec_tests:: --ignored
+          cargo test --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" -p bashkit --test integration --features http_client,ssh -- spec_tests:: --ignored
 
       - name: Run competitor regression corpus
-        run: cargo test -p bashkit --test integration --features http_client,jq -- competitor_regression_tests
+        run: cargo test --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" -p bashkit --test integration --features http_client,jq -- competitor_regression_tests
 
       - name: Run doc tests
-        run: cargo test --workspace --doc --features http_client,ssh,sqlite
+        run: cargo test --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" --workspace --doc --features http_client,ssh,sqlite
 
       # CPython (wasm) python3: unit, integration, capability (diffed against
       # the runner's python3), security and load tests. Feature-gated, so the
       # main test step above does not build it into bashkit.
       - name: Run CPython tests
-        run: cargo test -p bashkit --features cpython,http_client --lib --test integration -- cpython
+        run: cargo test --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" -p bashkit --features cpython,http_client --lib --test integration -- cpython
 
       # bashkit's own requests/httpx (guest modules) against the upstream
       # packages: same scenarios, same output.
@@ -399,62 +407,75 @@ jobs:
 
       # Same suites on the opt-in native-code build (`cpython-native`).
       - name: Run CPython tests (native code)
-        run: cargo test -p bashkit --features cpython-native,http_client --lib --test integration -- cpython
+        run: cargo test --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" -p bashkit --features cpython-native,http_client --lib --test integration -- cpython
 
       - name: Run realfs tests
-        run: cargo test --features realfs -p bashkit --test realfs_tests -p bashkit-cli
+        run: cargo test --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" --features realfs -p bashkit --test realfs_tests -p bashkit-cli
 
       # The third-party adoption and host-mount suites are `cfg(realfs)`, so
       # the main "Run tests" step (no realfs) compiles them out entirely.
       - name: Run realfs integration tests
-        run: cargo test -p bashkit --test integration --features realfs -- host_mounts_tests thirdparty_adoption_tests
+        run: cargo test --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" -p bashkit --test integration --features realfs -- host_mounts_tests thirdparty_adoption_tests
 
       # In-process terminal + vi builtin are `cfg(terminal)` (off by default),
       # so the main "Run tests" step compiles them out entirely.
       - name: Run terminal tests
         run: |
-          cargo test -p bashkit --features terminal,git --lib -- terminal:: builtins::vi:: builtins::pager:: builtins::nano::
-          cargo test -p bashkit --features terminal --test integration -- terminal_tests l_term_
-          cargo test -p bashkit --features terminal --doc terminal
+          cargo test --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" -p bashkit --features terminal,git --lib -- terminal:: builtins::vi:: builtins::pager:: builtins::nano::
+          cargo test --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" -p bashkit --features terminal --test integration -- terminal_tests l_term_
+          cargo test --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" -p bashkit --features terminal --doc terminal
 
       # markkit/fetchkit builtins are `cfg(markkit|fetchkit)` (off by default),
       # so the main "Run tests" step compiles them out entirely.
       - name: Run markkit/fetchkit builtin tests
         run: |
-          cargo test -p bashkit --features markkit,fetchkit --lib -- builtins::markkit:: builtins::fetchkit::
-          cargo test -p bashkit --features markkit,fetchkit --test integration -- markkit_builtin_tests fetchkit_builtin_tests
-          cargo test -p bashkit --features markkit --test integration -- markkit_builtin_tests
-          cargo test -p bashkit --features markkit,fetchkit --doc -- markkit_fetchkit_guide
+          cargo test --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" -p bashkit --features markkit,fetchkit --lib -- builtins::markkit:: builtins::fetchkit::
+          cargo test --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" -p bashkit --features markkit,fetchkit --test integration -- markkit_builtin_tests fetchkit_builtin_tests
+          cargo test --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" -p bashkit --features markkit --test integration -- markkit_builtin_tests
+          cargo test --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" -p bashkit --features markkit,fetchkit --doc -- markkit_fetchkit_guide
 
       # jq must keep working when another crate unifies serde_json's
       # arbitrary_precision on (issue #2964): non-integers then arrive via
       # visit_map with the private token instead of visit_f64.
       - name: Run jq tests with arbitrary_precision unified on
-        run: "cargo test -p bashkit --lib --features jq,serde_json/arbitrary_precision -- builtins::jq::"
+        run: "cargo test --features=\"${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}\" -p bashkit --lib --features jq,serde_json/arbitrary_precision -- builtins::jq::"
 
-      - name: Run fail-point tests (single-threaded)
-        run: cargo test --features failpoints --test security_failpoint_tests -- --test-threads=1
+      - name: Run failpoint unit and security tests (single-threaded)
+        run: cargo test --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" -p bashkit --features failpoints --lib --test security_failpoint_tests -- --test-threads=1
 
       - name: Run property-based security tests (proptest)
-        run: cargo test --test proptest_security -- --test-threads=1
+        run: cargo test --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" --test proptest_security -- --test-threads=1
         env:
           PROPTEST_CASES: 50
 
   cpython-platforms:
     # COFF rejects 64 KiB-aligned statics; Mach-O can lose their alignment at
     # load time. Keep the actual embedding, module load and execution covered.
-    name: CPython (${{ matrix.os }}, Rust ${{ matrix.rust }})
+    name: CPython (${{ matrix.os }}, Rust ${{ matrix.rust }}) (${{ matrix.execution_plan && 'execution-plan' || 'interpreter' }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
-            rust: "1.100.0"
-          - os: macos-latest
-            rust: "1.100.0"
-          - os: windows-2025
-            rust: "1.100.0"
+        - os: ubuntu-latest
+          rust: 1.100.0
+          execution_plan: false
+        - os: ubuntu-latest
+          rust: 1.100.0
+          execution_plan: true
+        - os: macos-latest
+          rust: 1.100.0
+          execution_plan: false
+        - os: macos-latest
+          rust: 1.100.0
+          execution_plan: true
+        - os: windows-2025
+          rust: 1.100.0
+          execution_plan: false
+        - os: windows-2025
+          rust: 1.100.0
+          execution_plan: true
+
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -474,13 +495,17 @@ jobs:
         run: cargo test --locked -p bashkit-cpython-wasm --lib
 
       - name: Execute CPython through the shell
-        run: cargo test --locked -p bashkit --features cpython --test integration -- cpython_integration_tests
+        run: cargo test --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" --locked -p bashkit --features cpython --test integration -- cpython_integration_tests
 
   windows-containment:
     # THREAT[TM-ESC-033]: Windows path parsing has drive, UNC, device, and
     # reparse-point semantics that cannot be exercised on a Unix runner.
-    name: Windows filesystem containment
+    name: Windows filesystem containment (${{ matrix.execution_plan && 'execution-plan' || 'interpreter' }})
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        execution_plan: [false, true]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -494,19 +519,19 @@ jobs:
           shared-key: windows-containment
 
       - name: Test VFS path normalization
-        run: cargo test -p bashkit --lib --features realfs windows_containment
+        run: cargo test --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" -p bashkit --lib --features realfs windows_containment
 
       - name: Test RealFS and overlay containment
-        run: cargo test -p bashkit --test realfs_tests --features realfs windows_containment
+        run: cargo test --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" -p bashkit --test realfs_tests --features realfs windows_containment
 
       - name: Test touch mtime on Windows (issue #2388)
-        run: cargo test -p bashkit --test realfs_tests --features realfs realfs_touch
+        run: cargo test --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" -p bashkit --test realfs_tests --features realfs realfs_touch
 
       # The C ABI mount-root guard is Windows-conditional, so the Linux
       # workspace test run compiles it out. Nothing else runs bashkit-capi's
       # tests on Windows, which left them never executing anywhere.
       - name: Test C ABI mount-root validation and runtime callbacks
-        run: cargo test -p bashkit-capi --lib --test runtime_functions
+        run: cargo test --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" -p bashkit-capi --lib --test runtime_functions
 
   # The adoption shape this covers — bashkit as an agent's shell, with commands
   # bridged to host processes — exists to work on Windows without a real bash.
@@ -514,8 +539,12 @@ jobs:
   # semantics (TM-ESC-033), this one pins the embedding contract. Scoped to the
   # adoption suites rather than the whole workspace.
   test-windows:
-    name: Test (Windows adoption shape)
+    name: Test (Windows adoption shape) (${{ matrix.execution_plan && 'execution-plan' || 'interpreter' }})
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        execution_plan: [false, true]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -529,21 +558,21 @@ jobs:
           shared-key: windows-adoption
 
       - name: Run third-party adoption tests
-        run: cargo test -p bashkit --test integration --features realfs -- thirdparty_adoption_tests
+        run: cargo test --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" -p bashkit --test integration --features realfs -- thirdparty_adoption_tests
 
       - name: Run host mount mapping tests
-        run: cargo test -p bashkit --test integration --features realfs -- host_mounts_tests
+        run: cargo test --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" -p bashkit --test integration --features realfs -- host_mounts_tests
 
       # The VFS is `/`-separated on every host; host-separator joins only show
       # up here (#2425, #2933). Reuses the realfs build from the steps above.
       - name: Run VFS separator and device path tests
-        run: cargo test -p bashkit --test integration --features realfs -- windows_containment dev_fd_path_tests dev_null_tests
+        run: cargo test --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" -p bashkit --test integration --features realfs -- windows_containment dev_fd_path_tests dev_null_tests
 
       - name: Run command resolver tests
-        run: cargo test -p bashkit --test integration -- command_resolver_tests
+        run: cargo test --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" -p bashkit --test integration -- command_resolver_tests
 
   examples:
-    name: Examples
+    name: Examples (${{ matrix.execution_plan && 'execution-plan' || 'interpreter' }})
     runs-on: ubuntu-latest
     # Secret guard: only expose Doppler/API keys on push to main (trusted
     # code). PRs — including same-repo branches — execute PR-controlled
@@ -551,6 +580,12 @@ jobs:
     # `github.event_name == 'push'` is the only reliable gate; the old
     # `head.repo.fork != true` check passes for same-repo PRs and for
     # workflow_call events where pull_request context is absent.
+    strategy:
+      fail-fast: false
+      matrix:
+        execution_plan: [false, true]
+    env:
+      EXECUTION_PLAN_FEATURE: ${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -562,49 +597,51 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
 
       - name: Build examples
-        run: cargo build --examples --features "git,http_client,ssh,sqlite"
+        run: cargo build --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" --examples --features "git,http_client,ssh,sqlite"
 
       - name: Run C API examples
+        env:
+          BASHKIT_CAPI_FEATURES: ${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}
         run: ./scripts/run-c-api-examples.sh
 
       - name: Run examples
         run: |
-          cargo run --example basic
-          cargo run --example custom_fs
-          cargo run --example clap_builtin
-          cargo run --example clap_builtin_subcommands
-          cargo run -p bashkit-scripted-tool --example scripted_tool_clap_builtin
-          cargo run --example resource_limits
-          cargo run --example text_processing
-          cargo run --example live_mounts
-          cargo run --example git_workflow --features git
-          cargo run --example python_external_functions --features python
-          cargo run --example cpython_scripts --features cpython
-          cargo run --example typescript_external_functions --features typescript
-          cargo run --example realfs_readonly --features realfs
-          cargo run --example realfs_readwrite --features realfs
-          cargo run --example sqlite_basic --features sqlite
-          cargo run --example sqlite_workflow --features sqlite
-          cargo run --example markkit_fetchkit --features markkit,fetchkit
-          cargo run --example terminal_vi --features terminal
-          cargo run --example terminal_record --features terminal
+          cargo run --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" --example basic
+          cargo run --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" --example custom_fs
+          cargo run --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" --example clap_builtin
+          cargo run --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" --example clap_builtin_subcommands
+          cargo run --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" -p bashkit-scripted-tool --example scripted_tool_clap_builtin
+          cargo run --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" --example resource_limits
+          cargo run --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" --example text_processing
+          cargo run --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" --example live_mounts
+          cargo run --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" --example git_workflow --features git
+          cargo run --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" --example python_external_functions --features python
+          cargo run --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" --example cpython_scripts --features cpython
+          cargo run --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" --example typescript_external_functions --features typescript
+          cargo run --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" --example realfs_readonly --features realfs
+          cargo run --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" --example realfs_readwrite --features realfs
+          cargo run --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" --example sqlite_basic --features sqlite
+          cargo run --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" --example sqlite_workflow --features sqlite
+          cargo run --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" --example markkit_fetchkit --features markkit,fetchkit
+          cargo run --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" --example terminal_vi --features terminal
+          cargo run --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" --example terminal_record --features terminal
 
       # SSH tests
       - name: Run ssh builtin tests (mock handler)
-        run: cargo test --features ssh -p bashkit --test ssh_builtin_tests
+        run: cargo test --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" --features ssh -p bashkit --test ssh_builtin_tests
 
       - name: Run ssh supabase.sh example and tests
         run: |
           if nc -z -w 5 supabase.sh 22 2>/dev/null; then
-            cargo run --example ssh_supabase --features ssh
-            cargo test --features ssh -p bashkit --test ssh_supabase_tests
+            cargo run --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" --example ssh_supabase --features ssh
+            cargo test --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" --features ssh -p bashkit --test ssh_supabase_tests
           else
             echo "::warning::supabase.sh:22 unreachable from this runner — skipping live SSH tests"
           fi
 
       - name: Run realfs bash example
         run: |
-          cargo build -p bashkit-cli --features realfs
+          cargo build --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" -p bashkit-cli --features realfs
           bash examples/realfs_mount.sh
 
       - name: Run ticket CLI example
@@ -656,8 +693,8 @@ jobs:
 
       - name: Build LLM examples without credentials
         run: |
-          cargo build --example agent_tool --features http_client
-          cargo build -p bashkit-cli --features realfs --quiet
+          cargo build --features="$EXECUTION_PLAN_FEATURE" --example agent_tool --features http_client
+          cargo build --features="$EXECUTION_PLAN_FEATURE" -p bashkit-cli --features realfs --quiet
 
       # Resolve only the required key; this token-bearing process exits before
       # repository code runs. Mask the output before crossing the step boundary.
@@ -703,8 +740,12 @@ jobs:
         run: bash examples/harness-openai-joke.sh
 
   fuzz-check:
-    name: Fuzz Compile Check
+    name: Fuzz build and smoke (${{ matrix.execution_plan && 'execution-plan' || 'interpreter' }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        execution_plan: [false, true]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -732,18 +773,34 @@ jobs:
         env:
           RUSTUP_TOOLCHAIN: nightly-2026-10-30
         with:
-          tool: cargo-fuzz
+          tool: cargo-fuzz@0.13.2
           locked: true
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          workspaces: crates/bashkit/fuzz -> target
+          shared-key: fuzz-smoke-${{ matrix.execution_plan }}
+          cache-on-failure: true
 
       - name: Verify fuzz targets compile
         working-directory: crates/bashkit
         run: |
-          cargo +nightly-2026-10-30 fuzz build
-          cargo +nightly-2026-10-30 fuzz build --features cpython cpython_fuzz
-          cargo +nightly-2026-10-30 fuzz build --features cpython cpython_http_fuzz
-          cargo +nightly-2026-10-30 fuzz build --features python python_fuzz
-          cargo +nightly-2026-10-30 fuzz build --features python,cpython python_diff_fuzz
-          cargo +nightly-2026-10-30 fuzz build --features typescript ts_fuzz
+          cargo +nightly-2026-10-30 fuzz build --codegen-units 16 --features="${{ matrix.execution_plan && 'experimental_execution_plan' || '' }}"
+          cargo +nightly-2026-10-30 fuzz build --codegen-units 16 --features="cpython${{ matrix.execution_plan && ',experimental_execution_plan' || '' }}" cpython_fuzz
+          cargo +nightly-2026-10-30 fuzz build --codegen-units 16 --features="cpython${{ matrix.execution_plan && ',experimental_execution_plan' || '' }}" cpython_http_fuzz
+          cargo +nightly-2026-10-30 fuzz build --codegen-units 16 --features="python${{ matrix.execution_plan && ',experimental_execution_plan' || '' }}" python_fuzz
+          cargo +nightly-2026-10-30 fuzz build --codegen-units 16 --features="python,cpython${{ matrix.execution_plan && ',experimental_execution_plan' || '' }}" python_diff_fuzz
+          cargo +nightly-2026-10-30 fuzz build --codegen-units 16 --features="typescript${{ matrix.execution_plan && ',experimental_execution_plan' || '' }}" ts_fuzz
+
+      - name: Smoke every fuzz target (manifest-discovered, bounded)
+        run: python3 scripts/fuzz-smoke.py ${{ matrix.execution_plan && '--execution-plan' || '' }}
+
+      - name: Upload fuzz failures
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: fuzz-smoke-failures-${{ matrix.execution_plan }}
+          path: crates/bashkit/fuzz/artifacts
 
   # Gate job for branch protection — name must stay "Check"
   check:
