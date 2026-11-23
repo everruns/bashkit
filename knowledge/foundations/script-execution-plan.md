@@ -111,6 +111,8 @@ and restores active loop counters when execution returns an error. Arithmetic
 uses the normal recursion/fuel budget and variable-write checks. Compilation
 has real work/live-memory costs, so tight budgets can stop execution earlier
 than the ordinary interpreter.
+Cooperative yields can suspend longer compiled scripts; browser callers should
+use the async `execute()` API for them. `executeSync()` still rejects suspension.
 
 ## Validation and performance gates
 

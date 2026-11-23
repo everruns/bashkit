@@ -32,6 +32,8 @@ traps, tracing, `errexit`, `nounset` and attributed variables retain ordinary
 semantics. Redirected compound boundaries still use interpreter execution.
 The `jq` builtin already compiles and reuses filters through its execution-local
 LRU, including calls from planned loops; values and file contents stay dynamic.
+Compiled regions yield cooperatively. Browser callers running longer compiled
+scripts should use `execute()`; `executeSync()` rejects suspended executions.
 
 Plans belong to one execution or function invocation and borrow its parsed
 source. They use the shared request's work and memory budgets,

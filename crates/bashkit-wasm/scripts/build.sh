@@ -54,6 +54,19 @@ if command -v wasm-opt >/dev/null 2>&1; then
     --enable-nontrapping-float-to-int \
     --enable-sign-ext \
     "$OUT_DIR/bashkit_wasm_bg.wasm" -o "$OUT_DIR/bashkit_wasm_bg.wasm"
+  case ",$FEATURES," in
+    *,experimental_execution_plan,*|*,bashkit/experimental_execution_plan,*)
+      # The mixed compiler adds async control-flow state machines. Reconstruct
+      # their branches before converging size optimization; keep the ordinary
+      # package's measured code-generation policy unchanged.
+      echo "==> wasm-opt --flatten --rereloop -Oz --converge (execution plan)"
+      wasm-opt --flatten --rereloop -Oz --converge \
+        --enable-bulk-memory \
+        --enable-nontrapping-float-to-int \
+        --enable-sign-ext \
+        "$OUT_DIR/bashkit_wasm_bg.wasm" -o "$OUT_DIR/bashkit_wasm_bg.wasm"
+      ;;
+  esac
 else
   WASM_OPT_VERSION=none
   echo "==> wasm-opt not found; skipping size optimization"

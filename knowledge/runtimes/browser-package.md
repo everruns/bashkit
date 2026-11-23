@@ -291,6 +291,12 @@ solve transfer size; size-oriented LLVM code generation is the larger lever.
 The more aggressive `opt-level = "z"` was rejected because representative
 arithmetic slowed about 50%, despite a larger download saving.
 
+The opt-in execution-plan build additionally runs Binaryen's `--flatten
+--rereloop -Oz --converge` after the ordinary pass to reconstruct branches in
+its additional async control-flow state machines. It retains the same APIs,
+limits, builtins and transfer-size budgets; the ordinary package keeps its
+existing optimization passes.
+
 CI and publication run the same bounded GNU Bash regression sample and raw /
 gzip / Brotli size budgets under `crates/bashkit-wasm/bench/`, in addition to
 all package integration tests. The gzip ceiling is 3,120,000 bytes. It

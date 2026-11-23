@@ -181,7 +181,8 @@ fn size(command: &Command, depth: usize) -> Option<usize> {
 
 // A small cold statement rarely recovers the cost of lowering it. The cheap
 // probe stays inline; full lowering is outlined away from ordinary tool calls.
-#[inline]
+#[cfg_attr(not(target_arch = "wasm32"), inline)]
+#[cfg_attr(target_arch = "wasm32", inline(never))]
 pub(super) fn worthwhile(command: &Command, weight: &mut usize, depth: usize) -> bool {
     if depth > 64 {
         return false;
@@ -314,6 +315,7 @@ impl<'s> ScriptPlan<'s> {
 }
 
 impl<'s> ControlProgram<'s> {
+    #[cfg_attr(target_arch = "wasm32", inline(never))]
     fn compile(
         compound: &'s CompoundCommand,
         builder: &mut Builder<'_, 's>,
@@ -405,7 +407,7 @@ impl<'s> ControlProgram<'s> {
                         .saturating_mul(Expression::STORAGE_FACTOR)
                         .saturating_add(4096),
                 )? {
-                    *slot = Expression::compile(source.as_str());
+                    *slot = Expression::compile(source.as_str().into());
                 }
             }
         }
@@ -447,6 +449,7 @@ impl<'p, 's> PreparedControl<'p, 's> {
 }
 
 impl<'s> Program<'s> {
+    #[cfg_attr(target_arch = "wasm32", inline(never))]
     fn compile(
         command: &'s Command,
         builder: &mut Builder<'_, 's>,
@@ -989,6 +992,8 @@ mod tests {
             "f() { local i; for ((i=0;i<3;i++)); do printf '%s:%s ' \"${FUNCNAME[0]}\" \"$LINENO\"; done; }; f > /tmp/out; cat /tmp/out",
             "set -e; f() { for ((i=0;i<3;i++)); do printf x; false; printf no; done; }; f || printf caught",
             "f() { local i; for ((i=0;i<3;i++)); do if ((i==1)); then declare -i i; fi; printf '%s' \"$i\"; done; }; f",
+            r#"f() { local n=0 line; while read -r line; do ((n+=1)); printf '%s:%s\n' "$n" "$line"; done; }; printf 'a\nb\n' | f"#,
+            r#"f() { local i line; for ((i=0;i<2;i++)); do read -r line; printf '%s' "$line"; done; }; f <<< $'a\nb'"#,
         ] {
             let mut results = Vec::new();
             let mut retained = Vec::new();
