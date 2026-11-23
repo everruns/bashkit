@@ -154,4 +154,5 @@ compilation overhead, and audit native command-boundary equivalence.
 - [Parser](parser.md)
 - [Security Testing](../security/security-testing.md)
 - [Performance Results](../operations/performance-results.md)
+- [Mixed functions and control-flow harness](../../experiments/mixed-execution-plan/README.md)
 - [Experiment results and remaining gates](../../experiments/script-execution-plan/README.md)

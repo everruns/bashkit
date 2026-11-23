@@ -14,7 +14,10 @@ macOS, `/bin/bash` 3.2 is unsuitable) and Node 22+.
 - `node crates/bashkit-wasm/bench/artifact.mjs [pkg] [--check]`: raw, gzip-9,
   Brotli-11 bytes for the actual JS + WASM load graph, SHA-256 identities, and
   WASM code/data/other sections. `--check` applies `size-budget.json`, with about
-  4-5% headroom above the selected shipping profile. Review new measurements
+  4-5% headroom above the selected shipping profile. The opt-in execution-plan
+  build uses the gzip override in `size-budget-execution-plan.json`, selected
+  from its explicit build-info features; normal package caps stay unchanged.
+  Review new measurements
   before deliberately raising a budget. No wall-clock threshold in CI.
 - `node crates/bashkit-wasm/bench/runtime.mjs pkg`: arithmetic, substitution,
   jq, and text pipelines; one warmup and seven measured fresh-instance runs.

@@ -1,0 +1,27 @@
+{
+  "revision": "9cab5a45e22f6cf9dc8f6322078ae6087cd935a1",
+  "rustc": "rustc 1.100.0 (0ef1bc386 2026-11-09)",
+  "binaries": {
+    "original": {
+      "path": "/workspace/scratch/bashkit-mixed-benchmark/bench-candidate-final",
+      "sha256": "f72a35f76c1b7991c7acf1c327bd257e5e350f19f57a062feb1413e9a7bb1c5b"
+    },
+    "loops": {
+      "path": "/workspace/scratch/bashkit-mixed-loops-target/release/mixed-plan-loops",
+      "sha256": "2bb9a937e39a96cc38064cb0c5a5e2b1a86f112ddd2072563c388ceacab53e7c"
+    },
+    "broad": {
+      "path": "/workspace/scratch/bashkit-mixed-benchmark/bench-broad-final",
+      "sha256": "bbd55ab2c1e66a1ab890eda7f41df5553ee18bef34a2477eb84745529e8ad5a7"
+    },
+    "parallel": {
+      "path": "/workspace/scratch/bashkit-plan-release-target/release/build/bashkit/81cf260a316d5735/out/parallel_execution-81cf260a316d5735",
+      "sha256": "dd229f1a1202b53aebc649301e1ef4baa370a87fac9cfae317592097dc0008c3"
+    }
+  },
+  "baseline_commit": "abc42a7cd4b5ef0af7f60002fda698517a9db417",
+  "baseline_binaries": {
+    "broad": "6543573352c7eb30bc21b0b53a8dca84ba304ace99b30ce9c1268753c728be00",
+    "parallel": "2761e05a787f35523d85688308e6f11e4aeeb94053fc73ad4437b45a7d26bf97"
+  }
+}

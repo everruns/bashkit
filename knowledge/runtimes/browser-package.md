@@ -291,11 +291,13 @@ solve transfer size; size-oriented LLVM code generation is the larger lever.
 The more aggressive `opt-level = "z"` was rejected because representative
 arithmetic slowed about 50%, despite a larger download saving.
 
-The opt-in execution-plan build additionally runs Binaryen's `--flatten
---rereloop -Oz --converge` after the ordinary pass to reconstruct branches in
-its additional async control-flow state machines. It retains the same APIs,
-limits, builtins and transfer-size budgets; the ordinary package keeps its
-existing optimization passes.
+The opt-in execution-plan build keeps the same optimization passes and has a
+separate 3.12 MB gzip cap selected from its build metadata. Normal packages keep
+the existing 3.1 MB gzip cap; raw and Brotli caps are unchanged in both profiles.
+A second Binaryen flatten/rereloop/convergence pass was rejected: it saved about
+10 KB but jq timings regressed in fixed-CPU probes. Execution speed takes
+precedence over that small transfer saving. Tests enforce explicit feature
+selection and every limit in both profiles.
 
 CI and publication run the same bounded GNU Bash regression sample and raw /
 gzip / Brotli size budgets under `crates/bashkit-wasm/bench/`, in addition to
