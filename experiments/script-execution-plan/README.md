@@ -1,7 +1,7 @@
 # Whole-script execution-plan experiment
 
-Isolated branch: `experiment/script-execution-plan`. Implementation commit:
-`7b7225e7`. Baseline: `782a4c55` (the shipped stream/dispatch optimization).
+Isolated branch: `experiment/script-execution-plan`. Initial implementation: `7b7225e7`; dispatch/allocation/policy refinements:
+`15cd14b4`, `c1963b9c`, `36220a35`; diagnostic control: `d3280018`. Baseline: `782a4c55` (the shipped stream/dispatch optimization).
 The `experimental_execution_plan` feature is off by default. This experiment
 has not been merged into production.
 
@@ -48,29 +48,104 @@ Positive percentages mean less time; negative percentages mean more time.
 
 | Workload | Baseline exec (ms) | Plan exec (ms) | Exec reduction | Construction + exec reduction |
 |---|---:|---:|---:|---:|
-| short_tool | 0.0163 | 0.0163 | -0.1% | +0.5% |
-| short_arithmetic | 0.0431 | 0.0467 | -8.4% | -9.2% |
-| straight_arithmetic | 0.2996 | 0.2883 | +3.8% | +2.2% |
-| while_1000 | 3.8733 | 1.4595 | +62.3% | +61.3% |
-| branch_loop | 6.6303 | 2.6471 | +60.1% | +59.5% |
-| assignment_loop | 3.0171 | 2.2410 | +25.7% | +25.4% |
-| pipeline_fallback | 2.5541 | 2.6231 | -2.7% | -2.2% |
-| substitution_fallback | 1.6041 | 1.6443 | -2.5% | -2.0% |
-| mixed_script | 3.9509 | 1.7694 | +55.2% | +54.3% |
-| arithmetic_for_100 | 0.4205 | 0.2034 | +51.6% | +45.9% |
-| arithmetic_for_1000 | 3.9119 | 1.7453 | +55.4% | +54.5% |
-| arithmetic_for_5000 | 19.7788 | 9.1169 | +53.9% | +53.4% |
-| existing_fanout | 8.1085 | 7.9425 | +2.0% | +2.0% |
+| short_tool | 0.0161 | 0.0160 | +0.1% | -1.0% |
+| short_arithmetic | 0.0283 | 0.0282 | +0.4% | -1.3% |
+| straight_arithmetic | 0.3064 | 0.2698 | +12.0% | +7.7% |
+| while_1000 | 3.9890 | 1.4848 | +62.8% | +61.7% |
+| branch_loop | 6.9396 | 2.6939 | +61.2% | +60.6% |
+| assignment_loop | 3.1261 | 2.3165 | +25.9% | +25.3% |
+| pipeline_fallback | 2.6579 | 2.6646 | -0.3% | -0.2% |
+| substitution_fallback | 1.6670 | 1.7337 | -4.0% | -4.2% |
+| mixed_script | 4.0972 | 1.8244 | +55.5% | +54.6% |
+| arithmetic_for_100 | 0.4347 | 0.2061 | +52.6% | +45.5% |
+| arithmetic_for_1000 | 4.1152 | 1.8058 | +56.1% | +55.2% |
+| arithmetic_for_5000 | 20.4192 | 8.8743 | +56.5% | +56.3% |
+| existing_fanout | 8.2532 | 8.1651 | +1.1% | +1.1% |
 
-Arithmetic-heavy loops improve substantially (roughly 2.1–2.7x faster). The
-mixed script combines fallback assignment/output commands with a compiled
-arithmetic region. Straight-line arithmetic gains are much smaller.
-Short arithmetic and fallback pipeline/substitution cases show overhead. The
-small fan-out difference is not a demonstrated general tool-orchestration win.
-This is promising evidence for the architecture, not a reason to enable it by
-default. Next gates are reducing one-shot compilation/fallback overhead and
-expanding backend coverage to normal tool-containing control flow and word
-expansions without weakening shell boundaries.
+The previous short-arithmetic penalty is gone in this comparison: small cold
+scripts skip lowering. Straight-line arithmetic now takes about 12% less time;
+supported arithmetic/branch loops take 26–63% less. Pipelines are approximately
+flat. Substitutions remain slower in separate builds: 4.0% in this matrix and
+3.7% in a prior 20-round focused repeat. This remaining regression is a production
+gate, even with unchanged fallback allocation counts. The small fan-out gain
+is not a demonstrated general tool-orchestration win. The feature stays off
+by default.
+
+The original experiment's samples are preserved in [results/v1](results/v1/).
+Compare builds within each matched run; absolute latency across these separate
+sessions is not a measure of the refinements alone.
+
+## What changed
+
+Ordinary commands and lists now keep their own async futures. Compiled dispatch
+uses separate futures, sharing the same command-boundary/list-orchestration
+macros. This removes the prepared-program payload from every fallback command.
+The script keeps a boxed optional plan.
+
+Native regions now use ranges in one instruction arena and one growable resource
+lease. Arithmetic parsing borrows source text and moves owned token names.
+Small cold scripts skip lowering after a cheap AST probe; loops and larger
+straight-line blocks still compile. All state belongs to one execution. There
+is no global cache or persistent hotness tracker, and no Bash syntax change.
+
+A buffer-drop regression test exposed an early lease release on failed lowering.
+The builder now drops its buffers before releasing their memory reservation.
+
+## Allocation profile
+
+Allocation counts are collected in separate binaries with a benchmark-only
+counting allocator. They count allocation/reallocation calls and total requested
+bytes during `Bash::exec`, excluding Bash construction; bytes are not peak/live
+memory. Timing results above use uninstrumented binaries.
+
+| Workload | Baseline calls | Plan calls | Baseline requested bytes | Plan requested bytes |
+|---|---:|---:|---:|---:|
+| short_tool | 85 | 85 | 23,432 | 23,440 |
+| short_arithmetic | 168 | 168 | 44,964 | 44,972 |
+| straight_arithmetic | 3,344 | 2,554 | 909,298 | 533,118 |
+| pipeline_fallback | 33,230 | 33,230 | 5,890,231 | 5,890,239 |
+| substitution_fallback | 18,583 | 18,583 | 4,646,593 | 4,646,601 |
+| arithmetic_for_1000 | 56,202 | 25,207 | 8,917,649 | 1,333,565 |
+
+Fallback dispatch no longer enlarges every command allocation. Only eight
+extra requested bytes remain per execution. Sharing the arena also removes hundreds
+of compiler allocations in a script with many separate arithmetic statements.
+
+## Same-binary diagnostic
+
+Positive changes below mean slower automatic admission; negative changes mean
+faster. These timings include the matched diagnostic extension in both modes.
+
+| Workload | Interpreter (µs) | Auto (µs) | Auto time change | Per-process change range |
+|---|---:|---:|---:|---:|
+| short_tool | 16.596 | 16.591 | -0.03% | -0.27% to +0.28% |
+| short_arithmetic | 29.331 | 29.562 | +0.79% | +0.39% to +0.94% |
+| straight_arithmetic | 313.188 | 274.923 | -12.22% | -13.68% to -9.77% |
+| pipeline_fallback | 2850.398 | 2867.340 | +0.59% | -2.23% to +0.61% |
+| substitution_fallback | 1752.316 | 1747.843 | -0.26% | -1.54% to +1.38% |
+| colon_fallback | 4537.475 | 4505.358 | -0.71% | -1.08% to +1.15% |
+| substitution_unrolled | 1991.370 | 1975.273 | -0.81% | -1.32% to +0.98% |
+
+All 30,000 measured executions assert exact output/status. Cold arithmetic has
+less than 1% admission-probe overhead in this control, compared with the original
+8% separate-build penalty. The substitution penalty is not reproduced by merely
+enabling plan construction inside one binary. This narrows the investigation;
+it does not establish why production and experimental builds differ or clear
+the remaining 4% regression.
+
+TODO(experiment): isolate the ordinary script runner's async frame and examine
+the compiled fallback path before enabling this feature by default. The current
+script future still carries an optional plan even when admission declines;
+command and list futures have already been separated. Same-binary controls
+cannot measure overhead caused by enabling the feature in the build itself.
+
+The extra `same_binary` harness feature enables a separate diagnostic library
+feature. Both modes attach the same typed per-execution extension and alternate
+order inside one process: interpreter-only versus automatic plan admission.
+Each of five processes measures 200 pairs after ten warmup pairs per workload.
+Normal experimental builds contain no control lookup. The control uses no
+shared flag or compiler state. It helps isolate runtime plan costs from other
+build differences; it does not replace the production-baseline comparison.
 
 This exploratory harness does not update the performance site. Raw samples
 and binary/lockfile hashes are in [results](results/).
@@ -111,12 +186,14 @@ python3 experiments/script-execution-plan/reproduce.py \
   --baseline-repo /path/to/baseline \
   --candidate-repo /path/to/experiment \
   --benchmark-repo /path/to/code-mode-language-benchmark \
-  --output /tmp/bashkit-script-plan-results
+  --output /tmp/bashkit-script-plan-results \
+  --allocation-profile --same-binary
 ```
 
 The output directory must be empty. The script creates isolated consumer
 projects, builds both binaries with one shared lockfile/profile, checks their
-behavior, and collects timings. The fixture checkout is linked into this
+behavior, and collects timings. Optional flags also build separate allocation-profile
+binaries and run the same-binary diagnostic. The fixture checkout is linked into this
 private directory; no third-party fixture source is vendored here. The timing
 orchestrator uses Linux `taskset`; the Rust runner and differential cases can
 also be run directly on another host. Reports from different hosts or compiler

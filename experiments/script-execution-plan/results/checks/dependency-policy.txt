@@ -1,0 +1,12 @@
+cargo-deny 0.20.2: advisories FAILED; bans, licenses and sources passed.
+Both baseline 782a4c55 and candidate have the same findings, with unchanged dependencies:
+error[unmaintained]: chrono is unmaintained
+   ├ ID: RUSTSEC-2026-0543
+   ├ Advisory: https://rustsec.org/advisories/RUSTSEC-2026-0543
+   ├ The chrono crate is unmaintained; all versions are affected.
+   ├ Solution: No safe upgrade is available!
+error[unmaintained]: chrono-tz is unmaintained
+   ├ ID: RUSTSEC-2026-0555
+   ├ Advisory: https://rustsec.org/advisories/RUSTSEC-2026-0555
+   ├ The chrono-tz crate is unmaintained; all versions are affected.
+   ├ Solution: No safe upgrade is available!

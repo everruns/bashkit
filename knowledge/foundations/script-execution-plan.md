@@ -22,6 +22,9 @@ production compiler or a new public execution API.
 Compile a parsed script into an execution-owned plan before running its first
 command. The ordinary script runner still handles alias/extglob reparsing,
 source lines, output routing, hooks, trailing syntax errors, and shell recovery.
+An allocation-free eligibility probe skips lowering for small one-shot regions;
+supported loops and larger straight-line regions still compile. This is a
+conservative local cost policy, not profiling or persistent hotness state.
 Reparsed script views use ordinary execution. Nested `eval`/`source` scripts
 build their own local plans through the same entry point.
 
@@ -30,6 +33,14 @@ branches, jumps, arithmetic operations, and loop boundaries. Numeric literal
 assignments use the existing assignment executor. The instruction evaluator
 uses the existing arithmetic variable resolver and ordered write overlay;
 variable values are read during execution.
+
+All native regions share one instruction arena; each stores a range into it.
+Arithmetic tokens borrow source text where possible and transfer owned names
+instead of cloning them. The boxed plan keeps its storage out of the ordinary
+script future. Ordinary and compiled command/list dispatch use separate futures,
+with shared macros preserving identical command boundaries and orchestration.
+A fallback command immediately enters the ordinary dispatcher and does not
+carry a prepared-program selector through its nested execution.
 
 Mixed command lists retain the existing list orchestration with prepared child
 commands. This preserves conditional execution, builtin/tool calls, redirects,
@@ -63,6 +74,12 @@ tokenization/lowering; storage is conservatively admitted before allocations.
 Compiler traversal, expression length, token count, and instruction-stack depth
 are bounded.
 
+One growable optional-storage lease covers the instruction arena. Capacity grows
+geometrically, and rejected lowering rolls back instructions while retaining
+the reservation for allocated capacity. Buffers drop before the lease releases
+their accounting, including failed compilation; a drop-order regression test
+checks this invariant.
+
 The VM charges every executable command node and loop iteration, checks shared
 cancellation/deadline/memory state between instructions, yields periodically,
 and restores active loop counters when execution returns an error. Arithmetic
@@ -78,6 +95,13 @@ execution. Public-API differential probes cover mixed scripts and fallback
 contexts. Baseline/candidate binaries must use identical dependency lockfiles
 and compiler/profile settings.
 
+The additional `experimental_plan_benchmark_control` feature is diagnostic only
+and is also off by default. A typed execution extension selects automatic plan
+admission or interpreter-only execution in one binary. Both benchmark modes
+attach the same extension type; no shared switch or cache is introduced. Normal
+experimental builds contain no selector lookup. Same-binary controls complement,
+and do not replace, comparisons with a production baseline build.
+
 Measure parsing, compilation, and execution together on fresh Bash instances.
 Report short/one-shot scripts and fallback workloads alongside supported hot
 regions. A supported-loop speedup alone is insufficient to enable the feature
@@ -90,3 +114,4 @@ compilation overhead, and audit native command-boundary equivalence.
 - [Parser](parser.md)
 - [Security Testing](../security/security-testing.md)
 - [Performance Results](../operations/performance-results.md)
+- [Experiment results and remaining gates](../../experiments/script-execution-plan/README.md)

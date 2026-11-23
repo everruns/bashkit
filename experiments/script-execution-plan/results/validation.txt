@@ -1,22 +1,35 @@
-Implementation: 7b7225e7
+Candidate code: d3280018297f7839385625125a7c61216f5cd67f
+Baseline: 782a4c55b932258e77453622e891fe3cec70aca6
 
-Final validation (all exit 0):
-- cargo check --locked -p bashkit --no-default-features
-- cargo clippy --locked -p bashkit --features experimental_execution_plan,jq --lib --tests -- -D warnings
+Successful final validation:
+- cargo build --locked -p bashkit-cli --no-default-features --features bashkit/experimental_execution_plan
 - cargo test --locked -p bashkit --features experimental_execution_plan,jq --lib --test integration
-  Unit: 3531 passed, 0 failed.
+  Unit: 3535 passed, 0 failed.
   Integration: 1852 passed, 0 failed, 4 ignored.
-- 199/199 public-API differential cases passed against baseline.
-- 7800/7800 measured benchmark executions asserted stdout/stderr/status.
-- 162/163 successful untraced GNU Bash oracle cases matched.
-  One existing baseline octal-variable gap is retained in bash-oracle-results.json.
-- Python syntax checks and reproduction helper --help passed.
-- Consumer Cargo metadata --locked validated the standalone manifest and lockfile.
+- cargo test --locked -p bashkit --features experimental_execution_plan,jq,failpoints --test security_failpoint_tests -- --test-threads=1
+  19 passed, 0 failed. Native admission declines in failpoint builds.
+- cargo clippy --locked -p bashkit --features experimental_plan_benchmark_control,jq --lib --tests -- -D warnings
+- cargo check --locked -p bashkit
+- cargo check --locked -p bashkit --no-default-features
+  Feature-off checks emit the existing unused-anyhow manifest warning.
+- 199/199 public-API differential cases passed against baseline using the final rebuilt candidate.
+- 7800/7800 measured standard benchmark executions asserted exact stdout/stderr/status.
+- 30000/30000 measured same-binary control executions asserted exact stdout/stderr/status.
+- Separate profile binaries confirmed unchanged fallback allocation counts and +8 total requested bytes per exec.
+- Buffer-drop regression failed before the fix; focused tests passed afterward (checks/buffer-drop-before.log).
+- Python syntax checks, reproduction helper --help and consumer cargo metadata --locked passed.
 - Knowledge, documentation links, capability-parity, Rust formatting and diff whitespace checks passed.
 
-The first narrow integration invocation omitted the CLI package, so eight
-subprocess tests could not start. After building the feature-enabled CLI,
-all 88 selected subprocess/resource tests passed. The final full unit/integration
-invocation above also passed with the CLI available.
+Inherited GNU Bash oracle evidence:
+- 162/163 successful untraced cases matched; final baseline differential outputs remain identical.
+- One existing octal-variable gap is retained in bash-oracle-results.json.
 
-This is an isolated experiment. No production merge or default feature enablement.
+Dependency-policy exception (also reproduced in the production baseline):
+- cargo deny check, cargo-deny 0.20.2: advisories FAILED; bans/licenses/sources passed.
+- chrono: RUSTSEC-2026-0543, unmaintained (all versions affected).
+- chrono-tz: RUSTSEC-2026-0555, unmaintained (no safe upgrade available).
+- Dependencies and workspace lockfile were not changed by the experiment.
+
+Measurements are CPU-pinned Linux release runs with no concurrent local builds.
+This remains an isolated experiment: no production merge or default feature enablement.
+The separate-build substitution regression remains an explicit production gate.

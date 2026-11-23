@@ -1,6 +1,6 @@
 {
   "baseline_commit": "782a4c55b932258e77453622e891fe3cec70aca6",
-  "candidate_code_commit": "7b7225e7",
+  "candidate_code_commit": "d3280018297f7839385625125a7c61216f5cd67f",
   "benchmark_commit": "258b364ed8c3281667149f7beed69b3d28c1e1b3",
   "rust": "1.100.0",
   "profile": {
@@ -17,11 +17,26 @@
       "default",
       "jq",
       "experimental_execution_plan"
+    ],
+    "same-binary": [
+      "default",
+      "jq",
+      "experimental_execution_plan",
+      "experimental_plan_benchmark_control"
     ]
   },
   "sha256": {
-    "baseline": "8f422ce9985d837441d6cbe17fc0ed6ce478786dee77242467865b40487e118b",
-    "candidate": "4452cae7b9df1c26c9a7110a78cc66625453561aebe84eb04dc8dc06b9b14670",
+    "baseline": "28f6f14cc7a8f630982dc2297f410144227bb9128e2d8731fdc0708616a1c568",
+    "candidate": "ce65c7337c639da0dbe8b0687e22199b6c8cf5e6dfed81be89c7cbc2d16dab58",
+    "baseline-profile": "9b419a52bc567e866125018b4345364d08f6b676d1b3734caaa4c4da231178dd",
+    "candidate-profile": "1aa30ab2533958262e280bf76f40acd9049aaac42bd65778472015d0ff32f6db",
+    "same-binary": "00035e5764b1a7255273cd2da1398b16b5390d2a8087e3222fc5cef6d75ed9d7",
     "Cargo.lock": "aa588bf3ca37c8d9d3cf9974844b0526cca218a8bf9a47c03244a2a8aca192c7"
-  }
+  },
+  "notes": [
+    "Allocation counters exist only in the profile consumer, not the library.",
+    "Same-binary modes use matched typed execution extensions.",
+    "The control lookup is absent from normal experimental builds."
+  ],
+  "prior_focused_and_diagnostic_code_commit": "36220a35"
 }
