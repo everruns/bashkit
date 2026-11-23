@@ -52,6 +52,8 @@ as ordinary execution. Individual unsupported leaves (tools, pipelines,
 substitutions, regexes and arrays) retain their existing executor. Safe arithmetic
 `for` clauses are compiled independently and recheck variable attributes, values
 and dynamic shell state before each evaluation.
+Controls with no compiled child or clause retain ordinary execution, preserving
+synchronous limit reporting and avoiding an empty prepared dispatcher.
 
 Profitable function bodies receive a fresh invocation-owned plan after entering
 the normal call frame. Small functions retain the ordinary boxed command future.

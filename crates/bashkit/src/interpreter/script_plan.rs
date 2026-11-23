@@ -409,13 +409,10 @@ impl<'s> ControlProgram<'s> {
                 }
             }
         }
-        if !matches!(
-            compound,
-            CompoundCommand::For(_)
-                | CompoundCommand::ArithmeticFor(_)
-                | CompoundCommand::While(_)
-                | CompoundCommand::Until(_)
-        ) && program.clauses.iter().all(Option::is_none)
+        // An opaque loop has no compiled work to amortize the prepared
+        // dispatcher. Keep its ordinary execution (including synchronous
+        // limit reporting) instead of introducing extra yield points.
+        if program.clauses.iter().all(Option::is_none)
             && program.blocks.iter().flatten().all(Option::is_none)
         {
             return Ok(None);
@@ -886,6 +883,29 @@ mod tests {
             plan.is_some(),
             "tool calls must not discard the surrounding compiled loop"
         );
+    }
+
+    #[tokio::test]
+    async fn opaque_loops_keep_synchronous_limit_reporting() {
+        let source = "while true; do :; done";
+        let ast = Parser::new(source).parse().unwrap();
+        let mut bash = crate::Bash::builder()
+            .limits(ExecutionLimits::new().max_loop_iterations(100))
+            .build();
+        assert!(
+            ScriptPlan::compile(&ast, &bash.interpreter.execution_budget)
+                .unwrap()
+                .is_none(),
+            "a wholly opaque loop must decline preparation"
+        );
+        let mut future = Box::pin(bash.exec(source));
+        let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+        assert!(matches!(
+            std::future::Future::poll(future.as_mut(), &mut context),
+            std::task::Poll::Ready(Err(crate::Error::ResourceLimit(
+                crate::LimitExceeded::MaxLoopIterations(100)
+            )))
+        ));
     }
 
     #[tokio::test]
