@@ -18,8 +18,12 @@ env:
 
 jobs:
   miri:
-    name: Miri
+    name: Miri (${{ matrix.execution_plan && 'execution-plan' || 'interpreter' }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        execution_plan: [false, true]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -42,11 +46,20 @@ jobs:
 
       - name: Run Miri on library tests
         run: |
-          cargo +nightly-2026-10-30 miri test --lib -p bashkit -- \
+          cargo +nightly-2026-10-30 miri test --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" --lib -p bashkit -- \
             --test-threads=1 \
             test_parse_simple_command \
             test_parse_variable \
             test_parse_pipeline
+        env:
+          MIRIFLAGS: -Zmiri-disable-isolation
+
+      - name: Miri plan admission and storage lifetime
+        if: matrix.execution_plan
+        run: |
+          cargo +nightly-2026-10-30 miri test --lib -p bashkit --features experimental_execution_plan -- \
+            --test-threads=1 builder_reservation_outlives_buffer_destruction \
+            declined_and_failed_compilation_refund_storage automatic_policy_skips_short_scripts
         env:
           MIRIFLAGS: -Zmiri-disable-isolation
 
@@ -156,7 +169,7 @@ jobs:
           retention-days: 30
 
   asan:
-    name: AddressSanitizer
+    name: AddressSanitizer (${{ matrix.execution_plan && 'execution-plan' || 'interpreter' }})
     # Pinned for the GNU coreutils oracle, like ci.yml's `test` job; see the
     # note there.
     runs-on: ubuntu-24.04
@@ -164,6 +177,10 @@ jobs:
     # differential corpora needs well over the previous 30-minute cap;
     # the last two nightly runs cancelled mid-suite at exactly 30 min.
     timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        execution_plan: [false, true]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -204,7 +221,7 @@ jobs:
           RUSTFLAGS: "-Z sanitizer=address"
           ASAN_OPTIONS: "detect_stack_use_after_return=1:detect_leaks=0"
         run: |
-          cargo +nightly-2026-10-30 test -Z build-std --target x86_64-unknown-linux-gnu --lib --tests \
+          cargo +nightly-2026-10-30 test --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" -Z build-std --target x86_64-unknown-linux-gnu --lib --tests \
             -- --test-threads=1
 
       # The default-feature run above leaves out embedded python3. The Monty
@@ -216,7 +233,7 @@ jobs:
           RUSTFLAGS: "-Z sanitizer=address"
           ASAN_OPTIONS: "detect_stack_use_after_return=1:detect_leaks=0"
         run: |
-          cargo +nightly-2026-10-30 test -Z build-std --target x86_64-unknown-linux-gnu \
+          cargo +nightly-2026-10-30 test --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" -Z build-std --target x86_64-unknown-linux-gnu \
             -p bashkit --features python --lib --test integration -- --test-threads=1 python
 
       # The vendored ZapCode VM (crates/bashkit/src/zapcode_vendor) is our
@@ -228,18 +245,22 @@ jobs:
           RUSTFLAGS: "-Z sanitizer=address"
           ASAN_OPTIONS: "detect_stack_use_after_return=1:detect_leaks=0"
         run: |
-          cargo +nightly-2026-10-30 test -Z build-std --target x86_64-unknown-linux-gnu \
+          cargo +nightly-2026-10-30 test --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" -Z build-std --target x86_64-unknown-linux-gnu \
             -p bashkit --features typescript --lib --test integration -- --test-threads=1 \
             typescript threat_ts ts_tenant_stress zapcode
 
   python-stress-soak:
-    name: Python multi-tenant stress soak
+    name: Python multi-tenant stress soak (${{ matrix.execution_plan && 'execution-plan' || 'interpreter' }})
     # PR CI runs python_tenant_stress_tests at 3 rounds. The soak repeats
     # them many times in release mode so rare cross-tenant leaks (meter
     # left on a worker thread, budget not returned after an abandoned call)
     # show up. Re-sync checklist in knowledge/operations/dependencies.md.
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        execution_plan: [false, true]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -256,16 +277,20 @@ jobs:
         env:
           BASHKIT_STRESS_ROUNDS: "300"
         run: |
-          cargo test --release -p bashkit --features python --test integration \
+          cargo test --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" --release -p bashkit --features python --test integration \
             -- python_tenant_stress
 
   ts-stress-soak:
-    name: TypeScript multi-tenant stress soak
+    name: TypeScript multi-tenant stress soak (${{ matrix.execution_plan && 'execution-plan' || 'interpreter' }})
     # PR CI runs ts_tenant_stress_tests at 3 rounds. The soak repeats them in
     # release mode so rare cross-tenant leaks (meter left on a worker thread,
     # charge not released after an abandoned call) show up.
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        execution_plan: [false, true]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -282,5 +307,5 @@ jobs:
         env:
           BASHKIT_STRESS_ROUNDS: "300"
         run: |
-          cargo test --release -p bashkit --features typescript --test integration \
+          cargo test --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" --release -p bashkit --features typescript --test integration \
             -- ts_tenant_stress

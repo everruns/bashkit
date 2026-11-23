@@ -28,9 +28,13 @@ env:
 
 jobs:
   scoreboard:
-    name: Bash oracle scoreboard
+    name: Bash oracle scoreboard (${{ matrix.execution_plan && 'execution-plan' || 'interpreter' }})
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        execution_plan: [false, true]
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -43,7 +47,7 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
 
       - name: Build CLI
-        run: cargo build -p bashkit-cli
+        run: cargo build --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" -p bashkit-cli
 
       - name: Run scoreboard
         run: python3 scripts/bash-oracle/run.py

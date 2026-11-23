@@ -33,9 +33,13 @@ env:
 
 jobs:
   windows-tests:
-    name: Windows full test suite
+    name: Windows full test suite (${{ matrix.execution_plan && 'execution-plan' || 'interpreter' }})
     runs-on: windows-latest
     timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        execution_plan: [false, true]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -49,10 +53,10 @@ jobs:
           shared-key: windows-nightly
 
       - name: Library tests
-        run: cargo test -p bashkit --lib --features http_client,realfs
+        run: cargo test --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" -p bashkit --lib --features http_client,realfs
 
       - name: Integration tests
-        run: cargo test -p bashkit --test integration --features http_client,realfs
+        run: cargo test --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" -p bashkit --test integration --features http_client,realfs
 
       - name: Property-based security tests
-        run: cargo test -p bashkit --test proptest_security -- --test-threads=1
+        run: cargo test --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" -p bashkit --test proptest_security -- --test-threads=1

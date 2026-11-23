@@ -20,13 +20,24 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  targets:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.targets.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: targets
+        run: echo "matrix=$(python3 scripts/fuzz-smoke.py --matrix)" >> "$GITHUB_OUTPUT"
+
   fuzz:
-    name: Fuzz Test
+    name: Fuzz (${{ matrix.target }}, plan=${{ matrix.execution_plan }})
+    needs: targets
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      matrix:
-        target: [parser_fuzz, lexer_fuzz, analyze_fuzz, arithmetic_fuzz, glob_fuzz, cpython_fuzz, cpython_http_fuzz, python_fuzz, python_diff_fuzz, ts_fuzz]
+      matrix: ${{ fromJSON(needs.targets.outputs.matrix) }}
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -48,20 +59,33 @@ jobs:
       # On the nightly, not the pinned stable default: an unpinned source
       # build on a pinned toolchain breaks when upstream raises its MSRV.
       - name: Install cargo-fuzz
-        run: cargo +nightly-2026-10-30 install cargo-fuzz --locked
+        uses: taiki-e/cache-cargo-install-action@9ee83daaa7b96a6fab930949ecf1122bba04a389 # v3
+        env:
+          RUSTUP_TOOLCHAIN: nightly-2026-10-30
+        with:
+          tool: cargo-fuzz@0.13.2
+          locked: true
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          workspaces: crates/bashkit/fuzz -> target
+          shared-key: fuzz-${{ matrix.features }}
+          cache-on-failure: true
 
       - name: Cache fuzz corpus
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
         with:
           path: crates/bashkit/fuzz/corpus
-          key: fuzz-corpus-${{ matrix.target }}-${{ github.sha }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ matrix.execution_plan }}-${{ github.sha }}
           restore-keys: |
-            fuzz-corpus-${{ matrix.target }}-
+            fuzz-corpus-${{ matrix.target }}-${{ matrix.execution_plan }}-
 
       - name: Run fuzzer - ${{ matrix.target }}
         working-directory: crates/bashkit
         env:
           DURATION_INPUT: ${{ github.event.inputs.duration || '300' }}
+          FUZZ_FEATURES: ${{ matrix.features }}
+          FUZZ_TARGET: ${{ matrix.target }}
         run: |
           # Validate duration is a positive integer before use (prevents shell injection
           # from workflow_dispatch inputs being interpolated directly into the shell).
@@ -72,13 +96,10 @@ jobs:
             exit 1
           fi
           features=()
-          case "${{ matrix.target }}" in
-            python_diff_fuzz) features=(--features python,cpython) ;;
-            cpython_*) features=(--features cpython) ;;
-            python_*) features=(--features python) ;;
-            ts_fuzz) features=(--features typescript) ;;
-          esac
-          cargo +nightly-2026-10-30 fuzz run "${features[@]}" ${{ matrix.target }} -- \
+          if [[ -n "$FUZZ_FEATURES" ]]; then
+            features=(--features "$FUZZ_FEATURES")
+          fi
+          cargo +nightly-2026-10-30 fuzz run --codegen-units 16 "${features[@]}" "$FUZZ_TARGET" -- \
             -max_total_time="$DURATION_INPUT" \
             -print_final_stats=1
 
@@ -86,7 +107,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: fuzz-crashes-${{ matrix.target }}
+          name: fuzz-crashes-${{ matrix.target }}-${{ matrix.execution_plan }}
           path: |
             crates/bashkit/fuzz/artifacts/${{ matrix.target }}
           retention-days: 30

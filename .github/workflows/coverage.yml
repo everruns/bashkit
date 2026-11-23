@@ -24,11 +24,15 @@ env:
 
 jobs:
   coverage:
-    name: Generate Rust Coverage
+    name: Rust coverage (plan=${{ matrix.execution_plan }})
     # Pinned for the GNU coreutils oracle, like ci.yml's `test` job; see the
     # note there.
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        execution_plan: [false, true]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -60,13 +64,13 @@ jobs:
       # (past --timeout). Its tests still run in the main CI test job.
       - name: Generate coverage report
         run: |
-          cargo tarpaulin --features http_client \
+          cargo tarpaulin --features="http_client${{ matrix.execution_plan && ',bashkit/experimental_execution_plan' || '' }}" \
             --workspace \
             --exclude bashkit-python \
             --exclude bashkit-eval \
             --out xml \
             --out html \
-            --output-dir coverage \
+            --output-dir coverage/${{ matrix.execution_plan }} \
             --exclude-files "crates/bashkit-bench/*" \
             --exclude-files "crates/bashkit-cli/*" \
             --exclude-files "crates/bashkit-python/*" \
@@ -77,7 +81,7 @@ jobs:
       - name: Upload coverage artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: rust-coverage-report
+          name: rust-${{ matrix.execution_plan }}-coverage-report
           path: coverage/
           retention-days: 30
 
@@ -218,7 +222,7 @@ jobs:
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-          files: coverage/cobertura.xml,coverage/python-rust-coverage.json,coverage/node-rust-coverage.json
+          files: coverage/false/cobertura.xml,coverage/true/cobertura.xml,coverage/python-rust-coverage.json,coverage/node-rust-coverage.json
           disable_search: true
           flags: unittests
           fail_ci_if_error: false

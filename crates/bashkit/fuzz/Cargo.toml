@@ -20,6 +20,9 @@ path = ".."
 features = ["jq"]
 
 [features]
+# Exercise the shipping feature independently of the diagnostic selector.
+experimental_execution_plan = ["bashkit/experimental_execution_plan"]
+plan_differential = ["experimental_execution_plan", "bashkit/experimental_plan_benchmark_control"]
 # CPython (wasm) python3 target; off by default so `cargo fuzz build` stays
 # light. Run with: cargo +nightly fuzz run cpython_fuzz --features cpython
 cpython = ["bashkit/cpython"]
@@ -36,6 +39,14 @@ members = ["."]
 
 [profile.release]
 debug = 1
+
+[[bin]]
+name = "script_plan_fuzz"
+path = "fuzz_targets/script_plan_fuzz.rs"
+required-features = ["plan_differential"]
+test = false
+doc = false
+bench = false
 
 [[bin]]
 name = "parser_fuzz"

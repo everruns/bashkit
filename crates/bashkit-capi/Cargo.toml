@@ -21,3 +21,7 @@ bashkit = { path = "../bashkit", default-features = false, features = ["git", "j
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
+
+[features]
+# Opt-in script compiler; preserves ordinary Bash syntax and AST fallback.
+experimental_execution_plan = ["bashkit/experimental_execution_plan"]

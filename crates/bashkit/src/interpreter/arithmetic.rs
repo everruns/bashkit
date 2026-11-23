@@ -23,6 +23,9 @@
 
 use super::*;
 
+#[cfg(feature = "experimental_execution_plan")]
+pub(super) mod program;
+
 /// One assignment performed while evaluating: `(name, key, value)`.
 /// `key` is `None` for scalars, the decimal index for indexed arrays, and the
 /// key for associative arrays.

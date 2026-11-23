@@ -9,6 +9,38 @@
 
 **Legend:** ✅ Implemented | ⚠️ Partial | ❌ Not implemented | N/A Security exclusion
 
+## Experimental execution plans
+
+The Cargo feature `experimental_execution_plan` enables an optional compiler
+behind the existing `Bash::exec` entry point. It is off by default. Scripts use
+ordinary Bash syntax and need no annotations or agent-specific conventions.
+Enable this feature on the `bashkit` dependency in a source build; the CLI,
+ScriptedTool, C ABI, Python, JavaScript and browser crates forward the same flag.
+For example, from a checkout:
+
+```bash
+cargo run -p bashkit-cli --features experimental_execution_plan -- \
+  -c 'total=0; for ((i=0;i<1000;i++)); do ((total+=i)); done; echo "$total"'
+```
+
+Supported scalar arithmetic, numeric assignments, branches and loops can execute
+as flat instructions. Small one-shot scripts skip compilation. Unsupported
+syntax, tool-containing compound bodies, word expansions, traps, tracing,
+`errexit`, `nounset`, arrays and attributed variables use the ordinary
+interpreter where required. A mixed script can use both paths.
+
+Plans belong to one execution and borrow its parsed source. They use the shared
+request's work and memory budgets, command/iteration limits, cancellation and
+deadline checks. Compilation costs real work and memory, so tight budgets may
+reject earlier than the interpreter-only build. There is no shared compiler
+cache or persistent hotness state.
+
+This feature is experimental. Arithmetic-heavy regions improve substantially
+in the initial Linux measurements, while substitutions remain about 4% slower
+in separate production/feature builds. Measure representative scripts before
+opting in. Historical measurements and reproduction instructions are in the
+[execution-plan experiment](https://github.com/everruns/bashkit/tree/main/experiments/script-execution-plan).
+
 ## POSIX Shell Compliance
 
 Bashkit provides substantial compliance with IEEE Std 1003.1-2024 (POSIX.1-2024)

@@ -71,39 +71,76 @@ jobs:
         working-directory: crates/bashkit-js
 
   build-and-test:
-    name: ${{ matrix.runtime }} ${{ matrix.version }}
+    name: ${{ matrix.runtime }} ${{ matrix.version }} (${{ matrix.execution_plan && 'execution-plan' || 'interpreter' }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         include:
-          # Node.js versions
-          - runtime: node
-            version: "20"
-            run: "node"
-          - runtime: node
-            version: "22.23.4"
-            run: "node"
-          - runtime: node
-            version: "24.22.1"
-            run: "node"
-          - runtime: node
-            version: "latest"
-            run: "node"
-          # Bun
-          - runtime: bun
-            version: "latest"
-            run: "bun"
-          - runtime: bun
-            version: "canary"
-            run: "bun"
-          # Deno
-          - runtime: deno
-            version: "2.x"
-            run: "deno run -A"
-          - runtime: deno
-            version: "canary"
-            run: "deno run -A"
+        - runtime: node
+          version: '20'
+          run: node
+          execution_plan: false
+        - runtime: node
+          version: '20'
+          run: node
+          execution_plan: true
+        - runtime: node
+          version: 22.23.4
+          run: node
+          execution_plan: false
+        - runtime: node
+          version: 22.23.4
+          run: node
+          execution_plan: true
+        - runtime: node
+          version: 24.22.1
+          run: node
+          execution_plan: false
+        - runtime: node
+          version: 24.22.1
+          run: node
+          execution_plan: true
+        - runtime: node
+          version: latest
+          run: node
+          execution_plan: false
+        - runtime: node
+          version: latest
+          run: node
+          execution_plan: true
+        - runtime: bun
+          version: latest
+          run: bun
+          execution_plan: false
+        - runtime: bun
+          version: latest
+          run: bun
+          execution_plan: true
+        - runtime: bun
+          version: canary
+          run: bun
+          execution_plan: false
+        - runtime: bun
+          version: canary
+          run: bun
+          execution_plan: true
+        - runtime: deno
+          version: 2.x
+          run: deno run -A
+          execution_plan: false
+        - runtime: deno
+          version: 2.x
+          run: deno run -A
+          execution_plan: true
+        - runtime: deno
+          version: canary
+          run: deno run -A
+          execution_plan: false
+        - runtime: deno
+          version: canary
+          run: deno run -A
+          execution_plan: true
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -157,7 +194,10 @@ jobs:
         working-directory: crates/bashkit-js
 
       - name: Build native binding
-        run: pnpm run build
+        run: |
+          pnpm exec napi build --platform --release --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}"
+          pnpm run build:cjs
+          pnpm run build:ts
         working-directory: crates/bashkit-js
 
       # ava >= 8 requires Node 22.20+, but the package still declares
@@ -252,26 +292,35 @@ jobs:
           ${{ matrix.run }} langchain_agent.mjs
 
   callback-platforms:
-    name: Runtime callbacks (${{ matrix.name }})
+    name: Runtime callbacks (${{ matrix.name }}) (${{ matrix.execution_plan && 'execution-plan' || 'interpreter' }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - name: macos-latest
-            os: macos-latest
-          - name: windows-latest
-            os: windows-latest
-          # `macos-latest` is arm64, so the shipped x86_64-apple-darwin binding
-          # only ever runs translated under Rosetta 2, where embedded-runtime
-          # start-up costs several times native. publish-js.yml was the only
-          # place that lane ran, so a timing regression on it first surfaced at
-          # release: v0.20.1 went red here while every native lane was green,
-          # and `release-js` is gated on these jobs, so npm was never reached.
-          - name: macos-latest x86_64 (Rosetta)
-            os: macos-latest
-            target: x86_64-apple-darwin
-            architecture: x64
+        - name: macos-latest
+          os: macos-latest
+          execution_plan: false
+        - name: macos-latest
+          os: macos-latest
+          execution_plan: true
+        - name: windows-latest
+          os: windows-latest
+          execution_plan: false
+        - name: windows-latest
+          os: windows-latest
+          execution_plan: true
+        - name: macos-latest x86_64 (Rosetta)
+          os: macos-latest
+          target: x86_64-apple-darwin
+          architecture: x64
+          execution_plan: false
+        - name: macos-latest x86_64 (Rosetta)
+          os: macos-latest
+          target: x86_64-apple-darwin
+          architecture: x64
+          execution_plan: true
+
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -297,7 +346,10 @@ jobs:
       - run: pnpm install --frozen-lockfile
         working-directory: crates/bashkit-js
       - if: ${{ !matrix.target }}
-        run: pnpm run build
+        run: |
+          pnpm exec napi build --platform --release --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}"
+          pnpm run build:cjs
+          pnpm run build:ts
         working-directory: crates/bashkit-js
       - if: ${{ matrix.target }}
         name: Build ${{ matrix.target }}
@@ -318,7 +370,7 @@ jobs:
           # resumes rather than rebuilds. Only the toolchain crash is retried:
           # a genuine compile error fails again and still fails the job.
           for attempt in 1 2 3; do
-            if pnpm exec napi build --platform --release --target ${{ matrix.target }}; then
+            if pnpm exec napi build --platform --release --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" --target ${{ matrix.target }}; then
               break
             fi
             if [ "$attempt" = 3 ]; then

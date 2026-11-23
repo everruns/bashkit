@@ -6,6 +6,9 @@ set -euo pipefail
 repo_root=$(cd "$(dirname "$0")/.." && pwd)
 profile=debug
 cargo_args=(-p bashkit-capi)
+if [[ -n "${BASHKIT_CAPI_FEATURES:-}" ]]; then
+    cargo_args+=(--features "$BASHKIT_CAPI_FEATURES")
+fi
 
 if [[ "${1:-}" == "--release" ]]; then
     profile=release
