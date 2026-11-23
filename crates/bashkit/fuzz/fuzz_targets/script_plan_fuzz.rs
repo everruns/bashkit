@@ -27,23 +27,27 @@ fuzz_target!(|data: &[u8]| {
         .unwrap();
     rt.block_on(async {
         bashkit::testing::fuzz_init();
-        let mut results = Vec::new();
-        for mode in [Mode::Auto, Mode::InterpreterOnly] {
-            let mut bash = Bash::new();
-            let options = ExecOptions::new().extensions(ExecutionExtensions::new().with(mode));
-            let result = bash.exec_with_options(&script, options).await.unwrap();
-            bashkit::testing::assert_fuzz_invariants(&result, &script, "script_plan_fuzz", &[]);
-            results.push((
-                result.stdout,
-                result.stderr,
-                result.exit_code,
-                result.control_flow,
-            ));
-            // Request-local plans/selectors must not corrupt subsequent use.
-            let next = bash.exec("printf reusable").await.unwrap();
-            assert_eq!(next.stdout, "reusable");
-            assert_eq!(next.exit_code, 0);
+        // Exercise both flat native regions and invocation-owned mixed
+        // function plans. Fixed shell syntax keeps arbitrary bytes as numeric
+        // operands; neither generated case can change the loop bound.
+        let mixed = format!(
+            r#"a=31; b=27; i=19; f() {{ local a b i observed; {}; }}; f; printf 'outer:%s,%s,%s\n' "$a" "$b" "$i""#,
+            script.replace("do if", r#"do observed=$(printf '%s' "$i"); [[ $observed =~ ^([0-9]+)$ ]] || return 7; ((BASH_REMATCH[1]==i)) || return 8; if"#)
+        );
+        for script in [&script, &mixed] {
+            let mut results = Vec::new();
+            for mode in [Mode::Auto, Mode::InterpreterOnly] {
+                let mut bash = Bash::new();
+                let options = ExecOptions::new().extensions(ExecutionExtensions::new().with(mode));
+                let result = bash.exec_with_options(script, options).await.unwrap();
+                assert_eq!(result.exit_code, 0, "generated bounded script must finish: {script}\n{}", result.stderr);
+                bashkit::testing::assert_fuzz_invariants(&result, script, "script_plan_fuzz", &[]);
+                results.push((result.stdout, result.stderr, result.exit_code, result.control_flow));
+                let next = bash.exec("printf reusable").await.unwrap();
+                assert_eq!(next.stdout, "reusable");
+                assert_eq!(next.exit_code, 0);
+            }
+            assert_eq!(results[0], results[1], "compiler/AST mismatch: {script}");
         }
-        assert_eq!(results[0], results[1], "compiler/AST mismatch: {script}");
     });
 });

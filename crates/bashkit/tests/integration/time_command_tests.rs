@@ -54,9 +54,18 @@ async fn gnu_format_reports_truthful_fields_and_bashkit_counters() {
         .unwrap();
 
     assert_eq!(result.stdout, "");
+    // The opt-in compiler also charges the work of visiting the loop and its
+    // body while preparing the child script; command/iteration counts agree.
+    let work = if cfg!(feature = "experimental_execution_plan") {
+        22
+    } else {
+        18
+    };
     assert_eq!(
         result.stderr,
-        "elapsed=0.00 status=4 cpu=unavailable rss=unavailable commands=7 loops=3 work=18\n"
+        format!(
+            "elapsed=0.00 status=4 cpu=unavailable rss=unavailable commands=7 loops=3 work={work}\n"
+        )
     );
     assert_eq!(result.exit_code, 4);
 }

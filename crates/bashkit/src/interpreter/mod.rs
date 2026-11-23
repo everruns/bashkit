@@ -44,6 +44,8 @@
 mod arithmetic;
 #[macro_use]
 mod command_dispatch;
+#[macro_use]
+mod control_dispatch;
 mod brace_expansion;
 mod completion;
 mod coproc;
@@ -4293,25 +4295,10 @@ impl Interpreter {
         fire_exit_hook: bool,
     ) -> Result<ExecResult> {
         #[cfg(feature = "experimental_execution_plan")]
-        let plan = {
-            #[cfg(feature = "experimental_plan_benchmark_control")]
-            let enabled = self
-                .current_execution_extensions()
-                .get::<crate::ExperimentalPlanBenchmarkControl>()
-                .and_then(|mode| {
-                    mode.try_with(|mode| {
-                        matches!(mode, crate::ExperimentalPlanBenchmarkControl::Auto)
-                    })
-                    .ok()
-                })
-                .unwrap_or(true);
-            #[cfg(not(feature = "experimental_plan_benchmark_control"))]
-            let enabled = true;
-            if enabled {
-                script_plan::ScriptPlan::compile(script, &self.execution_budget)?
-            } else {
-                None
-            }
+        let plan = if self.execution_plan_enabled() {
+            script_plan::ScriptPlan::compile(script, &self.execution_budget)?
+        } else {
+            None
         };
         let mut stdout = crate::StreamData::new();
         let mut stderr = crate::StreamData::new();
@@ -5170,218 +5157,12 @@ impl Interpreter {
 
     /// Execute an if statement
     async fn execute_if(&mut self, if_cmd: &IfCommand) -> Result<ExecResult> {
-        // Accumulate stdout/stderr from all condition evaluations
-        let mut cond_stdout = crate::StreamData::new();
-        let mut cond_stderr = crate::StreamData::new();
-
-        // Execute condition (no errexit checking - conditions are expected to fail)
-        let condition_result = self.execute_condition_sequence(&if_cmd.condition).await?;
-        self.append_output(
-            &mut cond_stdout,
-            &mut cond_stderr,
-            &condition_result.stdout,
-            &condition_result.stderr,
-            false,
-        )?;
-        // `exit`/`return`/`break` (or a fatal expansion error) inside the
-        // condition ends the `if` with that control flow.
-        if condition_result.control_flow != ControlFlow::None {
-            return Ok(ExecResult {
-                stdout: cond_stdout,
-                stderr: cond_stderr,
-                exit_code: condition_result.exit_code,
-                control_flow: condition_result.control_flow,
-                ..Default::default()
-            });
-        }
-
-        if condition_result.exit_code == 0 {
-            // Condition succeeded, execute then branch
-            let mut result = self.execute_command_sequence(&if_cmd.then_branch).await?;
-            self.append_output(
-                &mut cond_stdout,
-                &mut cond_stderr,
-                &result.stdout,
-                &result.stderr,
-                false,
-            )?;
-            result.stdout = cond_stdout;
-            result.stderr = cond_stderr;
-            return Ok(result);
-        }
-
-        // Check elif branches
-        for (elif_condition, elif_body) in &if_cmd.elif_branches {
-            let elif_result = self.execute_condition_sequence(elif_condition).await?;
-            self.append_output(
-                &mut cond_stdout,
-                &mut cond_stderr,
-                &elif_result.stdout,
-                &elif_result.stderr,
-                false,
-            )?;
-            if elif_result.control_flow != ControlFlow::None {
-                return Ok(ExecResult {
-                    stdout: cond_stdout,
-                    stderr: cond_stderr,
-                    exit_code: elif_result.exit_code,
-                    control_flow: elif_result.control_flow,
-                    ..Default::default()
-                });
-            }
-
-            if elif_result.exit_code == 0 {
-                let mut result = self.execute_command_sequence(elif_body).await?;
-                self.append_output(
-                    &mut cond_stdout,
-                    &mut cond_stderr,
-                    &result.stdout,
-                    &result.stderr,
-                    false,
-                )?;
-                result.stdout = cond_stdout;
-                result.stderr = cond_stderr;
-                return Ok(result);
-            }
-        }
-
-        // Execute else branch if present
-        if let Some(else_branch) = &if_cmd.else_branch {
-            let mut result = self.execute_command_sequence(else_branch).await?;
-            self.append_output(
-                &mut cond_stdout,
-                &mut cond_stderr,
-                &result.stdout,
-                &result.stderr,
-                false,
-            )?;
-            result.stdout = cond_stdout;
-            result.stderr = cond_stderr;
-            return Ok(result);
-        }
-
-        // No branch executed, return condition output with success exit code
-        Ok(ExecResult {
-            stdout: cond_stdout,
-            stderr: cond_stderr,
-            exit_code: 0,
-            ..Default::default()
-        })
+        if_body!(plain, self, if_cmd)
     }
 
     /// Execute a for loop
     async fn execute_for(&mut self, for_cmd: &ForCommand) -> Result<ExecResult> {
-        // Validate for-loop variable name (bash rejects invalid names at runtime, exit 1)
-        if !is_valid_var_name(&for_cmd.variable) {
-            return Ok(ExecResult::err(
-                self.diag(format!("`{}': not a valid identifier\n", for_cmd.variable)),
-                1,
-            ));
-        }
-
-        let mut acc = state::LoopAccumulator::new(self.retain_streamed_output());
-
-        // Get iteration values: expand fields, then apply brace/glob expansion
-        let values: Vec<String> = if let Some(words) = &for_cmd.words {
-            let mut vals = Vec::new();
-            for w0 in words {
-                // Brace expansion runs first, on the unexpanded word.
-                let braced = self.brace_expand_word(w0);
-                for w in braced.as_deref().unwrap_or(std::slice::from_ref(w0)) {
-                    let fields = self.expand_word_to_fields(w).await?;
-
-                    // Quoted words skip brace/glob expansion — unless the
-                    // word has unquoted glob chars (e.g. `"$var"*.ext`)
-                    if w.quoted && !w.has_unquoted_glob {
-                        vals.extend(fields);
-                        continue;
-                    }
-
-                    for expanded in fields {
-                        for item in [expanded] {
-                            match self
-                                .expand_glob_item(&item, w.quoted && w.has_unquoted_glob)
-                                .await
-                            {
-                                Ok(items) => vals.extend(items),
-                                Err(pat) => {
-                                    self.last_exit_code = 1;
-                                    return Ok(ExecResult::err(
-                                        self.diag(format!("no match: {pat}\n")),
-                                        1,
-                                    ));
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            vals
-        } else {
-            // No words specified - iterate over positional parameters ($@)
-            self.call_stack
-                .last()
-                .map(|frame| frame.positional.clone())
-                .unwrap_or_default()
-        };
-
-        self.counters.enter_loop();
-        let result = async {
-            for value in values {
-                // Check loop iteration limit
-                self.counters.tick_loop(&self.limits)?;
-
-                // Set loop variable (respects nameref). `value` is moved
-                // straight into `set_variable` — previously we cloned it
-                // even though `values` already owned the String for us.
-                // A nameref control variable is re-pointed at each word
-                // (bash: `declare -n r; for r in a b` binds r to a, then b).
-                if self.scoped.namerefs.contains_key(&for_cmd.variable)
-                    && declare::valid_nameref_target(&value)
-                {
-                    self.set_nameref(&for_cmd.variable, value);
-                } else {
-                    self.set_variable(for_cmd.variable.clone(), value);
-                }
-
-                // DEBUG runs for each round, at the `for` line.
-                let mut debug = if self.has_debug_trap() {
-                    self.current_line = self.line_at(for_cmd.span.line());
-                    self.debug_trap_now().await
-                } else {
-                    None
-                };
-                if let Some(r) = DebugTrapOutput::exit_result(&mut debug) {
-                    return Ok(r);
-                }
-
-                // Execute body
-                let emit_before = self.output_emit_count;
-                let result = self.execute_command_sequence(&for_cmd.body).await;
-                let result = DebugTrapOutput::prepend_opt(debug, result)?;
-                self.maybe_emit_output(&result.stdout, &result.stderr, emit_before)
-                    .await?;
-                let should_errexit = self.errexit_active()
-                    && result.exit_code != 0
-                    && result.control_flow == ControlFlow::None
-                    && !result.errexit_suppressed;
-                match acc.accumulate(result, &self.execution_budget)? {
-                    state::LoopAction::None => {
-                        if should_errexit {
-                            return Ok(acc.finish());
-                        }
-                    }
-                    state::LoopAction::Break => break,
-                    state::LoopAction::Continue => continue,
-                    state::LoopAction::Exit(r) => return Ok(*r),
-                }
-            }
-
-            Ok(acc.finish())
-        }
-        .await;
-        self.counters.exit_loop();
-        result
+        for_body!(plain, self, for_cmd)
     }
 
     /// Execute a select loop: select var in list; do body; done
@@ -5655,87 +5436,7 @@ impl Interpreter {
         &mut self,
         arith_for: &ArithmeticForCommand,
     ) -> Result<ExecResult> {
-        let mut acc = state::LoopAccumulator::new(self.retain_streamed_output());
-        // DEBUG output of the clauses (bash runs it before each one), put
-        // ahead of the next body's output or the loop's result.
-        let mut debug: Option<Box<DebugTrapOutput>> = None;
-
-        // Execute initialization
-        if !arith_for.init.is_empty() {
-            if self.has_debug_trap() {
-                self.current_line = self.line_at(arith_for.span.line());
-                Self::absorb_debug(&mut debug, self.debug_trap_now().await);
-                if let Some(r) = DebugTrapOutput::exit_result(&mut debug) {
-                    return Ok(r);
-                }
-            }
-            let init = self.arith_for_expr(&arith_for.init).await?;
-            self.execute_arithmetic_with_side_effects(&init);
-        }
-
-        self.counters.enter_loop();
-        let result = async {
-            loop {
-                // Check loop iteration limit
-                self.counters.tick_loop(&self.limits)?;
-
-                // Check condition (if empty, always true)
-                // The clauses see the `for` line, not the body's last one.
-                let for_line = self.line_at(arith_for.span.line());
-                self.current_line = for_line;
-                if self.has_debug_trap() {
-                    Self::absorb_debug(&mut debug, self.debug_trap_now().await);
-                    if let Some(r) = DebugTrapOutput::exit_result(&mut debug) {
-                        return Ok(r);
-                    }
-                }
-                if !arith_for.condition.is_empty() {
-                    let condition = self.arith_for_expr(&arith_for.condition).await?;
-                    let cond_result = self.evaluate_arithmetic(&condition);
-                    if cond_result == 0 {
-                        break;
-                    }
-                }
-
-                // Execute body
-                let emit_before = self.output_emit_count;
-                let result = self.execute_command_sequence(&arith_for.body).await;
-                let result = DebugTrapOutput::prepend_opt(debug.take(), result)?;
-                self.maybe_emit_output(&result.stdout, &result.stderr, emit_before)
-                    .await?;
-                let should_errexit = self.errexit_active()
-                    && result.exit_code != 0
-                    && result.control_flow == ControlFlow::None
-                    && !result.errexit_suppressed;
-                match acc.accumulate(result, &self.execution_budget)? {
-                    state::LoopAction::None | state::LoopAction::Continue => {
-                        if should_errexit {
-                            return Ok(acc.finish());
-                        }
-                    }
-                    state::LoopAction::Break => break,
-                    state::LoopAction::Exit(r) => return Ok(*r),
-                }
-
-                // Execute step
-                if !arith_for.step.is_empty() {
-                    self.current_line = for_line;
-                    if self.has_debug_trap() {
-                        Self::absorb_debug(&mut debug, self.debug_trap_now().await);
-                        if let Some(r) = DebugTrapOutput::exit_result(&mut debug) {
-                            return Ok(r);
-                        }
-                    }
-                    let step = self.arith_for_expr(&arith_for.step).await?;
-                    self.execute_arithmetic_with_side_effects(&step);
-                }
-            }
-
-            Ok(acc.finish())
-        }
-        .await;
-        self.counters.exit_loop();
-        DebugTrapOutput::prepend_opt(debug, result)
+        arithmetic_for_body!(plain, self, arith_for)
     }
 
     /// Add a DEBUG run's output to the pending one.
@@ -6270,76 +5971,7 @@ impl Interpreter {
         body: &[Command],
         break_on_zero: bool,
     ) -> Result<ExecResult> {
-        let mut acc = state::LoopAccumulator::new(self.retain_streamed_output());
-
-        self.counters.enter_loop();
-        let result = async {
-            loop {
-                // Check loop iteration limit
-                self.counters.tick_loop(&self.limits)?;
-
-                // Check condition (no errexit - conditions are expected to fail)
-                let emit_before_cond = self.output_emit_count;
-                let condition_result = self.execute_condition_sequence(condition).await?;
-                // Condition commands produce visible output (e.g., `while cat <<EOF; do ... done`)
-                self.maybe_emit_output(
-                    &condition_result.stdout,
-                    &condition_result.stderr,
-                    emit_before_cond,
-                )
-                .await?;
-                acc.append_output(&condition_result, &self.execution_budget)?;
-                // `while break; do` leaves the loop from its condition.
-                if condition_result.control_flow != ControlFlow::None {
-                    match acc.accumulate(
-                        ExecResult {
-                            exit_code: condition_result.exit_code,
-                            control_flow: condition_result.control_flow,
-                            ..Default::default()
-                        },
-                        &self.execution_budget,
-                    )? {
-                        state::LoopAction::None => {}
-                        state::LoopAction::Break => break,
-                        state::LoopAction::Continue => continue,
-                        state::LoopAction::Exit(r) => return Ok(*r),
-                    }
-                }
-                let should_break = if break_on_zero {
-                    condition_result.exit_code == 0
-                } else {
-                    condition_result.exit_code != 0
-                };
-                if should_break {
-                    break;
-                }
-
-                // Execute body
-                let emit_before = self.output_emit_count;
-                let result = self.execute_command_sequence(body).await?;
-                self.maybe_emit_output(&result.stdout, &result.stderr, emit_before)
-                    .await?;
-                let should_errexit = self.errexit_active()
-                    && result.exit_code != 0
-                    && result.control_flow == ControlFlow::None
-                    && !result.errexit_suppressed;
-                match acc.accumulate(result, &self.execution_budget)? {
-                    state::LoopAction::None => {
-                        if should_errexit {
-                            return Ok(acc.finish());
-                        }
-                    }
-                    state::LoopAction::Break => break,
-                    state::LoopAction::Continue => continue,
-                    state::LoopAction::Exit(r) => return Ok(*r),
-                }
-            }
-
-            Ok(acc.finish())
-        }
-        .await;
-        self.counters.exit_loop();
-        result
+        condition_loop_body!(plain, self, condition, body, break_on_zero)
     }
 
     /// Execute a case statement
@@ -7674,69 +7306,7 @@ impl Interpreter {
         commands: &[Command],
         check_errexit: bool,
     ) -> Result<ExecResult> {
-        let mut stdout = crate::StreamData::new();
-        let mut stderr = crate::StreamData::new();
-        let mut exit_code = 0;
-        let mut last_errexit_suppressed = false;
-
-        for command in commands {
-            let emit_before = self.output_emit_count;
-            self.sequence_accum = (stdout.len(), stderr.len());
-            let mut result = self.execute_command(command).await?;
-            if self.merge_stderr {
-                self.merge_stderr_into_stdout(&mut result)?;
-            }
-            self.reap_coprocs();
-            self.maybe_emit_output(&result.stdout, &result.stderr, emit_before)
-                .await?;
-            if self.retain_streamed_output() {
-                self.append_output(
-                    &mut stdout,
-                    &mut stderr,
-                    &result.stdout,
-                    &result.stderr,
-                    false,
-                )?;
-            }
-            exit_code = result.exit_code;
-            self.last_exit_code = exit_code;
-
-            // Propagate control flow
-            if result.control_flow != ControlFlow::None {
-                return Ok(ExecResult {
-                    stdout,
-                    stderr,
-                    exit_code,
-                    control_flow: result.control_flow,
-                    ..Default::default()
-                });
-            }
-
-            // Check for errexit (set -e) if enabled.
-            // Suppression is decided by the callee and surfaced through
-            // result.errexit_suppressed (e.g. AND-OR lists).
-            let suppress = result.errexit_suppressed;
-            if check_errexit && self.errexit_active() && exit_code != 0 && !suppress {
-                self.errexit_fired = true;
-                return Ok(ExecResult {
-                    stdout,
-                    stderr,
-                    exit_code,
-                    control_flow: ControlFlow::None,
-                    ..Default::default()
-                });
-            }
-            last_errexit_suppressed = suppress && exit_code != 0;
-        }
-
-        Ok(ExecResult {
-            stdout,
-            stderr,
-            exit_code,
-            control_flow: ControlFlow::None,
-            errexit_suppressed: last_errexit_suppressed,
-            ..Default::default()
-        })
+        sequence_body!(plain, self, commands, check_errexit)
     }
 
     /// Execute a pipeline (cmd1 | cmd2 | cmd3)
@@ -11467,10 +11037,13 @@ impl Interpreter {
         };
         let mut result = match DebugTrapOutput::exit_result(&mut entry_debug) {
             Some(stop) => Ok(stop),
-            None => DebugTrapOutput::prepend_opt(
-                entry_debug,
-                self.execute_command(&func_def.body).await,
-            ),
+            None => {
+                #[cfg(feature = "experimental_execution_plan")]
+                let body = self.execute_planned_function_body(&func_def.body);
+                #[cfg(not(feature = "experimental_execution_plan"))]
+                let body = self.execute_command(&func_def.body);
+                DebugTrapOutput::prepend_opt(entry_debug, body.await)
+            }
         };
         if let Ok(r) = &mut result {
             // Still in the function: the handler sees its locals.
@@ -13079,84 +12652,7 @@ impl Interpreter {
         compound: &'a CompoundCommand,
         redirects: &'a [Redirect],
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ExecResult>> + Send + 'a>> {
-        Box::pin(async move {
-            let end_line = (!redirects.is_empty())
-                .then(|| Self::compound_end_line(compound))
-                .flatten();
-            if let Some(line) = end_line {
-                self.current_line = line;
-            }
-            // Process input redirections before executing compound.
-            // WTF: a coproc fd as a compound's stdin (`while read l; do
-            // ...; done <&${C[0]}`) is read to end of input up front, not
-            // line by line as the loop runs.
-            let stdin_setup = match self
-                .process_input_redirections(None, redirects, StdinDemand::All, HighFdStdin::Any)
-                .await
-            {
-                Ok(s) => s,
-                Err(crate::error::Error::CommandFailure(msg)) => {
-                    return Ok(ExecResult::err(msg, 1));
-                }
-                Err(e) => return Err(e),
-            };
-            // Keep stdin's byte/text storage admitted through the body.
-            let _stdin_storage = stdin_setup.stdin_lease;
-            let stdin = stdin_setup.stdin;
-            let prev_pipeline_stdin = if stdin.is_some() {
-                let prev = self.pipeline_stdin.take();
-                self.pipeline_stdin = stdin;
-                Some(prev)
-            } else {
-                None
-            };
-
-            // Suspend output callback while output redirects are active
-            // so that maybe_emit_output inside the compound body does not
-            // leak output that will be redirected (e.g. `{ cmd; } 2>/dev/null`).
-            let region = self.enter_output_region(redirects);
-
-            let has_dup_output = redirects.iter().any(|r| r.kind == RedirectKind::DupOutput);
-            let has_file_redirect = redirects.iter().any(|r| {
-                matches!(
-                    r.kind,
-                    RedirectKind::Output
-                        | RedirectKind::Clobber
-                        | RedirectKind::Append
-                        | RedirectKind::OutputBoth
-                )
-            });
-            let capture_pending_fd = (has_dup_output && has_file_redirect)
-                || redirection::has_high_fd_file_redirect(redirects);
-            if capture_pending_fd {
-                if self.pending_fd_capture_depth == 0 {
-                    self.clear_pending_fd_redirect_state();
-                }
-                self.pending_fd_capture_depth += 1;
-            }
-            let result = self.execute_compound(compound).await;
-            if capture_pending_fd {
-                self.pending_fd_capture_depth = self.pending_fd_capture_depth.saturating_sub(1);
-                if result.is_err() {
-                    self.clear_pending_fd_redirect_state();
-                }
-            }
-            // Restore callback before applying redirections
-            self.leave_output_region(region);
-            let result = result?;
-
-            if let Some(prev) = prev_pipeline_stdin {
-                self.pipeline_stdin = prev;
-            }
-            if redirects.is_empty() {
-                Ok(result)
-            } else {
-                if let Some(line) = end_line {
-                    self.current_line = line;
-                }
-                self.apply_redirections(result, redirects).await
-            }
-        })
+        compound_redirect_body!(plain, self, compound, redirects)
     }
 
     fn execute_cmd_subst<'a>(

@@ -64,6 +64,7 @@ pub mod interactive_builtins_tests;
 pub mod make_substitution_tests;
 pub mod markkit_builtin_tests;
 pub mod memory_growth_security_tests;
+pub mod mixed_control_tests;
 pub mod output_file_tests;
 pub mod streaming_command_tests;
 pub mod tar_files_from_budget_tests;

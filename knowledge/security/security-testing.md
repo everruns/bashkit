@@ -32,8 +32,10 @@ whole-command early-error semantics. Native unit tests assert admission before
 injecting a loop-counter reset and verify that the command budget still stops
 the loop. Separate tests cover dropped futures, reuse, optional-memory decline,
 work-budget failure and reservation refunds. `script_plan_fuzz` compares bounded
-native arithmetic/branch loops with the AST executor; structured proptest cases
-also compare with real Bash. See [Execution Plans](../foundations/script-execution-plan.md).
+native arithmetic/branch loops and mixed functions containing substitutions,
+regex captures and local variables with the AST executor. Structured proptest
+cases and mixed-function fixtures also compare with real Bash. See
+[Execution Plans](../foundations/script-execution-plan.md).
 
 ## Conditional regex search reuse
 

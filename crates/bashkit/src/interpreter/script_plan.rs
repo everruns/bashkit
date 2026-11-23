@@ -1,7 +1,8 @@
 //! Isolated whole-script execution-plan experiment (off by default).
 //!
-//! THREAT[TM-DOS-147]: plans borrow one parsed Script, live only for that execution, and reserve
-//! storage before lowering. Pure scalar command trees lower to a flat program.
+//! THREAT[TM-DOS-147]: plans borrow a parsed Script or active function definition,
+//! live only for that execution/invocation, and reserve storage before lowering.
+//! Pure scalar command trees lower to a flat program.
 //! Mixed command lists keep the existing shell orchestration with prepared
 //! children. Unsupported syntax/state uses the ordinary interpreter. No global
 //! cache, pointer-keyed lookup, or new shell syntax is involved.
@@ -16,10 +17,23 @@ pub(super) struct ScriptPlan<'s> {
 
 pub(super) enum Program<'s> {
     Native(NativeProgram),
+    Control(Box<ControlProgram<'s>>),
     List {
         list: &'s CommandList,
         children: Vec<Option<Program<'s>>>,
     },
+}
+
+pub(super) struct ControlProgram<'s> {
+    compound: &'s CompoundCommand,
+    blocks: Vec<Vec<Option<Program<'s>>>>,
+    clauses: [Option<Expression<'s>>; 3],
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct PreparedControl<'p, 's> {
+    program: &'p ControlProgram<'s>,
+    ops: &'p [Instruction<'s>],
 }
 
 pub(super) struct NativeProgram {
@@ -168,7 +182,7 @@ fn size(command: &Command, depth: usize) -> Option<usize> {
 // A small cold statement rarely recovers the cost of lowering it. The cheap
 // probe stays inline; full lowering is outlined away from ordinary tool calls.
 #[inline]
-fn worthwhile(command: &Command, weight: &mut usize, depth: usize) -> bool {
+pub(super) fn worthwhile(command: &Command, weight: &mut usize, depth: usize) -> bool {
     if depth > 64 {
         return false;
     }
@@ -187,7 +201,27 @@ fn worthwhile(command: &Command, weight: &mut usize, depth: usize) -> bool {
             | CompoundCommand::Until(_),
             r,
         ) if r.is_empty() => {
-            return size(command, 0).is_some();
+            return true;
+        }
+        Command::Compound(CompoundCommand::For(_), r) if r.is_empty() => {
+            return true;
+        }
+        Command::Compound(CompoundCommand::BraceGroup(body), r) if r.is_empty() => {
+            return body.iter().any(|c| worthwhile(c, weight, depth + 1));
+        }
+        Command::Compound(CompoundCommand::If(branches), r) if r.is_empty() => {
+            return branches
+                .condition
+                .iter()
+                .chain(&branches.then_branch)
+                .chain(
+                    branches
+                        .elif_branches
+                        .iter()
+                        .flat_map(|(c, b)| c.iter().chain(b)),
+                )
+                .chain(branches.else_branch.iter().flatten())
+                .any(|c| worthwhile(c, weight, depth + 1));
         }
         Command::Compound(_, _) => {
             if let Some(bytes) = size(command, 0) {
@@ -211,25 +245,35 @@ impl<'s> ScriptPlan<'s> {
         script: &'s Script,
         budget: &crate::limits::ExecutionBudget,
     ) -> Result<Option<Box<Self>>> {
-        let mut weight = 0;
-        if !script
-            .commands
-            .iter()
-            .any(|c| worthwhile(c, &mut weight, 0))
-        {
-            return Ok(None);
-        }
-        Self::lower_script(script, budget)
+        Self::compile_commands(&script.commands, budget)
     }
 
-    #[cold]
+    pub(super) fn compile_commands(
+        commands: &'s [Command],
+        budget: &crate::limits::ExecutionBudget,
+    ) -> Result<Option<Box<Self>>> {
+        let mut weight = 0;
+        if !commands.iter().any(|c| worthwhile(c, &mut weight, 0)) {
+            return Ok(None);
+        }
+        Self::lower_commands(commands, budget)
+    }
+
+    #[cfg(test)]
     fn lower_script(
         script: &'s Script,
         budget: &crate::limits::ExecutionBudget,
     ) -> Result<Option<Box<Self>>> {
-        let capacity = script.commands.len().saturating_mul(4).clamp(8, 256);
-        let bytes = script
-            .commands
+        Self::lower_commands(&script.commands, budget)
+    }
+
+    #[cold]
+    fn lower_commands(
+        input: &'s [Command],
+        budget: &crate::limits::ExecutionBudget,
+    ) -> Result<Option<Box<Self>>> {
+        let capacity = input.len().saturating_mul(4).clamp(8, 256);
+        let bytes = input
             .len()
             .saturating_mul(std::mem::size_of::<Option<Program<'s>>>())
             .saturating_add(std::mem::size_of::<Self>())
@@ -248,8 +292,8 @@ impl<'s> ScriptPlan<'s> {
         };
         // Keep capacity equal to the admitted command storage; collecting a
         // fallible iterator may otherwise grow geometrically past its length.
-        let mut commands = Vec::with_capacity(script.commands.len());
-        for command in &script.commands {
+        let mut commands = Vec::with_capacity(input.len());
+        for command in input {
             commands.push(Program::compile(command, &mut builder, 0)?);
         }
         if commands.iter().all(Option::is_none) {
@@ -269,6 +313,142 @@ impl<'s> ScriptPlan<'s> {
     }
 }
 
+impl<'s> ControlProgram<'s> {
+    fn compile(
+        compound: &'s CompoundCommand,
+        builder: &mut Builder<'_, 's>,
+        depth: usize,
+    ) -> Result<Option<Box<Self>>> {
+        if depth > 64 {
+            return Ok(None);
+        }
+        let (blocks, commands) = match compound {
+            CompoundCommand::BraceGroup(body) => (1, body.len()),
+            CompoundCommand::For(f) => (1, f.body.len()),
+            CompoundCommand::ArithmeticFor(f) => (1, f.body.len()),
+            CompoundCommand::While(w) => (2, w.condition.len().saturating_add(w.body.len())),
+            CompoundCommand::Until(w) => (2, w.condition.len().saturating_add(w.body.len())),
+            CompoundCommand::If(i) => (
+                3usize.saturating_add(i.elif_branches.len().saturating_mul(2)),
+                i.elif_branches.iter().fold(
+                    i.condition
+                        .len()
+                        .saturating_add(i.then_branch.len())
+                        .saturating_add(i.else_branch.as_ref().map_or(0, Vec::len)),
+                    |n, (c, b)| n.saturating_add(c.len()).saturating_add(b.len()),
+                ),
+            ),
+            _ => return Ok(None),
+        };
+        // Admit every control node and exact child-vector capacity before
+        // allocating. Expressions use the tokenizer/operation layout bound.
+        if !builder.reserve(
+            std::mem::size_of::<Self>()
+                .saturating_add(
+                    blocks.saturating_mul(std::mem::size_of::<Vec<Option<Program<'s>>>>()),
+                )
+                .saturating_add(
+                    commands.saturating_mul(std::mem::size_of::<Option<Program<'s>>>()),
+                ),
+        )? {
+            return Ok(None);
+        }
+        let mut program = Box::new(Self {
+            compound,
+            blocks: Vec::with_capacity(blocks),
+            clauses: [None, None, None],
+        });
+        let mut add = |commands: &'s [Command]| -> Result<()> {
+            let mut children = Vec::with_capacity(commands.len());
+            for command in commands {
+                children.push(Program::compile(command, builder, depth)?);
+            }
+            program.blocks.push(children);
+            Ok(())
+        };
+        match compound {
+            CompoundCommand::BraceGroup(body) => add(body)?,
+            CompoundCommand::For(f) => add(&f.body)?,
+            CompoundCommand::ArithmeticFor(f) => add(&f.body)?,
+            CompoundCommand::While(w) => {
+                add(&w.condition)?;
+                add(&w.body)?;
+            }
+            CompoundCommand::Until(w) => {
+                add(&w.condition)?;
+                add(&w.body)?;
+            }
+            CompoundCommand::If(i) => {
+                add(&i.condition)?;
+                add(&i.then_branch)?;
+                for (condition, body) in &i.elif_branches {
+                    add(condition)?;
+                    add(body)?;
+                }
+                add(i.else_branch.as_deref().unwrap_or(&[]))?;
+            }
+            _ => unreachable!(),
+        }
+        if let CompoundCommand::ArithmeticFor(f) = compound {
+            for (slot, source) in program
+                .clauses
+                .iter_mut()
+                .zip([&f.init, &f.condition, &f.step])
+            {
+                if source.is_empty() || source.len() > 1024 {
+                    continue;
+                }
+                builder.budget.consume_work(source.len() as u64)?;
+                if builder.reserve(
+                    source
+                        .len()
+                        .saturating_mul(Expression::STORAGE_FACTOR)
+                        .saturating_add(4096),
+                )? {
+                    *slot = Expression::compile(source.as_str());
+                }
+            }
+        }
+        if !matches!(
+            compound,
+            CompoundCommand::For(_)
+                | CompoundCommand::ArithmeticFor(_)
+                | CompoundCommand::While(_)
+                | CompoundCommand::Until(_)
+        ) && program.clauses.iter().all(Option::is_none)
+            && program.blocks.iter().flatten().all(Option::is_none)
+        {
+            return Ok(None);
+        }
+        Ok(Some(program))
+    }
+}
+
+impl<'p, 's> PreparedControl<'p, 's> {
+    pub(super) fn clause(&self, index: usize) -> Option<&Expression<'s>> {
+        self.program.clauses[index].as_ref()
+    }
+
+    pub(super) async fn sequence(
+        self,
+        shell: &mut Interpreter,
+        commands: &[Command],
+        index: usize,
+        condition: bool,
+    ) -> Result<ExecResult> {
+        shell
+            .execute_prepared_sequence(
+                commands,
+                condition,
+                PreparedCommands {
+                    children: &self.program.blocks[index],
+                    ops: self.ops,
+                },
+            )
+            .await
+    }
+}
+
 impl<'s> Program<'s> {
     fn compile(
         command: &'s Command,
@@ -278,6 +458,7 @@ impl<'s> Program<'s> {
         if depth > 64 {
             return Ok(None);
         }
+        builder.budget.consume_work(1)?;
         if let Some(bytes) = size(command, 0) {
             builder.budget.consume_work(bytes as u64)?;
             let used = builder.used;
@@ -298,6 +479,12 @@ impl<'s> Program<'s> {
                 (builder.ops.capacity() - capacity)
                     .saturating_mul(std::mem::size_of::<Instruction<'s>>()),
             );
+        }
+        if let Command::Compound(compound, redirects) = command
+            && redirects.is_empty()
+            && let Some(control) = ControlProgram::compile(compound, builder, depth + 1)?
+        {
+            return Ok(Some(Self::Control(control)));
         }
         if let Command::List(list) = command {
             if !builder.reserve(
@@ -325,46 +512,54 @@ impl ProgramRef<'_, '_> {
         let Program::Native(program) = self.program else {
             return true;
         };
-        // TODO(experiment): lower these contexts only after their boundary
-        // semantics have dedicated VM coverage. Fallback is a normal execution.
-        // Resource failpoints must exercise native fuel checks too. Only the
-        // command-boundary injector needs AST execution: its early status/error
-        // actions deliberately replace a whole shell command. This lookup is
-        // compiled out of production builds.
-        #[cfg(feature = "failpoints")]
-        if fail::list()
-            .iter()
-            .any(|(name, action)| name == "interp::execute_command" && action != "off")
-        {
-            return false;
-        }
-        if shell.is_errexit_enabled()
-            || shell.is_nounset()
-            || shell.is_xtrace_enabled()
-            || shell.flags.contains(BashFlags::NOEXEC)
-            || !shell.scoped.traps.is_empty()
-            || shell.pipe_out.is_some()
-            || !shell.subst_stderr.is_empty()
-            || shell.has_arith_unbound()
-        {
-            return false;
-        }
-        let plain = |name: &str| {
-            shell
-                .var_attrs_get(name)
-                .difference(VarAttrs::EXPORT)
-                .is_empty()
-                && !shell.scoped.arrays.contains_key(name)
-                && !shell.scoped.assoc_arrays.contains_key(name)
-                && shell.resolve_nameref(name) == name
-                && shell.lookup_regular_variable_ref(name).is_none_or(numeric)
-        };
-        self.ops[program.range.clone()].iter().all(|op| match op {
-            Instruction::Arithmetic(e, _) => e.names().all(plain),
-            Instruction::Assign(s) => s.assignments.iter().all(|a| plain(&a.name)),
-            _ => true,
-        })
+        native_context(shell)
+            && self.ops[program.range.clone()].iter().all(|op| match op {
+                Instruction::Arithmetic(e, _) => e.names().all(|name| plain_variable(shell, name)),
+                Instruction::Assign(s) => {
+                    s.assignments.iter().all(|a| plain_variable(shell, &a.name))
+                }
+                _ => true,
+            })
     }
+}
+
+pub(super) fn native_context(shell: &Interpreter) -> bool {
+    // TODO(experiment): lower these contexts only after their boundary
+    // semantics have dedicated VM coverage. Fallback is a normal execution.
+    // Resource failpoints must exercise native fuel checks too. Only the
+    // command-boundary injector needs AST execution: its early status/error
+    // actions deliberately replace a whole shell command. This lookup is
+    // compiled out of production builds.
+    #[cfg(feature = "failpoints")]
+    if fail::list()
+        .iter()
+        .any(|(name, action)| name == "interp::execute_command" && action != "off")
+    {
+        return false;
+    }
+    if shell.is_errexit_enabled()
+        || shell.is_nounset()
+        || shell.is_xtrace_enabled()
+        || shell.flags.contains(BashFlags::NOEXEC)
+        || !shell.scoped.traps.is_empty()
+        || shell.pipe_out.is_some()
+        || !shell.subst_stderr.is_empty()
+        || shell.has_arith_unbound()
+    {
+        return false;
+    }
+    true
+}
+
+pub(super) fn plain_variable(shell: &Interpreter, name: &str) -> bool {
+    shell
+        .var_attrs_get(name)
+        .difference(VarAttrs::EXPORT)
+        .is_empty()
+        && !shell.scoped.arrays.contains_key(name)
+        && !shell.scoped.assoc_arrays.contains_key(name)
+        && shell.resolve_nameref(name) == name
+        && shell.lookup_regular_variable_ref(name).is_none_or(numeric)
 }
 
 fn expression<'s>(
@@ -488,6 +683,21 @@ impl Interpreter {
         &mut self,
         program: ProgramRef<'_, '_>,
     ) -> Result<ExecResult> {
+        if let Program::Control(control) = program.program {
+            let proc_sub_fds = self.proc_subs.open_count();
+            let result = self
+                .execute_prepared_compound(
+                    control.compound,
+                    &[],
+                    PreparedControl {
+                        program: control,
+                        ops: program.ops,
+                    },
+                )
+                .await;
+            self.proc_subs.close_from(proc_sub_fds);
+            return result;
+        }
         let Program::Native(native) = program.program else {
             let Program::List { list, children } = program.program else {
                 unreachable!()
@@ -657,6 +867,280 @@ impl PreparedCommands<'_, '_> {
 mod tests {
     use super::*;
 
+    fn has_control(program: &Program<'_>) -> bool {
+        match program {
+            Program::Control(_) => true,
+            Program::List { children, .. } => children.iter().flatten().any(has_control),
+            Program::Native(_) => false,
+        }
+    }
+
+    #[test]
+    fn mixed_tool_loop_keeps_a_compiled_plan() {
+        let interp = Interpreter::new(Arc::new(crate::InMemoryFs::new()));
+        let ast = Parser::new(
+            "for ((i=0;i<8;i++)); do reply=$(printf '%s' \"$i\"); [[ $reply == \"$i\" ]] || break; done",
+        ).parse().unwrap();
+        let plan = ScriptPlan::compile(&ast, &interp.execution_budget).unwrap();
+        assert!(
+            plan.is_some(),
+            "tool calls must not discard the surrounding compiled loop"
+        );
+    }
+
+    #[tokio::test]
+    async fn mixed_control_preserves_output_flow_and_command_accounting() {
+        for source in [
+            "for ((i=0;i<5;i++)); do reply=$(printf '%s' \"$i\"); [[ $reply == \"$i\" ]] || break; printf '%s ' \"$reply\"; done",
+            "i=0; while ((i<4)); do ((i++)); printf '%s ' \"$i\"; done",
+            "i=0; until ((i==4)); do ((i++)); printf '%s ' \"$i\"; done",
+            "for i in 1 2 3; do ((total+=i)); printf '%s ' \"$total\"; done",
+            "for ((i=0;i<4;i++)); do if ((i==1)); then continue; elif ((i==3)); then break; else printf '%s ' \"$i\"; fi; done",
+            "if ((0)); then for ((i=0;i<3;i++)); do printf no; done; elif ((1)); then for ((i=0;i<2;i++)); do printf yes; done; else printf no; fi",
+            "for ((i=0;i<3;i++)); do for ((j=0;j<3;j++)); do printf '%s%s ' \"$i\" \"$j\"; break 2; done; done",
+            "for ((i=0;i<3;i++)); do printf '%s' \"$i\" | tr 0-9 a-j; done",
+            "for ((i=0;i<3;i++)); do printf x >&2; ((n+=1)); done",
+            "for ((i=0;i<3;i++)); do if ((i==1)); then set -u; fi; printf '%s' \"$i\"; done",
+        ] {
+            let ast = Parser::new(source).parse().unwrap();
+            let mut expected = Interpreter::new(Arc::new(crate::InMemoryFs::new()));
+            let mut actual = Interpreter::new(Arc::new(crate::InMemoryFs::new()));
+            let plan = ScriptPlan::compile(&ast, &actual.execution_budget)
+                .unwrap()
+                .expect(source);
+            assert!(
+                plan.commands.iter().flatten().any(has_control),
+                "must prepare mixed control: {source}"
+            );
+            for (index, command) in ast.commands.iter().enumerate() {
+                let before = expected.execute_command(command).await.unwrap();
+                let after = actual
+                    .execute_command_with_program(command, plan.command(index))
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    (
+                        before.stdout,
+                        before.stderr,
+                        before.exit_code,
+                        before.control_flow,
+                        before.errexit_suppressed
+                    ),
+                    (
+                        after.stdout,
+                        after.stderr,
+                        after.exit_code,
+                        after.control_flow,
+                        after.errexit_suppressed
+                    ),
+                    "{source}"
+                );
+            }
+            for name in ["i", "j", "n", "total", "reply"] {
+                assert_eq!(
+                    expected.lookup_regular_variable(name),
+                    actual.lookup_regular_variable(name),
+                    "{source}: {name}"
+                );
+            }
+            assert_eq!(
+                expected.counters.commands, actual.counters.commands,
+                "{source}"
+            );
+            assert_eq!(
+                expected.scoped.arrays.get("PIPESTATUS"),
+                actual.scoped.arrays.get("PIPESTATUS"),
+                "{source}"
+            );
+            assert_eq!(actual.loop_depth, 0, "{source}");
+        }
+    }
+
+    #[cfg(feature = "experimental_plan_benchmark_control")]
+    #[tokio::test]
+    async fn planned_function_invocations_keep_fallback_semantics_and_redefinitions() {
+        use crate::{
+            Bash, ExecOptions, ExecutionExtensions, ExperimentalPlanBenchmarkControl as Mode,
+        };
+        for source in [
+            "run() { local count=$1 reply; for ((i=0;i<count;i++)); do reply=$(printf '%s' \"$i\"); [[ $reply =~ ^[0-9]+$ ]] || return 3; printf '%s ' \"$reply\"; done; }; run 4; run 2",
+            "f() { local i; for ((i=0;i<4;i++)); do printf '%s' \"$i\"; if ((i==2)); then return 7; fi; done; }; f; printf ':%s' \"$?\"",
+            "f() { for ((i=0;i<2;i++)); do printf old; f() { printf new; }; done; }; f; f",
+            "f() { local i; for ((i=0;i<3;i++)); do printf '%s:%s ' \"${FUNCNAME[0]}\" \"$LINENO\"; done; }; f > /tmp/out; cat /tmp/out",
+            "set -e; f() { for ((i=0;i<3;i++)); do printf x; false; printf no; done; }; f || printf caught",
+            "f() { local i; for ((i=0;i<3;i++)); do if ((i==1)); then declare -i i; fi; printf '%s' \"$i\"; done; }; f",
+        ] {
+            let mut results = Vec::new();
+            let mut retained = Vec::new();
+            for mode in [Mode::InterpreterOnly, Mode::Auto] {
+                let mut bash = Bash::new();
+                let result = bash
+                    .exec_with_options(
+                        source,
+                        ExecOptions::new().extensions(ExecutionExtensions::new().with(mode)),
+                    )
+                    .await
+                    .unwrap();
+                results.push((
+                    result.stdout,
+                    result.stderr,
+                    result.exit_code,
+                    result.control_flow,
+                ));
+                retained.push(bash.interpreter.execution_budget.live_bytes_for_test());
+                assert_eq!(
+                    bash.exec("printf reusable").await.unwrap().stdout,
+                    "reusable"
+                );
+            }
+            assert_eq!(results[0], results[1], "{source}");
+            assert_eq!(
+                retained[0], retained[1],
+                "only ordinary retained shell state may outlive the plan: {source}"
+            );
+        }
+    }
+
+    #[cfg(feature = "experimental_plan_benchmark_control")]
+    #[tokio::test]
+    async fn function_plan_is_live_during_tools_and_refunded_after_return() {
+        use crate::{
+            Bash, Builtin, BuiltinContext, ExecOptions, ExecutionExtensions,
+            ExperimentalPlanBenchmarkControl as Mode,
+        };
+        use std::sync::atomic::{AtomicU64, Ordering};
+        struct Observe(Arc<AtomicU64>);
+        #[crate::async_trait]
+        impl Builtin for Observe {
+            async fn execute(&self, ctx: BuiltinContext<'_>) -> crate::Result<ExecResult> {
+                self.0.fetch_max(
+                    ctx.execution_budget()
+                        .unwrap()
+                        .try_with(|budget| budget.live_bytes_for_test())
+                        .unwrap(),
+                    Ordering::Relaxed,
+                );
+                Ok(ExecResult::ok(""))
+            }
+        }
+        let mut peaks = Vec::new();
+        let mut retained = Vec::new();
+        for mode in [Mode::InterpreterOnly, Mode::Auto] {
+            let observed = Arc::new(AtomicU64::new(0));
+            let mut bash = Bash::builder()
+                .builtin("observe", Box::new(Observe(observed.clone())))
+                .build();
+            bash.exec_with_options(
+                "f() { for ((i=0;i<3;i++)); do observe; done; }; f",
+                ExecOptions::new().extensions(ExecutionExtensions::new().with(mode)),
+            )
+            .await
+            .unwrap();
+            peaks.push(observed.load(Ordering::Relaxed));
+            retained.push(bash.interpreter.execution_budget.live_bytes_for_test());
+        }
+        assert!(
+            peaks[1] > peaks[0] + std::mem::size_of::<ScriptPlan<'_>>() as u64,
+            "function must enter its own admitted plan"
+        );
+        assert_eq!(
+            retained[0], retained[1],
+            "invocation-owned storage must be refunded on return"
+        );
+    }
+
+    #[tokio::test]
+    async fn abandoning_a_mixed_function_refunds_its_compiler_storage() {
+        let mut bash = crate::Bash::new();
+        bash.exec("f() { local i; for ((i=0;i<10000;i++)); do printf x; done; }")
+            .await
+            .unwrap();
+        let before = bash.interpreter.execution_budget.live_bytes_for_test();
+        let mut future = Box::pin(bash.exec("f"));
+        let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+        assert!(std::future::Future::poll(future.as_mut(), &mut context).is_pending());
+        drop(future);
+        assert!(
+            bash.interpreter.execution_budget.live_bytes_for_test() <= before,
+            "abandoned invocation must release plan storage"
+        );
+        assert_eq!(
+            bash.exec("printf reusable").await.unwrap().stdout,
+            "reusable"
+        );
+    }
+
+    #[tokio::test]
+    async fn cancellation_during_a_mixed_function_tool_releases_the_active_plan() {
+        struct Suspend(Arc<StdMutex<Option<crate::limits::ExecutionBudget>>>);
+        #[crate::async_trait]
+        impl crate::Builtin for Suspend {
+            async fn execute(&self, ctx: crate::BuiltinContext<'_>) -> Result<ExecResult> {
+                *self.0.lock().unwrap() = Some(
+                    ctx.execution_budget()
+                        .unwrap()
+                        .try_with(Clone::clone)
+                        .unwrap(),
+                );
+                std::future::pending().await
+            }
+        }
+        let active_budget = Arc::new(StdMutex::new(None));
+        let mut bash = crate::Bash::builder()
+            .builtin("suspend", Box::new(Suspend(active_budget.clone())))
+            .build();
+        bash.exec("f() { local i; for ((i=0;i<3;i++)); do suspend; done; }")
+            .await
+            .unwrap();
+        let before = bash.interpreter.execution_budget.live_bytes_for_test();
+        let mut future = Box::pin(bash.exec("f"));
+        let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+        assert!(std::future::Future::poll(future.as_mut(), &mut context).is_pending());
+        // Bash replaces its budget at each exec boundary. Observe this
+        // request's budget inside the reached tool, rather than the old one.
+        let budget = active_budget.lock().unwrap().take().expect("tool reached");
+        assert!(
+            budget.live_bytes_for_test() > before + std::mem::size_of::<ScriptPlan<'_>>() as u64
+        );
+        drop(future);
+        assert!(
+            budget.live_bytes_for_test() <= before,
+            "active plan storage refunded"
+        );
+        assert_eq!(
+            bash.exec("printf reusable").await.unwrap().stdout,
+            "reusable"
+        );
+    }
+
+    #[cfg(all(feature = "jq", feature = "experimental_plan_benchmark_control"))]
+    #[tokio::test]
+    async fn mixed_function_jq_filters_keep_dynamic_bindings_and_file_contents() {
+        use crate::{
+            Bash, ExecOptions, ExecutionExtensions, ExperimentalPlanBenchmarkControl as Mode,
+        };
+        for source in [
+            r#"f() { for ((i=0;i<4;i++)); do printf '{"n":2}' | jq -r --argjson scale "$i" '.n * $scale'; done; }; f"#,
+            r#"f() { for ((i=0;i<3;i++)); do printf '.a + %s' "$i" > /tmp/filter; printf '{"a":2}' | jq -f /tmp/filter; done; }; f"#,
+            r#"f() { for ((i=0;i<3;i++)); do if ((i>100)); then jq -n 'bad('; fi; printf yes; done; }; f"#,
+            r#"f() { for ((i=0;i<2;i++)); do jq -n '42'; done; }; jq() { printf shadowed; }; f"#,
+        ] {
+            let mut results = Vec::new();
+            for mode in [Mode::InterpreterOnly, Mode::Auto] {
+                let mut bash = Bash::new();
+                let r = bash
+                    .exec_with_options(
+                        source,
+                        ExecOptions::new().extensions(ExecutionExtensions::new().with(mode)),
+                    )
+                    .await
+                    .unwrap();
+                results.push((r.stdout, r.stderr, r.exit_code, r.control_flow));
+            }
+            assert_eq!(results[0], results[1], "{source}");
+        }
+    }
+
     #[test]
     fn numeric_admission_requires_a_literal_instead_of_unary_expressions() {
         for value in ["++1", "--1", "-+2", "+-2", "+ 2"] {
@@ -717,22 +1201,25 @@ mod tests {
 
     #[test]
     fn declined_and_failed_compilation_refund_storage() {
-        let ast = Parser::new("for ((i=0;i<3;i++)); do ((a+=i)); done")
-            .parse()
-            .unwrap();
-        for (limits, work_error) in [
-            (ExecutionLimits::new().max_live_intermediate_bytes(1), false),
-            (ExecutionLimits::new().max_work_units(1), true),
+        for source in [
+            "for ((i=0;i<3;i++)); do ((a+=i)); done",
+            "for ((i=0;i<3;i++)); do reply=$(printf '%s' \"$i\"); printf '%s' \"$reply\"; done",
         ] {
-            let budget =
-                crate::limits::ExecutionBudget::new(&limits, Arc::new(AtomicBool::new(false)));
-            let result = ScriptPlan::compile(&ast, &budget);
-            if work_error {
-                assert!(result.is_err());
-            } else {
-                assert!(result.unwrap().is_none());
+            let ast = Parser::new(source).parse().unwrap();
+            for (limits, work_error) in [
+                (ExecutionLimits::new().max_live_intermediate_bytes(1), false),
+                (ExecutionLimits::new().max_work_units(1), true),
+            ] {
+                let budget =
+                    crate::limits::ExecutionBudget::new(&limits, Arc::new(AtomicBool::new(false)));
+                let result = ScriptPlan::compile(&ast, &budget);
+                if work_error {
+                    assert!(result.is_err(), "{source}");
+                } else {
+                    assert!(result.unwrap().is_none(), "{source}");
+                }
+                assert_eq!(budget.live_bytes_for_test(), 0, "{source}");
             }
-            assert_eq!(budget.live_bytes_for_test(), 0);
         }
     }
 
@@ -935,24 +1422,27 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn budget_errors_restore_native_loop_scopes() {
-        let ast = Parser::new("for ((i=0;i<100;i++)); do ((a+=i)); done")
-            .parse()
-            .unwrap();
-        for limits in [
-            ExecutionLimits::new().max_commands(5),
-            ExecutionLimits::new().max_loop_iterations(5),
+    async fn budget_errors_restore_prepared_loop_scopes() {
+        for source in [
+            "for ((i=0;i<100;i++)); do ((a+=i)); done",
+            "for ((i=0;i<100;i++)); do printf x; done",
         ] {
-            let mut interp = Interpreter::new(Arc::new(crate::InMemoryFs::new()));
-            interp.limits = limits;
-            let plan = ScriptPlan::lower_script(&ast, &interp.execution_budget)
-                .unwrap()
-                .unwrap();
-            let result = interp
-                .execute_command_with_program(&ast.commands[0], plan.command(0))
-                .await;
-            assert!(result.is_err());
-            assert_eq!(interp.loop_depth, 0);
+            let ast = Parser::new(source).parse().unwrap();
+            for limits in [
+                ExecutionLimits::new().max_commands(5),
+                ExecutionLimits::new().max_loop_iterations(5),
+            ] {
+                let mut interp = Interpreter::new(Arc::new(crate::InMemoryFs::new()));
+                interp.limits = limits;
+                let plan = ScriptPlan::lower_script(&ast, &interp.execution_budget)
+                    .unwrap()
+                    .unwrap();
+                let result = interp
+                    .execute_command_with_program(&ast.commands[0], plan.command(0))
+                    .await;
+                assert!(result.is_err(), "{source}");
+                assert_eq!(interp.loop_depth, 0, "{source}");
+            }
         }
     }
 

@@ -25,12 +25,17 @@ cargo run -p bashkit-cli --features experimental_execution_plan -- \
 
 Supported scalar arithmetic, numeric assignments, branches and loops can execute
 as flat instructions. Small one-shot scripts skip compilation. Unsupported
-syntax, tool-containing compound bodies, word expansions, traps, tracing,
-`errexit`, `nounset`, arrays and attributed variables use the ordinary
-interpreter where required. A mixed script can use both paths.
+leaves (including tools, pipelines, word expansions, regexes and arrays) use
+the ordinary executor inside prepared function bodies and loop/branch control.
+Arithmetic loop clauses recheck dynamic state before using compiled expressions;
+traps, tracing, `errexit`, `nounset` and attributed variables retain ordinary
+semantics. Redirected compound boundaries still use interpreter execution.
+The `jq` builtin already compiles and reuses filters through its execution-local
+LRU, including calls from planned loops; values and file contents stay dynamic.
 
-Plans belong to one execution and borrow its parsed source. They use the shared
-request's work and memory budgets, command/iteration limits, cancellation and
+Plans belong to one execution or function invocation and borrow its parsed
+source. They use the shared request's work and memory budgets,
+command/iteration limits, cancellation and
 deadline checks. Compilation costs real work and memory, so tight budgets may
 reject earlier than the interpreter-only build. There is no shared compiler
 cache or persistent hotness state.
