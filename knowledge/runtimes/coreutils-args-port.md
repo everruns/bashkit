@@ -23,6 +23,8 @@ codegen**, not by depending on `uu_*` crates at runtime.
 1. Parses `<uutils>/src/uu/<util>/src/<util>.rs` with `syn`, falling back to
    sibling `.rs` files (e.g. `ls/src/config.rs`) when `mod options` lives
    next to `<util>.rs`.
+   Module-level `const`/`static` declarations are emitted at file scope so
+   `uu_app()`'s bare-name references resolve (see "Bare-name constants").
 2. Reads `<uutils>/src/uu/<util>/locales/en-US.ftl` for help/about strings.
 3. Rewrites the `uu_app()` AST in place:
    - `translate!("k")` → `String::from("<value from ftl>")`
@@ -70,6 +72,36 @@ codegen**, not by depending on `uu_*` crates at runtime.
    (TM-INF-025).
 5. Emits `crates/bashkit/src/builtins/generated/<util>_args.rs` with a clean
    `pub fn <util>_command() -> clap::Command`.
+
+## Bare-name constants
+
+Utils with no `mod options` (mktemp, od, readlink, realpath) declare option
+keys as module-level `const`/`static` and reference them bare from
+`uu_app()` (`Arg::new(OPT_FOO)`). Those declarations are re-emitted at file
+scope in the generated module so the bare names resolve unchanged.
+
+Selection is the union of two rules:
+
+- **Convention** — names beginning `OPT_` / `ARG_`, emitted whether or not
+  `uu_app()` names them, so a key only a consumer reaches for still
+  resolves.
+- **Reachability** — any constant the ported clap definition actually
+  references, under any name. Transitive (a constant defined in terms of
+  another brings that one along) and it runs through the helpers inlined by
+  `collect_referenced_items`, because a spliced function or `impl` body can
+  name a constant too. Scoped to the same single level of helper inlining
+  that actually reaches the output, so no constant is emitted for a helper
+  that does not land in the generated file.
+
+The convention rule alone was the original implementation, and it is only a
+proxy for the reachability rule. Upstream outgrew it: od extracted its
+`--strings` / `--width` defaults into
+`const DEFAULT_MISSING_STRING_LENGTH` / `const DEFAULT_MISSING_WIDTH` and
+used them as `.default_missing_value(...)`. Neither name matches the prefix
+filter, so both were dropped, the generated file failed to compile with
+E0425, and the weekly drift workflow went red with no PR to show for it.
+A constant the clap definition references is emitted because it is
+referenced, not because of how it is spelled.
 
 ## Shared uucore clap helpers
 

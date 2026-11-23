@@ -89,23 +89,25 @@ pub fn run(uutils_dir: &Path, util: &str, rev: &str) -> Result<String> {
     //    Look in every `.rs` in the util's `src/` directory.
     //
     // Collect both: the optional `options` mod (if present) and any
-    // bare-name `OPT_*` / `ARG_*` constants we should also emit so
-    // uu_app's bare-name references resolve.
+    // bare-name constants we should also emit so uu_app's bare-name
+    // references resolve. The constant sweep needs `uu_app` to know what is
+    // actually referenced, so resolve the function first.
     let mut options_mod = find_mod(&file, "options").cloned();
     if options_mod.is_none() {
         options_mod = find_mod_in_sibling_files(&src_path, "options")?;
     }
-    let bare_name_consts = collect_option_constants(&file);
-    if options_mod.is_none() && bare_name_consts.is_empty() {
-        bail!(
-            "could not find `mod options` or any module-level `OPT_*`/`ARG_*` \
-             constants in {} or its sibling files",
-            src_path.display()
-        );
-    }
     let mut uu_app = find_fn(&file, "uu_app")
         .expect("uu_app presence already verified in source resolution above")
         .clone();
+    let bare_name_consts = collect_option_constants(&file, &uu_app);
+    if options_mod.is_none() && bare_name_consts.is_empty() {
+        bail!(
+            "could not find `mod options`, any module-level `OPT_*`/`ARG_*` \
+             constants, or any constant referenced by `uu_app` in {} or its \
+             sibling files",
+            src_path.display()
+        );
+    }
 
     // Harvest `.env(...)` annotations BEFORE the rewriter strips them
     // from the runtime Arg chain. Each entry becomes a row in the
@@ -501,23 +503,9 @@ fn path_ends_with_arg_new(func: &Expr) -> bool {
 /// than triggering recursive inlining. Broaden when a real case demands
 /// it.
 fn collect_referenced_items(uu_app: &ItemFn, file: &syn::File) -> Vec<Item> {
-    use syn::visit::{self, Visit};
+    use syn::visit::Visit;
 
-    struct IdentCollector(std::collections::HashSet<String>);
-    impl<'ast> Visit<'ast> for IdentCollector {
-        fn visit_path(&mut self, path: &'ast syn::Path) {
-            if path.segments.len() == 1
-                && let Some(seg) = path.segments.first()
-            {
-                self.0.insert(seg.ident.to_string());
-            }
-            visit::visit_path(self, path);
-        }
-    }
-
-    let mut idents = IdentCollector(Default::default());
-    idents.visit_item_fn(uu_app);
-    let names = idents.0;
+    let names = single_segment_idents(|v| v.visit_item_fn(uu_app));
 
     const PROVIDED_BY_PREAMBLE: &[&str] = &["format_usage"];
 
@@ -610,31 +598,126 @@ fn find_mod_in_sibling_files(src_path: &Path, name: &str) -> Result<Option<ItemM
     Ok(None)
 }
 
-/// Collect module-level `const OPT_FOO: &str = ...` / `static OPT_FOO`
-/// declarations that some uutils sources use in place of a
-/// `mod options { ... }`. uu_app() bodies in these utils refer to the
-/// constants by their bare name (`Arg::new(OPT_FOO)`); we emit them
-/// at the same scope in the generated file so the bare-name references
-/// resolve unchanged.
+/// Collect module-level `const` / `static` declarations the generated file
+/// must carry at file scope so `uu_app()`'s bare-name references resolve.
 ///
-/// Filter: name must start with `OPT_` or `ARG_` to avoid sweeping in
-/// unrelated source-level constants.
-fn collect_option_constants(file: &syn::File) -> Vec<Item> {
-    file.items
-        .iter()
-        .filter(|it| match it {
-            Item::Const(c) => {
-                let n = c.ident.to_string();
-                n.starts_with("OPT_") || n.starts_with("ARG_")
-            }
-            Item::Static(s) => {
-                let n = s.ident.to_string();
-                n.starts_with("OPT_") || n.starts_with("ARG_")
+/// Two sources, unioned:
+///
+/// 1. **Convention.** `OPT_*` / `ARG_*` is uutils' idiom for option keys in
+///    utils that have no `mod options` (mktemp, readlink, realpath, od).
+///    These are emitted whether or not `uu_app()` names them, so a key that
+///    only a consumer of the generated module reaches for still resolves.
+/// 2. **Reachability.** Any constant the ported clap definition actually
+///    references, under any name. The prefix rule alone is a proxy for
+///    "referenced", and upstream outgrew it: od gained
+///    `const DEFAULT_MISSING_WIDTH: &str = "32";` used as
+///    `.default_missing_value(DEFAULT_MISSING_WIDTH)`, which the prefix
+///    filter dropped — the generated file then failed to compile with
+///    E0425 and took the drift workflow red. Reachability also runs through
+///    the helpers `collect_referenced_items` inlines, since a spliced
+///    function or `impl` body can name a constant too, and transitively
+///    through constants defined in terms of other constants.
+///
+/// Reachability is deliberately scoped to the same one level of helper
+/// inlining `collect_referenced_items` performs, so this never emits a
+/// constant for a helper that does not itself land in the output.
+///
+/// Source order is preserved, so a constant defined in terms of an earlier
+/// one keeps a valid definition order.
+fn collect_option_constants(file: &syn::File, uu_app: &ItemFn) -> Vec<Item> {
+    use syn::visit::Visit;
+
+    fn is_option_key_name(n: &str) -> bool {
+        n.starts_with("OPT_") || n.starts_with("ARG_")
+    }
+
+    // Bare names `uu_app()` itself mentions.
+    let mut reachable = single_segment_idents(|v| v.visit_item_fn(uu_app));
+
+    // Plus the bare names reached through each inlined helper: the free
+    // functions and value-parser structs `collect_referenced_items` splices
+    // in, and the `impl` blocks that follow those structs.
+    let helper_names = reachable.clone();
+    for item in &file.items {
+        let named = match item {
+            Item::Fn(f) => helper_names.contains(&f.sig.ident.to_string()),
+            Item::Struct(s) => helper_names.contains(&s.ident.to_string()),
+            Item::Impl(im) => {
+                impl_target_ident(im).is_some_and(|target| helper_names.contains(&target))
             }
             _ => false,
-        })
+        };
+        if named {
+            reachable.extend(single_segment_idents(|v| v.visit_item(item)));
+        }
+    }
+
+    // Whether a constant or static is emitted, by either rule.
+    let emitted = |item: &Item, reachable: &std::collections::HashSet<String>| {
+        const_or_static_name(item)
+            .is_some_and(|name| is_option_key_name(&name) || reachable.contains(&name))
+    };
+
+    // A referenced constant may be defined in terms of another constant, so
+    // close over the initialisers of emitted constants until the set stops
+    // growing.
+    loop {
+        let mut grew = false;
+        for item in &file.items {
+            if !emitted(item, &reachable) {
+                continue;
+            }
+            for id in single_segment_idents(|v| v.visit_item(item)) {
+                grew |= reachable.insert(id);
+            }
+        }
+        if !grew {
+            break;
+        }
+    }
+
+    file.items
+        .iter()
+        .filter(|it| emitted(it, &reachable))
         .cloned()
         .collect()
+}
+
+/// The declared name of a module-level `const` or `static`, if `item` is one.
+fn const_or_static_name(item: &Item) -> Option<String> {
+    match item {
+        Item::Const(c) => Some(c.ident.to_string()),
+        Item::Static(s) => Some(s.ident.to_string()),
+        _ => None,
+    }
+}
+
+/// Collect every single-segment path ident reached by `visit`.
+///
+/// Single-segment is the shape that matters for emission: bare-name
+/// references (`OPT_FOO`, `parse_range`) are what inlining has to satisfy,
+/// while qualified paths (`options::FOO`, `uucore::a::b`) resolve through
+/// the emitted `mod options` or the clap-helper flattening instead.
+fn single_segment_idents<F>(visit: F) -> std::collections::HashSet<String>
+where
+    F: FnOnce(&mut IdentCollector),
+{
+    let mut collector = IdentCollector(Default::default());
+    visit(&mut collector);
+    collector.0
+}
+
+struct IdentCollector(std::collections::HashSet<String>);
+
+impl<'ast> syn::visit::Visit<'ast> for IdentCollector {
+    fn visit_path(&mut self, path: &'ast syn::Path) {
+        if path.segments.len() == 1
+            && let Some(seg) = path.segments.first()
+        {
+            self.0.insert(seg.ident.to_string());
+        }
+        syn::visit::visit_path(self, path);
+    }
 }
 
 // THREAT[TM-INF-025]: args-mode consumes third-party Rust from uutils.
@@ -2409,5 +2492,141 @@ pub fn uu_app() -> clap::Command {
         let err = run(&uutils, "cat", "poc").unwrap_err();
         let msg = format!("{err:#}");
         assert!(msg.contains("found 3 statements"), "got: {msg}");
+    }
+
+    /// Regression: upstream od grew
+    /// `const DEFAULT_MISSING_WIDTH: &str = "32";` and referenced it from
+    /// `uu_app()` via `.default_missing_value(DEFAULT_MISSING_WIDTH)`.
+    /// The old collector only emitted constants whose name began with
+    /// `OPT_`/`ARG_`, so these were dropped and the generated file failed
+    /// to compile with E0425. Any module-level constant the ported clap
+    /// definition actually references has to be emitted alongside it.
+    #[test]
+    fn emits_non_opt_prefixed_constants_referenced_by_uu_app() {
+        let (_tmp, uutils) = fixture(&[
+            (
+                "src/uu/od/src/od.rs",
+                r#"
+const DEFAULT_MISSING_WIDTH: &str = "32";
+const DEFAULT_MISSING_STRING_LENGTH: &str = "3";
+const PEEK_BUFFER_SIZE: usize = 4;
+
+const OPT_WIDTH: &str = "width";
+const OPT_STRINGS: &str = "strings";
+
+pub fn uu_app() -> clap::Command {
+    Command::new("od")
+        .arg(
+            Arg::new(OPT_WIDTH)
+                .long(OPT_WIDTH)
+                .num_args(0..=1)
+                .default_missing_value(DEFAULT_MISSING_WIDTH),
+        )
+        .arg(
+            Arg::new(OPT_STRINGS)
+                .long(OPT_STRINGS)
+                .num_args(0..=1)
+                .default_missing_value(DEFAULT_MISSING_STRING_LENGTH),
+        )
+}
+"#,
+            ),
+            ("src/uu/od/locales/en-US.ftl", ""),
+        ]);
+
+        let body = run(&uutils, "od", "poc").unwrap();
+        // The referenced constants are emitted at the same scope the
+        // bare-name references expect.
+        assert!(
+            body.contains("const DEFAULT_MISSING_WIDTH: &str = \"32\";"),
+            "got: {body}"
+        );
+        assert!(
+            body.contains("const DEFAULT_MISSING_STRING_LENGTH: &str = \"3\";"),
+            "got: {body}"
+        );
+        // Option keys keep working.
+        assert!(
+            body.contains("const OPT_WIDTH: &str = \"width\";"),
+            "got: {body}"
+        );
+        // An unreferenced constant stays out: emission follows real
+        // references, not "every constant in the file".
+        assert!(!body.contains("PEEK_BUFFER_SIZE"), "got: {body}");
+    }
+
+    /// A referenced constant may itself be defined in terms of another
+    /// constant. Emitting only the directly-referenced one would leave
+    /// the second name unresolved, so the closure has to be transitive.
+    #[test]
+    fn emits_constants_referenced_transitively() {
+        let (_tmp, uutils) = fixture(&[
+            (
+                "src/uu/od/src/od.rs",
+                r#"
+const BASE_WIDTH: &str = "32";
+const DEFAULT_MISSING_WIDTH: &str = BASE_WIDTH;
+
+const OPT_WIDTH: &str = "width";
+
+pub fn uu_app() -> clap::Command {
+    Command::new("od").arg(
+        Arg::new(OPT_WIDTH)
+            .long(OPT_WIDTH)
+            .default_missing_value(DEFAULT_MISSING_WIDTH),
+    )
+}
+"#,
+            ),
+            ("src/uu/od/locales/en-US.ftl", ""),
+        ]);
+
+        let body = run(&uutils, "od", "poc").unwrap();
+        assert!(
+            body.contains("const DEFAULT_MISSING_WIDTH: &str = BASE_WIDTH;"),
+            "got: {body}"
+        );
+        assert!(
+            body.contains("const BASE_WIDTH: &str = \"32\";"),
+            "got: {body}"
+        );
+    }
+
+    /// Constants reached only through an inlined helper (a free function
+    /// or value-parser struct spliced in by `collect_referenced_items`)
+    /// also have to come along, for the same reason.
+    #[test]
+    fn emits_constants_referenced_by_inlined_helper() {
+        let (_tmp, uutils) = fixture(&[
+            (
+                "src/uu/shuf/src/shuf.rs",
+                r#"
+const RANGE_SEPARATOR: &str = "-";
+
+const OPT_RANGE: &str = "input-range";
+
+fn parse_range(s: &str) -> Result<(usize, usize), String> {
+    let _ = RANGE_SEPARATOR;
+    Err(String::from(s))
+}
+
+pub fn uu_app() -> clap::Command {
+    Command::new("shuf").arg(
+        Arg::new(OPT_RANGE)
+            .long(OPT_RANGE)
+            .value_parser(parse_range),
+    )
+}
+"#,
+            ),
+            ("src/uu/shuf/locales/en-US.ftl", ""),
+        ]);
+
+        let body = run(&uutils, "shuf", "poc").unwrap();
+        assert!(body.contains("fn parse_range"), "got: {body}");
+        assert!(
+            body.contains("const RANGE_SEPARATOR: &str = \"-\";"),
+            "got: {body}"
+        );
     }
 }
