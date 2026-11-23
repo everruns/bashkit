@@ -21,7 +21,6 @@ this does not expand or restrict the accepted Bash language. Compilation consume
 request budgets and can reject tighter limits earlier. The remaining substitution
 performance regression is tracked in [Execution Plans](../foundations/script-execution-plan.md).
 
-
 The negative spec: what Bashkit deliberately does NOT do (and why), plus
 known partial implementations. Absences can't be recovered from code, so
 they're recorded here; everything positive is generated or tested instead:

@@ -22,7 +22,7 @@ flag; the existing public execution APIs and Bash syntax stay the same.
 Compile a parsed script into an execution-owned plan before running its first
 command. The ordinary script runner still handles alias/extglob reparsing,
 source lines, output routing, hooks, trailing syntax errors, and shell recovery.
-An allocation-free eligibility probe skips lowering for small one-shot regions;
+An inexpensive eligibility probe skips lowering for small one-shot regions;
 supported loops and larger straight-line regions still compile. This is a
 conservative local cost policy, not profiling or persistent hotness state.
 Reparsed script views use ordinary execution. Nested `eval`/`source` scripts
@@ -105,7 +105,6 @@ to compare output, status, writes and subsequent session use. Structured
 proptest scripts also compare with real Bash. Native-specific unit tests prove
 backend eligibility, resource fault injection, compilation admission refunds,
 and abandoned-future cleanup instead of accepting silent AST fallback.
-
 
 Unit tests require native regions to be selected and compare results, variable
 writes, PIPESTATUS, command counts, and scope cleanup with ordinary AST
