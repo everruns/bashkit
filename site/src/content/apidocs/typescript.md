@@ -1302,6 +1302,26 @@ One file redirect found by `analyze()`.
 
   Target path, or `null` when it is not fully literal.
 
+## AnalyzedUpload
+
+A local file that `curl`, `wget`, or `scp` would send, found by `analyze()`.
+
+### Fields
+
+- **`command`** — `string`
+
+  `"curl"`, `"wget"`, or `"scp"`.
+- **`context`** — `string`
+
+  `"direct"`, `"substitution"`, or `"function_body"`.
+- **`option?`** — `null | string`
+
+  Option naming the file (`"-d"`, `"-F"`, `"--post-file"`, ...), or
+  `null` for an `scp` source operand.
+- **`path?`** — `null | string`
+
+  Local path, or `null` when the argument is not fully literal.
+
 ## BashOptions
 
 Options for creating a Bash or BashTool instance.
@@ -1358,6 +1378,13 @@ Options for creating a Bash or BashTool instance.
   first read and the result is cached.
 - **`hostname?`** — `string`
 - **`maxCommands?`** — `number`
+- **`maxExecCalls?`** — `number`
+
+  Session-wide cap on `execute*()` calls for this instance (default 1,000).
+
+  Unlike `maxCommands`, this counts across calls so a tenant cannot dodge
+  per-call limits by splitting work. Snapshots carry the count; `reset()`
+  clears it. Raise it for long agent sessions.
 - **`maxInputBytes?`** — `number`
 
   Maximum script input size in UTF-8 bytes.
@@ -1371,6 +1398,9 @@ Options for creating a Bash or BashTool instance.
 
   Caps the total byte budget for variable storage and function bodies.
   Prevents OOM from untrusted input such as exponential string doubling.
+- **`maxSessionCommands?`** — `number`
+
+  Session-wide cap on commands across all calls (default 100,000).
 - **`maxTotalLoopIterations?`** — `number`
 - **`mounts?`** — `({ path: string; root: string; writable?: boolean })[]`
 
@@ -1740,6 +1770,9 @@ the builtin registry, the network allowlist, and the mount policy.
 - **`truncated`** — `boolean`
 
   Node budget hit — `commands` and `redirects` are incomplete.
+- **`uploads`** — `AnalyzedUpload[]`
+
+  Local files that `curl`, `wget`, or `scp` would send, in source order.
 
 ## ShellState
 
@@ -2377,6 +2410,13 @@ Options for configuring the bash tool adapter.
   Pre-populate VFS files. Keys are absolute paths, values are file contents.
 - **`hostname?`** — `string`
 - **`maxCommands?`** — `number`
+- **`maxExecCalls?`** — `number`
+
+  Session-wide cap on `execute*()` calls for this instance (default 1,000).
+
+  Unlike `maxCommands`, this counts across calls so a tenant cannot dodge
+  per-call limits by splitting work. Snapshots carry the count; `reset()`
+  clears it. Raise it for long agent sessions.
 - **`maxInputBytes?`** — `number`
 
   Maximum script input size in UTF-8 bytes.
@@ -2396,6 +2436,9 @@ Options for configuring the bash tool adapter.
 
   Output exceeding this limit is truncated with a `[truncated]` marker.
   Prevents context window flooding when scripts produce large output.
+- **`maxSessionCommands?`** — `number`
+
+  Session-wide cap on commands across all calls (default 100,000).
 - **`maxTotalLoopIterations?`** — `number`
 - **`mounts?`** — `({ path: string; root: string; writable?: boolean })[]`
 
@@ -2607,6 +2650,13 @@ Options for configuring the bash tool adapter.
   Pre-populate VFS files. Keys are absolute paths, values are file contents.
 - **`hostname?`** — `string`
 - **`maxCommands?`** — `number`
+- **`maxExecCalls?`** — `number`
+
+  Session-wide cap on `execute*()` calls for this instance (default 1,000).
+
+  Unlike `maxCommands`, this counts across calls so a tenant cannot dodge
+  per-call limits by splitting work. Snapshots carry the count; `reset()`
+  clears it. Raise it for long agent sessions.
 - **`maxInputBytes?`** — `number`
 
   Maximum script input size in UTF-8 bytes.
@@ -2626,6 +2676,9 @@ Options for configuring the bash tool adapter.
 
   Output exceeding this limit is truncated with a `[truncated]` marker.
   Prevents context window flooding when scripts produce large output.
+- **`maxSessionCommands?`** — `number`
+
+  Session-wide cap on commands across all calls (default 100,000).
 - **`maxTotalLoopIterations?`** — `number`
 - **`mounts?`** — `({ path: string; root: string; writable?: boolean })[]`
 
@@ -2818,6 +2871,13 @@ Options for configuring the bash tool adapter.
   Pre-populate VFS files. Keys are absolute paths, values are file contents.
 - **`hostname?`** — `string`
 - **`maxCommands?`** — `number`
+- **`maxExecCalls?`** — `number`
+
+  Session-wide cap on `execute*()` calls for this instance (default 1,000).
+
+  Unlike `maxCommands`, this counts across calls so a tenant cannot dodge
+  per-call limits by splitting work. Snapshots carry the count; `reset()`
+  clears it. Raise it for long agent sessions.
 - **`maxInputBytes?`** — `number`
 
   Maximum script input size in UTF-8 bytes.
@@ -2831,6 +2891,9 @@ Options for configuring the bash tool adapter.
 
   Caps the total byte budget for variable storage and function bodies.
   Prevents OOM from untrusted input such as exponential string doubling.
+- **`maxSessionCommands?`** — `number`
+
+  Session-wide cap on commands across all calls (default 100,000).
 - **`maxTotalLoopIterations?`** — `number`
 - **`mounts?`** — `({ path: string; root: string; writable?: boolean })[]`
 
