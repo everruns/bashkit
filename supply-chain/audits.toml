@@ -862,6 +862,7 @@ notes = "Reviewed complete published package diff: nine Rust files changed, no n
 who = "Bashkit maintenance review"
 criteria = "safe-to-deploy"
 delta = "0.8.3 -> 0.8.4"
+importable = false
 notes = "Reviewed the complete published package diff: five Rust files changed, no new dependencies beyond the matching turso_ext/turso_macros/turso_parser version bumps, build.rs byte-identical, unsafe unchanged at 693 occurrences, and the std::fs, std::net, std::process and std::env occurrence counts all unchanged, so no new host filesystem, network or process access. Statement reprepare now rolls back the autocommit transaction first: the rollback body splits into rollback_autocommit_txn and maybe_reparse_schema moves out of it into reprepare, so the schema reparse runs after the main and attached pagers have ended their transactions instead of before, and a failing reprepare still releases the counted active root. DELETE safety stops walking the FK cascade chain for triggers on child tables and instead requires the statement journal whenever foreign keys are enabled and any FK referencing the table has an on_delete other than NoAction or Restrict, which is strictly more conservative than the previous trigger-conditioned walk; the now-unused table_has_fk_cascade_triggers helper and its SmallVec worklist are removed. UPDATE statement-journal safety switches from the explicit SET clause list to columns_affected_by_update, so generated and otherwise affected columns are counted for the NOT NULL check, and a rowid or rowid-alias change now also forces the unique path. The upsert CDC before-image is hoisted above the delete in the rowid-changing branch, because reading it after the write returned the new row instead of the old one. Source safety review, not formal transactional proof."
 
 [[audits.turso_ext]]
@@ -898,6 +899,7 @@ notes = "Reviewed complete published package diff: zero differing .rs files acro
 who = "Bashkit maintenance review"
 criteria = "safe-to-deploy"
 delta = "0.8.3 -> 0.8.4"
+importable = false
 notes = "Reviewed the complete published package diff: the source trees are byte-identical. Only Cargo.toml, Cargo.lock and .cargo_vcs_info.json differ, and they carry version stamps plus the upstream release commit sha. Nothing to review beyond the version bump that keeps this crate in step with turso_core 0.8.4."
 
 [[audits.turso_macros]]
@@ -934,6 +936,7 @@ notes = "Reviewed complete published package diff: zero differing .rs files acro
 who = "Bashkit maintenance review"
 criteria = "safe-to-deploy"
 delta = "0.8.3 -> 0.8.4"
+importable = false
 notes = "Reviewed the complete published package diff: the source trees are byte-identical. Only Cargo.toml, Cargo.lock and .cargo_vcs_info.json differ, and they carry version stamps plus the upstream release commit sha. Nothing to review beyond the version bump that keeps this crate in step with turso_core 0.8.4."
 
 [[audits.turso_parser]]
@@ -970,6 +973,7 @@ notes = "Reviewed complete published package diff: zero differing .rs files acro
 who = "Bashkit maintenance review"
 criteria = "safe-to-deploy"
 delta = "0.8.3 -> 0.8.4"
+importable = false
 notes = "Reviewed the complete published package diff: the source trees are byte-identical. Only Cargo.toml, Cargo.lock and .cargo_vcs_info.json differ, and they carry version stamps plus the upstream release commit sha. Nothing to review beyond the version bump that keeps this crate in step with turso_core 0.8.4."
 
 [[audits.twox-hash]]
