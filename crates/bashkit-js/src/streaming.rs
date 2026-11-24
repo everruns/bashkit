@@ -34,8 +34,8 @@ struct JsCommand {
     name: String,
     callback: Arc<CommandTsfn>,
     in_sync: Arc<AtomicUsize>,
-    /// See `JsCustomBuiltinAdapter::has_lazy_mounts`.
-    has_lazy_mounts: Arc<std::sync::atomic::AtomicBool>,
+    /// See `JsCustomBuiltinAdapter::lazy_guard`.
+    lazy_guard: Arc<crate::lazy_fs::LazyMountGuard>,
 }
 
 #[async_trait]
@@ -54,7 +54,7 @@ impl Command for JsCommand {
             payload,
             External::new(NativeFileSystemState::for_context(
                 ctx.fs.clone(),
-                self.has_lazy_mounts.load(Ordering::SeqCst),
+                self.lazy_guard.clone(),
             )),
             External::new(ctx.stdin.clone()),
             External::new(ctx.stdout.clone()),
@@ -90,7 +90,7 @@ pub(super) fn register(
             name,
             callback: Arc::new(callback),
             in_sync: state.in_sync_execute_depth.clone(),
-            has_lazy_mounts: state.has_lazy_mounts.clone(),
+            lazy_guard: state.lazy_guard.clone(),
         },
     );
     Ok(())

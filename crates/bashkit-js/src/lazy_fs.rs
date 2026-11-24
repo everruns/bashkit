@@ -21,12 +21,12 @@
 //!   polling this future);
 //! - inside an execution's task ([`in_execution`]): proceed. No sync caller
 //!   can be waiting on this task, so if the loop is busy the callback simply
-//!   runs once it is free;
-//! - anywhere else (sqlite's VFS I/O thread, the C ABI export thread, tasks
-//!   spawned outside the execution scope) while the owning JS thread is
-//!   inside a sync entry point: wait up to [`SYNC_BLOCK_GRACE`], then fail,
-//!   because that sync call may be waiting on this very operation. Later
-//!   such operations in the same blocked period fail at once.
+//!   runs once it is free, and the execution deadline (`timeoutMs`) bounds it;
+//! - anywhere else, i.e. helper threads such as sqlite's VFS I/O thread: fail
+//!   at once. Such threads block a runtime worker (or the JS thread) until
+//!   they finish and cannot be reached by the execution deadline, so waiting
+//!   on a promise there can starve or hang the runtime. They are served from
+//!   the cache only; scripts load content first (`cat file > /dev/null`).
 //!
 //! Lazy handles are mounted directly (`mountLazyFileSystem`) and refuse
 //! `toExternal()`: the C ABI bridge blocks a runtime worker per operation,
@@ -53,10 +53,10 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{Error as IoError, ErrorKind};
 use std::path::{Component, Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::thread::ThreadId;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use base64::Engine;
 use bashkit::time::{SystemTime, UNIX_EPOCH};
@@ -72,8 +72,37 @@ const MAX_CACHED_DIRS: usize = 10_000;
 const MAX_CACHED_DIR_ENTRIES: usize = 1_000_000;
 /// Upper bound on remembered missing paths before the sets are cleared.
 const MAX_NEGATIVE_ENTRIES: usize = 100_000;
-/// How long an off-thread operation waits for a blocked owning JS thread.
-const SYNC_BLOCK_GRACE: Duration = Duration::from_secs(2);
+const LAZY_EXPORT_ERROR: &str =
+    "filesystems of instances with a lazy mount cannot be exported with toExternal()";
+const LAZY_AFTER_EXPORT_ERROR: &str = "cannot mount a lazy filesystem into an instance whose filesystem was exported with toExternal()";
+
+/// Per-instance bookkeeping that keeps lazy mounts off the C ABI bridge,
+/// whichever happens first: a lazy mount refuses an instance whose
+/// filesystem was exported, and an export refuses an instance with a lazy
+/// mount. Both flags are sticky (never cleared by `unmount`).
+#[derive(Default)]
+pub(crate) struct LazyMountGuard {
+    has_lazy_mounts: AtomicBool,
+    exported: AtomicBool,
+}
+
+impl LazyMountGuard {
+    pub(crate) fn note_export(&self) -> Result<(), &'static str> {
+        if self.has_lazy_mounts.load(Ordering::SeqCst) {
+            return Err(LAZY_EXPORT_ERROR);
+        }
+        self.exported.store(true, Ordering::SeqCst);
+        Ok(())
+    }
+
+    pub(crate) fn note_lazy_mount(&self) -> Result<(), &'static str> {
+        if self.exported.load(Ordering::SeqCst) {
+            return Err(LAZY_AFTER_EXPORT_ERROR);
+        }
+        self.has_lazy_mounts.store(true, Ordering::SeqCst);
+        Ok(())
+    }
+}
 
 tokio::task_local! {
     static IN_EXECUTION: ();
@@ -89,77 +118,8 @@ fn in_execution_scope() -> bool {
     IN_EXECUTION.try_with(|_| ()).is_ok()
 }
 
-/// A JS thread inside one or more nested synchronous native calls.
-#[derive(Default)]
-struct BlockedThread {
-    depth: usize,
-    /// An off-thread operation already timed out during this blocked period,
-    /// so later ones fail at once instead of each waiting the full grace.
-    gave_up: bool,
-}
-
-/// JS threads currently inside a synchronous native call.
-fn blocked_js_threads() -> &'static StdMutex<HashMap<ThreadId, BlockedThread>> {
-    static BLOCKED: OnceLock<StdMutex<HashMap<ThreadId, BlockedThread>>> = OnceLock::new();
-    BLOCKED.get_or_init(|| StdMutex::new(HashMap::new()))
-}
-
-enum JsThreadState {
-    Free,
-    Blocked,
-    GaveUp,
-}
-
-fn js_thread_state(id: ThreadId) -> JsThreadState {
-    let map = blocked_js_threads()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
-    match map.get(&id) {
-        None => JsThreadState::Free,
-        Some(b) if b.gave_up => JsThreadState::GaveUp,
-        Some(_) => JsThreadState::Blocked,
-    }
-}
-
-fn mark_gave_up(id: ThreadId) {
-    let mut map = blocked_js_threads()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
-    if let Some(b) = map.get_mut(&id) {
-        b.gave_up = true;
-    }
-}
-
-/// Marks the current (JS) thread as blocked for the guard's lifetime. Held by
-/// every sync entry point that blocks the event loop.
-pub(crate) struct JsThreadBlocked(ThreadId);
-
-impl JsThreadBlocked {
-    pub(crate) fn enter() -> Self {
-        let id = std::thread::current().id();
-        let mut map = blocked_js_threads()
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        map.entry(id).or_default().depth += 1;
-        Self(id)
-    }
-}
-
-impl Drop for JsThreadBlocked {
-    fn drop(&mut self) {
-        let mut map = blocked_js_threads()
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        if let Some(b) = map.get_mut(&self.0) {
-            b.depth -= 1;
-            if b.depth == 0 {
-                map.remove(&self.0);
-            }
-        }
-    }
-}
-
 pub(crate) const LAZY_FS_SYNC_ERROR: &str = "lazy filesystem callbacks require async access (execute()); synchronous calls such as executeSync() or bash.readFile() would deadlock because the JS event loop is blocked";
+const LAZY_FS_HELPER_THREAD_ERROR: &str = "lazy file not loaded yet: helper threads (such as sqlite -backend vfs) only see lazy files a script has already read, e.g. with cat FILE > /dev/null";
 
 /// `(requestJson) => Promise<responseJson>`; the TS wrapper adapts user callbacks.
 pub(crate) type LazyFsTsfn = napi::threadsafe_function::ThreadsafeFunction<
@@ -327,6 +287,24 @@ fn callback_failed() -> bashkit::Error {
     IoError::other("lazy filesystem callback failed").into()
 }
 
+/// Dispatch one request to JS under the process-wide callback semaphore and
+/// return the raw JSON response.
+async fn dispatch(callback: Arc<LazyFsTsfn>, request: String) -> bashkit::Result<String> {
+    // Bound concurrent JS callbacks across all instances (issue #982).
+    let _permit = crate::callback_semaphore()
+        .acquire()
+        .await
+        .map_err(|_| callback_failed())?;
+    // TSFN/promise failures carry napi status noise; the TS dispatcher
+    // already turns user errors into `{error}`, so only a generic message is
+    // surfaced here (TM-INF-028).
+    let promise = callback
+        .call_async(request)
+        .await
+        .map_err(|_| callback_failed())?;
+    promise.await.map_err(|_| callback_failed())
+}
+
 /// Normalize to an absolute path without `.`/`..` (MountableFs already strips
 /// the mount prefix; this guards direct handle use too).
 fn normalize(path: &Path) -> PathBuf {
@@ -394,51 +372,22 @@ impl JsLazyBackend {
     /// Decide whether a host call may be made now (see the module docs).
     /// Runs before the per-path lock so a sync caller never queues behind a
     /// call that needs the event loop it is blocking.
-    async fn preflight(&self) -> bashkit::Result<()> {
-        let sync_error = || IoError::new(ErrorKind::WouldBlock, LAZY_FS_SYNC_ERROR).into();
+    fn preflight(&self) -> bashkit::Result<()> {
         if std::thread::current().id() == self.js_thread {
-            return Err(sync_error());
+            return Err(IoError::new(ErrorKind::WouldBlock, LAZY_FS_SYNC_ERROR).into());
         }
         if in_execution_scope() {
             return Ok(());
         }
-        // Decision: a plain thread sleep, never a tokio timer. Callers here
-        // are helper threads (sqlite's VFS I/O, the C ABI export runtime)
-        // whose runtime's timer may be driven by nobody: the JS thread is
-        // blocked, or the only other worker is parked in a thread join. Such
-        // threads are dedicated, so blocking them for the bounded grace is
-        // safe; execution tasks never reach this loop (`in_execution`).
-        let started = Instant::now();
-        loop {
-            match js_thread_state(self.js_thread) {
-                JsThreadState::Free => return Ok(()),
-                JsThreadState::GaveUp => return Err(sync_error()),
-                JsThreadState::Blocked if started.elapsed() >= SYNC_BLOCK_GRACE => {
-                    mark_gave_up(self.js_thread);
-                    return Err(sync_error());
-                }
-                JsThreadState::Blocked => std::thread::sleep(Duration::from_millis(2)),
-            }
-        }
+        Err(IoError::new(ErrorKind::WouldBlock, LAZY_FS_HELPER_THREAD_ERROR).into())
     }
 
     async fn call(&self, op: &str, path: &Path) -> bashkit::Result<WireResponse> {
-        self.preflight().await?;
-        // Bound concurrent JS callbacks across all instances (issue #982).
-        let _permit = crate::callback_semaphore()
-            .acquire()
-            .await
-            .map_err(|_| callback_failed())?;
+        self.preflight()?;
         let request = serde_json::json!({ "op": op, "path": path_str(path) }).to_string();
-        // TSFN/promise failures carry napi status noise; the TS dispatcher
-        // already turns user errors into `{error}`, so only a generic message
-        // is surfaced here (TM-INF-028).
-        let promise = self
-            .callback
-            .call_async(request)
-            .await
-            .map_err(|_| callback_failed())?;
-        let raw = promise.await.map_err(|_| callback_failed())?;
+        // Inside an execution, so the execution deadline (`timeoutMs`) drops
+        // this future if the callback never settles.
+        let raw = dispatch(self.callback.clone(), request).await?;
         let resp: WireResponse = serde_json::from_str(&raw)
             .map_err(|_| invalid("lazy filesystem callback returned a malformed response"))?;
         if let Some(message) = resp.error {
@@ -490,7 +439,8 @@ impl JsLazyBackend {
                 .and_then(|ms| UNIX_EPOCH.checked_add(Duration::from_millis(ms)))
                 .unwrap_or(listed_at);
             let mode = whole(e.mode)
-                .map(|m| (m as u32) & 0o7777)
+                .filter(|m| *m <= 0o7777)
+                .map(|m| m as u32)
                 .unwrap_or(if is_dir { 0o755 } else { 0o644 });
             entries.push(DirEntry {
                 name: e.name,
@@ -533,7 +483,7 @@ impl JsLazyBackend {
                 return Err(not_a_directory());
             }
         }
-        self.preflight().await?;
+        self.preflight()?;
         let entry = self.inflight_entry("readDir", dir);
         let _guard = entry.lock.lock().await;
         if let Some(hit) = self.cached_listing(dir) {
@@ -625,7 +575,7 @@ impl FsBackend for JsLazyBackend {
         if meta.size > self.limits.max_file_size {
             return Err(self.too_large());
         }
-        self.preflight().await?;
+        self.preflight()?;
         let entry = self.inflight_entry("readFile", &path);
         let _guard = entry.lock.lock().await;
         {
@@ -747,20 +697,6 @@ mod tests {
         assert_eq!(whole(Some(-1.0)), None);
         assert_eq!(whole(Some(f64::NAN)), None);
         assert_eq!(whole(None), None);
-    }
-
-    #[test]
-    fn blocked_period_resets_after_last_guard() {
-        let id = std::thread::current().id();
-        assert!(matches!(js_thread_state(id), JsThreadState::Free));
-        let outer = JsThreadBlocked::enter();
-        let inner = JsThreadBlocked::enter();
-        assert!(matches!(js_thread_state(id), JsThreadState::Blocked));
-        mark_gave_up(id);
-        drop(inner);
-        assert!(matches!(js_thread_state(id), JsThreadState::GaveUp));
-        drop(outer);
-        assert!(matches!(js_thread_state(id), JsThreadState::Free));
     }
 
     #[test]

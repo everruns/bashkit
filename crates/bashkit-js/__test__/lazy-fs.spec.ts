@@ -470,7 +470,7 @@ test("lazy: handles cannot be exported through the C ABI", (t) => {
 });
 
 test.serial(
-  "lazy: sync access from a helper thread fails instead of hanging",
+  "lazy: sync sqlite reads on a lazy mount return promptly",
   (t) => {
     // sqlite's VFS backend does its I/O on a helper thread, which the
     // same-thread check cannot see; the bounded wait must end the call.
@@ -650,3 +650,80 @@ test("lazy: builtin ctx.fs of an instance with a lazy mount cannot be exported",
   await bash.execute("try-export");
   t.regex(message, /cannot be exported/);
 });
+
+test("lazy: exported instances refuse later lazy mounts", (t) => {
+  const { source } = recordingSource();
+  const a = new Bash();
+  const b = new Bash();
+  b.mount("/x", a.fs());
+  t.throws(() => a.mount("/r", FileSystem.lazy(source)), {
+    message: /exported with toExternal/,
+  });
+});
+
+test.serial(
+  "lazy: helper-thread reads never wait on a callback",
+  async (t) => {
+    const fs = FileSystem.lazy({
+      readDir: () => [{ name: "x.db", type: "file" }],
+      readFile: never,
+    });
+    const runs = [0, 1].map(() => {
+      const b = new Bash({ sqlite: true, timeoutMs: 2000 });
+      b.mount("/r", fs);
+      return b.execute("sqlite3 -backend vfs /r/x.db 'select 1'");
+    });
+    const unrelated = await Promise.race([
+      new Bash().execute("echo hi"),
+      sleep(5000).then(() => ({ stdout: "starved" })),
+    ]);
+    t.is(unrelated.stdout, "hi\n");
+    const started = Date.now();
+    const done = await Promise.race([
+      Promise.all(runs).then(() => "done"),
+      sleep(20_000).then(() => "hung"),
+    ]);
+    t.is(done, "done", `after ${Date.now() - started}ms`);
+  },
+);
+
+test("lazy: out-of-range modes fall back to the default", async (t) => {
+  const bash = new Bash();
+  bash.mount(
+    "/r",
+    FileSystem.lazy({
+      readDir: () => [{ name: "f", type: "file", mode: 1e30 }],
+      readFile: () => "",
+    }),
+  );
+  const r = await bash.execute("stat -c %a /r/f");
+  t.is(r.stdout, "644\n");
+});
+
+test.serial(
+  "lazy: helper threads read lazy files once a script has loaded them",
+  async (t) => {
+    const maker = new Bash({ sqlite: true });
+    await maker.execute(
+      "sqlite3 /tmp/x.db 'create table t(a); insert into t values(42)'",
+    );
+    const b64 = (await maker.execute("base64 -w0 /tmp/x.db")).stdout.trim();
+    const db = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+    const fs = FileSystem.lazy({
+      readDir: () => [{ name: "x.db", type: "file", size: db.length }],
+      readFile: () => db,
+    });
+    const cold = new Bash({ sqlite: true });
+    cold.mount("/r", fs);
+    const before = await cold.execute(
+      "sqlite3 -backend vfs /r/x.db 'select a from t'",
+    );
+    t.not(before.stdout, "42\n");
+    const warm = new Bash({ sqlite: true });
+    warm.mount("/r", fs);
+    const after = await warm.execute(
+      "cat /r/x.db > /dev/null; sqlite3 -backend vfs /r/x.db 'select a from t'",
+    );
+    t.is(after.stdout, "42\n", after.stderr);
+  },
+);
