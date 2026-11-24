@@ -247,7 +247,10 @@ impl JobTable {
 
     /// Output of finished, not yet reported jobs (in job order). The jobs
     /// stay in the table so `wait $pid` still returns their status.
-    pub fn take_finished_output(&mut self) -> (crate::StreamData, crate::StreamData) {
+    pub fn take_finished_output(
+        &mut self,
+        budget: &crate::ExecutionBudget,
+    ) -> crate::Result<(crate::StreamData, crate::StreamData)> {
         let mut out = crate::StreamData::new();
         let mut err = crate::StreamData::new();
         for job in self.jobs.values_mut() {
@@ -255,12 +258,12 @@ impl JobTable {
                 continue;
             }
             if let Some(result) = &mut job.result {
-                out.append(&std::mem::take(&mut result.stdout));
-                err.append(&std::mem::take(&mut result.stderr));
+                out.try_append(&std::mem::take(&mut result.stdout), usize::MAX, budget)?;
+                err.try_append(&std::mem::take(&mut result.stderr), usize::MAX, budget)?;
                 job.reported = true;
             }
         }
-        (out, err)
+        Ok((out, err))
     }
 
     /// Finished jobs, in job order.

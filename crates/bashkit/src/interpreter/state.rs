@@ -181,20 +181,33 @@ impl LoopAccumulator {
         }
     }
 
+    pub fn append_output(
+        &mut self,
+        result: &ExecResult,
+        budget: &crate::ExecutionBudget,
+    ) -> crate::Result<()> {
+        if self.retain_output {
+            self.stdout.try_append(&result.stdout, usize::MAX, budget)?;
+            self.stderr.try_append(&result.stderr, usize::MAX, budget)?;
+        }
+        Ok(())
+    }
+
     /// Accumulate a loop body result and classify the control flow action.
     ///
     /// Appends stdout/stderr, updates exit_code and errexit_suppressed.
     /// For multi-level break/continue or return, builds a propagation
     /// `ExecResult` and returns `LoopAction::Exit`.
-    pub fn accumulate(&mut self, result: ExecResult) -> LoopAction {
-        if self.retain_output {
-            self.stdout.append(&result.stdout);
-            self.stderr.append(&result.stderr);
-        }
+    pub fn accumulate(
+        &mut self,
+        result: ExecResult,
+        budget: &crate::ExecutionBudget,
+    ) -> crate::Result<LoopAction> {
+        self.append_output(&result, budget)?;
         self.exit_code = result.exit_code;
         self.errexit_suppressed = result.errexit_suppressed;
 
-        match result.control_flow {
+        Ok(match result.control_flow {
             ControlFlow::Break(n) if n <= 1 => LoopAction::Break,
             ControlFlow::Break(n) => {
                 LoopAction::Exit(Box::new(self.build_exit(ControlFlow::Break(n - 1))))
@@ -211,7 +224,7 @@ impl LoopAccumulator {
             }
             ControlFlow::Abort => LoopAction::Exit(Box::new(self.build_exit(ControlFlow::Abort))),
             ControlFlow::None => LoopAction::None,
-        }
+        })
     }
 
     /// Consume into a final `ExecResult` with `ControlFlow::None`.
@@ -245,6 +258,13 @@ impl LoopAccumulator {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_budget() -> crate::ExecutionBudget {
+        crate::ExecutionBudget::new(
+            &crate::ExecutionLimits::new(),
+            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        )
+    }
 
     // --- ControlFlow ---
 
@@ -452,7 +472,10 @@ mod tests {
             errexit_suppressed: true,
             ..Default::default()
         };
-        assert!(matches!(acc.accumulate(r), LoopAction::None));
+        assert!(matches!(
+            acc.accumulate(r, &test_budget()).unwrap(),
+            LoopAction::None
+        ));
         assert_eq!(acc.stdout, "out");
         assert_eq!(acc.stderr, "err");
         assert_eq!(acc.exit_code, 2);
@@ -466,7 +489,10 @@ mod tests {
             control_flow: ControlFlow::Break(1),
             ..Default::default()
         };
-        assert!(matches!(acc.accumulate(r), LoopAction::Break));
+        assert!(matches!(
+            acc.accumulate(r, &test_budget()).unwrap(),
+            LoopAction::Break
+        ));
     }
 
     #[test]
@@ -478,7 +504,7 @@ mod tests {
             control_flow: ControlFlow::Break(3),
             ..Default::default()
         };
-        match acc.accumulate(r) {
+        match acc.accumulate(r, &test_budget()).unwrap() {
             LoopAction::Exit(result) => {
                 assert_eq!(result.control_flow, ControlFlow::Break(2));
                 assert_eq!(result.stdout, "prev body");
@@ -494,7 +520,10 @@ mod tests {
             control_flow: ControlFlow::Continue(1),
             ..Default::default()
         };
-        assert!(matches!(acc.accumulate(r), LoopAction::Continue));
+        assert!(matches!(
+            acc.accumulate(r, &test_budget()).unwrap(),
+            LoopAction::Continue
+        ));
     }
 
     #[test]
@@ -504,7 +533,7 @@ mod tests {
             control_flow: ControlFlow::Return(42),
             ..Default::default()
         };
-        match acc.accumulate(r) {
+        match acc.accumulate(r, &test_budget()).unwrap() {
             LoopAction::Exit(result) => {
                 assert_eq!(result.control_flow, ControlFlow::Return(42));
                 assert_eq!(result.exit_code, 42);
@@ -522,14 +551,14 @@ mod tests {
             errexit_suppressed: true,
             ..Default::default()
         };
-        acc.accumulate(r1);
+        acc.accumulate(r1, &test_budget()).unwrap();
         let r2 = ExecResult {
             stdout: "b".into(),
             exit_code: 0,
             errexit_suppressed: false,
             ..Default::default()
         };
-        acc.accumulate(r2);
+        acc.accumulate(r2, &test_budget()).unwrap();
         let final_result = acc.finish();
         assert_eq!(final_result.stdout, "ab");
         assert_eq!(final_result.exit_code, 0);

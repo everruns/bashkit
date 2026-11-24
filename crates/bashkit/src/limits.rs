@@ -1148,6 +1148,23 @@ pub(crate) struct BudgetedVec<T> {
 pub(crate) type BudgetedBytes = BudgetedVec<u8>;
 
 impl<T> BudgetedVec<T> {
+    pub(crate) fn adopt(
+        inner: Vec<T>,
+        lease: Option<ExecutionBudgetLease>,
+        budget: &ExecutionBudget,
+    ) -> Result<Self, LimitExceeded> {
+        let lease = match lease {
+            Some(lease) => lease,
+            None => {
+                budget.lease_bytes(inner.capacity().saturating_mul(std::mem::size_of::<T>()))?
+            }
+        };
+        Ok(Self {
+            inner,
+            lease: Some(lease),
+        })
+    }
+
     pub(crate) fn new(budget: Option<&ExecutionBudget>) -> Result<Self, LimitExceeded> {
         Ok(Self {
             inner: Vec::new(),
@@ -1295,6 +1312,21 @@ pub(crate) struct BudgetedString {
 }
 
 impl BudgetedString {
+    pub(crate) fn adopt(
+        inner: String,
+        lease: Option<ExecutionBudgetLease>,
+        budget: &ExecutionBudget,
+    ) -> Result<Self, LimitExceeded> {
+        let lease = match lease {
+            Some(lease) => lease,
+            None => budget.lease_bytes(inner.capacity())?,
+        };
+        Ok(Self {
+            inner,
+            lease: Some(lease),
+        })
+    }
+
     /// Adopt existing storage without copying, retaining its capacity charge.
     pub(crate) fn try_from_string(
         inner: String,

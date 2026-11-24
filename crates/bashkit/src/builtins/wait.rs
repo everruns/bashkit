@@ -32,6 +32,7 @@ impl Builtin for Wait {
             return Ok(ExecResult::ok(String::new()));
         };
         let jobs = shell.jobs();
+        let budget = shell.execution_budget;
 
         let mut next = false;
         let mut pid_var: Option<String> = None;
@@ -91,8 +92,8 @@ impl Builtin for Wait {
                     let mut table = jobs.lock();
                     reaped_pid = u32::try_from(id).ok();
                     if let Some(r) = table.reap(id) {
-                        stdout.append(&r.stdout);
-                        stderr.append(&r.stderr);
+                        stdout.try_append(&r.stdout, usize::MAX, budget)?;
+                        stderr.try_append(&r.stderr, usize::MAX, budget)?;
                         exit_code = r.exit_code;
                     }
                 }
@@ -104,8 +105,8 @@ impl Builtin for Wait {
             let mut table = jobs.lock();
             for id in table.ids() {
                 if let Some(r) = table.reap(id) {
-                    stdout.append(&r.stdout);
-                    stderr.append(&r.stderr);
+                    stdout.try_append(&r.stdout, usize::MAX, budget)?;
+                    stderr.try_append(&r.stderr, usize::MAX, budget)?;
                 }
             }
         } else {
@@ -118,7 +119,7 @@ impl Builtin for Wait {
                     } else {
                         format!("bash: wait: `{spec}': not a pid or valid job spec\n")
                     };
-                    stderr.append(&crate::StreamData::from(msg));
+                    stderr.try_append(&crate::StreamData::from(msg), usize::MAX, budget)?;
                     exit_code = 127;
                     continue;
                 };
@@ -132,8 +133,8 @@ impl Builtin for Wait {
                     .await;
                 match r {
                     Some(r) => {
-                        stdout.append(&r.stdout);
-                        stderr.append(&r.stderr);
+                        stdout.try_append(&r.stdout, usize::MAX, budget)?;
+                        stderr.try_append(&r.stderr, usize::MAX, budget)?;
                         exit_code = r.exit_code;
                     }
                     None => exit_code = 127,

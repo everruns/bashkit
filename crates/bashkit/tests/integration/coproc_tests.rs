@@ -374,3 +374,12 @@ async fn coproc_counts_against_job_limit() {
         .unwrap();
     assert_eq!(result.stdout, "rc=1 []\n");
 }
+
+#[tokio::test]
+async fn coproc_sequential_stderr_preserves_raw_bytes() {
+    let mut bash = Bash::builder().concurrent_jobs(false).build();
+    let result = bash.exec(r"coproc { printf '\377' >&2; }").await.unwrap();
+
+    assert_eq!(result.stderr.as_bytes(), [0xff]);
+    assert_eq!(result.stderr.text_lossy(), "\u{fffd}");
+}

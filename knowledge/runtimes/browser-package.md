@@ -293,7 +293,9 @@ arithmetic slowed about 50%, despite a larger download saving.
 
 CI and publication run the same bounded GNU Bash regression sample and raw /
 gzip / Brotli size budgets under `crates/bashkit-wasm/bench/`, in addition to
-all package integration tests. Browser wall-clock results are recorded, not
+all package integration tests. The gzip ceiling is 3,120,000 bytes. It
+includes the compound-output memory accounting in both interpreter builds.
+Browser wall-clock results are recorded, not
 gated, because host load, browser caches, and network emulation make them noisy.
 See the [benchmark methodology](../../crates/bashkit-wasm/bench/README.md) and
 [measured report](../../crates/bashkit-wasm/bench/results/wasm-startup-2026-10-15.md).
