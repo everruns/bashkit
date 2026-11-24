@@ -409,7 +409,11 @@ impl NativeFileSystemState {
     }
 
     fn to_external(&self, env: Env) -> napi::Result<Unknown<'static>> {
-        if self.requires_event_loop {
+        let lazy_inside = match &self.inner {
+            FileSystemHandle::Live(state) => state.has_lazy_mounts.load(Ordering::SeqCst),
+            FileSystemHandle::Static(_) => false,
+        };
+        if self.requires_event_loop || lazy_inside {
             return Err(napi::Error::from_reason(
                 "lazy filesystems cannot be exported with toExternal(); mount them with bash.mount() instead",
             ));
@@ -1073,11 +1077,16 @@ async fn execute_rust_bash(
     cancelled: Option<&Arc<AtomicBool>>,
     callback_requested_cancel: Option<&Arc<AtomicBool>>,
 ) -> napi::Result<ExecResult> {
-    let result = if let Some(output_callback) = output_callback {
-        bash.exec_streaming(commands, output_callback).await
-    } else {
-        bash.exec(commands).await
-    };
+    // Lazy filesystem reads inside an execution can wait for the event loop
+    // instead of failing (see `lazy_fs::in_execution`).
+    let result = lazy_fs::in_execution(async {
+        if let Some(output_callback) = output_callback {
+            bash.exec_streaming(commands, output_callback).await
+        } else {
+            bash.exec(commands).await
+        }
+    })
+    .await;
 
     if let Some(callback_error) = callback_error
         && let Some(err) = take_callback_error(callback_error)
@@ -1642,6 +1651,9 @@ struct SharedState {
     async_execute_semaphore: Arc<Semaphore>,
     async_execute_depth: Arc<AtomicUsize>,
     sync_idle: Arc<tokio::sync::Notify>,
+    /// Set once a `FileSystem.lazy()` handle is mounted. Such an instance's
+    /// live filesystem must not cross the blocking C ABI bridge.
+    has_lazy_mounts: AtomicBool,
     username: Option<String>,
     profile: Option<ExecutionProfileName>,
     hostname: Option<String>,
@@ -2718,6 +2730,7 @@ impl Bash {
             ));
         }
         let mounted_fs = fs.export_fs()?;
+        self.state.has_lazy_mounts.store(true, Ordering::SeqCst);
         mount_fs_arc(&self.state, vfs_path, mounted_fs, read_only)
     }
 
@@ -3520,6 +3533,7 @@ impl BashTool {
             ));
         }
         let mounted_fs = fs.export_fs()?;
+        self.state.has_lazy_mounts.store(true, Ordering::SeqCst);
         mount_fs_arc(&self.state, vfs_path, mounted_fs, read_only)
     }
 
@@ -4302,6 +4316,7 @@ fn shared_state_from_opts(opts: BashOptions) -> napi::Result<SharedState> {
         async_execute_semaphore: Arc::new(Semaphore::new(MAX_PENDING_ASYNC_EXECUTIONS)),
         async_execute_depth: Arc::new(AtomicUsize::new(0)),
         sync_idle: Arc::new(tokio::sync::Notify::new()),
+        has_lazy_mounts: AtomicBool::new(false),
         username: opts.username.clone(),
         profile: opts.profile,
         hostname: opts.hostname.clone(),
@@ -4363,6 +4378,7 @@ fn shared_state_from_opts(opts: BashOptions) -> napi::Result<SharedState> {
         async_execute_semaphore: Arc::new(Semaphore::new(MAX_PENDING_ASYNC_EXECUTIONS)),
         async_execute_depth: Arc::new(AtomicUsize::new(0)),
         sync_idle: Arc::new(tokio::sync::Notify::new()),
+        has_lazy_mounts: AtomicBool::new(false),
         username: opts.username,
         profile: opts.profile,
         hostname: opts.hostname,

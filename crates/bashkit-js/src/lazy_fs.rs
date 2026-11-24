@@ -14,14 +14,19 @@
 //!
 //! Decision: callbacks dispatch through a threadsafe function onto the Node
 //! event loop. Sync entry points (`executeSync()`, `bash.readFile()`, ...)
-//! block that loop, so a callback they wait on could never run. Two checks
-//! turn that deadlock into an error:
-//! - an operation polled on the owning JS thread itself fails at once;
-//! - an operation on another thread (sqlite's VFS I/O thread, for example)
-//!   while the owning JS thread is inside a sync entry point waits up to
-//!   [`SYNC_BLOCK_GRACE`] for the thread to unblock, then fails. Unrelated
-//!   short sync calls therefore only delay async reads; a sync call that is
-//!   waiting on this very operation ends with an error instead of hanging.
+//! block that loop, so a callback they wait on could never run. Before a
+//! cache miss takes the per-path lock or dispatches, [`JsLazyBackend::preflight`]
+//! decides:
+//! - on the owning JS thread itself: fail at once (a sync entry point is
+//!   polling this future);
+//! - inside an execution's task ([`in_execution`]): proceed. No sync caller
+//!   can be waiting on this task, so if the loop is busy the callback simply
+//!   runs once it is free;
+//! - anywhere else (sqlite's VFS I/O thread, the C ABI export thread, tasks
+//!   spawned outside the execution scope) while the owning JS thread is
+//!   inside a sync entry point: wait up to [`SYNC_BLOCK_GRACE`], then fail,
+//!   because that sync call may be waiting on this very operation. Later
+//!   such operations in the same blocked period fail at once.
 //!
 //! Lazy handles are mounted directly (`mountLazyFileSystem`) and refuse
 //! `toExternal()`: the C ABI bridge blocks a runtime worker per operation,
@@ -69,6 +74,20 @@ const MAX_CACHED_DIR_ENTRIES: usize = 1_000_000;
 const MAX_NEGATIVE_ENTRIES: usize = 100_000;
 /// How long an off-thread operation waits for a blocked owning JS thread.
 const SYNC_BLOCK_GRACE: Duration = Duration::from_secs(2);
+
+tokio::task_local! {
+    static IN_EXECUTION: ();
+}
+
+/// Run an execution future so lazy filesystem reads polled by it know that
+/// no synchronous caller can be waiting on them.
+pub(crate) async fn in_execution<F: std::future::Future>(future: F) -> F::Output {
+    IN_EXECUTION.scope((), future).await
+}
+
+fn in_execution_scope() -> bool {
+    IN_EXECUTION.try_with(|_| ()).is_ok()
+}
 
 /// A JS thread inside one or more nested synchronous native calls.
 #[derive(Default)]
@@ -372,18 +391,24 @@ impl JsLazyBackend {
         }
     }
 
-    /// Fail fast instead of deadlocking when the owning JS thread cannot run
-    /// callbacks (see the module docs).
-    fn wait_for_event_loop(&self) -> bashkit::Result<()> {
+    /// Decide whether a host call may be made now (see the module docs).
+    /// Runs before the per-path lock so a sync caller never queues behind a
+    /// call that needs the event loop it is blocking.
+    async fn preflight(&self) -> bashkit::Result<()> {
         let sync_error = || IoError::new(ErrorKind::WouldBlock, LAZY_FS_SYNC_ERROR).into();
         if std::thread::current().id() == self.js_thread {
             return Err(sync_error());
         }
-        // Decision: a plain thread sleep, not a tokio timer. On a helper
-        // thread driving a current-thread runtime (sqlite's VFS I/O), the
-        // timer driver belongs to the blocked JS thread and would never fire.
-        // This only runs while the owning JS thread is blocked, and is bounded
-        // by SYNC_BLOCK_GRACE.
+        if in_execution_scope() {
+            return Ok(());
+        }
+        // Decision: on a multi-thread runtime yield to the timer; elsewhere
+        // (a helper thread driving the blocked JS thread's current-thread
+        // runtime, as sqlite's VFS I/O does) the timer driver belongs to the
+        // blocked thread and would never fire, so sleep the helper thread.
+        let multi_thread = tokio::runtime::Handle::try_current()
+            .map(|h| h.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread)
+            .unwrap_or(false);
         let started = Instant::now();
         loop {
             match js_thread_state(self.js_thread) {
@@ -393,13 +418,16 @@ impl JsLazyBackend {
                     mark_gave_up(self.js_thread);
                     return Err(sync_error());
                 }
+                JsThreadState::Blocked if multi_thread => {
+                    tokio::time::sleep(Duration::from_millis(2)).await;
+                }
                 JsThreadState::Blocked => std::thread::sleep(Duration::from_millis(2)),
             }
         }
     }
 
     async fn call(&self, op: &str, path: &Path) -> bashkit::Result<WireResponse> {
-        self.wait_for_event_loop()?;
+        self.preflight().await?;
         // Bound concurrent JS callbacks across all instances (issue #982).
         let _permit = crate::callback_semaphore()
             .acquire()
@@ -509,6 +537,7 @@ impl JsLazyBackend {
                 return Err(not_a_directory());
             }
         }
+        self.preflight().await?;
         let entry = self.inflight_entry("readDir", dir);
         let _guard = entry.lock.lock().await;
         if let Some(hit) = self.cached_listing(dir) {
@@ -600,6 +629,7 @@ impl FsBackend for JsLazyBackend {
         if meta.size > self.limits.max_file_size {
             return Err(self.too_large());
         }
+        self.preflight().await?;
         let entry = self.inflight_entry("readFile", &path);
         let _guard = entry.lock.lock().await;
         {

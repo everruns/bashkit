@@ -525,3 +525,55 @@ test("lazy: other filesystem mounts keep their existing semantics", async (t) =>
   const r = await a.execute("df > /dev/null; echo done");
   t.is(r.stdout, "done\n");
 });
+
+test.serial(
+  "lazy: sync read of a shared handle fails while another instance's read is pending",
+  async (t) => {
+    const fs = FileSystem.lazy({
+      readDir: () => [{ name: "f", type: "file" }],
+      readFile: async () => {
+        await sleep(300);
+        return "F\n";
+      },
+    });
+    const a = new Bash();
+    a.mount("/r", fs);
+    const b = new Bash();
+    b.mount("/r", fs);
+    await a.execute("ls /r");
+    const pending = a.execute("cat /r/f");
+    await sleep(50);
+    const started = Date.now();
+    const sync = b.executeSync("cat /r/f");
+    t.true(Date.now() - started < 1000, `took ${Date.now() - started}ms`);
+    t.regex(sync.stderr, /require async access/);
+    t.is((await pending).stdout, "F\n");
+  },
+);
+
+test.serial(
+  "lazy: async reads wait out a long unrelated sync call",
+  async (t) => {
+    const a = new Bash();
+    a.mount(
+      "/r",
+      FileSystem.lazy({
+        readDir: () => [{ name: "f", type: "file" }],
+        readFile: async () => "ok\n",
+      }),
+    );
+    const other = new Bash();
+    const pending = a.execute("cat /r/f");
+    setTimeout(() => other.executeSync("sleep 2.5"), 0);
+    const r = await pending;
+    t.is(r.exitCode, 0, r.stderr);
+    t.is(r.stdout, "ok\n");
+  },
+);
+
+test("lazy: instances with lazy mounts cannot export their filesystem", (t) => {
+  const { source } = recordingSource();
+  const bash = new Bash();
+  bash.mount("/r", FileSystem.lazy(source));
+  t.throws(() => bash.fs().toExternal(), { message: /cannot be exported/ });
+});

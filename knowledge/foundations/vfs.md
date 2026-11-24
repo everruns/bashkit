@@ -582,10 +582,13 @@ fetched on first use and cached per handle (bounded, oldest-first eviction,
 negative entries for missing and oversized paths, one shared call per in-flight
 path); `stat` resolves through the parent listing, so only declared paths reach
 the host. Lazy handles mount directly (`mountLazyFileSystem`) and refuse
-`toExternal()`, because the C ABI bridge blocks a runtime worker per operation,
-which pending JS promises would starve. Other handles keep the ABI path and its
-mount semantics. Sync entry points mark their JS thread blocked: an operation on
-that thread fails at once, one on a helper thread waits up to 2 s, then fails.
+`toExternal()` (as does `bash.fs()` of an instance with a lazy mount), because
+the C ABI bridge blocks a runtime worker per operation, which pending JS
+promises would starve. Other handles keep the ABI path and its mount semantics.
+Before a cache miss takes its per-path lock: an operation on the owning JS
+thread fails at once; one inside an execution's task (`lazy_fs::in_execution`)
+proceeds and waits for a busy loop; any other, while a sync entry point blocks
+the JS thread, waits up to 2 s and then fails.
 Threats: TM-DOS-148, TM-INF-036. TODO: Python parity, a writable mode (needs an
 overlay with an empty upper layer), cache invalidation, and cancellation of
 pending callbacks (needs the execution budget in `FsBackend` calls).

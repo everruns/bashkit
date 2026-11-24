@@ -147,9 +147,10 @@ pub(super) fn execute<'env>(
             let options = match output {
                 Some((output, callback_error)) => {
                     // Keep the exact error slot used by the callback.
-                    let result = bash
-                        .exec_with_options(&commands, options.streaming(output))
-                        .await;
+                    let result = super::lazy_fs::in_execution(
+                        bash.exec_with_options(&commands, options.streaming(output)),
+                    )
+                    .await;
                     if let Some(err) = super::take_callback_error(&callback_error) {
                         if requested.load(Ordering::SeqCst) {
                             cancelled.store(false, Ordering::SeqCst);
@@ -161,7 +162,7 @@ pub(super) fn execute<'env>(
                 None => options,
             };
             Ok(super::js_exec_result_from_bash_result(
-                bash.exec_with_options(&commands, options).await,
+                super::lazy_fs::in_execution(bash.exec_with_options(&commands, options)).await,
             ))
         },
         // SAFETY: NAPI invokes this conversion on the originating JS Env.

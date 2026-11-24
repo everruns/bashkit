@@ -246,9 +246,10 @@ await bash.execute("grep -rl TODO /repo/src"); // lists /, /src, then reads matc
   passes `/src` for `/repo/src`.
 - Results are cached per handle and shared by every instance that mounts it.
   Concurrent first reads of one path share one call, and missing paths are
-  remembered. The cache is bounded (`max_total_bytes`, `max_file_count`) and
-  evicts oldest entries first. There is no invalidation: create a new handle
-  to see changes in the source.
+  remembered. The cache is bounded by the default filesystem limits (100 MB
+  and 10,000 files of content, and 1,000,000 directory entries) and evicts
+  oldest entries first. There is no invalidation: create a new handle to see
+  changes in the source.
 - The filesystem is read-only. Scripts can only reach paths a parent listing
   declared, entry names follow the same rules as in-memory files, and files
   whose declared `size` exceeds the 10 MB file limit fail with
@@ -256,14 +257,16 @@ await bash.execute("grep -rl TODO /repo/src"); // lists /, /src, then reads matc
 - Callback errors reach the script as a short message with host paths and
   IPv4 addresses removed; stacks are never exposed. Other text (hostnames,
   credentials) passes through, so keep secrets out of error messages.
-- Callbacks run on the JS event loop, so use `execute()`. Synchronous access
-  (`executeSync()`, `bash.readFile()`) to a path that is not cached yet fails
-  with an error instead of deadlocking; when the read runs on a helper thread
-  (sqlite's file backend) it fails after waiting up to 2 seconds.
+- Callbacks run on the JS event loop, so use `execute()`; reads there wait
+  for the loop if it is busy. Synchronous access (`executeSync()`,
+  `bash.readFile()`) to a path that is not cached yet fails with an error
+  instead of deadlocking; when the read runs on a helper thread (sqlite's
+  file backend) it fails after waiting up to 2 seconds.
 - `timeoutMs` bounds a pending callback. `cancel()` takes effect once pending
   callbacks settle, and a callback that never settles holds one of the
   process-wide callback slots, so give slow callbacks their own timeouts.
-- Lazy handles mount only through `bash.mount()`; `toExternal()` throws.
+- Lazy handles mount only through `bash.mount()`. `toExternal()` throws, on
+  the handle and on `bash.fs()` of an instance with a lazy mount.
 - Use `files: { path: () => content }` for a small, fixed set of paths; it is
   resolved when the instance is created. Use `FileSystem.lazy()` when the
   layout itself should be loaded on demand.
