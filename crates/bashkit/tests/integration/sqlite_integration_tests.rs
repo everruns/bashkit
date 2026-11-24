@@ -448,3 +448,85 @@ async fn invalid_sql_exit_code_one() {
         r.stderr
     );
 }
+
+// turso_core 0.8.4 reworked two DML safety checks that a script can reach
+// through this builtin. DELETE safety now demands the statement journal
+// whenever foreign keys are on and an FK referencing the table has a real
+// ON DELETE action, and UPDATE safety forces the unique path when the
+// statement changes a rowid or rowid alias. Both are pinned here against
+// standard SQLite semantics.
+#[tokio::test]
+async fn delete_cascades_to_referencing_rows() {
+    let mut bash = make_bash();
+    let r = bash
+        .exec(
+            r#"sqlite :memory: '
+PRAGMA foreign_keys=ON;
+CREATE TABLE p(id INTEGER PRIMARY KEY);
+CREATE TABLE c(id INTEGER PRIMARY KEY, pid INTEGER REFERENCES p(id) ON DELETE CASCADE);
+INSERT INTO p VALUES (1),(2);
+INSERT INTO c VALUES (10,1),(11,2);
+DELETE FROM p WHERE id=1;
+SELECT group_concat(id) FROM c;'"#,
+        )
+        .await
+        .unwrap();
+    assert_eq!(r.exit_code, 0, "stderr: {}", r.stderr);
+    // Only the child of the surviving parent remains.
+    assert_eq!(r.stdout.trim(), "11");
+}
+
+#[tokio::test]
+async fn update_shifting_rowid_alias_keeps_every_row() {
+    let mut bash = make_bash();
+    let r = bash
+        .exec(
+            r#"sqlite :memory: '
+CREATE TABLE t(id INTEGER PRIMARY KEY, v TEXT NOT NULL);
+INSERT INTO t VALUES (1,"a"),(2,"b"),(3,"c");
+UPDATE t SET id=id+10;
+SELECT group_concat(id || ":" || v) FROM t;'"#,
+        )
+        .await
+        .unwrap();
+    assert_eq!(r.exit_code, 0, "stderr: {}", r.stderr);
+    // A rowid-alias shift must move all three rows without clobbering any.
+    assert_eq!(r.stdout.trim(), "11:a,12:b,13:c");
+}
+
+#[tokio::test]
+async fn update_colliding_rowid_alias_rolls_back() {
+    let mut bash = make_bash();
+    let r = bash
+        .exec(
+            r#"sqlite /tmp/rowid.sqlite '
+CREATE TABLE t(id INTEGER PRIMARY KEY, v TEXT NOT NULL);
+INSERT INTO t VALUES (1,"a"),(2,"b");'"#,
+        )
+        .await
+        .unwrap();
+    assert_eq!(r.exit_code, 0, "stderr: {}", r.stderr);
+
+    let collide = bash
+        .exec(r#"sqlite /tmp/rowid.sqlite 'UPDATE t SET id=1 WHERE id=2'"#)
+        .await
+        .unwrap();
+    assert_ne!(
+        collide.exit_code, 0,
+        "a colliding rowid update must fail: stdout={:?} stderr={:?}",
+        collide.stdout, collide.stderr
+    );
+    assert!(
+        collide.stderr.contains("UNIQUE constraint failed"),
+        "expected a UNIQUE constraint diagnostic, got: {:?}",
+        collide.stderr
+    );
+
+    let after = bash
+        .exec(r#"sqlite /tmp/rowid.sqlite 'SELECT group_concat(id || ":" || v) FROM t'"#)
+        .await
+        .unwrap();
+    assert_eq!(after.exit_code, 0, "stderr: {}", after.stderr);
+    // The failed statement must leave both original rows intact.
+    assert_eq!(after.stdout.trim(), "1:a,2:b");
+}

@@ -858,6 +858,13 @@ criteria = "safe-to-deploy"
 delta = "0.8.2 -> 0.8.3"
 notes = "Reviewed complete published package diff: nine Rust files changed, no new dependencies, no new unsafe code, no new build scripts, and no new host filesystem, network or process access. AUTOINCREMENT explicit-rowid advance now also reads the backing table's is_called column, so a fresh sequence row (1, is_called = 0) no longer leaves the next generated id at a rowid an explicit INSERT already used; the single Le comparison becomes Lt/Gt plus an is_called test, with the descending case mirrored. An abandoned MVCC commit now releases the connection's read transaction and, for the main database only, resets transaction state - state the dropped CommitStateMachine does not own and previously leaked. MVCC tombstone insertion for B-tree-resident rows moves into its own helper with the visibility and write-write conflict rules unchanged. Cursor seek reuse narrows from 'position matches the seek key' to 'position is the only row for that key', which requires a rowid, a whole index entry, or every column of a UNIQUE index with no NULL. The logical-log header upgrade returns the CRC-filled header for the caller to adopt instead of publishing it before the write lands, so a failed header write keeps the previous on-disk header and retries; a new fault-injecting file covers that path. Source safety review, not formal transactional proof."
 
+[[audits.turso_core]]
+who = "Bashkit maintenance review"
+criteria = "safe-to-deploy"
+delta = "0.8.3 -> 0.8.4"
+importable = false
+notes = "Reviewed the complete published package diff: five Rust files changed, no new dependencies beyond the matching turso_ext/turso_macros/turso_parser version bumps, build.rs byte-identical, unsafe unchanged at 693 occurrences, and the std::fs, std::net, std::process and std::env occurrence counts all unchanged, so no new host filesystem, network or process access. Statement reprepare now rolls back the autocommit transaction first: the rollback body splits into rollback_autocommit_txn and maybe_reparse_schema moves out of it into reprepare, so the schema reparse runs after the main and attached pagers have ended their transactions instead of before, and a failing reprepare still releases the counted active root. DELETE safety stops walking the FK cascade chain for triggers on child tables and instead requires the statement journal whenever foreign keys are enabled and any FK referencing the table has an on_delete other than NoAction or Restrict, which is strictly more conservative than the previous trigger-conditioned walk; the now-unused table_has_fk_cascade_triggers helper and its SmallVec worklist are removed. UPDATE statement-journal safety switches from the explicit SET clause list to columns_affected_by_update, so generated and otherwise affected columns are counted for the NOT NULL check, and a rowid or rowid-alias change now also forces the unique path. The upsert CDC before-image is hoisted above the delete in the rowid-changing branch, because reading it after the write returned the new row instead of the old one. Source safety review, not formal transactional proof."
+
 [[audits.turso_ext]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
@@ -887,6 +894,13 @@ who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
 delta = "0.8.2 -> 0.8.3"
 notes = "Reviewed complete published package diff: zero differing .rs files across the two published trees. Only the crate version and its matching turso_macros dependency version, plus Cargo.lock and .cargo_vcs_info.json release metadata. No runtime, unsafe, host access, or build-script changes; nothing to review beyond the version stamp."
+
+[[audits.turso_ext]]
+who = "Bashkit maintenance review"
+criteria = "safe-to-deploy"
+delta = "0.8.3 -> 0.8.4"
+importable = false
+notes = "Reviewed the complete published package diff: the source trees are byte-identical. Only Cargo.toml, Cargo.lock and .cargo_vcs_info.json differ, and they carry version stamps plus the upstream release commit sha. Nothing to review beyond the version bump that keeps this crate in step with turso_core 0.8.4."
 
 [[audits.turso_macros]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
@@ -918,6 +932,13 @@ criteria = "safe-to-deploy"
 delta = "0.8.2 -> 0.8.3"
 notes = "Reviewed complete published package diff: zero differing .rs files across the two published trees. Only the crate version, plus Cargo.lock and .cargo_vcs_info.json release metadata. No runtime, unsafe, host access, or build-script changes; nothing to review beyond the version stamp."
 
+[[audits.turso_macros]]
+who = "Bashkit maintenance review"
+criteria = "safe-to-deploy"
+delta = "0.8.3 -> 0.8.4"
+importable = false
+notes = "Reviewed the complete published package diff: the source trees are byte-identical. Only Cargo.toml, Cargo.lock and .cargo_vcs_info.json differ, and they carry version stamps plus the upstream release commit sha. Nothing to review beyond the version bump that keeps this crate in step with turso_core 0.8.4."
+
 [[audits.turso_parser]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
@@ -947,6 +968,13 @@ who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
 delta = "0.8.2 -> 0.8.3"
 notes = "Reviewed complete published package diff: zero differing .rs files across the two published trees. Only the crate version and its matching turso_macros dependency version, plus Cargo.lock and .cargo_vcs_info.json release metadata. No runtime, unsafe, host access, or build-script changes; nothing to review beyond the version stamp."
+
+[[audits.turso_parser]]
+who = "Bashkit maintenance review"
+criteria = "safe-to-deploy"
+delta = "0.8.3 -> 0.8.4"
+importable = false
+notes = "Reviewed the complete published package diff: the source trees are byte-identical. Only Cargo.toml, Cargo.lock and .cargo_vcs_info.json differ, and they carry version stamps plus the upstream release commit sha. Nothing to review beyond the version bump that keeps this crate in step with turso_core 0.8.4."
 
 [[audits.twox-hash]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
