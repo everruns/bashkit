@@ -121,6 +121,7 @@ Do you need a custom filesystem?
 - Whole-file reads enforce the default 10,000,000-byte file size ceiling in
   both modes. RealFs checks the opened file size before allocating the read
   buffer and caps the read itself in case the size changes or is underreported.
+  This ceiling is independent of the retained-content quotas in `FsLimits`.
 - Path traversal prevented via canonicalization + root prefix check
 - New-path writes canonicalize the nearest existing ancestor before attaching a
   missing suffix, blocking symlink escapes through non-existent subpaths

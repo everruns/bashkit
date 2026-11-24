@@ -848,6 +848,8 @@ impl FsBackend for RealFs {
     }
 
     fn limits(&self) -> FsLimits {
+        // These quotas describe retained filesystem content. The read-buffer
+        // ceiling does not restrict host writes or native copies.
         FsLimits::unlimited()
     }
 }
@@ -881,22 +883,22 @@ mod tests {
 
         let dir = setup();
         let host_file = std::fs::File::create(dir.path().join("data")).unwrap();
-        let fs = RealFs::open(dir.path(), RealFsMode::ReadOnly)
-            .await
-            .unwrap();
         let path = Path::new("/data");
 
-        host_file.set_len(DEFAULT_MAX_FILE_SIZE).unwrap();
-        assert_eq!(
-            fs.read(path).await.unwrap().len() as u64,
-            DEFAULT_MAX_FILE_SIZE
-        );
+        for mode in [RealFsMode::ReadOnly, RealFsMode::ReadWrite] {
+            let fs = RealFs::open(dir.path(), mode).await.unwrap();
+            host_file.set_len(DEFAULT_MAX_FILE_SIZE).unwrap();
+            assert_eq!(
+                fs.read(path).await.unwrap().len() as u64,
+                DEFAULT_MAX_FILE_SIZE
+            );
 
-        host_file.set_len(DEFAULT_MAX_FILE_SIZE + 1).unwrap();
-        let error = fs.read(path).await.unwrap_err();
-        assert!(
-            matches!(error, crate::Error::Io(ref err) if err.kind() == ErrorKind::FileTooLarge)
-        );
+            host_file.set_len(DEFAULT_MAX_FILE_SIZE + 1).unwrap();
+            let error = fs.read(path).await.unwrap_err();
+            assert!(
+                matches!(error, crate::Error::Io(ref err) if err.kind() == ErrorKind::FileTooLarge)
+            );
+        }
     }
 
     #[tokio::test]
