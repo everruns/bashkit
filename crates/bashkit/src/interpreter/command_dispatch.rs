@@ -118,7 +118,7 @@ macro_rules! list_body {
         if first_is_bg {
             // Boxed: the job path holds a forked Interpreter across an await,
             // which would otherwise bloat every recursive execute_list frame.
-            Box::pin($shell.spawn_in_background(&$list.first, &mut stdout, &mut stderr)).await?;
+            Box::pin($shell.spawn_in_background(&$list.first, &mut stdout, &mut stderr, $route)).await?;
             exit_code = 0;
             control_flow = ControlFlow::None;
             exit_code_from_conditional_context = false;
@@ -156,8 +156,7 @@ macro_rules! list_body {
                 Box::pin($shell.flush_exec_passthrough(&mut result)).await?;
             }
             if $shell.retain_streamed_output() {
-                stdout.append(&result.stdout);
-                stderr.append(&result.stderr);
+                $shell.append_output(&mut stdout, &mut stderr, &result.stdout, &result.stderr, $route)?;
             }
             exit_code = result.exit_code;
             $shell.last_exit_code = exit_code;
@@ -228,7 +227,7 @@ macro_rules! list_body {
 
             if should_execute {
                 if should_background {
-                    Box::pin($shell.spawn_in_background(cmd, &mut stdout, &mut stderr)).await?;
+                    Box::pin($shell.spawn_in_background(cmd, &mut stdout, &mut stderr, $route)).await?;
                     exit_code = 0;
                     exit_code_from_conditional_context = false;
                 } else {
@@ -265,8 +264,7 @@ macro_rules! list_body {
                         Box::pin($shell.flush_exec_passthrough(&mut result)).await?;
                     }
                     if $shell.retain_streamed_output() {
-                        stdout.append(&result.stdout);
-                        stderr.append(&result.stderr);
+                        $shell.append_output(&mut stdout, &mut stderr, &result.stdout, &result.stderr, $route)?;
                     }
                     exit_code = result.exit_code;
                     $shell.last_exit_code = exit_code;

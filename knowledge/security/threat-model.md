@@ -1497,6 +1497,13 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | TM-DOS-108 | CLI host-stdin read can stall before execution | A producer keeps the one-shot CLI's stdin pipe open while idle or trickles fewer than 10 MiB, so the pre-execution read never reaches EOF or the byte cap | Read stdin on a dedicated thread and bound the wait with the selected execution timeout; timeout exits with a diagnostic suggesting `--no-stdin`, while the existing byte cap remains enforced — **MITIGATED** |
 | TM-DOS-112 | `sed r` output amplification | A script can read the complete stdin after every input line, synchronously growing output quadratically inside the sed engine before any interpreter-level truncation applies | Every sed sink (stdout, `w`/`W` files, in-place edits) is a `BudgetedString` that leases capacity from the shared live-intermediate budget (`max_live_intermediate_bytes`) *before* growing, and a refused lease becomes `sed: <error>` with exit 1. The stdout *capture* cap is deliberately not a sink limit: sed output is routinely piped onward or redirected to a file, neither of which is captured stdout, so bounding sinks by it truncated ordinary transformations (#2455). Regression tests: `sed_resource_tests` — **MITIGATED** |
 
+Compound command output follows TM-DOS-103. Command sequences, lists, loops,
+conditions, and finished jobs reserve capacity for raw bytes and cached text
+against the shared live-intermediate memory budget before appending. Top-level
+capture and routed lists retain only the configured byte prefixes and report
+truncation. Shell consumers such as redirects receive complete byte streams
+within the live-memory budget.
+
 Streaming builtin pipe reads also follow TM-DOS-096: each read consumes the
 shared input/work budget and polls request cancellation/deadlines. Delimited
 record assembly, returned record copies, `cat` accumulation and `tr` whole-input

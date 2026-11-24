@@ -187,13 +187,16 @@ impl Interpreter {
                 let jobs = Arc::clone(&child.jobs);
                 let result = jobs::with_jobs(&jobs, child.execute_command(&body)).await;
                 jobs.finish_all().await;
-                let (out, err) = jobs.lock().take_finished_output();
+                let result = result.and_then(|mut r| {
+                    let (out, err) = jobs.lock().take_finished_output(&child.execution_budget)?;
+                    child.append_output(&mut r.stdout, &mut r.stderr, &out, &err, false)?;
+                    r.stderr.admit_storage(&child.execution_budget)?;
+                    Ok(r)
+                });
                 let mut r = match result {
                     Ok(r) => r,
                     Err(e) => return ExecResult::err(format!("{job_diag}{e}\n"), 1),
                 };
-                r.stdout.append(&out);
-                r.stderr.append(&err);
                 // Output not yet sent at a command boundary goes now.
                 let sent = child.output_stream_stdout_bytes.min(r.stdout.len());
                 write_end.0.write(&r.stdout.as_bytes()[sent..]);

@@ -10,11 +10,32 @@ use std::fmt;
 pub(crate) type StreamStorage = [Option<crate::limits::ExecutionBudgetLease>; 2];
 
 /// Owned data carried by a shell byte stream.
-#[derive(Clone, Default, Eq, PartialEq)]
+#[derive(Default)]
 pub struct StreamData {
     bytes: Vec<u8>,
     text: String,
+    storage: Option<Box<StreamStorage>>,
+    truncated: bool,
 }
+
+impl Clone for StreamData {
+    fn clone(&self) -> Self {
+        Self {
+            bytes: self.bytes.clone(),
+            text: self.text.clone(),
+            truncated: self.truncated,
+            storage: None,
+        }
+    }
+}
+
+impl PartialEq for StreamData {
+    fn eq(&self, other: &Self) -> bool {
+        self.bytes == other.bytes
+    }
+}
+
+impl Eq for StreamData {}
 
 impl StreamData {
     /// Decode a VFS buffer whose byte capacity is already leased by its caller.
@@ -34,7 +55,14 @@ impl StreamData {
             }
         }
         let (text, storage) = text.into_parts();
-        Ok((Self { bytes, text }, storage))
+        Ok((
+            Self {
+                bytes,
+                text,
+                ..Self::new()
+            },
+            storage,
+        ))
     }
 
     /// Copy both representations through the existing capacity-owning builders.
@@ -49,7 +77,14 @@ impl StreamData {
         text.try_push_str(&self.text)?;
         let (bytes, byte_storage) = bytes.into_parts();
         let (text, text_storage) = text.into_parts();
-        Ok((Self { bytes, text }, [byte_storage, text_storage]))
+        Ok((
+            Self {
+                bytes,
+                text,
+                ..Self::new()
+            },
+            [byte_storage, text_storage],
+        ))
     }
 
     /// Convert admitted text to the byte/text stream without an uncharged copy.
@@ -64,7 +99,14 @@ impl StreamData {
         bytes.try_extend_from_slice(text.as_bytes())?;
         let (bytes, byte_storage) = bytes.into_parts();
         let (text, text_storage) = text.into_parts();
-        Ok((Self { bytes, text }, [byte_storage, text_storage]))
+        Ok((
+            Self {
+                bytes,
+                text,
+                ..Self::new()
+            },
+            [byte_storage, text_storage],
+        ))
     }
 
     /// Materialize cached text without releasing the byte buffer's lease or
@@ -84,13 +126,22 @@ impl StreamData {
         }
         let (bytes, byte_storage) = bytes.into_parts();
         let (text, text_storage) = text.into_parts();
-        Ok((Self { bytes, text }, [byte_storage, text_storage]))
+        Ok((
+            Self {
+                bytes,
+                text,
+                ..Self::new()
+            },
+            [byte_storage, text_storage],
+        ))
     }
 
     pub const fn new() -> Self {
         Self {
             bytes: Vec::new(),
             text: String::new(),
+            storage: None,
+            truncated: false,
         }
     }
     pub fn as_bytes(&self) -> &[u8] {
@@ -117,7 +168,81 @@ impl StreamData {
     pub fn is_empty(&self) -> bool {
         self.bytes.is_empty()
     }
+    pub(crate) fn was_truncated(&self) -> bool {
+        self.truncated
+    }
+
+    pub(crate) fn admit_storage(
+        &mut self,
+        budget: &crate::limits::ExecutionBudget,
+    ) -> Result<(), crate::limits::LimitExceeded> {
+        if self.storage.is_none() && !self.is_empty() {
+            self.storage = Some(Box::new([
+                Some(budget.lease_bytes(self.bytes.capacity())?),
+                Some(budget.lease_bytes(self.text.capacity())?),
+            ]));
+        }
+        Ok(())
+    }
+
+    /// Admit both retained representations before growing a compound result.
+    // THREAT[TM-DOS-103]: retain the capacity leases as the stream moves out of
+    // its accumulator. Only captured output gets a byte ceiling, since shell
+    // consumers such as redirects must receive the original bytes.
+    pub(crate) fn try_append(
+        &mut self,
+        other: &Self,
+        limit: usize,
+        budget: &crate::limits::ExecutionBudget,
+    ) -> Result<bool, crate::limits::LimitExceeded> {
+        use crate::limits::{BudgetedBytes, BudgetedString};
+
+        let added = other.len().min(limit.saturating_sub(self.len()));
+        self.truncated |= added < other.len() || other.truncated;
+        if added == 0 {
+            return Ok(self.truncated);
+        }
+
+        let boundary = self.len();
+        let mut storage = self
+            .storage
+            .take()
+            .unwrap_or_else(|| Box::new([None, None]));
+        let [raw_lease, text_lease] = std::mem::take(&mut *storage);
+        let cached = std::mem::take(&mut self.text);
+        let mut bytes = BudgetedBytes::adopt(std::mem::take(&mut self.bytes), raw_lease, budget)?;
+        let mut text = BudgetedString::adopt(cached, text_lease, budget)?;
+        bytes.try_extend_from_slice_with_limit(&other.bytes[..added], limit)?;
+        if lossy_decode_changes_at_boundary(&bytes, boundary) {
+            drop(text);
+            let (stream, leases) = Self::from_budgeted_bytes(bytes, budget)?;
+            self.bytes = stream.bytes;
+            self.text = stream.text;
+            *storage = leases;
+        } else {
+            if added == other.len() {
+                text.try_push_str(&other.text)?;
+            } else {
+                for chunk in other.bytes[..added].utf8_chunks() {
+                    text.try_push_str(chunk.valid())?;
+                    if !chunk.invalid().is_empty() {
+                        text.try_push('\u{fffd}')?;
+                    }
+                }
+            }
+            let (raw, raw_lease) = bytes.into_parts();
+            let (cached, text_lease) = text.into_parts();
+            self.bytes = raw;
+            self.text = cached;
+            *storage = [raw_lease, text_lease];
+        }
+        self.storage = Some(storage);
+        Ok(self.truncated)
+    }
+
     pub(crate) fn append(&mut self, other: &Self) {
+        self.storage = None;
+        self.truncated |= other.truncated;
         let boundary = self.bytes.len();
         self.bytes.extend_from_slice(&other.bytes);
         if lossy_decode_changes_at_boundary(&self.bytes, boundary) {
@@ -199,7 +324,11 @@ impl fmt::Display for StreamData {
 impl From<Vec<u8>> for StreamData {
     fn from(bytes: Vec<u8>) -> Self {
         let text = String::from_utf8_lossy(&bytes).into_owned();
-        Self { bytes, text }
+        Self {
+            bytes,
+            text,
+            ..Self::new()
+        }
     }
 }
 impl From<String> for StreamData {
@@ -207,6 +336,7 @@ impl From<String> for StreamData {
         Self {
             bytes: text.as_bytes().to_vec(),
             text,
+            ..Self::new()
         }
     }
 }
@@ -280,7 +410,65 @@ mod tests {
     use super::StreamData;
     use proptest::prelude::*;
 
+    #[test]
+    fn bounded_append_preserves_prefix_and_releases_storage() {
+        let budget = crate::limits::ExecutionBudget::new(
+            &crate::ExecutionLimits::new().max_live_intermediate_bytes(32),
+            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        );
+        let mut stream = StreamData::new();
+        assert!(
+            !stream
+                .try_append(&StreamData::from(&[0xc3][..]), 2, &budget)
+                .unwrap()
+        );
+        assert!(
+            stream
+                .try_append(&StreamData::from(&[0xa9, b'x'][..]), 2, &budget)
+                .unwrap()
+        );
+        assert_eq!(stream.text_lossy(), "é");
+        assert!(budget.live_bytes_for_test() >= 4);
+        drop(stream);
+        assert_eq!(budget.live_bytes_for_test(), 0);
+    }
+
+    #[test]
+    fn bounded_append_charges_cached_text_before_growth() {
+        let budget = crate::limits::ExecutionBudget::new(
+            &crate::ExecutionLimits::new().max_live_intermediate_bytes(3),
+            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        );
+        let mut stream = StreamData::new();
+        assert!(
+            stream
+                .try_append(&StreamData::from(&[0xff][..]), 1, &budget)
+                .is_err()
+        );
+        assert!(stream.is_empty());
+        assert_eq!(budget.live_bytes_for_test(), 0);
+    }
+
     proptest! {
+        #[test]
+        fn bounded_append_decodes_the_retained_bytes(
+            left in proptest::collection::vec(any::<u8>(), 0..32),
+            right in proptest::collection::vec(any::<u8>(), 0..32),
+            room in 0..40usize,
+        ) {
+            let budget = crate::limits::ExecutionBudget::new(
+                &crate::ExecutionLimits::new(),
+                std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            );
+            let limit = left.len() + room;
+            let mut stream = StreamData::from(left.clone());
+            let truncated = stream.try_append(&StreamData::from(right.clone()), limit, &budget).unwrap();
+            let prefix: Vec<u8> = left.into_iter().chain(right.iter().copied()).take(limit).collect();
+            prop_assert_eq!(truncated, right.len() > room);
+            prop_assert_eq!(stream.as_bytes(), prefix.as_slice());
+            prop_assert_eq!(stream.text_lossy(), String::from_utf8_lossy(&prefix));
+        }
+
         #[test]
         fn appending_chunks_preserves_the_combined_lossy_view(
             left in proptest::collection::vec(any::<u8>(), 0..64),

@@ -172,3 +172,32 @@ async fn builder_sets_limits() {
     assert_eq!(limits.max_stdout_bytes, 500);
     assert_eq!(limits.max_stderr_bytes, 300);
 }
+
+#[tokio::test]
+async fn compound_capture_preserves_raw_prefixes_and_status() {
+    let result = run_with_limits("printf ab && { printf é; printf xyz >&2; }; false", 3, 2).await;
+
+    assert_eq!(result.stdout.as_bytes(), b"ab\xc3");
+    assert_eq!(result.stdout.text_lossy(), "ab\u{fffd}");
+    assert_eq!(result.stderr.as_bytes(), b"xy");
+    assert!(result.stdout_truncated);
+    assert!(result.stderr_truncated);
+    assert_eq!(result.exit_code, 1);
+}
+
+#[tokio::test]
+async fn compound_redirect_receives_complete_output() {
+    let limits = bashkit::ExecutionLimits::new().max_stdout_bytes(2);
+    let mut bash = Bash::builder().limits(limits).build();
+    let result = bash.exec("{ printf ab; printf cd; } > /out").await.unwrap();
+    assert_eq!(
+        bash.fs()
+            .read_file(std::path::Path::new("/out"))
+            .await
+            .unwrap(),
+        b"abcd"
+    );
+    assert_eq!(result.exit_code, 0);
+    assert!(result.stdout.is_empty());
+    assert!(!result.stdout_truncated);
+}

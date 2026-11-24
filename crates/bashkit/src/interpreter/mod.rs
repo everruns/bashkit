@@ -4037,26 +4037,26 @@ impl Interpreter {
             // lose the shell's ends, as when a script exits.
             self.close_coprocs();
             jobs.finish_all().await;
-            let (out, err) = jobs.lock().take_finished_output();
-            // Jobs completing after the last command boundary still owe their
-            // output to live sinks. Drain before closing the execution writers;
-            // keep cleanup unconditional when delivery fails.
-            let emission = if result.is_ok()
-                && self.output_callback.is_some()
-                && (!out.is_empty() || !err.is_empty())
-            {
-                self.maybe_emit_output(&out, &err, self.output_emit_count)
-                    .await
-                    .map(|_| ())
-            } else {
+            let emission = async {
+                let (out, err) = jobs.lock().take_finished_output(&self.execution_budget)?;
+                // Jobs can finish after the final command boundary.
+                if result.is_ok()
+                    && self.output_callback.is_some()
+                    && (!out.is_empty() || !err.is_empty())
+                {
+                    self.maybe_emit_output(&out, &err, self.output_emit_count)
+                        .await?;
+                }
+                if self.retain_streamed_output()
+                    && let Ok(r) = &mut result
+                {
+                    self.append_output(&mut r.stdout, &mut r.stderr, &out, &err, true)?;
+                    r.stdout_truncated |= r.stdout.was_truncated();
+                    r.stderr_truncated |= r.stderr.was_truncated();
+                }
                 Ok(())
-            };
-            if self.retain_streamed_output()
-                && let Ok(r) = &mut result
-            {
-                r.stdout.append(&out);
-                r.stderr.append(&err);
             }
+            .await;
             jobs.lock().clear();
             if let Some(error) = &self.memory_limit_error {
                 Err(crate::error::Error::ResourceLimit(error.clone()))
@@ -4353,14 +4353,12 @@ impl Interpreter {
                     self.top_level_line(script, index, Self::command_start_line(command))
             {
                 let (out, err) = self.top_level_line_async(false).await;
-                stdout.append(&out);
-                stderr.append(&err);
+                self.append_output(&mut stdout, &mut stderr, &out, &err, true)?;
             }
             self.check_cancelled()?;
             if let Some(echo) = self.before_body_command(script, index, command, run_exit_trap) {
                 let echo = self.route_verbose_echo(echo).await?;
-                stdout.append(&echo.stdout);
-                stderr.append(&echo.stderr);
+                self.append_output(&mut stdout, &mut stderr, &echo.stdout, &echo.stderr, true)?;
             }
             let emit_before = self.output_emit_count;
             let emitted_before = (
@@ -4388,9 +4386,8 @@ impl Interpreter {
             if top_level {
                 // Background jobs that finished meanwhile report here, as
                 // bash prints their output while the script continues.
-                let (out, err) = self.take_finished_job_output();
-                result.stdout.append(&out);
-                result.stderr.append(&err);
+                let (out, err) = self.take_finished_job_output()?;
+                self.append_output(&mut result.stdout, &mut result.stderr, &out, &err, false)?;
             }
             self.reap_coprocs();
             self.check_cancelled()?;
@@ -4412,38 +4409,15 @@ impl Interpreter {
                 Box::pin(self.flush_exec_passthrough(&mut result)).await?;
             }
 
-            // Accumulate stdout with truncation
             if retain_output && !stdout_truncated {
-                let remaining = max_stdout.saturating_sub(stdout.len());
-                if remaining == 0 {
-                    if !result.stdout.is_empty() {
-                        stdout_truncated = true;
-                    }
-                } else if result.stdout.len() <= remaining {
-                    stdout.append(&result.stdout);
-                } else {
-                    stdout.append(&result.stdout.prefix(remaining));
-                    stdout_truncated = true;
-                }
+                stdout_truncated =
+                    stdout.try_append(&result.stdout, max_stdout, &self.execution_budget)?;
             }
-
-            // Accumulate stderr with truncation
             if retain_output && !stderr_truncated {
-                let remaining = max_stderr.saturating_sub(stderr.len());
-                if remaining == 0 {
-                    if !result.stderr.is_empty() {
-                        stderr_truncated = true;
-                    }
-                } else if result.stderr.len() <= remaining {
-                    stderr.append(&result.stderr);
-                } else {
-                    stderr.append(&result.stderr.prefix(remaining));
-                    stderr_truncated = true;
-                }
+                stderr_truncated =
+                    stderr.try_append(&result.stderr, max_stderr, &self.execution_budget)?;
             }
-            if !retain_output {
-                stdout_truncated |= result.stdout_truncated;
-            }
+            stdout_truncated |= result.stdout_truncated;
             stderr_truncated |= result.stderr_truncated;
 
             exit_code = result.exit_code;
@@ -4546,8 +4520,7 @@ impl Interpreter {
                 .is_some_and(|r| r.interactive && r.reads(view.get()))
         {
             let (out, err) = self.top_level_line_async(true).await;
-            stdout.append(&out);
-            stderr.append(&err);
+            self.append_output(&mut stdout, &mut stderr, &out, &err, true)?;
         }
 
         // Syntax error after the commands that ran: bash reads and runs a
@@ -4558,7 +4531,7 @@ impl Interpreter {
             self.maybe_emit_output(&crate::StreamData::new(), &err, emit_before)
                 .await?;
             if !stderr_truncated {
-                stderr.append(&err);
+                stderr.try_append(&err, max_stderr, &self.execution_budget)?;
             }
             exit_code = 2;
             self.last_exit_code = 2;
@@ -4580,8 +4553,13 @@ impl Interpreter {
                             emit_before,
                         )
                         .await?;
-                        stdout.append(&trap_result.stdout);
-                        stderr.append(&trap_result.stderr);
+                        self.append_output(
+                            &mut stdout,
+                            &mut stderr,
+                            &trap_result.stdout,
+                            &trap_result.stderr,
+                            true,
+                        )?;
                         // `exit N` in the handler is the shell's status.
                         if let ControlFlow::Exit(code) = trap_result.control_flow {
                             exit_code = code;
@@ -4624,6 +4602,8 @@ impl Interpreter {
 
         let events = self.trace.take_events();
 
+        stdout_truncated |= stdout.was_truncated();
+        stderr_truncated |= stderr.was_truncated();
         Ok(ExecResult {
             stdout,
             stderr,
@@ -5196,8 +5176,13 @@ impl Interpreter {
 
         // Execute condition (no errexit checking - conditions are expected to fail)
         let condition_result = self.execute_condition_sequence(&if_cmd.condition).await?;
-        cond_stdout.append(&condition_result.stdout);
-        cond_stderr.append(&condition_result.stderr);
+        self.append_output(
+            &mut cond_stdout,
+            &mut cond_stderr,
+            &condition_result.stdout,
+            &condition_result.stderr,
+            false,
+        )?;
         // `exit`/`return`/`break` (or a fatal expansion error) inside the
         // condition ends the `if` with that control flow.
         if condition_result.control_flow != ControlFlow::None {
@@ -5213,16 +5198,28 @@ impl Interpreter {
         if condition_result.exit_code == 0 {
             // Condition succeeded, execute then branch
             let mut result = self.execute_command_sequence(&if_cmd.then_branch).await?;
-            result.stdout = cond_stdout + &result.stdout;
-            result.stderr = cond_stderr + &result.stderr;
+            self.append_output(
+                &mut cond_stdout,
+                &mut cond_stderr,
+                &result.stdout,
+                &result.stderr,
+                false,
+            )?;
+            result.stdout = cond_stdout;
+            result.stderr = cond_stderr;
             return Ok(result);
         }
 
         // Check elif branches
         for (elif_condition, elif_body) in &if_cmd.elif_branches {
             let elif_result = self.execute_condition_sequence(elif_condition).await?;
-            cond_stdout.append(&elif_result.stdout);
-            cond_stderr.append(&elif_result.stderr);
+            self.append_output(
+                &mut cond_stdout,
+                &mut cond_stderr,
+                &elif_result.stdout,
+                &elif_result.stderr,
+                false,
+            )?;
             if elif_result.control_flow != ControlFlow::None {
                 return Ok(ExecResult {
                     stdout: cond_stdout,
@@ -5235,8 +5232,15 @@ impl Interpreter {
 
             if elif_result.exit_code == 0 {
                 let mut result = self.execute_command_sequence(elif_body).await?;
-                result.stdout = cond_stdout + &result.stdout;
-                result.stderr = cond_stderr + &result.stderr;
+                self.append_output(
+                    &mut cond_stdout,
+                    &mut cond_stderr,
+                    &result.stdout,
+                    &result.stderr,
+                    false,
+                )?;
+                result.stdout = cond_stdout;
+                result.stderr = cond_stderr;
                 return Ok(result);
             }
         }
@@ -5244,8 +5248,15 @@ impl Interpreter {
         // Execute else branch if present
         if let Some(else_branch) = &if_cmd.else_branch {
             let mut result = self.execute_command_sequence(else_branch).await?;
-            result.stdout = cond_stdout + &result.stdout;
-            result.stderr = cond_stderr + &result.stderr;
+            self.append_output(
+                &mut cond_stdout,
+                &mut cond_stderr,
+                &result.stdout,
+                &result.stderr,
+                false,
+            )?;
+            result.stdout = cond_stdout;
+            result.stderr = cond_stderr;
             return Ok(result);
         }
 
@@ -5354,7 +5365,7 @@ impl Interpreter {
                     && result.exit_code != 0
                     && result.control_flow == ControlFlow::None
                     && !result.errexit_suppressed;
-                match acc.accumulate(result) {
+                match acc.accumulate(result, &self.execution_budget)? {
                     state::LoopAction::None => {
                         if should_errexit {
                             return Ok(acc.finish());
@@ -5497,7 +5508,7 @@ impl Interpreter {
                 // Output menu to stderr, or straight to the terminal when
                 // the choice is typed there.
                 if self.pipeline_stdin.is_some() || !self.has_terminal() {
-                    stderr.append(&menu_text);
+                    stderr.try_append(&menu_text, usize::MAX, &self.execution_budget)?;
                 }
 
                 // Read a line from pipeline_stdin
@@ -5557,8 +5568,13 @@ impl Interpreter {
                 self.maybe_emit_output(&result.stdout, &result.stderr, emit_before)
                     .await?;
                 if self.retain_streamed_output() {
-                    stdout.append(&result.stdout);
-                    stderr.append(&result.stderr);
+                    self.append_output(
+                        &mut stdout,
+                        &mut stderr,
+                        &result.stdout,
+                        &result.stderr,
+                        false,
+                    )?;
                 }
                 exit_code = result.exit_code;
 
@@ -5691,7 +5707,7 @@ impl Interpreter {
                     && result.exit_code != 0
                     && result.control_flow == ControlFlow::None
                     && !result.errexit_suppressed;
-                match acc.accumulate(result) {
+                match acc.accumulate(result, &self.execution_budget)? {
                     state::LoopAction::None | state::LoopAction::Continue => {
                         if should_errexit {
                             return Ok(acc.finish());
@@ -6323,15 +6339,17 @@ impl Interpreter {
                     emit_before_cond,
                 )
                 .await?;
-                acc.stdout.append(&condition_result.stdout);
-                acc.stderr.append(&condition_result.stderr);
+                acc.append_output(&condition_result, &self.execution_budget)?;
                 // `while break; do` leaves the loop from its condition.
                 if condition_result.control_flow != ControlFlow::None {
-                    match acc.accumulate(ExecResult {
-                        exit_code: condition_result.exit_code,
-                        control_flow: condition_result.control_flow,
-                        ..Default::default()
-                    }) {
+                    match acc.accumulate(
+                        ExecResult {
+                            exit_code: condition_result.exit_code,
+                            control_flow: condition_result.control_flow,
+                            ..Default::default()
+                        },
+                        &self.execution_budget,
+                    )? {
                         state::LoopAction::None => {}
                         state::LoopAction::Break => break,
                         state::LoopAction::Continue => continue,
@@ -6356,7 +6374,7 @@ impl Interpreter {
                     && result.exit_code != 0
                     && result.control_flow == ControlFlow::None
                     && !result.errexit_suppressed;
-                match acc.accumulate(result) {
+                match acc.accumulate(result, &self.execution_budget)? {
                     state::LoopAction::None => {
                         if should_errexit {
                             return Ok(acc.finish());
@@ -6406,8 +6424,7 @@ impl Interpreter {
 
             if matched {
                 let r = self.execute_command_sequence(&case_item.commands).await?;
-                stdout.append(&r.stdout);
-                stderr.append(&r.stderr);
+                self.append_output(&mut stdout, &mut stderr, &r.stdout, &r.stderr, false)?;
                 exit_code = r.exit_code;
                 if r.control_flow != ControlFlow::None {
                     return Ok(ExecResult {
@@ -7717,8 +7734,13 @@ impl Interpreter {
             self.maybe_emit_output(&result.stdout, &result.stderr, emit_before)
                 .await?;
             if self.retain_streamed_output() {
-                stdout.append(&result.stdout);
-                stderr.append(&result.stderr);
+                self.append_output(
+                    &mut stdout,
+                    &mut stderr,
+                    &result.stdout,
+                    &result.stderr,
+                    false,
+                )?;
             }
             exit_code = result.exit_code;
             self.last_exit_code = exit_code;
@@ -8036,6 +8058,24 @@ impl Interpreter {
             .ok()
     }
 
+    fn append_output(
+        &self,
+        stdout: &mut crate::StreamData,
+        stderr: &mut crate::StreamData,
+        out: &crate::StreamData,
+        err: &crate::StreamData,
+        capture: bool,
+    ) -> Result<()> {
+        let (out_limit, err_limit) = if capture {
+            (self.limits.max_stdout_bytes, self.limits.max_stderr_bytes)
+        } else {
+            (usize::MAX, usize::MAX)
+        };
+        stdout.try_append(out, out_limit, &self.execution_budget)?;
+        stderr.try_append(err, err_limit, &self.execution_budget)?;
+        Ok(())
+    }
+
     /// Caller-delivered bytes belong to output pumps, not every list/loop.
     fn retain_streamed_output(&self) -> bool {
         self.output_callback.is_none()
@@ -8132,10 +8172,9 @@ impl Interpreter {
                 let jobs = Arc::clone(&child.jobs);
                 let result = jobs::with_jobs(&jobs, child.execute_command(command)).await;
                 jobs.finish_all().await;
-                let (out, err) = jobs.lock().take_finished_output();
+                let (out, err) = jobs.lock().take_finished_output(&child.execution_budget)?;
                 let mut r = result?;
-                r.stdout.append(&out);
-                r.stderr.append(&err);
+                child.append_output(&mut r.stdout, &mut r.stderr, &out, &err, false)?;
                 // Output not yet sent at a command boundary goes now.
                 let sent = child.output_stream_stdout_bytes;
                 if r.stdout.len() > sent {
@@ -8385,6 +8424,7 @@ impl Interpreter {
         cmd: &Command,
         parent_stdout: &mut crate::StreamData,
         parent_stderr: &mut crate::StreamData,
+        capture: bool,
     ) -> Result<()> {
         let text = describe_command(cmd);
         let emit_before = self.output_emit_count;
@@ -8403,7 +8443,15 @@ impl Interpreter {
                     self.limits.max_background_jobs,
                     self.limits.max_subshell_depth
                 );
-                parent_stderr.append(&crate::StreamData::from(msg));
+                parent_stderr.try_append(
+                    &crate::StreamData::from(msg),
+                    if capture {
+                        self.limits.max_stderr_bytes
+                    } else {
+                        usize::MAX
+                    },
+                    &self.execution_budget,
+                )?;
                 self.last_exit_code = 1;
                 return Ok(());
             };
@@ -8415,11 +8463,15 @@ impl Interpreter {
                 let jobs = Arc::clone(&child.jobs);
                 let result = jobs::with_jobs(&jobs, child.execute_command(&cmd)).await;
                 jobs.finish_all().await;
-                let (out, err) = jobs.lock().take_finished_output();
+                let result = result.and_then(|mut r| {
+                    let (out, err) = jobs.lock().take_finished_output(&child.execution_budget)?;
+                    child.append_output(&mut r.stdout, &mut r.stderr, &out, &err, false)?;
+                    r.stdout.admit_storage(&child.execution_budget)?;
+                    r.stderr.admit_storage(&child.execution_budget)?;
+                    Ok(r)
+                });
                 match result {
                     Ok(mut r) => {
-                        r.stdout.append(&out);
-                        r.stderr.append(&err);
                         if let ControlFlow::Exit(code) = r.control_flow {
                             r.exit_code = code;
                         }
@@ -8449,8 +8501,13 @@ impl Interpreter {
             self.maybe_emit_output(&result.stdout, &result.stderr, emit_before)
                 .await?;
             // Emit output immediately (background output goes to terminal in real bash)
-            parent_stdout.append(&result.stdout);
-            parent_stderr.append(&result.stderr);
+            self.append_output(
+                parent_stdout,
+                parent_stderr,
+                &result.stdout,
+                &result.stderr,
+                capture,
+            )?;
             let (_, pid) = self.jobs.lock().spawn_finished(text, result);
             self.last_bg_pid = Some(pid.to_string());
         }
@@ -8462,8 +8519,10 @@ impl Interpreter {
     }
 
     /// Output of background jobs that finished since the last report.
-    fn take_finished_job_output(&self) -> (crate::StreamData, crate::StreamData) {
-        self.jobs.lock().take_finished_output()
+    fn take_finished_job_output(&self) -> Result<(crate::StreamData, crate::StreamData)> {
+        self.jobs
+            .lock()
+            .take_finished_output(&self.execution_budget)
     }
 
     /// Execute a command list (cmd1 && cmd2 || cmd3)
@@ -8714,9 +8773,17 @@ impl Interpreter {
                         break;
                     }
                 };
-                if let Ok(r) = result {
-                    r.stdout.append(&cmd_result.stdout);
-                    r.stderr.append(&cmd_result.stderr);
+                if let Ok(r) = result
+                    && let Err(error) = self.append_output(
+                        &mut r.stdout,
+                        &mut r.stderr,
+                        &cmd_result.stdout,
+                        &cmd_result.stderr,
+                        false,
+                    )
+                {
+                    run = Err(error);
+                    break;
                 }
                 if matches!(
                     cmd_result.control_flow,
@@ -12412,8 +12479,13 @@ impl Interpreter {
                     let result = self.execute_command(&inner_cmd).await;
                     self.pipeline_stdin = saved_stdin;
                     let result = result?;
-                    combined_stdout.append(&result.stdout);
-                    combined_stderr.append(&result.stderr);
+                    self.append_output(
+                        &mut combined_stdout,
+                        &mut combined_stderr,
+                        &result.stdout,
+                        &result.stderr,
+                        false,
+                    )?;
                     last_exit_code = result.exit_code;
                 }
 
@@ -12441,8 +12513,13 @@ impl Interpreter {
                     let result = self.execute_command(&inner_cmd).await;
                     self.pipeline_stdin = saved_stdin;
                     let result = result?;
-                    combined_stdout.append(&result.stdout);
-                    combined_stderr.append(&result.stderr);
+                    self.append_output(
+                        &mut combined_stdout,
+                        &mut combined_stderr,
+                        &result.stdout,
+                        &result.stderr,
+                        false,
+                    )?;
                     last_exit_code = result.exit_code;
                 }
 
@@ -14821,8 +14898,16 @@ impl Interpreter {
         self.maybe_emit_output(&trap_result.stdout, &trap_result.stderr, emit_before)
             .await
             .ok();
-        stdout.append(&trap_result.stdout);
-        stderr.append(&trap_result.stderr);
+        if let Err(crate::error::Error::ResourceLimit(limit)) = self.append_output(
+            stdout,
+            stderr,
+            &trap_result.stdout,
+            &trap_result.stderr,
+            false,
+        ) {
+            self.note_trap_depth_error(limit);
+            return None;
+        }
         Some((trap_result.control_flow, trap_result.exit_code))
     }
 
