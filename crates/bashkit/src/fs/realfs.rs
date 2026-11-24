@@ -21,6 +21,7 @@
 //! - Path traversal via `..` or symlink hops in missing path suffixes is
 //!   blocked by canonicalizing the resolved path or nearest existing ancestor
 //!   and checking it stays under the root.
+//! - Whole-file reads of host files are limited to 10 MB (10,000,000 bytes).
 //! - Readonly mode rejects all write operations at the backend level.
 //!
 //! # Ownership
@@ -540,15 +541,39 @@ fn normalize_host_path(path: &Path) -> PathBuf {
 #[async_trait]
 impl FsBackend for RealFs {
     async fn read(&self, path: &Path) -> Result<Vec<u8>> {
+        use super::limits::DEFAULT_MAX_FILE_SIZE;
+        use tokio::io::AsyncReadExt;
+
         let real = self.resolve_no_follow(path).await?;
-        if tokio::fs::symlink_metadata(&real)
-            .await?
-            .file_type()
-            .is_symlink()
-        {
+        let metadata = tokio::fs::symlink_metadata(&real).await?;
+        if metadata.is_symlink() {
             return Err(IoError::new(ErrorKind::NotFound, "file not found").into());
         }
-        let data = tokio::fs::read(&real).await?;
+        if metadata.is_dir() {
+            return Err(IoError::new(ErrorKind::IsADirectory, "is a directory").into());
+        }
+
+        let too_large = || {
+            IoError::new(
+                ErrorKind::FileTooLarge,
+                format!("host file exceeds read limit of {DEFAULT_MAX_FILE_SIZE} bytes"),
+            )
+        };
+        let file = tokio::fs::File::open(&real).await?;
+        let size = file.metadata().await?.len();
+        if size > DEFAULT_MAX_FILE_SIZE {
+            return Err(too_large().into());
+        }
+
+        // THREAT[TM-DOS-148]: Bound actual reads as the file can grow after
+        // metadata is sampled or report a size smaller than its contents.
+        let mut data = Vec::with_capacity(size as usize + 1);
+        file.take(DEFAULT_MAX_FILE_SIZE + 1)
+            .read_to_end(&mut data)
+            .await?;
+        if data.len() as u64 > DEFAULT_MAX_FILE_SIZE {
+            return Err(too_large().into());
+        }
         Ok(data)
     }
 
@@ -823,6 +848,8 @@ impl FsBackend for RealFs {
     }
 
     fn limits(&self) -> FsLimits {
+        // These quotas describe retained filesystem content. The read-buffer
+        // ceiling does not restrict host writes or native copies.
         FsLimits::unlimited()
     }
 }
@@ -848,6 +875,30 @@ mod tests {
         let fs = RealFs::new(dir.path(), RealFsMode::ReadOnly).unwrap();
         let data = fs.read(Path::new("/hello.txt")).await.unwrap();
         assert_eq!(data, b"hello world");
+    }
+
+    #[tokio::test]
+    async fn read_enforces_host_file_size_limit() {
+        use super::super::limits::DEFAULT_MAX_FILE_SIZE;
+
+        let dir = setup();
+        let host_file = std::fs::File::create(dir.path().join("data")).unwrap();
+        let path = Path::new("/data");
+
+        for mode in [RealFsMode::ReadOnly, RealFsMode::ReadWrite] {
+            let fs = RealFs::open(dir.path(), mode).await.unwrap();
+            host_file.set_len(DEFAULT_MAX_FILE_SIZE).unwrap();
+            assert_eq!(
+                fs.read(path).await.unwrap().len() as u64,
+                DEFAULT_MAX_FILE_SIZE
+            );
+
+            host_file.set_len(DEFAULT_MAX_FILE_SIZE + 1).unwrap();
+            let error = fs.read(path).await.unwrap_err();
+            assert!(
+                matches!(error, crate::Error::Io(ref err) if err.kind() == ErrorKind::FileTooLarge)
+            );
+        }
     }
 
     #[tokio::test]
