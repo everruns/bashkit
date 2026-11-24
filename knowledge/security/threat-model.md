@@ -2368,7 +2368,7 @@ panics on multi-byte Unicode because it conflates character positions with byte 
 
 | ID | Threat | Attack Vector | Mitigation | Status |
 |----|--------|--------------|------------|--------|
-| TM-UNI-001 | Byte-boundary panic in awk | `awk '{print}' <<< "─ comment"`, multi-byte char causes `self.input[self.pos..]` panic | `catch_unwind` (TM-INT-001) catches the panic; root fix requires char-boundary-safe indexing | **PARTIAL** |
+| TM-UNI-001 | Byte-boundary panic in awk | `awk '{print}' <<< "─ comment"`, multi-byte char causes `self.input[self.pos..]` panic; also `awk '-¸'`, where the short-option split used byte index 2 | `catch_unwind` (TM-INT-001) catches the panic. The program parser is char-based and seeded in `unicode_security_tests::byte_boundary_safety`; the option parser now splits one whole character past the dash (`char_indices().nth(2)`) and is seeded in `awk_fuzz_scaffold_tests` (`awk_fuzz` crash `a10f82c7`) | **PARTIAL** |
 | TM-UNI-002 | Byte-boundary panic in sed | `sed 's/─/x/' file`, similar byte-offset slicing | `catch_unwind` catches; needs audit of `&s[start..i]` patterns | **PARTIAL** |
 | TM-UNI-015 | Byte-boundary panic in expr | `expr substr "café" 4 1`, char position used as byte index in string slice | `catch_unwind` catches; `.len()` returns bytes but used as char count | **PARTIAL** |
 | TM-UNI-016 | Byte-boundary panic in printf | `printf "%.1s" "é"`, precision truncation slices mid-character | `catch_unwind` catches; `&s[..prec]` without boundary check | **PARTIAL** |
