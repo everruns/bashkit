@@ -83,7 +83,6 @@ const nativeImportFileSystem: (external: unknown) => any =
   native.__importFileSystem;
 const nativeLazyFileSystem: (
   dispatcher: (request: string) => Promise<string>,
-  writable?: boolean,
 ) => any = native.__lazyFileSystem;
 const nativeFileSystemToExternal: (fs: any) => unknown =
   native.__fileSystemToExternal;
@@ -687,18 +686,10 @@ type MaybePromise<T> = T | Promise<T>;
  * Return `null`/`undefined` for a path that does not exist.
  */
 export interface LazyFileSystemSource {
-  /** List one directory. Called at most once per directory. */
+  /** List one directory. Normally called once per directory (cached). */
   readDir(path: string): MaybePromise<LazyDirEntry[] | null | undefined>;
-  /** Return one file's content. Called at most once per file. */
+  /** Return one file's content. Normally called once per file (cached). */
   readFile(path: string): MaybePromise<string | Uint8Array | null | undefined>;
-}
-
-export interface FileSystemLazyOptions {
-  /**
-   * Accept writes into an in-memory overlay. Writes never reach the
-   * callbacks. Default `false` (writes fail with "read-only").
-   */
-  writable?: boolean;
 }
 
 function bytesToBase64(bytes: Uint8Array): string {
@@ -710,32 +701,65 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
+/**
+ * THREAT[TM-INF-036]: callback errors reach script stderr, so expose only a
+ * bounded message with host paths and IPv4 addresses stripped, never a
+ * stack.
+ */
+function sanitizeLazyFsError(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  return (
+    raw
+      .replace(/file:\/\/[^\s]*/g, "<path>")
+      .replace(/(?<!\w)\/[^\s]*/g, "<path>")
+      .replace(/[A-Za-z]:[\\/][^\s]*/g, "<path>")
+      .replace(/\b\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?\b/g, "<addr>")
+      .slice(0, 256) || "lazy filesystem callback failed"
+  );
+}
+
+/** Replace lone surrogates so JSON transport cannot fail on the native side. */
+function toWellFormedText(text: string): string {
+  const s = text as string & { toWellFormed?: () => string };
+  if (typeof s.toWellFormed === "function") return s.toWellFormed();
+  return new TextDecoder().decode(new TextEncoder().encode(text));
+}
+
 /** Adapt {@link LazyFileSystemSource} to the native JSON dispatcher ABI. */
 function makeLazyFsDispatcher(
   source: LazyFileSystemSource,
 ): (request: string) => Promise<string> {
   return async (request: string) => {
-    const { op, path } = JSON.parse(request) as { op: string; path: string };
-    if (op === "readDir") {
-      const entries = await source.readDir(path);
-      if (entries == null) return JSON.stringify({ missing: true });
-      if (!Array.isArray(entries)) {
-        throw new TypeError(`readDir(${path}) must return an array`);
+    try {
+      const { op, path } = JSON.parse(request) as { op: string; path: string };
+      if (op === "readDir") {
+        const entries = await source.readDir(path);
+        if (entries == null) return JSON.stringify({ missing: true });
+        if (!Array.isArray(entries)) {
+          throw new TypeError("readDir must return an array");
+        }
+        return JSON.stringify({
+          entries: entries.map((e) => ({
+            ...e,
+            name: typeof e?.name === "string" ? toWellFormedText(e.name) : "",
+          })),
+        });
       }
-      return JSON.stringify({ entries });
-    }
-    if (op === "readFile") {
-      const content = await source.readFile(path);
-      if (content == null) return JSON.stringify({ missing: true });
-      if (typeof content === "string") return JSON.stringify({ text: content });
-      if (content instanceof Uint8Array) {
-        return JSON.stringify({ base64: bytesToBase64(content) });
+      if (op === "readFile") {
+        const content = await source.readFile(path);
+        if (content == null) return JSON.stringify({ missing: true });
+        if (typeof content === "string") {
+          return JSON.stringify({ text: toWellFormedText(content) });
+        }
+        if (content instanceof Uint8Array) {
+          return JSON.stringify({ base64: bytesToBase64(content) });
+        }
+        throw new TypeError("readFile must return a string or Uint8Array");
       }
-      throw new TypeError(
-        `readFile(${path}) must return a string or Uint8Array`,
-      );
+      throw new Error("unknown lazy filesystem operation");
+    } catch (error) {
+      return JSON.stringify({ error: sanitizeLazyFsError(error) });
     }
-    throw new Error(`unknown lazy filesystem op: ${op}`);
   };
 }
 
@@ -782,7 +806,9 @@ export class FileSystem {
    * Nothing is fetched up front. A directory is listed (via `readDir`) the
    * first time a script lists, stats or opens something inside it, and a
    * file's content is fetched (via `readFile`) the first time it is read.
-   * Results are cached for the lifetime of the handle.
+   * Results are cached per handle (bounded; oldest entries are evicted), and
+   * concurrent first reads of one path share a single call. The filesystem
+   * is read-only.
    *
    * Callbacks run on the JS event loop, so use `execute()` (async).
    * Synchronous access (`executeSync()`, `bash.readFile()`, `fs.readFile()`)
@@ -801,10 +827,7 @@ export class FileSystem {
    * await bash.execute("grep -rl TODO /repo/src");
    * ```
    */
-  static lazy(
-    source: LazyFileSystemSource,
-    options?: FileSystemLazyOptions,
-  ): FileSystem {
+  static lazy(source: LazyFileSystemSource): FileSystem {
     if (
       !source ||
       typeof source.readDir !== "function" ||
@@ -815,7 +838,7 @@ export class FileSystem {
       );
     }
     return FileSystem.fromNative(
-      nativeLazyFileSystem(makeLazyFsDispatcher(source), options?.writable),
+      nativeLazyFileSystem(makeLazyFsDispatcher(source)),
     );
   }
 
@@ -823,6 +846,11 @@ export class FileSystem {
     const fs = FileSystem.fromNative(nativeImportFileSystem(external));
     fs.external = external;
     return fs;
+  }
+
+  /** @internal Native handle for same-addon mounts (no C ABI round-trip). */
+  nativeHandle(): unknown {
+    return this.native;
   }
 
   toExternal(): unknown {
@@ -1852,11 +1880,19 @@ export class Bash {
     writableOrReadOnly?: boolean,
   ): void {
     if (isFileSystemLike(vfsPathOrFs)) {
-      this.native.mountFileSystem(
-        hostPathOrVfsPath,
-        vfsPathOrFs.toExternal(),
-        writableOrReadOnly,
-      );
+      if (vfsPathOrFs instanceof FileSystem) {
+        this.native.mountNativeFileSystem(
+          hostPathOrVfsPath,
+          vfsPathOrFs.nativeHandle(),
+          writableOrReadOnly,
+        );
+      } else {
+        this.native.mountFileSystem(
+          hostPathOrVfsPath,
+          (vfsPathOrFs as { toExternal(): unknown }).toExternal(),
+          writableOrReadOnly,
+        );
+      }
       return;
     }
     this.native.mount(hostPathOrVfsPath, vfsPathOrFs, writableOrReadOnly);
@@ -2407,11 +2443,19 @@ export class BashTool {
     writableOrReadOnly?: boolean,
   ): void {
     if (isFileSystemLike(vfsPathOrFs)) {
-      this.native.mountFileSystem(
-        hostPathOrVfsPath,
-        vfsPathOrFs.toExternal(),
-        writableOrReadOnly,
-      );
+      if (vfsPathOrFs instanceof FileSystem) {
+        this.native.mountNativeFileSystem(
+          hostPathOrVfsPath,
+          vfsPathOrFs.nativeHandle(),
+          writableOrReadOnly,
+        );
+      } else {
+        this.native.mountFileSystem(
+          hostPathOrVfsPath,
+          (vfsPathOrFs as { toExternal(): unknown }).toExternal(),
+          writableOrReadOnly,
+        );
+      }
       return;
     }
     this.native.mount(hostPathOrVfsPath, vfsPathOrFs, writableOrReadOnly);

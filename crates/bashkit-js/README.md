@@ -220,7 +220,7 @@ bash.unmount("/workspace");
 or remote tree (an object store, a git host, a database) never has to be
 listed up front. A directory is listed the first time a script lists, stats
 or opens something inside it, and a file is fetched the first time a script
-reads it. Each result is cached for the lifetime of the handle.
+reads it.
 
 ```typescript
 import { Bash, FileSystem } from "@everruns/bashkit";
@@ -244,13 +244,23 @@ await bash.execute("grep -rl TODO /repo/src"); // lists /, /src, then reads matc
 
 - Paths are absolute within the lazy filesystem, so a mount at `/repo`
   passes `/src` for `/repo/src`.
-- Read-only by default. Pass `{ writable: true }` to accept writes into an
-  in-memory overlay; writes never reach the callbacks.
-- Scripts can only ask for paths the parent listing declared, so callbacks
-  never see invented paths. Entry names must be single path components.
+- Results are cached per handle and shared by every instance that mounts it.
+  Concurrent first reads of one path share one call, and missing paths are
+  remembered. The cache is bounded (`max_total_bytes`, `max_file_count`) and
+  evicts oldest entries first.
+- The filesystem is read-only. Scripts can only reach paths a parent listing
+  declared, entry names follow the same rules as in-memory files, and files
+  whose declared `size` exceeds the 10 MB file limit fail with
+  `File too large` without being fetched.
+- Callback errors reach the script as a short message with host paths and
+  IPv4 addresses removed; stacks are never exposed.
 - Callbacks run on the JS event loop, so use `execute()`. Synchronous access
   (`executeSync()`, `bash.readFile()`) fails with an error instead of
-  deadlocking.
+  deadlocking. `timeoutMs` bounds a pending callback; `cancel()` takes effect
+  once pending callbacks settle, so give slow callbacks their own timeouts.
+- Use `files: { path: () => content }` for a small, fixed set of paths; it is
+  resolved when the instance is created. Use `FileSystem.lazy()` when the
+  layout itself should be loaded on demand.
 
 ## Error Handling
 

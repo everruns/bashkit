@@ -576,13 +576,18 @@ Runtime methods:
 - filesystem mount: `mount(vfs_path, filesystem)`
 - `unmount(vfs_path)`
 
-Lazy filesystems (Node.js only for now): `FileSystem.lazy({ readDir, readFile },
-{ writable? })` builds a read-only `FsBackend` over host callbacks. Listings and
-contents are fetched on first use and cached per handle; `stat` resolves through
-the parent listing, so only declared paths reach the host. `writable` wraps it in
-`OverlayFs`. Callbacks dispatch on the JS event loop, so every sync entry point
-marks its JS thread blocked and the backend fails fast instead of deadlocking.
-TODO: Python parity (`FileSystem.lazy` with sync and async callables).
+Lazy filesystems (Node.js only for now): `FileSystem.lazy({ readDir, readFile })`
+builds a read-only `FsBackend` over host callbacks. Listings and contents are
+fetched on first use and cached per handle (bounded, oldest-first eviction,
+negative entries for missing paths, one shared call per in-flight path); `stat`
+resolves through the parent listing, so only declared paths reach the host.
+Same-addon handles mount directly (`mountNativeFileSystem`) because the C ABI
+bridge blocks a runtime worker per operation, which pending JS promises would
+starve. Sync entry points run their future on the JS thread, so the backend
+fails fast there instead of deadlocking. Threats: TM-DOS-148, TM-INF-036.
+TODO: Python parity, a writable mode (needs an overlay with an empty upper
+layer), and cancellation of pending callbacks (needs the execution budget in
+`FsBackend` calls).
 
 Native-extension interop is binding-specific but must preserve bashkit-owned
 filesystem objects when crossing the language runtime boundary:

@@ -157,18 +157,12 @@ fn reject_on_output_reentry(state: &Arc<SharedState>) -> napi::Result<()> {
 struct SyncExecuteScope {
     depth: Arc<AtomicUsize>,
     wake: Option<Arc<tokio::sync::Notify>>,
-    /// Lets lazy filesystem callbacks fail fast while this JS thread blocks.
-    _js_blocked: lazy_fs::JsThreadBlocked,
 }
 
 impl SyncExecuteScope {
     fn enter(depth: Arc<AtomicUsize>) -> Self {
         depth.fetch_add(1, Ordering::SeqCst);
-        Self {
-            depth,
-            wake: None,
-            _js_blocked: lazy_fs::JsThreadBlocked::enter(),
-        }
+        Self { depth, wake: None }
     }
 }
 
@@ -266,10 +260,7 @@ impl NativeFileSystemState {
         Fut: std::future::Future<Output = napi::Result<T>>,
     {
         match &self.inner {
-            FileSystemHandle::Static(fs) => {
-                let _js_blocked = lazy_fs::JsThreadBlocked::enter();
-                callback_runtime().block_on(f(fs.clone()))
-            }
+            FileSystemHandle::Static(fs) => callback_runtime().block_on(f(fs.clone())),
             FileSystemHandle::Live(state) => block_on_with(state, |s| async move {
                 let bash = s.inner.lock().await;
                 f(bash.fs()).await
@@ -591,30 +582,23 @@ pub fn real_file_system(
     )?))
 }
 
-/// Create a lazy filesystem backed by a JS dispatcher.
+/// Create a lazy, read-only filesystem backed by a JS dispatcher.
 ///
 /// The dispatcher receives `{"op":"readDir"|"readFile","path":...}` as JSON
-/// and resolves with a JSON response (see `lazy_fs.rs`). Read-only unless
-/// `writable`, in which case writes go to an in-memory overlay and never reach
-/// the host callbacks.
+/// and resolves with a JSON response (see `lazy_fs.rs`).
 #[napi(
     js_name = "__lazyFileSystem",
-    ts_args_type = "dispatcher: (request: string) => Promise<string>, writable?: boolean"
+    ts_args_type = "dispatcher: (request: string) => Promise<string>"
 )]
 pub fn lazy_file_system(
     dispatcher: napi::bindgen_prelude::Function<String, napi::bindgen_prelude::Promise<String>>,
-    writable: Option<bool>,
 ) -> napi::Result<External<NativeFileSystemState>> {
     let tsfn: lazy_fs::LazyFsTsfn = dispatcher
         .build_threadsafe_function::<String>()
         .weak::<true>()
         .build()?;
-    let lower: Arc<dyn BashFileSystem> = Arc::new(PosixFs::new(lazy_fs::JsLazyBackend::new(tsfn)));
-    let fs: Arc<dyn BashFileSystem> = if writable.unwrap_or(false) {
-        Arc::new(bashkit::OverlayFs::new(lower))
-    } else {
-        Arc::new(ReadOnlyFs::new(lower))
-    };
+    let lazy: Arc<dyn BashFileSystem> = Arc::new(PosixFs::new(lazy_fs::JsLazyBackend::new(tsfn)));
+    let fs: Arc<dyn BashFileSystem> = Arc::new(ReadOnlyFs::new(lazy));
     Ok(External::new(NativeFileSystemState::from_static(fs)))
 }
 
@@ -1762,6 +1746,36 @@ fn forget_runtime_mount(log: &RuntimeMountLog, vfs_path: &str) {
     mounts.retain(|existing| Path::new(existing.vfs_path()) != normalized);
 }
 
+/// Mount `fs` at `vfs_path` and record it so `reset()` replays the mount.
+///
+/// With `read_only` the handle is wrapped in `ReadOnlyFs` (host-enforced);
+/// the recorded handle is the wrapped one, so `reset()` replays the protection.
+fn mount_fs_arc(
+    state: &Arc<SharedState>,
+    vfs_path: String,
+    fs: Arc<dyn BashFileSystem>,
+    read_only: Option<bool>,
+) -> napi::Result<()> {
+    let mounted_fs: Arc<dyn BashFileSystem> = if read_only.unwrap_or(false) {
+        Arc::new(ReadOnlyFs::new(fs))
+    } else {
+        fs
+    };
+    block_on_with(state, |s| async move {
+        let bash = s.inner.lock().await;
+        bash.mount(Path::new(&vfs_path), Arc::clone(&mounted_fs))
+            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+        record_runtime_mount(
+            &s.runtime_mounts,
+            RuntimeMount::Fs {
+                vfs_path,
+                fs: mounted_fs,
+            },
+        );
+        Ok(())
+    })
+}
+
 /// Clone `Arc<SharedState>`, then use the runtime to block on a future that
 /// captures only the cloned Arc. This avoids holding raw `&self` across
 /// `block_on` boundaries.
@@ -2652,26 +2666,25 @@ impl Bash {
         read_only: Option<bool>,
     ) -> napi::Result<()> {
         let mounted_fs = import_external_file_system(fs)?;
-        // Host-enforced read-only projection; the recorded handle is the
-        // wrapped one, so `reset()` replays the protection.
-        let mounted_fs: Arc<dyn BashFileSystem> = if read_only.unwrap_or(false) {
-            Arc::new(ReadOnlyFs::new(mounted_fs))
-        } else {
-            mounted_fs
-        };
-        block_on_with(&self.state, |s| async move {
-            let bash = s.inner.lock().await;
-            bash.mount(Path::new(&vfs_path), Arc::clone(&mounted_fs))
-                .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-            record_runtime_mount(
-                &s.runtime_mounts,
-                RuntimeMount::Fs {
-                    vfs_path,
-                    fs: mounted_fs,
-                },
-            );
-            Ok(())
-        })
+        mount_fs_arc(&self.state, vfs_path, mounted_fs, read_only)
+    }
+
+    /// Mount a filesystem handle created by this addon without the C ABI.
+    ///
+    /// Decision: the ABI import blocks a runtime worker on every operation
+    /// until it completes. That is harmless for in-memory and real
+    /// filesystems, but a lazy filesystem waits on JS promises, so the ABI
+    /// path would park workers and starve unrelated executions. Same-addon
+    /// handles therefore mount their `Arc<dyn FileSystem>` directly.
+    #[napi(ts_args_type = "vfsPath: string, fs: unknown, readOnly?: boolean")]
+    pub fn mount_native_file_system(
+        &self,
+        vfs_path: String,
+        fs: &External<NativeFileSystemState>,
+        read_only: Option<bool>,
+    ) -> napi::Result<()> {
+        let mounted_fs = fs.export_fs()?;
+        mount_fs_arc(&self.state, vfs_path, mounted_fs, read_only)
     }
 
     /// Unmount a previously mounted filesystem.
@@ -3448,26 +3461,25 @@ impl BashTool {
         read_only: Option<bool>,
     ) -> napi::Result<()> {
         let mounted_fs = import_external_file_system(fs)?;
-        // Host-enforced read-only projection; the recorded handle is the
-        // wrapped one, so `reset()` replays the protection.
-        let mounted_fs: Arc<dyn BashFileSystem> = if read_only.unwrap_or(false) {
-            Arc::new(ReadOnlyFs::new(mounted_fs))
-        } else {
-            mounted_fs
-        };
-        block_on_with(&self.state, |s| async move {
-            let bash = s.inner.lock().await;
-            bash.mount(Path::new(&vfs_path), Arc::clone(&mounted_fs))
-                .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-            record_runtime_mount(
-                &s.runtime_mounts,
-                RuntimeMount::Fs {
-                    vfs_path,
-                    fs: mounted_fs,
-                },
-            );
-            Ok(())
-        })
+        mount_fs_arc(&self.state, vfs_path, mounted_fs, read_only)
+    }
+
+    /// Mount a filesystem handle created by this addon without the C ABI.
+    ///
+    /// Decision: the ABI import blocks a runtime worker on every operation
+    /// until it completes. That is harmless for in-memory and real
+    /// filesystems, but a lazy filesystem waits on JS promises, so the ABI
+    /// path would park workers and starve unrelated executions. Same-addon
+    /// handles therefore mount their `Arc<dyn FileSystem>` directly.
+    #[napi(ts_args_type = "vfsPath: string, fs: unknown, readOnly?: boolean")]
+    pub fn mount_native_file_system(
+        &self,
+        vfs_path: String,
+        fs: &External<NativeFileSystemState>,
+        read_only: Option<bool>,
+    ) -> napi::Result<()> {
+        let mounted_fs = fs.export_fs()?;
+        mount_fs_arc(&self.state, vfs_path, mounted_fs, read_only)
     }
 
     /// Unmount a previously mounted filesystem.

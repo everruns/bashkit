@@ -1,5 +1,5 @@
 import test from "ava";
-import { Bash, FileSystem, type LazyDirEntry } from "../wrapper.js";
+import { Bash, BashTool, FileSystem, type LazyDirEntry } from "../wrapper.js";
 
 // ============================================================================
 // FileSystem.lazy — layout and contents loaded on demand
@@ -115,7 +115,10 @@ test("lazy: unknown paths are not found and never reach readFile", async (t) => 
 
   const r = await bash.execute("cat /repo/nope.txt; cat /repo/nodir/x");
   t.not(r.exitCode, 0);
-  t.regex(r.stderr, /No such file or directory/i);
+  t.is(
+    r.stderr,
+    "cat: /repo/nope.txt: No such file or directory\ncat: /repo/nodir/x: No such file or directory\n",
+  );
   t.false(calls.some((c) => c.startsWith("readFile")));
   t.false(calls.includes("readDir /nodir"));
 });
@@ -141,17 +144,6 @@ test("lazy: read-only by default", async (t) => {
   const r = await bash.execute("echo x > /repo/new.txt");
   t.not(r.exitCode, 0);
   t.regex(r.stderr, /read-only/i);
-});
-
-test("lazy: writable option keeps writes in memory", async (t) => {
-  const { source, calls } = recordingSource();
-  const bash = new Bash();
-  bash.mount("/repo", FileSystem.lazy(source, { writable: true }));
-  const r = await bash.execute(
-    "echo changed > /repo/README.md && echo new > /repo/new.txt && cat /repo/README.md /repo/new.txt",
-  );
-  t.is(r.stdout, "changed\nnew\n");
-  t.false(calls.some((c) => /write/i.test(c)));
 });
 
 test("lazy: callback errors surface as command errors", async (t) => {
@@ -200,4 +192,262 @@ test("lazy: requires both callbacks", (t) => {
   t.throws(() => FileSystem.lazy({ readDir: () => [] } as never), {
     instanceOf: TypeError,
   });
+});
+
+// ============================================================================
+// Review regressions
+// ============================================================================
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const never = () => new Promise<never>(() => {});
+const flat = (readFile: (p: string) => unknown, n = 20) =>
+  FileSystem.lazy({
+    readDir: (p) =>
+      p === "/"
+        ? Array.from({ length: n }, (_, i) => ({
+            name: `f${i}`,
+            type: "file" as const,
+          }))
+        : null,
+    readFile: readFile as never,
+  });
+
+test("lazy: error kinds match the in-memory filesystem", async (t) => {
+  const bash = new Bash();
+  bash.mount(
+    "/r",
+    FileSystem.lazy({
+      readDir: (p) =>
+        p === "/"
+          ? [
+              { name: "f", type: "file" },
+              { name: "d", type: "dir" },
+            ]
+          : [],
+      readFile: () => "x",
+    }),
+  );
+  const r = await bash.execute(
+    "cat /r/f/x; ls /r/f/x; cat /r/d; test -e /r/f/x || echo absent",
+  );
+  t.is(
+    r.stderr,
+    [
+      "cat: /r/f/x: Not a directory",
+      "ls: cannot access '/r/f/x': Not a directory",
+      "cat: /r/d: Is a directory",
+      "",
+    ].join("\n"),
+  );
+  t.is(r.stdout, "absent\n");
+});
+
+test("lazy: callback errors are sanitized", async (t) => {
+  const bash = new Bash();
+  bash.mount(
+    "/r",
+    FileSystem.lazy({
+      readDir: () => [{ name: "f", type: "file" }],
+      readFile: () => {
+        const e = new Error(
+          "connect ECONNREFUSED 10.0.0.5:5432 at /home/host/secret/app.js " +
+            "x".repeat(400),
+        );
+        throw e;
+      },
+    }),
+  );
+  const r = await bash.execute("cat /r/f");
+  t.not(r.exitCode, 0);
+  t.false(r.stderr.includes("10.0.0.5"));
+  t.false(r.stderr.includes("/home/host"));
+  t.false(r.stderr.includes("io error"));
+  t.false(r.stderr.includes("GenericFailure"));
+  t.regex(
+    r.stderr,
+    /^cat: \/r\/f: connect ECONNREFUSED <addr> at <path> x+\n$/,
+  );
+  t.true(r.stderr.length < 300);
+});
+
+test("lazy: timeoutMs bounds a pending callback", async (t) => {
+  const bash = new Bash({ timeoutMs: 300 });
+  bash.mount("/r", flat(never));
+  const started = Date.now();
+  const r = await bash.execute("cat /r/f1");
+  t.is(r.exitCode, 124);
+  t.true(Date.now() - started < 3000);
+});
+
+test("lazy: pending callbacks do not starve unrelated executions", async (t) => {
+  const fs = flat(never);
+  for (let i = 0; i < 4; i++) {
+    const b = new Bash({ timeoutMs: 2000 });
+    b.mount("/r", fs);
+    void b.execute(`cat /r/f${i}`);
+  }
+  const r = await Promise.race([
+    new Bash().execute("echo hi"),
+    sleep(1500).then(() => ({ stdout: "starved" })),
+  ]);
+  t.is(r.stdout, "hi\n");
+});
+
+test("lazy: slow callbacks run concurrently", async (t) => {
+  const fs = flat(async (p: string) => {
+    await sleep(200);
+    return p;
+  });
+  const started = Date.now();
+  await Promise.all(
+    Array.from({ length: 8 }, (_, i) => {
+      const b = new Bash();
+      b.mount("/r", fs);
+      return b.execute(`cat /r/f${i}`);
+    }),
+  );
+  t.true(Date.now() - started < 1200, `took ${Date.now() - started}ms`);
+});
+
+test("lazy: concurrent first reads share one host call", async (t) => {
+  let dirCalls = 0;
+  let fileCalls = 0;
+  const fs = FileSystem.lazy({
+    readDir: async () => {
+      dirCalls++;
+      await sleep(50);
+      return [{ name: "f", type: "file" }];
+    },
+    readFile: async () => {
+      fileCalls++;
+      await sleep(50);
+      return "F\n";
+    },
+  });
+  const results = await Promise.all(
+    Array.from({ length: 5 }, () => {
+      const b = new Bash();
+      b.mount("/r", fs);
+      return b.execute("cat /r/f");
+    }),
+  );
+  t.true(results.every((r) => r.stdout === "F\n"));
+  t.is(dirCalls, 1);
+  t.is(fileCalls, 1);
+});
+
+test("lazy: missing files are cached negatively", async (t) => {
+  const { source, calls } = recordingSource();
+  const gone = {
+    ...source,
+    readDir: (p: string) =>
+      p === "/" ? [{ name: "gone", type: "file" as const }] : null,
+  };
+  const bash = new Bash();
+  bash.mount("/r", FileSystem.lazy(gone));
+  await bash.execute("cat /r/gone; cat /r/gone");
+  t.is(calls.filter((c) => c === "readFile /gone").length, 1);
+});
+
+test("lazy: oversized files are rejected without fetching", async (t) => {
+  let fetched = 0;
+  const bash = new Bash();
+  bash.mount(
+    "/r",
+    FileSystem.lazy({
+      readDir: () => [{ name: "big", type: "file", size: 50_000_000 }],
+      readFile: () => {
+        fetched++;
+        return "x";
+      },
+    }),
+  );
+  const r = await bash.execute("cat /r/big; cat /r/big");
+  t.is(r.stderr, "cat: /r/big: File too large\ncat: /r/big: File too large\n");
+  t.is(fetched, 0);
+});
+
+test("lazy: unsafe entry names are rejected", async (t) => {
+  for (const name of ["a\nb", "evil\u202Etxt", "x".repeat(300)]) {
+    const bash = new Bash();
+    bash.mount(
+      "/r",
+      FileSystem.lazy({
+        readDir: () => [{ name, type: "file" }],
+        readFile: () => "",
+      }),
+    );
+    const r = await bash.execute("ls /r");
+    t.not(r.exitCode, 0, JSON.stringify(name.slice(0, 10)));
+    t.regex(r.stderr, /invalid entry name/);
+  }
+});
+
+test("lazy: out-of-range optional fields fall back to defaults", async (t) => {
+  const bash = new Bash();
+  bash.mount(
+    "/r",
+    FileSystem.lazy({
+      readDir: () => [
+        { name: "a", type: "file", size: -1, mode: 1.5, modified: 1e300 },
+        { name: "b", type: "file", size: 1.5 },
+      ],
+      readFile: () => "ok",
+    }),
+  );
+  const r = await bash.execute("ls /r");
+  t.is(r.stdout, "a\nb\n");
+});
+
+test("lazy: lone surrogates in text are transported safely", async (t) => {
+  const bash = new Bash();
+  bash.mount(
+    "/r",
+    FileSystem.lazy({
+      readDir: () => [{ name: "f", type: "file" }],
+      readFile: () => "a\ud800b",
+    }),
+  );
+  const r = await bash.execute("cat /r/f");
+  t.is(r.exitCode, 0);
+  t.is(r.stdout, "a\ufffdb");
+});
+
+test("lazy: unrelated sync calls do not break async reads", async (t) => {
+  const fs = flat(async () => {
+    await sleep(2);
+    return "x\n";
+  }, 30);
+  const a = new Bash();
+  a.mount("/r", fs);
+  const other = new Bash();
+  const timer = setInterval(() => other.executeSync("true"), 1);
+  try {
+    const r = await a.execute(
+      "for i in $(seq 0 29); do cat /r/f$i; done | wc -l",
+    );
+    t.is(r.stdout.trim(), "30");
+    t.is(r.stderr, "");
+  } finally {
+    clearInterval(timer);
+  }
+});
+
+test("lazy: BashTool mounts lazy filesystems too", async (t) => {
+  const { source } = recordingSource();
+  const tool = new BashTool();
+  tool.mount("/repo", FileSystem.lazy(source));
+  const r = await tool.execute("cat /repo/README.md");
+  t.is(r.stdout, "hello\n");
+});
+
+test("lazy: unmount and reset keep working", async (t) => {
+  const { source } = recordingSource();
+  const bash = new Bash();
+  bash.mount("/repo", FileSystem.lazy(source));
+  t.is((await bash.execute("cat /repo/README.md")).stdout, "hello\n");
+  bash.reset();
+  t.is((await bash.execute("cat /repo/README.md")).stdout, "hello\n");
+  bash.unmount("/repo");
+  t.not((await bash.execute("cat /repo/README.md")).exitCode, 0);
 });
