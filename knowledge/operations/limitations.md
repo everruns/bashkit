@@ -243,7 +243,8 @@ pass in CI); only divergences and boundaries are recorded here.
 Safety boundaries (enforced, not bugs): printf width/precision caps (10,000;
 `printf "%10239s"` fails, so `bashbox_du_human_rounding` is skipped),
 output buffer caps, getline file-cache cap, shared regex size limit, runtime regex
-cache cap (64 entries and 1 MB retained pattern text per evaluator),
+cache cap (64 entries and 1 MB retained pattern text per evaluator, with one
+conditional-search scratch cache retaining at most 64 KiB),
 curl/wget timeouts clamped to [1, 600] s, multipart field-name
 sanitization, redirect handling hardened against credential leaks, and curl's
 aggregate data/multipart request body capped at 10 MB. Repeated mixed curl

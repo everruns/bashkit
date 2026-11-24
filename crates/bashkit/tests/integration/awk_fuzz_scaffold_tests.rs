@@ -79,3 +79,53 @@ async fn awk_field_separator() {
     )
     .await;
 }
+
+// Regression: fuzz crash-a10f82c7 (awk_fuzz). A short option whose character
+// after `-` is multi-byte made the option parser slice at byte index 2, which
+// is not a char boundary, panicking instead of reporting an invalid option.
+#[tokio::test]
+async fn awk_multibyte_short_option_does_not_panic() {
+    let mut bash = fuzz_bash();
+    fuzz_exec(
+        &mut bash,
+        "echo 'a b c' | awk '-\u{b8}'",
+        "awk_multibyte_short_option",
+        &[],
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn awk_multibyte_short_option_reports_invalid_option() {
+    let mut bash = Bash::new();
+    let result = bash
+        .exec("awk '-\u{b8}'")
+        .await
+        .expect("awk invalid option must not panic");
+    assert_ne!(
+        result.exit_code, 0,
+        "awk must fail for an unknown short option"
+    );
+    let stderr = result.stderr.to_string();
+    assert!(
+        stderr.contains("invalid option") && stderr.contains('\u{b8}'),
+        "expected an invalid-option diagnostic naming the character, got: {stderr:?}"
+    );
+}
+
+// A multi-byte value attached to a real short option stays attached as its value.
+#[tokio::test]
+async fn awk_multibyte_attached_field_separator() {
+    let mut bash = Bash::new();
+    let result = bash
+        .exec("printf 'a\u{a7}b\\n' | awk -F'\u{a7}' '{print $2}'")
+        .await
+        .expect("multi-byte -F value must parse");
+    assert_eq!(
+        result.exit_code,
+        0,
+        "stderr: {:?}",
+        result.stderr.to_string()
+    );
+    assert_eq!(result.stdout.trim(), "b");
+}

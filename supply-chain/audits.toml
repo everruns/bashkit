@@ -78,6 +78,13 @@ criteria = "safe-to-deploy"
 delta = "4.6.6 -> 4.6.7"
 notes = "Reviewed derive Command-to-Self renames, defer builder plumbing, and docs; CLI parsing stays bounded with no new unsafe, fs, net, or ambient access."
 
+[[audits.clap]]
+who = "Bashkit maintenance review"
+criteria = "safe-to-deploy"
+delta = "4.6.7 -> 4.6.9"
+importable = false
+notes = "Reviewed the complete published package diff: documentation only. Every source change is Rustdoc text in src/lib.rs, src/_tutorial.rs, src/_derive/_tutorial.rs and src/_faq.rs, collapsing intra-doc links of the form [`Command`][crate::Command] to [`Command`] and moving github.com URLs from the master branch to main. No executable code, no new dependency names (the manifest only raises floors on crates already present), no build script, unsafe unchanged at 1 occurrence, and no new filesystem, network or process access. CLI parsing is untouched."
+
 [[audits.clap_builder]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
@@ -95,6 +102,13 @@ who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
 delta = "4.6.4 -> 4.6.7"
 notes = "Reviewed defer attribute codegen (Defer magic attr, bool-lit helper, initial/final method ordering); proc-macro output only, no new unsafe or ambient access."
+
+[[audits.clap_derive]]
+who = "Bashkit maintenance review"
+criteria = "safe-to-deploy"
+delta = "4.6.7 -> 4.6.9"
+importable = false
+notes = "Reviewed the complete published package diff: proc-macro output shape only, in src/derives/args.rs and src/derives/subcommand.rs, plus a logo URL in src/lib.rs. The generated augment_args/augment_args_for_update/augment_subcommands bodies stop rebinding with `let #app_var = ...` at each step and instead take the Command by `mut` binding and reassign it, with the same call sequence and the same order of builder methods; an `Args::group_id()` expect whose value was discarded is now bound to `let _`, and clippy::self_assignment joins the allow list the generated code already carries, because the new shape can produce `x = x` for an empty augmentation. No semantic change to the parser the macro emits, no new dependency names, unsafe unchanged at 1 occurrence, and no new ambient access."
 
 [[audits.clipboard-win]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
@@ -858,6 +872,13 @@ criteria = "safe-to-deploy"
 delta = "0.8.2 -> 0.8.3"
 notes = "Reviewed complete published package diff: nine Rust files changed, no new dependencies, no new unsafe code, no new build scripts, and no new host filesystem, network or process access. AUTOINCREMENT explicit-rowid advance now also reads the backing table's is_called column, so a fresh sequence row (1, is_called = 0) no longer leaves the next generated id at a rowid an explicit INSERT already used; the single Le comparison becomes Lt/Gt plus an is_called test, with the descending case mirrored. An abandoned MVCC commit now releases the connection's read transaction and, for the main database only, resets transaction state - state the dropped CommitStateMachine does not own and previously leaked. MVCC tombstone insertion for B-tree-resident rows moves into its own helper with the visibility and write-write conflict rules unchanged. Cursor seek reuse narrows from 'position matches the seek key' to 'position is the only row for that key', which requires a rowid, a whole index entry, or every column of a UNIQUE index with no NULL. The logical-log header upgrade returns the CRC-filled header for the caller to adopt instead of publishing it before the write lands, so a failed header write keeps the previous on-disk header and retries; a new fault-injecting file covers that path. Source safety review, not formal transactional proof."
 
+[[audits.turso_core]]
+who = "Bashkit maintenance review"
+criteria = "safe-to-deploy"
+delta = "0.8.3 -> 0.8.4"
+importable = false
+notes = "Reviewed the complete published package diff: five Rust files changed, no new dependencies beyond the matching turso_ext/turso_macros/turso_parser version bumps, build.rs byte-identical, unsafe unchanged at 693 occurrences, and the std::fs, std::net, std::process and std::env occurrence counts all unchanged, so no new host filesystem, network or process access. Statement reprepare now rolls back the autocommit transaction first: the rollback body splits into rollback_autocommit_txn and maybe_reparse_schema moves out of it into reprepare, so the schema reparse runs after the main and attached pagers have ended their transactions instead of before, and a failing reprepare still releases the counted active root. DELETE safety stops walking the FK cascade chain for triggers on child tables and instead requires the statement journal whenever foreign keys are enabled and any FK referencing the table has an on_delete other than NoAction or Restrict, which is strictly more conservative than the previous trigger-conditioned walk; the now-unused table_has_fk_cascade_triggers helper and its SmallVec worklist are removed. UPDATE statement-journal safety switches from the explicit SET clause list to columns_affected_by_update, so generated and otherwise affected columns are counted for the NOT NULL check, and a rowid or rowid-alias change now also forces the unique path. The upsert CDC before-image is hoisted above the delete in the rowid-changing branch, because reading it after the write returned the new row instead of the old one. Source safety review, not formal transactional proof."
+
 [[audits.turso_ext]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
@@ -887,6 +908,13 @@ who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
 delta = "0.8.2 -> 0.8.3"
 notes = "Reviewed complete published package diff: zero differing .rs files across the two published trees. Only the crate version and its matching turso_macros dependency version, plus Cargo.lock and .cargo_vcs_info.json release metadata. No runtime, unsafe, host access, or build-script changes; nothing to review beyond the version stamp."
+
+[[audits.turso_ext]]
+who = "Bashkit maintenance review"
+criteria = "safe-to-deploy"
+delta = "0.8.3 -> 0.8.4"
+importable = false
+notes = "Reviewed the complete published package diff: the source trees are byte-identical. Only Cargo.toml, Cargo.lock and .cargo_vcs_info.json differ, and they carry version stamps plus the upstream release commit sha. Nothing to review beyond the version bump that keeps this crate in step with turso_core 0.8.4."
 
 [[audits.turso_macros]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
@@ -918,6 +946,13 @@ criteria = "safe-to-deploy"
 delta = "0.8.2 -> 0.8.3"
 notes = "Reviewed complete published package diff: zero differing .rs files across the two published trees. Only the crate version, plus Cargo.lock and .cargo_vcs_info.json release metadata. No runtime, unsafe, host access, or build-script changes; nothing to review beyond the version stamp."
 
+[[audits.turso_macros]]
+who = "Bashkit maintenance review"
+criteria = "safe-to-deploy"
+delta = "0.8.3 -> 0.8.4"
+importable = false
+notes = "Reviewed the complete published package diff: the source trees are byte-identical. Only Cargo.toml, Cargo.lock and .cargo_vcs_info.json differ, and they carry version stamps plus the upstream release commit sha. Nothing to review beyond the version bump that keeps this crate in step with turso_core 0.8.4."
+
 [[audits.turso_parser]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
@@ -947,6 +982,13 @@ who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
 delta = "0.8.2 -> 0.8.3"
 notes = "Reviewed complete published package diff: zero differing .rs files across the two published trees. Only the crate version and its matching turso_macros dependency version, plus Cargo.lock and .cargo_vcs_info.json release metadata. No runtime, unsafe, host access, or build-script changes; nothing to review beyond the version stamp."
+
+[[audits.turso_parser]]
+who = "Bashkit maintenance review"
+criteria = "safe-to-deploy"
+delta = "0.8.3 -> 0.8.4"
+importable = false
+notes = "Reviewed the complete published package diff: the source trees are byte-identical. Only Cargo.toml, Cargo.lock and .cargo_vcs_info.json differ, and they carry version stamps plus the upstream release commit sha. Nothing to review beyond the version bump that keeps this crate in step with turso_core 0.8.4."
 
 [[audits.twox-hash]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
@@ -1019,6 +1061,25 @@ who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
 delta = "1.9.0 -> 1.9.1"
 notes = "Reviewed complete published package diff: no new dependencies, no build scripts, no host filesystem, network or process access. Three fixes, all narrowing rather than widening behaviour. Zeroizing's derived Debug is replaced with an opaque impl, so a wrapped secret no longer renders its contents through '{:?}'. The Vec impl no longer zeroizes initialized elements twice. The optimization_barrier fallback read volatile memory as u8 that could be uninitialized; it now reads MaybeUninit<u8> through a cast, removing the UB, and the internal use of that barrier is dropped. Remaining changes are the aarch64/x86 barrier modules following the same cast, a lint allowance, and the version stamp. Existing unsafe is refactored in place; no new unsafe blocks."
+
+[[audits.zeroize]]
+who = "Bashkit maintenance review"
+criteria = "safe-to-deploy"
+delta = "1.9.1 -> 1.9.2"
+importable = false
+notes = """
+Reviewed the complete published package diff: a new src/bulk.rs (114 lines), changes to src/barrier.rs and src/lib.rs, plus tests and a new benches directory. No new dependency names, no build script, no filesystem, network or process access, and unsafe in src/ moves 21 -> 22 occurrences.
+
+This changes how the crate keeps a zeroing write from being optimized away, so that is the part worth recording. The asm barrier is not new -- barrier.rs already used core::arch::asm! in 1.9.1, and the asm occurrence count is 2 in both versions. What is new is that per-element volatile writes are no longer the only bulk path: on the nine architectures where asm! is stable (aarch64, arm, arm64ec, loongarch64, riscv32, riscv64, s390x, x86, x86_64) and not under miri, zeroize_byte_ptr now does a single core::ptr::write_bytes and then calls optimization_barrier over the written range, and fill_slice does slice::fill followed by one barrier. The barrier is an empty asm block taking the address in a register with options(readonly, preserves_flags, nostack); because the block is not pure and the pointer is an input, LLVM must treat the pointee as observed, so the preceding memset cannot be dropped. readonly is correct here: the barrier only needs to read. Everywhere else, including wasm32, which is the target that matters for the wasm builds in this tree, the portable path is unchanged in kind -- volatile writes -- but now chunked, dispatching by element size into 16-byte groups with the tail written separately through the same volatile_write primitive.
+
+The other fallback change is the one the CHANGELOG lists: optimization_barrier's non-asm arm drops the hand-rolled custom_black_box that did a read_volatile into MaybeUninit<u8> and calls core::hint::black_box(val) instead. On a reference that still forces the pointee to count as observed, and it removes the raw read.
+
+Safety of the new unsafe reads correctly. zeroize_byte_ptr documents that the caller must supply exclusive access to len writable bytes in one allocation with no wrapping and size <= isize::MAX; on the asm path write_bytes initializes every byte before slice::from_raw_parts is used to hand the range to the barrier, and on the portable path the range is viewed as MaybeUninit<u8>, which tolerates uninitialized bytes and has byte alignment -- the right choice, since this is also the path that erases padding. as_chunks_mut is a vendored copy of core's Rust 1.88 implementation for MSRV, kept verbatim with its own safety comments: split_at_mut_unchecked at len / N * N is in bounds, and reinterpreting that prefix as [T; N] is sound because an array has its element's alignment. Two overflow guards disappear but are not needed: the Vec/slice impl replaces len.checked_mul(size_of::<Z>()) plus an isize::try_from assert with size_of_val(self), which cannot overflow for a slice that exists. A zero-sized early return is added to zeroize_flat_type and fill_slice.
+
+The crate also gains a public zeroize_bytes(&mut [u8]) wrapper over the same primitive. No Zeroize impl changes its contract.
+
+Source safety review of the delta, not a formal proof that the barrier is sufficient on every supported target.
+"""
 
 [[audits.zerovec]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"

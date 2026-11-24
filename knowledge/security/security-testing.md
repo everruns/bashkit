@@ -35,6 +35,20 @@ work-budget failure and reservation refunds. `script_plan_fuzz` compares bounded
 native arithmetic/branch loops with the AST executor; structured proptest cases
 also compare with real Bash. See [Execution Plans](../foundations/script-execution-plan.md).
 
+## Conditional regex search reuse
+
+`builtins::search_common::tests` compares cached search captures with the string
+`regex` API, including UTF-8 boundaries, optional groups, invalid patterns,
+pattern switches and eviction/recompilation. A bounded nullable pattern checks
+that search scratch over 64 KiB is released without discarding its compiled
+program. `conditional-regex-reuse.test.sh` compares ordinary captures, nonmatches,
+UTF-8, `nocasematch` and invalid statuses with real Bash. The discovered
+`conditional_regex_fuzz` target compares cold, repeated and switched searches
+through `Bash::exec`, with at most 512 bytes of quoted pattern/haystack data;
+nightly fuzzing covers both interpreter and execution-plan configurations.
+See [Architecture](../foundations/architecture.md#conditional-regex-searches)
+and TM-DOS-023 in the [Threat Model](threat-model.md).
+
 ## Available Fail Points
 
 ### Resource Limits (`limits.rs`)

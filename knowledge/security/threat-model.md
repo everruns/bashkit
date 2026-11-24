@@ -257,7 +257,7 @@ on default 2 MiB test threads (TM-DOS-044).
 
 | ID | Threat | Attack Vector | Mitigation | Status |
 |----|--------|--------------|------------|--------|
-| TM-DOS-023 | Long computation | Complex awk/sed regex, including repeated evaluation of dynamic awk and `[[ =~ ]]` operands | Linear-time regex engine; runtime regex compilation cached per evaluator (64 entries / 1 MB retained pattern text, including invalid patterns); timeout (30s) | **MITIGATED** |
+| TM-DOS-023 | Long computation | Complex awk/sed regex, including repeated evaluation of dynamic awk and `[[ =~ ]]` operands | Linear-time regex engine; runtime regex compilation cached per evaluator (64 entries / 1 MB retained pattern text, including invalid patterns); conditional searches retain one scratch cache up to 64 KiB, replaced on pattern changes and cleared on compilation misses/execution reset; existing 1 MB engine limits and timeout (30s) | **MITIGATED** |
 | TM-DOS-024 | Parser hang | Malformed input | `parser_timeout` (5s) + `max_parser_operations` | **MITIGATED** |
 | TM-DOS-025 | Regex backtrack | `grep "a](*b)*c" file`; `grep -P '(a+)+$' file` | Default `regex` engine is linear-time; `grep -P`, grep BRE/ERE back-references (`\(a\)\1`) and `sed` fancy-regex paths capped by `FANCY_BACKTRACK_LIMIT` (1M steps), exceeding it yields "no match", not a hang | **MITIGATED** |
 | TM-DOS-027 | Builtin parser recursion | Deeply nested awk/jq expressions, including unary operator chains after an awk `$` field operator | awk: every recursive grouping, statement, unary expression, and field operand shares `AWK_MAX_PARSER_DEPTH` (100), while operator chains share a 1,000-node tree cap (`builtins/awk/parser.rs`), so parsing and evaluator recursion are bounded; jq: `MAX_JQ_JSON_DEPTH` (100). Regression: `awk_field_depth_bounded` supervises inline and VFS `awk -f` routes with CPU, stack, output, and wall limits, plus an address-space limit where supported | **MITIGATED** |
@@ -2370,7 +2370,7 @@ panics on multi-byte Unicode because it conflates character positions with byte 
 
 | ID | Threat | Attack Vector | Mitigation | Status |
 |----|--------|--------------|------------|--------|
-| TM-UNI-001 | Byte-boundary panic in awk | `awk '{print}' <<< "─ comment"`, multi-byte char causes `self.input[self.pos..]` panic | `catch_unwind` (TM-INT-001) catches the panic; root fix requires char-boundary-safe indexing | **PARTIAL** |
+| TM-UNI-001 | Byte-boundary panic in awk | `awk '{print}' <<< "─ comment"`, multi-byte char causes `self.input[self.pos..]` panic; also `awk '-¸'`, where the short-option split used byte index 2 | `catch_unwind` (TM-INT-001) catches the panic. The program parser is char-based and seeded in `unicode_security_tests::byte_boundary_safety`; the option parser now splits one whole character past the dash (`char_indices().nth(2)`) and is seeded in `awk_fuzz_scaffold_tests` (`awk_fuzz` crash `a10f82c7`) | **PARTIAL** |
 | TM-UNI-002 | Byte-boundary panic in sed | `sed 's/─/x/' file`, similar byte-offset slicing | `catch_unwind` catches; needs audit of `&s[start..i]` patterns | **PARTIAL** |
 | TM-UNI-015 | Byte-boundary panic in expr | `expr substr "café" 4 1`, char position used as byte index in string slice | `catch_unwind` catches; `.len()` returns bytes but used as char count | **PARTIAL** |
 | TM-UNI-016 | Byte-boundary panic in printf | `printf "%.1s" "é"`, precision truncation slices mid-character | `catch_unwind` catches; `&s[..prec]` without boundary check | **PARTIAL** |
