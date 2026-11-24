@@ -297,6 +297,43 @@ fn bench_startup(c: &mut Criterion) {
     g.finish();
 }
 
+fn bench_conditional_regex(c: &mut Criterion) {
+    let rt = Runtime::new().unwrap();
+    let mut group = c.benchmark_group("conditional_regex");
+    for (name, script) in [
+        (
+            "capture_1k",
+            r#"for ((i=0;i<1000;i++)); do
+reply="{\"id\":$i,\"ok\":true}"
+[[ $reply =~ \"id\":([0-9]+) ]] || exit 3
+((BASH_REMATCH[1] == i)) || exit 4
+done
+printf 'done\n'"#,
+        ),
+        (
+            "nonmatch_1k",
+            r#"for ((i=0;i<1000;i++)); do
+if [[ other =~ \"id\":([0-9]+) ]]; then exit 3; fi
+done
+printf 'done\n'"#,
+        ),
+    ] {
+        group.bench_function(name, |b| {
+            b.iter(|| {
+                rt.block_on(async {
+                    let mut bash = Bash::new();
+                    let result = bash.exec(script).await.expect("exec failed");
+                    assert_eq!(result.exit_code, 0, "{}", result.stderr);
+                    assert_eq!(result.stdout, "done\n");
+                    assert!(result.stderr.is_empty());
+                    std::hint::black_box(result);
+                });
+            });
+        });
+    }
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_startup,
@@ -308,5 +345,6 @@ criterion_group!(
     bench_pipelines,
     bench_functions,
     bench_param_exp,
+    bench_conditional_regex,
 );
 criterion_main!(benches);

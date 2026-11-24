@@ -64,6 +64,26 @@ state.
   immediately before execution. A pipe or redirect inside the script
   still wins for the command it applies to.
 
+### Conditional regex searches
+
+`[[ value =~ pattern ]]` caches immutable compiled programs per execution,
+including rejected patterns, with the existing 64-entry and 1 MB pattern-text
+bounds. Cache storage is boxed and allocated only on first use, keeping it out
+of the interpreter's inline execution frames. Searches borrow these programs
+instead of cloning a `regex::Regex`,
+whose clone starts with an empty search pool. One explicit `regex-automata`
+scratch cache preserves lazy-DFA state for consecutive uses of the same pattern.
+It is created only when searching, replaced before another pattern's search,
+and cleared before a compilation miss or the next execution. No process-global
+or thread-local cache is added. Only scratch reporting at most 64 KiB of engine
+heap is retained between searches, plus fixed cache metadata; larger searches
+release it after use. Compilation and
+transient search budgets retain the existing 1 MB engine limits.
+
+Capture spans index the current UTF-8 haystack and are copied into `BASH_REMATCH`;
+scratch never retains captured shell values. Compatibility and cache-lifecycle
+coverage are described in [Security Testing](../security/security-testing.md).
+
 ### Byte-native streams
 
 `StreamData` is the canonical stdin/stdout/stderr transport value. Its byte

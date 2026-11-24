@@ -6213,7 +6213,11 @@ impl Interpreter {
                     // Set BASH_REMATCH array
                     let mut rematch = HashMap::new();
                     for (i, m) in captures.iter().enumerate() {
-                        rematch.insert(i, m.map(|m| m.as_str().to_string()).unwrap_or_default());
+                        rematch.insert(
+                            i,
+                            m.map(|m| string[m.start..m.end].to_string())
+                                .unwrap_or_default(),
+                        );
                     }
                     self.arrays_mut()
                         .insert("BASH_REMATCH".to_string(), rematch);

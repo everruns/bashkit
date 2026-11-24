@@ -1,5 +1,9 @@
 # Bashkit Knowledge Update Log
 
+## 2026-11-23
+
+* **Conditional regex search reuse**: compiled `[[ =~ ]]` programs now lend one execution-local search cache instead of cloning an empty engine pool for each match. Retained scratch is capped at 64 KiB and released on pattern changes, compilation misses and execution reset; program/pattern bounds and string matching semantics remain unchanged. See [Architecture](foundations/architecture.md#conditional-regex-searches), [Security Testing](security/security-testing.md#conditional-regex-search-reuse), and TM-DOS-023 in the [Threat Model](security/threat-model.md).
+
 ## 2026-11-21
 
 * **Host shell compatibility**: [Virtual Filesystem](foundations/vfs.md) records ownership metadata and accurate `-O`/`-G` comparisons against sandbox ID 1000; absent owners retain existing defaults. [Parser](foundations/parser.md) records `[()` function syntax. [Browser Package](runtimes/browser-package.md) records structured custom-builtin results so nonzero statuses reach shell control flow without thrown errors. WASM integration regressions exercise the public host API, and the function spec compares bracket overrides against Bash.
