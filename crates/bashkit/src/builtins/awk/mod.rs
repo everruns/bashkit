@@ -205,8 +205,12 @@ fn parse_opts(args: &[String]) -> std::result::Result<Opts, Box<ExecResult>> {
                 None => (arg.to_string(), None),
             }
         } else {
-            let rest = &arg[2..];
-            (arg[..2].to_string(), (!rest.is_empty()).then_some(rest))
+            // Split after the leading `-` plus one whole character. Byte index 2
+            // is not a char boundary when that character is multi-byte (`-\u{b8}`),
+            // so slicing there panics on otherwise valid UTF-8 operands.
+            let split = arg.char_indices().nth(2).map_or(arg.len(), |(idx, _)| idx);
+            let rest = &arg[split..];
+            (arg[..split].to_string(), (!rest.is_empty()).then_some(rest))
         };
         match name.as_str() {
             "-F" | "--field-separator" => {
