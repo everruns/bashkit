@@ -180,7 +180,12 @@ Arc<TokioMutex<Option<SqliteEngine>>>>>>` keyed by `(SqliteBackend, PathBuf)`.
 First call against a file-backed path opens the engine and caches it; later
 calls lock the per-key `TokioMutex` and reuse the connection. Concurrent
 calls to the same DB serialise through that mutex; different DBs/backends run
-independently.
+independently. The cache has eight slots shared across both backends.
+Opening a new path at capacity reuses an idle slot with an empty handle or
+an autocommit connection. A handle held by a running or waiting invocation
+and a connection with an open transaction keep their slots. If all slots
+are occupied this way, a new path returns an error while existing paths
+remain usable.
 
 Consequences:
 
@@ -193,7 +198,9 @@ Consequences:
   Tested by `memory_target_does_not_persist_across_exec_calls`.
 - **Per-call flush is preserved.** After every successful or failing call,
   the builtin snapshots/flushes to the VFS, so snapshots between exec calls
-  always pick up the latest committed state. Tested by
+  can capture committed state after successful persistence. If persistence
+  fails, the invocation reports an error and discards the connection.
+  The next invocation reopens from the VFS. Tested by
   `snapshot_and_restore_round_trips_sqlite_state`.
 - **Lifecycle.** Cache drops with the owning `Bash`; each
   `Bash::builder().sqlite()` produces its own cache, so parallel `Bash`

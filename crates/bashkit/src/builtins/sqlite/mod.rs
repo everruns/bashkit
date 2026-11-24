@@ -71,6 +71,8 @@ const DEFAULT_MAX_RESULT_BYTES: usize = 8 * 1024 * 1024; // 8 MiB
 const DEFAULT_MAX_OUTPUT_BYTES: usize = 32 * 1024 * 1024; // 32 MiB
 /// Default cap on the size of a single database file when loaded from VFS.
 const DEFAULT_MAX_DB_BYTES: usize = 256 * 1024 * 1024; // 256 MiB
+/// THREAT[TM-DOS-149]: Bound resident file-backed engines across both backends.
+const MAX_CACHED_ENGINES: usize = 8;
 /// Default per-script wall-clock cap. Each individual statement is checked
 /// against the *remaining* budget — once spent, further `step()` calls are
 /// interrupted via turso's cooperative interrupt.
@@ -321,15 +323,39 @@ impl Sqlite {
     /// `std::sync::Mutex` is held only briefly for HashMap access; the
     /// inner `tokio::sync::Mutex` is what serialises concurrent `sqlite`
     /// calls against the same database.
-    fn cache_handle(&self, key: &CacheKey) -> EngineHandle {
+    fn cache_handle(&self, key: &CacheKey) -> Option<EngineHandle> {
         let mut cache = self
             .engine_cache
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        cache
-            .entry(key.clone())
-            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(None)))
-            .clone()
+        if let Some(handle) = cache.get(key) {
+            return Some(handle.clone());
+        }
+
+        let evicted = if cache.len() >= MAX_CACHED_ENGINES {
+            // A caller holding a clone may be executing or waiting to execute.
+            // Keep its handle, and preserve transactions that span invocations.
+            let idle_key = cache.iter().find_map(|(key, handle)| {
+                if Arc::strong_count(handle) != 1 {
+                    return None;
+                }
+                let engine = handle.try_lock().ok()?;
+                engine
+                    .as_ref()
+                    .is_none_or(SqliteEngine::is_autocommit)
+                    .then_some(key.clone())
+            })?;
+            cache.remove(&idle_key)
+        } else {
+            None
+        };
+
+        let handle = Arc::new(tokio::sync::Mutex::new(None));
+        cache.insert(key.clone(), handle.clone());
+        drop(cache);
+        // Closing an engine may checkpoint, so drop it outside the cache lock.
+        drop(evicted);
+        Some(handle)
     }
 }
 
@@ -457,7 +483,9 @@ impl Builtin for Sqlite {
             }
             DbTarget::File { path } => {
                 let key: CacheKey = (backend, path.clone());
-                let handle = self.cache_handle(&key);
+                let Some(handle) = self.cache_handle(&key) else {
+                    return Ok(ExecResult::err("sqlite: too many active databases\n", 1));
+                };
                 let mut guard = handle.lock().await;
 
                 // Security: if the VFS file was removed/replaced between calls,
@@ -481,7 +509,8 @@ impl Builtin for Sqlite {
                         }
                     }
                 }
-                if reopen {
+                let engine = if reopen {
+                    *guard = None;
                     match open_file_engine(
                         backend,
                         path,
@@ -491,16 +520,19 @@ impl Builtin for Sqlite {
                     )
                     .await
                     {
-                        Ok(e) => *guard = Some(e),
+                        Ok(engine) => engine,
                         Err(msg) => {
                             return Ok(ExecResult::err(format!("sqlite: {}\n", sanitize(&msg)), 1));
                         }
                     }
-                }
-                let engine = guard.as_ref().expect("engine populated above");
+                } else {
+                    guard.take().expect("cached engine does not need reopening")
+                };
+                // Return the engine to the cache only after persistence succeeds.
+                // If the invocation is cancelled during an await, it drops the engine.
 
                 let outcome = run_statements(
-                    engine,
+                    &engine,
                     stmts,
                     &ctx.fs,
                     ctx.cwd,
@@ -517,41 +549,33 @@ impl Builtin for Sqlite {
                     exit_code = 1;
                 }
 
-                // Persist to the VFS so snapshots taken between exec()
-                // calls always pick up the latest committed state. We
-                // keep the engine in the cache unless the snapshot exceeds
-                // the configured cap; an oversized cached image would keep
-                // memory pressure alive across later shell commands.
-                let mut drop_cached_engine = false;
-                match backend {
-                    SqliteBackend::Memory => {
-                        if let Some(bytes) = engine.snapshot_bytes() {
-                            if bytes.len() > self.limits.max_db_bytes {
-                                stderr.push_str(&format!(
-                                    "sqlite: database file too large after execution ({} bytes; limit {})\n",
-                                    bytes.len(),
-                                    self.limits.max_db_bytes
-                                ));
-                                exit_code = exit_code.max(1);
-                                drop_cached_engine = true;
-                            } else if let Err(e) = ctx.fs.write_file(path, &bytes).await {
-                                stderr.push_str(&format!(
-                                    "sqlite: persist failed: {}: {e}\n",
-                                    path.display()
-                                ));
-                                exit_code = exit_code.max(1);
-                            }
-                        }
+                // Persist committed state before allowing the engine to be reused.
+                let persisted = match backend {
+                    SqliteBackend::Memory => match engine.snapshot_bytes() {
+                        Some(bytes) if bytes.len() <= self.limits.max_db_bytes => ctx
+                            .fs
+                            .write_file(path, &bytes)
+                            .await
+                            .map_err(|e| format!("persist failed: {}: {e}", path.display())),
+                        Some(bytes) => Err(format!(
+                            "database file too large after execution ({} bytes; limit {})",
+                            bytes.len(),
+                            self.limits.max_db_bytes
+                        )),
+                        None => Err("could not read database snapshot".into()),
+                    },
+                    SqliteBackend::Vfs => engine
+                        .flush_dirty()
+                        .await
+                        .map(|_| ())
+                        .map_err(|e| format!("flush failed: {e}")),
+                };
+                match persisted {
+                    Ok(()) => *guard = Some(engine),
+                    Err(error) => {
+                        stderr.push_str(&format!("sqlite: {}\n", sanitize(&error)));
+                        exit_code = 1;
                     }
-                    SqliteBackend::Vfs => {
-                        if let Err(e) = engine.flush_dirty().await {
-                            stderr.push_str(&format!("sqlite: flush failed: {e}\n"));
-                            exit_code = exit_code.max(1);
-                        }
-                    }
-                }
-                if drop_cached_engine {
-                    *guard = None;
                 }
             }
         }

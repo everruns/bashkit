@@ -130,6 +130,13 @@ schedulers).
 
 Tune per workload via `SqliteLimits::default().max_*(...)`.
 
+Each Bash session caches up to eight file-backed connections across both
+backends. At capacity, opening another database may close an idle connection
+and reset its connection-local settings and temporary tables. Connections
+with open transactions or pending calls keep their slots. If all eight
+slots are in use, opening a new database returns an error. A persistence
+error closes the affected connection, and the next call reopens from the VFS.
+
 ## Security
 
 See `knowledge/runtimes/sqlite-builtin.md` § "Trust Model & Threats" for the full
