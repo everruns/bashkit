@@ -42,6 +42,9 @@ pub(crate) const AWK_MAX_FIELD_INDEX: usize = 100_000;
 pub(crate) const AWK_VARIABLE_OVERHEAD_BYTES: usize = 48;
 /// Max compiled runtime regexes retained by one evaluator.
 pub(crate) const RUNTIME_REGEX_CACHE_ENTRIES: usize = 64;
+/// Max search-scratch heap retained between conditional regex queries.
+/// Larger searches use the normal engine limits, then release their scratch.
+pub(crate) const RUNTIME_REGEX_RETAINED_SCRATCH_BYTES: usize = 64 * 1024;
 
 /// curl: max number of HTTP redirects to follow.
 #[cfg(feature = "http_client")]

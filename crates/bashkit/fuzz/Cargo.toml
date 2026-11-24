@@ -91,6 +91,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "conditional_regex_fuzz"
+path = "fuzz_targets/conditional_regex_fuzz.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "jq_fuzz"
 path = "fuzz_targets/jq_fuzz.rs"
 test = false
