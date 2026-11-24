@@ -1,5 +1,9 @@
 # Bashkit Knowledge Update Log
 
+## 2026-11-24
+
+* **Lazy filesystem (Node bindings)**: [Virtual Filesystem](foundations/vfs.md) documents `JsLazyBackend`, its bounded caches (file content, listings, negatives), the sync-safety rules (JS-thread fail-fast, in-execution busy-wait, helper-thread cache-only), and the C ABI export guard. [Threat Model](security/threat-model.md) adds TM-DOS-148 (script-driven host fetches through a lazy filesystem) and TM-INF-036 (lazy callback errors leaking host details).
+
 ## 2026-11-21
 
 * **Host shell compatibility**: [Virtual Filesystem](foundations/vfs.md) records ownership metadata and accurate `-O`/`-G` comparisons against sandbox ID 1000; absent owners retain existing defaults. [Parser](foundations/parser.md) records `[()` function syntax. [Browser Package](runtimes/browser-package.md) records structured custom-builtin results so nonzero statuses reach shell control flow without thrown errors. WASM integration regressions exercise the public host API, and the function spec compares bracket overrides against Bash.
