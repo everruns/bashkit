@@ -609,13 +609,7 @@ impl HttpClient {
         // Check allowlist + private IP policy BEFORE making any network request.
         self.enforce_url_security(url).await?;
 
-        // THREAT[TM-NET-031]: validate caller headers before filtering and
-        // before hooks can add credentials.
-        for (name, value) in headers {
-            validate_header(name, value)?;
-        }
-
-        // Drop caller-set Host/framing/proxy headers
+        // THREAT[TM-NET-031]: drop caller-set Host/framing/proxy headers
         // before hooks run, so injected credentials only ever travel to the
         // allowlisted host the URL names. Hooks (host-trusted) may still add
         // headers.
@@ -625,6 +619,11 @@ impl HttpClient {
             .cloned()
             .collect();
         let headers: &[(String, String)] = &caller_headers;
+
+        // Validate the remaining caller headers before hooks can add credentials.
+        for (name, value) in headers {
+            validate_header(name, value)?;
+        }
 
         // Fire before_http hooks — may modify URL/headers or cancel the request
         let (url, headers) = if !self.before_http.is_empty() {
