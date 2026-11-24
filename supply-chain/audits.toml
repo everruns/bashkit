@@ -78,6 +78,13 @@ criteria = "safe-to-deploy"
 delta = "4.6.6 -> 4.6.7"
 notes = "Reviewed derive Command-to-Self renames, defer builder plumbing, and docs; CLI parsing stays bounded with no new unsafe, fs, net, or ambient access."
 
+[[audits.clap]]
+who = "Bashkit maintenance review"
+criteria = "safe-to-deploy"
+delta = "4.6.7 -> 4.6.9"
+importable = false
+notes = "Reviewed the complete published package diff: documentation only. Every source change is Rustdoc text in src/lib.rs, src/_tutorial.rs, src/_derive/_tutorial.rs and src/_faq.rs, collapsing intra-doc links of the form [`Command`][crate::Command] to [`Command`] and moving github.com URLs from the master branch to main. No executable code, no new dependency names (the manifest only raises floors on crates already present), no build script, unsafe unchanged at 1 occurrence, and no new filesystem, network or process access. CLI parsing is untouched."
+
 [[audits.clap_builder]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
@@ -95,6 +102,13 @@ who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
 delta = "4.6.4 -> 4.6.7"
 notes = "Reviewed defer attribute codegen (Defer magic attr, bool-lit helper, initial/final method ordering); proc-macro output only, no new unsafe or ambient access."
+
+[[audits.clap_derive]]
+who = "Bashkit maintenance review"
+criteria = "safe-to-deploy"
+delta = "4.6.7 -> 4.6.9"
+importable = false
+notes = "Reviewed the complete published package diff: proc-macro output shape only, in src/derives/args.rs and src/derives/subcommand.rs, plus a logo URL in src/lib.rs. The generated augment_args/augment_args_for_update/augment_subcommands bodies stop rebinding with `let #app_var = ...` at each step and instead take the Command by `mut` binding and reassign it, with the same call sequence and the same order of builder methods; an `Args::group_id()` expect whose value was discarded is now bound to `let _`, and clippy::self_assignment joins the allow list the generated code already carries, because the new shape can produce `x = x` for an empty augmentation. No semantic change to the parser the macro emits, no new dependency names, unsafe unchanged at 1 occurrence, and no new ambient access."
 
 [[audits.clipboard-win]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
@@ -1047,6 +1061,25 @@ who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
 delta = "1.9.0 -> 1.9.1"
 notes = "Reviewed complete published package diff: no new dependencies, no build scripts, no host filesystem, network or process access. Three fixes, all narrowing rather than widening behaviour. Zeroizing's derived Debug is replaced with an opaque impl, so a wrapped secret no longer renders its contents through '{:?}'. The Vec impl no longer zeroizes initialized elements twice. The optimization_barrier fallback read volatile memory as u8 that could be uninitialized; it now reads MaybeUninit<u8> through a cast, removing the UB, and the internal use of that barrier is dropped. Remaining changes are the aarch64/x86 barrier modules following the same cast, a lint allowance, and the version stamp. Existing unsafe is refactored in place; no new unsafe blocks."
+
+[[audits.zeroize]]
+who = "Bashkit maintenance review"
+criteria = "safe-to-deploy"
+delta = "1.9.1 -> 1.9.2"
+importable = false
+notes = """
+Reviewed the complete published package diff: a new src/bulk.rs (114 lines), changes to src/barrier.rs and src/lib.rs, plus tests and a new benches directory. No new dependency names, no build script, no filesystem, network or process access, and unsafe in src/ moves 21 -> 22 occurrences.
+
+This changes how the crate keeps a zeroing write from being optimized away, so that is the part worth recording. The asm barrier is not new -- barrier.rs already used core::arch::asm! in 1.9.1, and the asm occurrence count is 2 in both versions. What is new is that per-element volatile writes are no longer the only bulk path: on the nine architectures where asm! is stable (aarch64, arm, arm64ec, loongarch64, riscv32, riscv64, s390x, x86, x86_64) and not under miri, zeroize_byte_ptr now does a single core::ptr::write_bytes and then calls optimization_barrier over the written range, and fill_slice does slice::fill followed by one barrier. The barrier is an empty asm block taking the address in a register with options(readonly, preserves_flags, nostack); because the block is not pure and the pointer is an input, LLVM must treat the pointee as observed, so the preceding memset cannot be dropped. readonly is correct here: the barrier only needs to read. Everywhere else, including wasm32, which is the target that matters for the wasm builds in this tree, the portable path is unchanged in kind -- volatile writes -- but now chunked, dispatching by element size into 16-byte groups with the tail written separately through the same volatile_write primitive.
+
+The other fallback change is the one the CHANGELOG lists: optimization_barrier's non-asm arm drops the hand-rolled custom_black_box that did a read_volatile into MaybeUninit<u8> and calls core::hint::black_box(val) instead. On a reference that still forces the pointee to count as observed, and it removes the raw read.
+
+Safety of the new unsafe reads correctly. zeroize_byte_ptr documents that the caller must supply exclusive access to len writable bytes in one allocation with no wrapping and size <= isize::MAX; on the asm path write_bytes initializes every byte before slice::from_raw_parts is used to hand the range to the barrier, and on the portable path the range is viewed as MaybeUninit<u8>, which tolerates uninitialized bytes and has byte alignment -- the right choice, since this is also the path that erases padding. as_chunks_mut is a vendored copy of core's Rust 1.88 implementation for MSRV, kept verbatim with its own safety comments: split_at_mut_unchecked at len / N * N is in bounds, and reinterpreting that prefix as [T; N] is sound because an array has its element's alignment. Two overflow guards disappear but are not needed: the Vec/slice impl replaces len.checked_mul(size_of::<Z>()) plus an isize::try_from assert with size_of_val(self), which cannot overflow for a slice that exists. A zero-sized early return is added to zeroize_flat_type and fill_slice.
+
+The crate also gains a public zeroize_bytes(&mut [u8]) wrapper over the same primitive. No Zeroize impl changes its contract.
+
+Source safety review of the delta, not a formal proof that the barrier is sufficient on every supported target.
+"""
 
 [[audits.zerovec]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
