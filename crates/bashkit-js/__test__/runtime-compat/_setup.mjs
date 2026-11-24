@@ -6,6 +6,7 @@ export {
   Bash,
   BashTool,
   BashError,
+  FileSystem,
   getVersion,
   snapshotAncestry,
   snapshotCapabilities,

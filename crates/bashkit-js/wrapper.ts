@@ -81,6 +81,9 @@ const nativeRealFileSystem: (
 ) => any = native.__realFileSystem;
 const nativeImportFileSystem: (external: unknown) => any =
   native.__importFileSystem;
+const nativeLazyFileSystem: (
+  dispatcher: (request: string) => Promise<string>,
+) => any = native.__lazyFileSystem;
 const nativeFileSystemToExternal: (fs: any) => unknown =
   native.__fileSystemToExternal;
 const nativeFileSystemReadFile: (fs: any, path: string) => string =
@@ -662,6 +665,170 @@ export interface FileSystemRealOptions {
   allowedMountPaths: string[];
 }
 
+/** One entry returned by {@link LazyFileSystemSource.readDir}. */
+export interface LazyDirEntry {
+  /** Entry name: a single path component (no `/`, not `.` or `..`). */
+  name: string;
+  type: "file" | "dir";
+  /** File size in bytes, reported by `stat`/`ls -l` until the file is read. */
+  size?: number;
+  /** Permission bits, e.g. `0o644`. */
+  mode?: number;
+  /** Modification time in milliseconds since the Unix epoch. */
+  modified?: number;
+}
+
+type MaybePromise<T> = T | Promise<T>;
+
+/**
+ * Host callbacks behind {@link FileSystem.lazy}. Paths are absolute within the
+ * lazy filesystem (a mount at `/repo` sees `/repo/src` as `/src`).
+ * Return `null`/`undefined` for a path that does not exist.
+ */
+export interface LazyFileSystemSource {
+  /** List one directory. Normally called once per directory (cached). */
+  readDir(path: string): MaybePromise<LazyDirEntry[] | null | undefined>;
+  /** Return one file's content. Normally called once per file (cached). */
+  readFile(path: string): MaybePromise<string | Uint8Array | null | undefined>;
+}
+
+/**
+ * Native handles of `FileSystem.lazy()` instances. Module-private so lazy
+ * handles mount directly (see `mountLazyFileSystem`) without exposing a
+ * public accessor; other filesystems keep the `toExternal()` path.
+ */
+const lazyFileSystemNatives = new WeakMap<object, unknown>();
+
+function bytesToBase64(bytes: Uint8Array): string {
+  const NodeBuffer = (
+    globalThis as {
+      Buffer?: {
+        from(b: ArrayBufferLike, o: number, l: number): { toString(e: string): string };
+      };
+    }
+  ).Buffer;
+  if (NodeBuffer) {
+    return NodeBuffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString(
+      "base64",
+    );
+  }
+  let binary = "";
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary);
+}
+
+/**
+ * THREAT[TM-INF-036]: callback errors reach script stderr, so expose only a
+ * bounded message with host paths and IPv4 addresses stripped, never a
+ * stack. Hostnames and other text pass through: hosts must not put secrets
+ * in error messages.
+ */
+function sanitizeLazyFsError(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  return (
+    raw
+      .replace(/file:\/\/[^\s]*/g, "<path>")
+      .replace(/(?<!\w)\/[^\s]*/g, "<path>")
+      .replace(/[A-Za-z]:[\\/][^\s]*/g, "<path>")
+      .replace(/\b\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?\b/g, "<addr>")
+      .slice(0, 256) || "lazy filesystem callback failed"
+  );
+}
+
+/** Replace lone surrogates so JSON transport cannot fail on the native side. */
+function toWellFormedText(text: string): string {
+  const s = text as string & { toWellFormed?: () => string };
+  if (typeof s.toWellFormed === "function") return s.toWellFormed();
+  return new TextDecoder().decode(new TextEncoder().encode(text));
+}
+
+/** UTF-8 size of `text` without encoding it (a lone surrogate counts as U+FFFD). */
+function utf8ByteLength(text: string): number {
+  const NodeBuffer = (
+    globalThis as { Buffer?: { byteLength(s: string, e: string): number } }
+  ).Buffer;
+  if (NodeBuffer) return NodeBuffer.byteLength(text, "utf8");
+  let bytes = 0;
+  for (let i = 0; i < text.length; i++) {
+    const code = text.codePointAt(i)!;
+    if (code > 0xffff) i++;
+    bytes += code < 0x80 ? 1 : code < 0x800 ? 2 : code > 0xffff ? 4 : 3;
+  }
+  return bytes;
+}
+
+function numberOrUndefined(value: unknown): number | undefined {
+  return typeof value === "number" ? value : undefined;
+}
+
+/** Longer than any valid entry name, so a cut name is still rejected natively. */
+const LAZY_MAX_NAME_UNITS = 1024;
+
+/**
+ * THREAT[TM-DOS-148]: sizes are checked before content is escaped, base64
+ * encoded or copied to the native side, because a listing may omit or
+ * understate `size`. Adapt {@link LazyFileSystemSource} to the native JSON dispatcher ABI.
+ */
+function makeLazyFsDispatcher(
+  source: LazyFileSystemSource,
+): (request: string) => Promise<string> {
+  return async (request: string) => {
+    try {
+      const { op, path, limit } = JSON.parse(request) as {
+        op: string;
+        path: string;
+        limit: number;
+      };
+      if (op === "readDir") {
+        const entries = await source.readDir(path);
+        if (entries == null) return JSON.stringify({ missing: true });
+        if (!Array.isArray(entries)) {
+          throw new TypeError("readDir must return an array");
+        }
+        if (entries.length > limit) {
+          throw new Error(
+            `lazy filesystem readDir returned more than ${limit} entries`,
+          );
+        }
+        return JSON.stringify({
+          entries: entries.map((e) => ({
+            name:
+              typeof e?.name === "string"
+                ? toWellFormedText(e.name.slice(0, LAZY_MAX_NAME_UNITS))
+                : "",
+            type: typeof e?.type === "string" ? e.type.slice(0, 32) : "",
+            size: numberOrUndefined(e?.size),
+            mode: numberOrUndefined(e?.mode),
+            modified: numberOrUndefined(e?.modified),
+          })),
+        });
+      }
+      if (op === "readFile") {
+        const content = await source.readFile(path);
+        if (content == null) return JSON.stringify({ missing: true });
+        if (typeof content === "string") {
+          const size = utf8ByteLength(content);
+          if (size > limit) return JSON.stringify({ oversize: size });
+          return JSON.stringify({ text: toWellFormedText(content) });
+        }
+        if (content instanceof Uint8Array) {
+          if (content.byteLength > limit) {
+            return JSON.stringify({ oversize: content.byteLength });
+          }
+          return JSON.stringify({ base64: bytesToBase64(content) });
+        }
+        throw new TypeError("readFile must return a string or Uint8Array");
+      }
+      throw new Error("unknown lazy filesystem operation");
+    } catch (error) {
+      return JSON.stringify({ error: sanitizeLazyFsError(error) });
+    }
+  };
+}
+
 export class FileSystem {
   private nativeValue: any;
   private owner?: object;
@@ -697,6 +864,52 @@ export class FileSystem {
         options.allowedMountPaths,
       ),
     );
+  }
+
+  /**
+   * Create a filesystem whose layout and contents are loaded on demand.
+   *
+   * Nothing is fetched up front. A directory is listed (via `readDir`) the
+   * first time a script lists, stats or opens something inside it, and a
+   * file's content is fetched (via `readFile`) the first time it is read.
+   * Results are cached per handle (bounded; oldest entries are evicted), and
+   * concurrent first reads of one path share a single call. The filesystem
+   * is read-only.
+   *
+   * Callbacks run on the JS event loop, so use `execute()` (async).
+   * Synchronous access (`executeSync()`, `bash.readFile()`, `fs.readFile()`)
+   * to a path that is not cached yet fails with an error instead of
+   * deadlocking, as do `ctx.fs` reads in custom builtins. Helper threads
+   * (sqlite `-backend vfs`) only see files a script has already read. Lazy handles cannot be exported with
+   * `toExternal()`.
+   *
+   * @example
+   * ```typescript
+   * const repo = FileSystem.lazy({
+   *   readDir: async (path) => (await s3.list(path)).map((o) => ({
+   *     name: o.name, type: o.isDir ? "dir" : "file", size: o.size,
+   *   })),
+   *   readFile: (path) => s3.getText(path),
+   * });
+   * const bash = new Bash();
+   * bash.mount("/repo", repo);
+   * await bash.execute("grep -rl TODO /repo/src");
+   * ```
+   */
+  static lazy(source: LazyFileSystemSource): FileSystem {
+    if (
+      !source ||
+      typeof source.readDir !== "function" ||
+      typeof source.readFile !== "function"
+    ) {
+      throw new TypeError(
+        "FileSystem.lazy requires readDir and readFile callbacks",
+      );
+    }
+    const native = nativeLazyFileSystem(makeLazyFsDispatcher(source));
+    const fs = FileSystem.fromNative(native);
+    lazyFileSystemNatives.set(fs, native);
+    return fs;
   }
 
   static fromExternal(external: unknown): FileSystem {
@@ -1732,11 +1945,20 @@ export class Bash {
     writableOrReadOnly?: boolean,
   ): void {
     if (isFileSystemLike(vfsPathOrFs)) {
-      this.native.mountFileSystem(
-        hostPathOrVfsPath,
-        vfsPathOrFs.toExternal(),
-        writableOrReadOnly,
-      );
+      const lazyNative = lazyFileSystemNatives.get(vfsPathOrFs as object);
+      if (lazyNative !== undefined) {
+        this.native.mountLazyFileSystem(
+          hostPathOrVfsPath,
+          lazyNative,
+          writableOrReadOnly,
+        );
+      } else {
+        this.native.mountFileSystem(
+          hostPathOrVfsPath,
+          (vfsPathOrFs as { toExternal(): unknown }).toExternal(),
+          writableOrReadOnly,
+        );
+      }
       return;
     }
     this.native.mount(hostPathOrVfsPath, vfsPathOrFs, writableOrReadOnly);
@@ -2287,11 +2509,20 @@ export class BashTool {
     writableOrReadOnly?: boolean,
   ): void {
     if (isFileSystemLike(vfsPathOrFs)) {
-      this.native.mountFileSystem(
-        hostPathOrVfsPath,
-        vfsPathOrFs.toExternal(),
-        writableOrReadOnly,
-      );
+      const lazyNative = lazyFileSystemNatives.get(vfsPathOrFs as object);
+      if (lazyNative !== undefined) {
+        this.native.mountLazyFileSystem(
+          hostPathOrVfsPath,
+          lazyNative,
+          writableOrReadOnly,
+        );
+      } else {
+        this.native.mountFileSystem(
+          hostPathOrVfsPath,
+          (vfsPathOrFs as { toExternal(): unknown }).toExternal(),
+          writableOrReadOnly,
+        );
+      }
       return;
     }
     this.native.mount(hostPathOrVfsPath, vfsPathOrFs, writableOrReadOnly);

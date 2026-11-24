@@ -214,6 +214,76 @@ console.log(bash.executeSync("ls /workspace").stdout);
 bash.unmount("/workspace");
 ```
 
+### Lazy Filesystems
+
+`FileSystem.lazy()` loads a tree on demand from two callbacks, so a large
+or remote tree (an object store, a git host, a database) never has to be
+listed up front. A directory is listed the first time a script lists, stats
+or opens something inside it, and a file is fetched the first time a script
+reads it.
+
+```typescript
+import { Bash, FileSystem } from "@everruns/bashkit";
+
+const repo = FileSystem.lazy({
+  // Return null/undefined for a directory that does not exist.
+  readDir: async (path) =>
+    (await store.list(path)).map((o) => ({
+      name: o.name,
+      type: o.isDir ? "dir" : "file",
+      size: o.size, // optional: shown by stat / ls -l before the file is read
+    })),
+  // Return a string or Uint8Array, or null/undefined if missing.
+  readFile: (path) => store.get(path),
+});
+
+const bash = new Bash();
+bash.mount("/repo", repo);
+await bash.execute("grep -rl TODO /repo/src"); // lists /, /src, then reads matches
+```
+
+- Paths are absolute within the lazy filesystem, so a mount at `/repo`
+  passes `/src` for `/repo/src`.
+- Results are cached per handle and shared by every instance that mounts it.
+  Concurrent first reads of one path share one call, and missing paths are
+  remembered. The cache is bounded by the default filesystem limits (100 MB
+  and 10,000 files of content, and 1,000,000 directory entries) and evicts
+  oldest entries first. There is no invalidation: create a new handle to see
+  changes in the source.
+- The filesystem is read-only. Scripts can only reach paths a parent listing
+  declared, entry names follow the same rules as in-memory files, and files
+  whose declared `size` exceeds the 10 MB file limit fail with
+  `File too large` without being fetched. Content that turns out larger is
+  rejected after `readFile` returns it, so declare `size` when you know it.
+- Callback errors reach the script as a short message with host paths and
+  IPv4 addresses removed; stacks are never exposed. Other text (hostnames,
+  credentials) passes through, so keep secrets out of error messages.
+- Callbacks run on the JS event loop, so use `execute()` (with or without
+  live output); reads there wait for the loop if it is busy. Synchronous
+  access (`executeSync()`, `bash.readFile()`) to a path that is not cached
+  yet fails with an error instead of deadlocking; so do `ctx.fs` reads in
+  custom builtins and command callbacks, which run on the JS thread. Helper
+  threads (sqlite's `-backend vfs`) never call back into JS either: they see
+  only files a script has already read, otherwise sqlite reports an empty
+  database. For sqlite, copy the database out first
+  (`cp /repo/app.db /tmp/ && sqlite3 /tmp/app.db ...`), since sqlite on any
+  read-only mount also fails to flush.
+- `timeoutMs` bounds a pending callback. `cancel()` takes effect once pending
+  callbacks settle. Each pending callback holds one of 10 process-wide
+  callback slots (shared with custom builtins), so a callback that never
+  settles, or ten callbacks that each wait on a nested `execute()` needing
+  another lazy read, stall every callback until `timeoutMs`. A callback that
+  awaits `execute()` on the same instance waits for itself until
+  `timeoutMs`. Give slow callbacks their own timeouts.
+- Lazy handles mount only through `bash.mount()`. `toExternal()` throws on
+  the handle, and on `bash.fs()` and callback `ctx.fs` of an instance that
+  has had a lazy mount (also after it is unmounted). Conversely, an instance
+  whose filesystem was already exported (for example mounted into another
+  instance with `other.mount(path, bash.fs())`) refuses lazy mounts.
+- Use `files: { path: () => content }` for a small, fixed set of paths; it is
+  resolved when the instance is created. Use `FileSystem.lazy()` when the
+  layout itself should be loaded on demand.
+
 ## Error Handling
 
 ```typescript

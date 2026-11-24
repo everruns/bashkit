@@ -13,6 +13,7 @@
 //! work. This prevents CodeQL `rust/access-invalid-pointer` alerts caused by
 //! holding a raw-pointer-derived `&self` across `block_on` or `.await` points.
 
+mod lazy_fs;
 mod runtime_functions;
 mod streaming;
 mod terminal;
@@ -235,6 +236,12 @@ enum FileSystemHandle {
 // receives mutable handle bytes or function pointers.
 pub struct NativeFileSystemState {
     inner: FileSystemHandle,
+    /// A `FileSystem.lazy()` handle: waits on JS promises, so it must never
+    /// cross the blocking C ABI bridge (see `mount_lazy_file_system`).
+    is_lazy: bool,
+    /// Lazy-mount bookkeeping of the owning instance, for `bash.fs()` and
+    /// callback `ctx.fs` handles (see `lazy_fs::LazyMountGuard`).
+    guard: Option<Arc<lazy_fs::LazyMountGuard>>,
 }
 
 impl NativeFileSystemState {
@@ -245,12 +252,37 @@ impl NativeFileSystemState {
     fn from_static(fs: Arc<dyn BashFileSystem>) -> Self {
         Self {
             inner: FileSystemHandle::Static(fs),
+            is_lazy: false,
+            guard: None,
+        }
+    }
+
+    /// A callback's `ctx.fs`, tied to its instance's lazy-mount guard.
+    pub(crate) fn for_context(
+        fs: Arc<dyn BashFileSystem>,
+        guard: Arc<lazy_fs::LazyMountGuard>,
+    ) -> Self {
+        Self {
+            inner: FileSystemHandle::Static(fs),
+            is_lazy: false,
+            guard: Some(guard),
+        }
+    }
+
+    fn lazy(fs: Arc<dyn BashFileSystem>) -> Self {
+        Self {
+            inner: FileSystemHandle::Static(fs),
+            is_lazy: true,
+            guard: None,
         }
     }
 
     fn from_live(state: Arc<SharedState>) -> Self {
+        let guard = Some(state.lazy_guard.clone());
         Self {
             inner: FileSystemHandle::Live(state),
+            is_lazy: false,
+            guard,
         }
     }
 
@@ -386,6 +418,14 @@ impl NativeFileSystemState {
     }
 
     fn to_external(&self, env: Env) -> napi::Result<Unknown<'static>> {
+        if self.is_lazy {
+            return Err(napi::Error::from_reason(
+                "lazy filesystems cannot be exported with toExternal(); mount them with bash.mount() instead",
+            ));
+        }
+        if let Some(guard) = &self.guard {
+            guard.note_export().map_err(napi::Error::from_reason)?;
+        }
         let fs = self.export_fs()?;
         let handle = export_filesystem(fs).map_err(|e| napi::Error::from_reason(e.to_string()))?;
         create_file_system_external(&env, handle)
@@ -579,6 +619,26 @@ pub fn real_file_system(
         writable,
         allowed_mount_paths,
     )?))
+}
+
+/// Create a lazy, read-only filesystem backed by a JS dispatcher.
+///
+/// The dispatcher receives `{"op":"readDir"|"readFile","path":...}` as JSON
+/// and resolves with a JSON response (see `lazy_fs.rs`).
+#[napi(
+    js_name = "__lazyFileSystem",
+    ts_args_type = "dispatcher: (request: string) => Promise<string>"
+)]
+pub fn lazy_file_system(
+    dispatcher: napi::bindgen_prelude::Function<String, napi::bindgen_prelude::Promise<String>>,
+) -> napi::Result<External<NativeFileSystemState>> {
+    let tsfn: lazy_fs::LazyFsTsfn = dispatcher
+        .build_threadsafe_function::<String>()
+        .weak::<true>()
+        .build()?;
+    let lazy: Arc<dyn BashFileSystem> = Arc::new(PosixFs::new(lazy_fs::JsLazyBackend::new(tsfn)));
+    let fs: Arc<dyn BashFileSystem> = Arc::new(ReadOnlyFs::new(lazy));
+    Ok(External::new(NativeFileSystemState::lazy(fs)))
 }
 
 #[napi(js_name = "__importFileSystem")]
@@ -1025,11 +1085,16 @@ async fn execute_rust_bash(
     cancelled: Option<&Arc<AtomicBool>>,
     callback_requested_cancel: Option<&Arc<AtomicBool>>,
 ) -> napi::Result<ExecResult> {
-    let result = if let Some(output_callback) = output_callback {
-        bash.exec_streaming(commands, output_callback).await
-    } else {
-        bash.exec(commands).await
-    };
+    // Lazy filesystem reads inside an execution can wait for the event loop
+    // instead of failing (see `lazy_fs::in_execution`).
+    let result = lazy_fs::in_execution(async {
+        if let Some(output_callback) = output_callback {
+            bash.exec_streaming(commands, output_callback).await
+        } else {
+            bash.exec(commands).await
+        }
+    })
+    .await;
 
     if let Some(callback_error) = callback_error
         && let Some(err) = take_callback_error(callback_error)
@@ -1594,6 +1659,9 @@ struct SharedState {
     async_execute_semaphore: Arc<Semaphore>,
     async_execute_depth: Arc<AtomicUsize>,
     sync_idle: Arc<tokio::sync::Notify>,
+    /// Set once a `FileSystem.lazy()` handle is mounted. Such an instance's
+    /// live filesystem must not cross the blocking C ABI bridge.
+    lazy_guard: Arc<lazy_fs::LazyMountGuard>,
     username: Option<String>,
     profile: Option<ExecutionProfileName>,
     hostname: Option<String>,
@@ -1723,6 +1791,36 @@ fn forget_runtime_mount(log: &RuntimeMountLog, vfs_path: &str) {
     let normalized = bashkit::normalize_path(Path::new(vfs_path));
     let mut mounts = log.lock().expect("runtime mount log poisoned");
     mounts.retain(|existing| Path::new(existing.vfs_path()) != normalized);
+}
+
+/// Mount `fs` at `vfs_path` and record it so `reset()` replays the mount.
+///
+/// With `read_only` the handle is wrapped in `ReadOnlyFs` (host-enforced);
+/// the recorded handle is the wrapped one, so `reset()` replays the protection.
+fn mount_fs_arc(
+    state: &Arc<SharedState>,
+    vfs_path: String,
+    fs: Arc<dyn BashFileSystem>,
+    read_only: Option<bool>,
+) -> napi::Result<()> {
+    let mounted_fs: Arc<dyn BashFileSystem> = if read_only.unwrap_or(false) {
+        Arc::new(ReadOnlyFs::new(fs))
+    } else {
+        fs
+    };
+    block_on_with(state, |s| async move {
+        let bash = s.inner.lock().await;
+        bash.mount(Path::new(&vfs_path), Arc::clone(&mounted_fs))
+            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+        record_runtime_mount(
+            &s.runtime_mounts,
+            RuntimeMount::Fs {
+                vfs_path,
+                fs: mounted_fs,
+            },
+        );
+        Ok(())
+    })
 }
 
 /// Clone `Arc<SharedState>`, then use the runtime to block on a future that
@@ -2112,6 +2210,7 @@ impl Bash {
                 name,
                 callback: Arc::new(tsfn),
                 in_sync_execute_depth: self.state.in_sync_execute_depth.clone(),
+                lazy_guard: self.state.lazy_guard.clone(),
             }),
         );
         Ok(())
@@ -2615,26 +2714,34 @@ impl Bash {
         read_only: Option<bool>,
     ) -> napi::Result<()> {
         let mounted_fs = import_external_file_system(fs)?;
-        // Host-enforced read-only projection; the recorded handle is the
-        // wrapped one, so `reset()` replays the protection.
-        let mounted_fs: Arc<dyn BashFileSystem> = if read_only.unwrap_or(false) {
-            Arc::new(ReadOnlyFs::new(mounted_fs))
-        } else {
-            mounted_fs
-        };
-        block_on_with(&self.state, |s| async move {
-            let bash = s.inner.lock().await;
-            bash.mount(Path::new(&vfs_path), Arc::clone(&mounted_fs))
-                .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-            record_runtime_mount(
-                &s.runtime_mounts,
-                RuntimeMount::Fs {
-                    vfs_path,
-                    fs: mounted_fs,
-                },
-            );
-            Ok(())
-        })
+        mount_fs_arc(&self.state, vfs_path, mounted_fs, read_only)
+    }
+
+    /// Mount a `FileSystem.lazy()` handle without the C ABI.
+    ///
+    /// Decision: the ABI import blocks a runtime worker on every operation
+    /// until it completes. That is harmless for in-memory and real
+    /// filesystems, but a lazy filesystem waits on JS promises, so the ABI
+    /// path would park workers and starve unrelated executions. Lazy handles
+    /// therefore mount their `Arc<dyn FileSystem>` directly. Other handles
+    /// keep the ABI path so their mount semantics (usage, cycles) are
+    /// unchanged.
+    #[napi(ts_args_type = "vfsPath: string, fs: unknown, readOnly?: boolean")]
+    pub fn mount_lazy_file_system(
+        &self,
+        vfs_path: String,
+        fs: &External<NativeFileSystemState>,
+        read_only: Option<bool>,
+    ) -> napi::Result<()> {
+        if !fs.is_lazy {
+            return Err(napi::Error::from_reason(
+                "mountLazyFileSystem requires a FileSystem.lazy() handle",
+            ));
+        }
+        let mounted_fs = fs.export_fs()?;
+        self.state
+            .lazy_guard
+            .mount_lazy(|| mount_fs_arc(&self.state, vfs_path, mounted_fs, read_only))
     }
 
     /// Unmount a previously mounted filesystem.
@@ -2981,6 +3088,7 @@ impl BashTool {
                 name,
                 callback: Arc::new(tsfn),
                 in_sync_execute_depth: self.state.in_sync_execute_depth.clone(),
+                lazy_guard: self.state.lazy_guard.clone(),
             }),
         );
         Ok(())
@@ -3411,26 +3519,34 @@ impl BashTool {
         read_only: Option<bool>,
     ) -> napi::Result<()> {
         let mounted_fs = import_external_file_system(fs)?;
-        // Host-enforced read-only projection; the recorded handle is the
-        // wrapped one, so `reset()` replays the protection.
-        let mounted_fs: Arc<dyn BashFileSystem> = if read_only.unwrap_or(false) {
-            Arc::new(ReadOnlyFs::new(mounted_fs))
-        } else {
-            mounted_fs
-        };
-        block_on_with(&self.state, |s| async move {
-            let bash = s.inner.lock().await;
-            bash.mount(Path::new(&vfs_path), Arc::clone(&mounted_fs))
-                .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-            record_runtime_mount(
-                &s.runtime_mounts,
-                RuntimeMount::Fs {
-                    vfs_path,
-                    fs: mounted_fs,
-                },
-            );
-            Ok(())
-        })
+        mount_fs_arc(&self.state, vfs_path, mounted_fs, read_only)
+    }
+
+    /// Mount a `FileSystem.lazy()` handle without the C ABI.
+    ///
+    /// Decision: the ABI import blocks a runtime worker on every operation
+    /// until it completes. That is harmless for in-memory and real
+    /// filesystems, but a lazy filesystem waits on JS promises, so the ABI
+    /// path would park workers and starve unrelated executions. Lazy handles
+    /// therefore mount their `Arc<dyn FileSystem>` directly. Other handles
+    /// keep the ABI path so their mount semantics (usage, cycles) are
+    /// unchanged.
+    #[napi(ts_args_type = "vfsPath: string, fs: unknown, readOnly?: boolean")]
+    pub fn mount_lazy_file_system(
+        &self,
+        vfs_path: String,
+        fs: &External<NativeFileSystemState>,
+        read_only: Option<bool>,
+    ) -> napi::Result<()> {
+        if !fs.is_lazy {
+            return Err(napi::Error::from_reason(
+                "mountLazyFileSystem requires a FileSystem.lazy() handle",
+            ));
+        }
+        let mounted_fs = fs.export_fs()?;
+        self.state
+            .lazy_guard
+            .mount_lazy(|| mount_fs_arc(&self.state, vfs_path, mounted_fs, read_only))
     }
 
     /// Unmount a previously mounted filesystem.
@@ -3551,6 +3667,9 @@ struct JsCustomBuiltinAdapter {
     /// TSFN callback would never resolve. We surface a real error in that case
     /// instead of hanging.
     in_sync_execute_depth: Arc<AtomicUsize>,
+    /// The instance's lazy-mount guard, so `ctx.fs` refuses the blocking C
+    /// ABI bridge like `bash.fs()` does.
+    lazy_guard: Arc<lazy_fs::LazyMountGuard>,
 }
 
 #[async_trait]
@@ -3583,7 +3702,10 @@ impl Builtin for JsCustomBuiltinAdapter {
         // Wrap the interpreter's live VFS as a `Static` handle so the JS
         // callback reads and writes the same filesystem without re-locking
         // the interpreter (mirrors the Python binding's `BuiltinContext.fs`).
-        let fs_handle = External::new(NativeFileSystemState::from_static(ctx.fs.clone()));
+        let fs_handle = External::new(NativeFileSystemState::for_context(
+            ctx.fs.clone(),
+            self.lazy_guard.clone(),
+        ));
 
         // Two-step await: first call_async returns the `Promise<String>`
         // handle from JS, then awaiting the Promise resolves to its value.
@@ -4212,6 +4334,7 @@ fn shared_state_from_opts(opts: BashOptions) -> napi::Result<SharedState> {
         async_execute_semaphore: Arc::new(Semaphore::new(MAX_PENDING_ASYNC_EXECUTIONS)),
         async_execute_depth: Arc::new(AtomicUsize::new(0)),
         sync_idle: Arc::new(tokio::sync::Notify::new()),
+        lazy_guard: Arc::default(),
         username: opts.username.clone(),
         profile: opts.profile,
         hostname: opts.hostname.clone(),
@@ -4273,6 +4396,7 @@ fn shared_state_from_opts(opts: BashOptions) -> napi::Result<SharedState> {
         async_execute_semaphore: Arc::new(Semaphore::new(MAX_PENDING_ASYNC_EXECUTIONS)),
         async_execute_depth: Arc::new(AtomicUsize::new(0)),
         sync_idle: Arc::new(tokio::sync::Notify::new()),
+        lazy_guard: Arc::default(),
         username: opts.username,
         profile: opts.profile,
         hostname: opts.hostname,

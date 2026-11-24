@@ -576,6 +576,31 @@ Runtime methods:
 - filesystem mount: `mount(vfs_path, filesystem)`
 - `unmount(vfs_path)`
 
+Lazy filesystems (Node.js only for now): `FileSystem.lazy({ readDir, readFile })`
+builds a read-only `FsBackend` over host callbacks. Listings and contents are
+fetched on first use and cached per handle (bounded, oldest-first eviction,
+negative entries for missing and oversized paths, which also hide missing paths
+from `stat` and listings, one shared call, failures included, per in-flight
+path); `stat` resolves through the parent listing, so only declared paths reach
+the host. Lazy handles mount directly (`mountLazyFileSystem`) and refuse
+`toExternal()` (as do `bash.fs()` and callback `ctx.fs` of an instance with a
+lazy mount; an already exported instance in turn refuses lazy mounts; both
+flags are sticky, see `lazy_fs::LazyMountGuard`), because
+the C ABI bridge blocks a runtime worker per operation, which pending JS
+promises would starve. Other handles keep the ABI path and its mount semantics.
+Before a cache miss takes its per-path lock: an operation on the owning JS
+thread fails at once; one inside an execution's task (`lazy_fs::in_execution`)
+proceeds and waits for a busy loop (every execute path, live output included,
+runs in that scope); any other (helper threads such as sqlite's VFS I/O) fails
+at once and is served from the cache only. Helper threads block a runtime
+worker or the JS thread until they finish and the execution deadline cannot
+reach them, so waiting on a promise there starves or hangs the runtime; scripts
+load the file first (for sqlite, `cp` it out of the read-only mount), and
+sqlite reports an unloaded file as an empty database.
+Threats: TM-DOS-148, TM-INF-036. TODO: Python parity, a writable mode (needs an
+overlay with an empty upper layer), cache invalidation, and cancellation of
+pending callbacks (needs the execution budget in `FsBackend` calls).
+
 Native-extension interop is binding-specific but must preserve bashkit-owned
 filesystem objects when crossing the language runtime boundary:
 - Python: `FileSystem.from_capsule(capsule)`, `FileSystem.to_capsule()`
