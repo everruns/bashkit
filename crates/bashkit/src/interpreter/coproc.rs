@@ -222,9 +222,14 @@ impl Interpreter {
             } else {
                 Some(fut.as_mut().await)
             };
+            let mut stderr = crate::StreamData::from(stderr);
             let (job, pid) = match finished {
-                Some(result) => {
-                    stderr.push_str(&result.stderr.text_lossy());
+                Some(mut result) => {
+                    if stderr.is_empty() {
+                        stderr = std::mem::take(&mut result.stderr);
+                    } else {
+                        stderr.try_append(&result.stderr, usize::MAX, &self.execution_budget)?;
+                    }
                     self.jobs.lock().spawn_finished(text, result)
                 }
                 None => self.jobs.lock().spawn_running(text, fut),
@@ -257,7 +262,7 @@ impl Interpreter {
             });
             self.last_exit_code = 0;
             Ok(ExecResult {
-                stderr: stderr.into(),
+                stderr,
                 ..Default::default()
             })
         })

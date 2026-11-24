@@ -4247,7 +4247,7 @@ impl Interpreter {
             self.route_exec_output(&mut result, emitted, (0, 0), None)
                 .await?;
             if self.merge_stderr {
-                Self::merge_stderr_into_stdout(&mut result);
+                self.merge_stderr_into_stdout(&mut result)?;
             }
             let emit_before = self.output_emit_count;
             self.maybe_emit_output(&result.stdout, &result.stderr, emit_before)
@@ -4401,7 +4401,7 @@ impl Interpreter {
                 .await?;
             }
             if self.merge_stderr {
-                Self::merge_stderr_into_stdout(&mut result);
+                self.merge_stderr_into_stdout(&mut result)?;
             }
             self.maybe_emit_output(&result.stdout, &result.stderr, emit_before)
                 .await?;
@@ -7197,11 +7197,18 @@ impl Interpreter {
         }
     }
 
-    fn merge_stderr_into_stdout(result: &mut ExecResult) {
+    fn merge_stderr_into_stdout(&self, result: &mut ExecResult) -> Result<()> {
         if !result.stderr.is_empty() {
             let err = std::mem::take(&mut result.stderr);
-            result.stdout.append(&err);
+            if result.stdout.is_empty() && !result.stdout.was_truncated() {
+                result.stdout = err;
+            } else {
+                result
+                    .stdout
+                    .try_append(&err, usize::MAX, &self.execution_budget)?;
+            }
         }
+        Ok(())
     }
 
     /// Enter the body of a command whose `redirects` route output: its
@@ -7728,7 +7735,7 @@ impl Interpreter {
             self.sequence_accum = (stdout.len(), stderr.len());
             let mut result = self.execute_command(command).await?;
             if self.merge_stderr {
-                Self::merge_stderr_into_stdout(&mut result);
+                self.merge_stderr_into_stdout(&mut result)?;
             }
             self.reap_coprocs();
             self.maybe_emit_output(&result.stdout, &result.stderr, emit_before)

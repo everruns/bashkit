@@ -18,6 +18,8 @@ pub struct StreamData {
     truncated: bool,
 }
 
+// Host-facing stream values can be cloned outside any request. Use
+// try_clone_budgeted for a fallible copy retained by the interpreter.
 impl Clone for StreamData {
     fn clone(&self) -> Self {
         Self {
@@ -186,6 +188,9 @@ impl StreamData {
     }
 
     /// Admit both retained representations before growing a compound result.
+    ///
+    /// The capture limit counts raw bytes. The matching lossy view may take
+    /// more space for invalid UTF-8 and charges its full capacity to the budget.
     // THREAT[TM-DOS-103]: retain the capacity leases as the stream moves out of
     // its accumulator. Only captured output gets a byte ceiling, since shell
     // consumers such as redirects must receive the original bytes.
@@ -240,9 +245,13 @@ impl StreamData {
         Ok(self.truncated)
     }
 
+    /// Append ordinary stream values. Request accumulators use `try_append`.
     pub(crate) fn append(&mut self, other: &Self) {
-        self.storage = None;
         self.truncated |= other.truncated;
+        if other.is_empty() {
+            return;
+        }
+        self.storage = None;
         let boundary = self.bytes.len();
         self.bytes.extend_from_slice(&other.bytes);
         if lossy_decode_changes_at_boundary(&self.bytes, boundary) {

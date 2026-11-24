@@ -148,7 +148,7 @@ macro_rules! list_body {
                 .await?;
             }
             if $shell.merge_stderr {
-                Self::merge_stderr_into_stdout(&mut result);
+                $shell.merge_stderr_into_stdout(&mut result)?;
             }
             $shell.maybe_emit_output(&result.stdout, &result.stderr, emit_before)
                 .await?;
@@ -256,7 +256,7 @@ macro_rules! list_body {
                         .await?;
                     }
                     if $shell.merge_stderr {
-                        Self::merge_stderr_into_stdout(&mut result);
+                        $shell.merge_stderr_into_stdout(&mut result)?;
                     }
                     $shell.maybe_emit_output(&result.stdout, &result.stderr, emit_before)
                         .await?;
