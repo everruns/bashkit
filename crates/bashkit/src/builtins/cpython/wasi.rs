@@ -297,6 +297,9 @@ impl GuestState {
 
     /// Resolve a guest path relative to directory fd `fd`.
     fn resolve(&self, fd: u32, raw: &[u8]) -> Result<PathBuf, Errno> {
+        if raw.is_empty() {
+            return Err(ENOENT);
+        }
         if raw.len() > MAX_PATH_LEN {
             return Err(ENAMETOOLONG);
         }

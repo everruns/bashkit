@@ -20,7 +20,7 @@ async fn rm_rf_root_refuses_and_keeps_files() {
 
 #[tokio::test]
 async fn rm_r_root_spellings_resolve_to_root() {
-    for spelling in ["//", "/tmp/..", "/./"] {
+    for spelling in ["/", "//", "///"] {
         let mut bash = Bash::new();
         let r = bash
             .exec(&format!(
@@ -33,6 +33,22 @@ async fn rm_r_root_spellings_resolve_to_root() {
             r.stderr.contains("dangerous to operate recursively"),
             "{spelling}: {}",
             r.stderr
+        );
+    }
+}
+
+#[tokio::test]
+async fn rm_rejects_dot_spellings_that_resolve_to_root() {
+    for spelling in ["/tmp/..", "/./"] {
+        let mut bash = Bash::new();
+        let result = bash.exec(&format!("rm -rf -- {spelling}")).await.unwrap();
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("refusing to remove '.' or '..'"));
+        assert!(
+            bash.fs()
+                .exists(std::path::Path::new("/tmp"))
+                .await
+                .unwrap()
         );
     }
 }

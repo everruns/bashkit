@@ -9,6 +9,51 @@
 use bashkit::{Bash, BashBuilder};
 use std::path::Path;
 
+#[tokio::test]
+async fn realfs_preserves_host_mount_and_contents_on_invalid_targets() {
+    use bashkit::{FsBackend, RealFs, RealFsMode};
+    use std::io::ErrorKind;
+
+    let host = tempfile::tempdir().unwrap();
+    let sentinel = host.path().join("sentinel");
+    std::fs::write(&sentinel, b"keep").unwrap();
+    let mut bash = Bash::builder()
+        .cwd("/workspace")
+        .mount_real_readwrite_at(host.path(), "/workspace")
+        .build();
+
+    for script in [
+        "rm -rf -- ''",
+        "find '' -maxdepth 0 -print",
+        "rm -rf /workspace",
+    ] {
+        let result = bash.exec(script).await.unwrap();
+        assert_eq!(result.exit_code, 1, "{script}: {}", result.stderr);
+        assert!(!result.stderr.is_empty(), "{script}");
+        assert_eq!(std::fs::read(&sentinel).unwrap(), b"keep", "{script}");
+    }
+
+    let backend = RealFs::open(host.path(), RealFsMode::ReadWrite)
+        .await
+        .unwrap();
+    let root = Path::new("/");
+    let child = Path::new("/sentinel");
+    for result in [
+        backend.rename(root, Path::new("/new-root")).await,
+        backend.rename(child, root).await,
+    ] {
+        assert!(
+            matches!(result, Err(bashkit::Error::Io(e)) if e.kind() == ErrorKind::ResourceBusy)
+        );
+    }
+    assert_eq!(std::fs::read(&sentinel).unwrap(), b"keep");
+
+    let result = bash.exec("rm /workspace/sentinel").await.unwrap();
+    assert_eq!(result.exit_code, 0, "{}", result.stderr);
+    assert!(host.path().is_dir());
+    assert!(!sentinel.exists());
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn realfs_reports_host_ownership() {

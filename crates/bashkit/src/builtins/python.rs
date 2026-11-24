@@ -744,7 +744,13 @@ async fn handle_os_call(
     env: &HashMap<String, String>,
 ) -> ExtFunctionResult {
     use OsFunctionCall as F;
-    let rp = |p: &monty_types::MontyPath| resolve_python_path(p.as_str(), cwd);
+    let rp = |p: &monty_types::MontyPath| {
+        if p.is_empty() {
+            PathBuf::new()
+        } else {
+            resolve_python_path(p.as_str(), cwd)
+        }
+    };
     let ret = ExtFunctionResult::Return;
     match function {
         F::Getenv(a) => match env.get(&a.key) {
@@ -850,6 +856,7 @@ async fn handle_os_call(
                 Err(e) => map_vfs_error(e, &path),
             }
         }
+        F::Unlink(p) | F::Rmdir(p) if p.is_empty() => python_missing_path(),
         F::Unlink(p) | F::Rmdir(p) => {
             let path = rp(&p);
             match fs.remove(&path, false).await {
@@ -884,6 +891,7 @@ async fn handle_os_call(
                 Err(e) => map_vfs_error(e, &path),
             }
         }
+        F::Rename(a) if a.src.is_empty() || a.dst.is_empty() => python_missing_path(),
         F::Rename(a) => {
             let (src, dst) = (rp(&a.src), rp(&a.dst));
             match fs.rename(&src, &dst).await {
@@ -891,9 +899,11 @@ async fn handle_os_call(
                 Err(e) => map_vfs_error(e, &src),
             }
         }
-        F::Resolve(p) | F::Absolute(p) => {
-            ret(MontyObject::path(rp(&p).to_string_lossy().to_string()))
-        }
+        F::Resolve(p) | F::Absolute(p) => ret(MontyObject::path(
+            resolve_python_path(p.as_str(), cwd)
+                .to_string_lossy()
+                .to_string(),
+        )),
         F::Scan(a) => handle_scan(&a, &rp(&a.path), fs).await,
         // Unknown modules: no host modules are offered. Monty 1.5 passes the
         // import's `search_path` alongside the name for its file-import path;
@@ -1006,6 +1016,13 @@ fn resolve_python_path(path_str: &str, cwd: &Path) -> PathBuf {
     } else {
         vfs_join(cwd, p)
     }
+}
+
+fn python_missing_path() -> ExtFunctionResult {
+    ExtFunctionResult::Error(MontyException::new(
+        ExcType::FileNotFoundError,
+        Some("[Errno 2] No such file or directory: ''".into()),
+    ))
 }
 
 /// Map a Bashkit VFS error to a Python exception via ExtFunctionResult.

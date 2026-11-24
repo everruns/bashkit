@@ -211,6 +211,7 @@ impl NamespaceFs {
     }
 
     fn normalized(&self, path: &Path) -> Result<PathBuf> {
+        super::reject_empty_path(path)?;
         self.limits
             .validate_path(path)
             .map_err(|error| IoError::new(ErrorKind::InvalidInput, error.to_string()))?;

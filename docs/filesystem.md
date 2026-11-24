@@ -162,6 +162,10 @@ bashkit --mount-ro /host/data:/data -c 'ls /data'   # read-only
 bashkit --mount-rw /host/out:/out  -c 'echo hi > /out/f'  # writable (dangerous)
 ```
 
+On a read-write host mount, scripts can modify entries inside the mounted
+directory. Bashkit rejects attempts to remove or rename the mounted directory
+itself, including when a shell command opts out of its own root check.
+
 To freeze a session, including in-memory writes, wrap it with
 `readonly_filesystem()`.
 

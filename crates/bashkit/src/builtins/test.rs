@@ -96,7 +96,7 @@ impl Builtin for Bracket {
 /// Resolve a file path against cwd (relative paths become absolute)
 fn resolve_file_path(cwd: &Path, arg: &str) -> PathBuf {
     let p = Path::new(arg);
-    if p.has_root() {
+    if arg.is_empty() || p.has_root() {
         p.to_path_buf()
     } else {
         vfs_join(cwd, p)
@@ -371,128 +371,81 @@ fn eval_node<'a>(
 
 /// Evaluate a unary test expression
 async fn evaluate_unary(op: &str, arg: &str, env: &Env<'_>) -> TestResult {
-    let (fs, cwd, variables) = (env.fs, env.cwd, env.variables);
     match op {
-        // Shell state: a set variable, an enabled `set -o` option.
         "-v" => Ok(env.set_vars.iter().any(|v| v == arg)),
-        "-o" => Ok(super::vars::set_o_option_on(variables, arg).unwrap_or(false)),
-        // String tests
+        "-o" => Ok(super::vars::set_o_option_on(env.variables, arg).unwrap_or(false)),
         "-z" => Ok(arg.is_empty()),
         "-n" => Ok(!arg.is_empty()),
+        "-t" => {
+            // Allow scripts to model which file descriptors refer to a terminal.
+            let fd_key = format!("_TTY_{arg}");
+            Ok(env.variables.get(&fd_key).is_some_and(|v| v == "1"))
+        }
+        _ => test_file_unary(op, arg, env.fs, env.cwd)
+            .await
+            .ok_or_else(|| TestError(format!("{op}: unary operator expected"))),
+    }
+}
 
-        // File tests using the virtual filesystem
-        "-e" | "-a" => {
-            // file exists
-            let path = resolve_file_path(cwd, arg);
-            Ok(fs.exists(&path).await.unwrap_or(false))
-        }
-        "-f" => {
-            // regular file
-            let path = resolve_file_path(cwd, arg);
-            Ok(match fs.stat(&path).await {
-                Ok(meta) => meta.file_type.is_file(),
-                Err(_) => false,
-            })
-        }
-        "-d" => {
-            // directory
-            let path = resolve_file_path(cwd, arg);
-            Ok(match fs.stat(&path).await {
-                Ok(meta) => meta.file_type.is_dir(),
-                Err(_) => false,
-            })
-        }
-        "-r" => {
-            // readable - in virtual fs, check if file exists
-            // (permissions are stored but not enforced)
-            let path = resolve_file_path(cwd, arg);
-            Ok(fs.exists(&path).await.unwrap_or(false))
-        }
-        "-w" => {
-            // writable - in virtual fs, check if file exists
-            let path = resolve_file_path(cwd, arg);
-            Ok(fs.exists(&path).await.unwrap_or(false))
-        }
-        "-x" => {
-            // executable - in virtual fs, check if file exists and has executable permission
-            let path = resolve_file_path(cwd, arg);
-            Ok(match fs.stat(&path).await {
-                // Check if any execute bit is set (u+x, g+x, o+x)
-                Ok(meta) => (meta.mode & 0o111) != 0,
-                Err(_) => false,
-            })
-        }
-        "-s" => {
-            // file exists and has size > 0
-            let path = resolve_file_path(cwd, arg);
-            Ok(match fs.stat(&path).await {
-                Ok(meta) => meta.size > 0,
-                Err(_) => false,
-            })
+/// Evaluate a file predicate shared by `test` and `[[ ... ]]`.
+pub(crate) async fn test_file_unary(
+    op: &str,
+    arg: &str,
+    fs: &Arc<dyn FileSystem>,
+    cwd: &Path,
+) -> Option<bool> {
+    let matched = match op {
+        // The VFS tracks permissions without enforcing read and write bits.
+        "-e" | "-a" | "-r" | "-w" => {
+            !arg.is_empty()
+                && fs
+                    .exists(&resolve_file_path(cwd, arg))
+                    .await
+                    .unwrap_or(false)
         }
         "-L" | "-h" => {
-            // symbolic link
-            let path = resolve_file_path(cwd, arg);
-            Ok(match fs.lstat(&path).await {
-                Ok(meta) => meta.file_type.is_symlink(),
-                Err(_) => false,
-            })
+            !arg.is_empty()
+                && fs
+                    .lstat(&resolve_file_path(cwd, arg))
+                    .await
+                    .is_ok_and(|meta| meta.file_type.is_symlink())
         }
-        "-p" => {
-            // named pipe (FIFO)
-            let path = resolve_file_path(cwd, arg);
-            Ok(match fs.stat(&path).await {
-                Ok(meta) => meta.file_type.is_fifo(),
-                Err(_) => false,
-            })
-        }
-        // Mode bits: setuid, setgid, sticky.
-        "-u" | "-g" | "-k" => {
-            let bit = match op {
-                "-u" => 0o4000,
-                "-g" => 0o2000,
-                _ => 0o1000,
+        "-f" | "-d" | "-x" | "-s" | "-p" | "-u" | "-g" | "-k" | "-O" | "-G" => {
+            if arg.is_empty() {
+                return Some(false);
+            }
+            let Ok(meta) = fs.stat(&resolve_file_path(cwd, arg)).await else {
+                return Some(false);
             };
-            let path = resolve_file_path(cwd, arg);
-            Ok(fs.stat(&path).await.is_ok_and(|meta| meta.mode & bit != 0))
+            match op {
+                "-f" => meta.file_type.is_file(),
+                "-d" => meta.file_type.is_dir(),
+                "-x" => meta.mode & 0o111 != 0,
+                "-s" => meta.size > 0,
+                "-p" => meta.file_type.is_fifo(),
+                "-u" => meta.mode & 0o4000 != 0,
+                "-g" => meta.mode & 0o2000 != 0,
+                "-k" => meta.mode & 0o1000 != 0,
+                "-O" => meta.uid == super::system::SANDBOX_UID,
+                "-G" => meta.gid == super::system::SANDBOX_GID,
+                _ => false,
+            }
         }
-        "-O" | "-G" => {
-            let path = resolve_file_path(cwd, arg);
-            Ok(fs.stat(&path).await.is_ok_and(|meta| {
-                if op == "-O" {
-                    meta.uid == super::system::SANDBOX_UID
-                } else {
-                    meta.gid == super::system::SANDBOX_GID
-                }
-            }))
-        }
-        "-S" => Ok(false), // socket (not supported)
-        "-b" => Ok(false), // block device (not supported)
-        "-c" => {
-            // The virtual character devices.
-            let path = resolve_file_path(cwd, arg);
-            Ok(matches!(
-                path.to_str(),
-                Some(
-                    "/dev/null"
-                        | "/dev/zero"
-                        | "/dev/full"
-                        | "/dev/random"
-                        | "/dev/urandom"
-                        | "/dev/tty"
-                )
-            ))
-        }
-        "-t" => {
-            // file descriptor refers to a terminal
-            // In VFS sandbox, defaults to false for all FDs.
-            // Configurable via _TTY_N variables (e.g. _TTY_0=1 for stdin).
-            let fd_key = format!("_TTY_{}", arg);
-            Ok(variables.get(&fd_key).map(|v| v == "1").unwrap_or(false))
-        }
-
-        _ => Err(TestError(format!("{op}: unary operator expected"))),
-    }
+        "-S" | "-b" => false, // Unix-domain sockets and block devices are unavailable.
+        "-c" => matches!(
+            resolve_file_path(cwd, arg).to_str(),
+            Some(
+                "/dev/null"
+                    | "/dev/zero"
+                    | "/dev/full"
+                    | "/dev/random"
+                    | "/dev/urandom"
+                    | "/dev/tty"
+            )
+        ),
+        _ => return None,
+    };
+    Some(matched)
 }
 
 /// Evaluate a binary test expression
@@ -524,36 +477,41 @@ async fn evaluate_binary(
             })
         }
 
-        // File comparisons
-        "-nt" => {
-            // file1 is newer than file2
-            let left_meta = fs.stat(&resolve_file_path(cwd, left)).await;
-            let right_meta = fs.stat(&resolve_file_path(cwd, right)).await;
-            Ok(match (left_meta, right_meta) {
-                (Ok(lm), Ok(rm)) => lm.modified > rm.modified,
-                (Ok(_), Err(_)) => true, // left exists, right doesn't → left is newer
-                _ => false,
-            })
-        }
-        "-ot" => {
-            // file1 is older than file2
-            let left_meta = fs.stat(&resolve_file_path(cwd, left)).await;
-            let right_meta = fs.stat(&resolve_file_path(cwd, right)).await;
-            Ok(match (left_meta, right_meta) {
-                (Ok(lm), Ok(rm)) => lm.modified < rm.modified,
-                (Err(_), Ok(_)) => true, // left doesn't exist, right does → left is older
-                _ => false,
-            })
-        }
-        "-ef" => {
-            // file1 and file2 refer to the same file (same path after resolution)
-            // In VFS without inodes, compare canonical paths
-            let left_path = super::resolve_path(cwd, left);
-            let right_path = super::resolve_path(cwd, right);
-            Ok(left_path == right_path)
-        }
+        "-nt" | "-ot" | "-ef" => Ok(test_file_binary(left, op, right, fs, cwd).await),
 
         _ => Err(TestError(format!("{op}: binary operator expected"))),
+    }
+}
+
+pub(crate) async fn test_file_binary(
+    left: &str,
+    op: &str,
+    right: &str,
+    fs: &Arc<dyn FileSystem>,
+    cwd: &Path,
+) -> bool {
+    if op == "-ef" {
+        return !left.is_empty()
+            && !right.is_empty()
+            && super::resolve_path(cwd, left) == super::resolve_path(cwd, right);
+    }
+
+    let mut modified = [None, None];
+    for (time, operand) in modified.iter_mut().zip([left, right]) {
+        if !operand.is_empty() {
+            *time = fs
+                .stat(&resolve_file_path(cwd, operand))
+                .await
+                .ok()
+                .map(|meta| meta.modified);
+        }
+    }
+    match (op, modified) {
+        ("-nt", [Some(left), Some(right)]) => left > right,
+        ("-ot", [Some(left), Some(right)]) => left < right,
+        // A missing operand is treated as older than an existing file.
+        ("-nt", [Some(_), None]) | ("-ot", [None, Some(_)]) => true,
+        _ => false,
     }
 }
 

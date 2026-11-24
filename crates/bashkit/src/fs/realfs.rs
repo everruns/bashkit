@@ -23,6 +23,7 @@
 //!   and checking it stays under the root.
 //! - Whole-file reads of host files are limited to 10 MB (10,000,000 bytes).
 //! - Readonly mode rejects all write operations at the backend level.
+//! - The configured host root cannot be removed or renamed through the mount.
 //!
 //! # Ownership
 //!
@@ -181,6 +182,7 @@ impl RealFs {
     /// prevent traversal and symlink escapes before attaching the missing
     /// suffix.
     async fn resolve(&self, vpath: &Path) -> std::io::Result<PathBuf> {
+        super::reject_empty_path(vpath)?;
         // THREAT[TM-ESC-033]: Use the shared POSIX VFS normalizer. A
         // platform-aware normalization here would preserve Windows prefixes,
         // and joining a drive/UNC/device absolute path would discard `root`.
@@ -255,6 +257,7 @@ impl RealFs {
     /// root, then append the basename verbatim. The caller must then use
     /// `symlink_metadata`/`read_link`/`remove_file` on the result.
     async fn resolve_no_follow(&self, vpath: &Path) -> std::io::Result<PathBuf> {
+        super::reject_empty_path(vpath)?;
         let normalized = super::normalize_path(vpath);
         let relative = normalized.strip_prefix("/").unwrap_or(&normalized);
 
@@ -316,6 +319,17 @@ impl RealFs {
             return Err(IoError::new(
                 ErrorKind::PermissionDenied,
                 "realfs is mounted readonly",
+            ));
+        }
+        Ok(())
+    }
+
+    fn protect_root(&self, path: &Path) -> std::io::Result<()> {
+        // THREAT[TM-FS-018]: A mount root may appear at a non-root shell path.
+        if path == self.root {
+            return Err(IoError::new(
+                ErrorKind::ResourceBusy,
+                "cannot remove or rename the root of a host mount",
             ));
         }
         Ok(())
@@ -615,6 +629,7 @@ impl FsBackend for RealFs {
         // `remove('/link', recursive=true)` unlinks the symlink instead of
         // recursively wiping its target.
         let real = self.resolve_no_follow(path).await?;
+        self.protect_root(&real)?;
         let meta = tokio::fs::symlink_metadata(&real).await?;
         let ft = meta.file_type();
         if ft.is_symlink() {
@@ -664,7 +679,9 @@ impl FsBackend for RealFs {
     async fn rename(&self, from: &Path, to: &Path) -> Result<()> {
         self.check_writable()?;
         let real_from = self.resolve_no_follow(from).await?;
+        self.protect_root(&real_from)?;
         let real_to = self.resolve_for_create(to).await?;
+        self.protect_root(&real_to)?;
         tokio::fs::rename(&real_from, &real_to).await?;
         Ok(())
     }

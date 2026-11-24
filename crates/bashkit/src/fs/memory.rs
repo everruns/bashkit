@@ -1605,6 +1605,7 @@ impl FileSystem for InMemoryFs {
     }
 
     async fn remove(&self, path: &Path, recursive: bool) -> Result<()> {
+        super::reject_empty_path(path)?;
         self.limits
             .validate_path(path)
             .map_err(|e| IoError::new(ErrorKind::InvalidInput, e.to_string()))?;
@@ -1720,6 +1721,8 @@ impl FileSystem for InMemoryFs {
     }
 
     async fn rename(&self, from: &Path, to: &Path) -> Result<()> {
+        super::reject_empty_path(from)?;
+        super::reject_empty_path(to)?;
         self.limits
             .validate_path(from)
             .map_err(|e| IoError::new(ErrorKind::InvalidInput, e.to_string()))?;
