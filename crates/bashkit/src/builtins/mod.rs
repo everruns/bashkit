@@ -271,11 +271,10 @@ pub use split::Split;
 pub use strings::Strings;
 pub use sysextra::{Arch, Free, Getconf, Hostid, RunAs, SyncCmd, Tty, Uptime, UserInfo};
 pub use system::{DEFAULT_HOSTNAME, DEFAULT_USERNAME, Hostname, Id, Nproc, Uname, Whoami};
-pub(crate) use system::{
-    SANDBOX_GID, SANDBOX_UID, VIRTUAL_KERNEL_RELEASE, VIRTUAL_KERNEL_VERSION, VIRTUAL_NPROC,
-};
+pub(crate) use system::{VIRTUAL_KERNEL_RELEASE, VIRTUAL_KERNEL_VERSION, VIRTUAL_NPROC};
 pub use template::Template;
 pub use test::{Bracket, Test};
+pub(crate) use test::{test_file_binary, test_file_unary};
 pub use textrev::{Rev, Tac};
 pub use timeout::Timeout;
 pub use tomlq::Tomlq;
@@ -922,6 +921,14 @@ pub fn resolve_path(cwd: &Path, path_str: &str) -> PathBuf {
     };
     // Normalize the path to handle . and .. components
     normalize_path(&joined)
+}
+
+/// Resolve an explicit filename without treating the empty operand as the cwd.
+pub(crate) fn resolve_file_operand(cwd: &Path, operand: &str) -> Option<PathBuf> {
+    if operand.is_empty() {
+        return None;
+    }
+    Some(resolve_path(cwd, operand))
 }
 
 // Re-export shared normalize_path for use by builtins

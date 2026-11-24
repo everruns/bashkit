@@ -65,6 +65,15 @@ option spelling matches GNU; builtins on a ported clap surface (see
 Obsolete forms GNU still accepts (`head -5`, `fold -5`) are rewritten to the
 modern option before getopt runs, never when they are an option's value.
 
+### File operand validation
+
+Validate explicit file operands before joining them to the current directory or
+normalizing their components. Use `resolve_file_operand` for required names.
+Commands that inspect the original spelling, such as `rm` checking the final
+dot component, validate it before resolution. Commands with an omitted-path
+default, such as `find`, apply it during argument parsing. Shell predicates
+treat an empty file operand as missing.
+
 ### Directory copy operands
 
 `cp` preserves an explicit final `.` component before path normalization:

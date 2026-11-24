@@ -638,6 +638,7 @@ impl FileSystem for OverlayFs {
     }
 
     async fn remove(&self, path: &Path, recursive: bool) -> Result<()> {
+        super::reject_empty_path(path)?;
         // THREAT[TM-DOS-039]: Validate path before use
         self.limits
             .validate_path(path)
@@ -791,6 +792,8 @@ impl FileSystem for OverlayFs {
     }
 
     async fn rename(&self, from: &Path, to: &Path) -> Result<()> {
+        super::reject_empty_path(from)?;
+        super::reject_empty_path(to)?;
         // THREAT[TM-DOS-039]: Validate both paths before use
         self.limits
             .validate_path(from)

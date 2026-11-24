@@ -479,6 +479,17 @@ pub fn vfs_join(base: &Path, child: impl AsRef<Path>) -> PathBuf {
     }
 }
 
+/// Validate an operand before normalization can turn it into the VFS root.
+pub(crate) fn reject_empty_path(path: &Path) -> std::io::Result<()> {
+    if path.as_os_str().is_empty() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "empty filesystem path",
+        ));
+    }
+    Ok(())
+}
+
 /// Normalize a virtual filesystem path by resolving `.` and `..` components.
 ///
 /// Returns a canonical absolute path. If the result would be empty (e.g., from

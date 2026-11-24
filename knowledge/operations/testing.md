@@ -235,6 +235,13 @@ it from the consolidated integration binary; `realfs_tests.rs` invokes the same
 contract under `--features realfs`. Keep backend-neutral invariants in the
 helper and adapter-specific fault/atomicity cases in their owning test module.
 
+For changes to file operands, path normalization, or mount routing, cover the
+operation's return status and resulting filesystem state. Use a surviving file
+with known contents to verify that a rejected operation leaves its target
+untouched. Test an omitted operand, an explicit empty operand, and an explicit
+dot when the command gives them different meanings. Run host-mount regressions
+against a disposable directory in the RealFs feature suite.
+
 The consolidation rule above covers the `bashkit` crate. `bashkit-cli`
 has its own, much smaller test surface:
 

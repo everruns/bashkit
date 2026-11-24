@@ -112,7 +112,9 @@ impl Builtin for Install {
                 return fail("missing operand".to_string());
             }
             for d in &operands {
-                let p = super::resolve_path(ctx.cwd, d);
+                let Some(p) = super::resolve_file_operand(ctx.cwd, d) else {
+                    return fail("cannot create directory '': No such file or directory".into());
+                };
                 if let Err(e) = ctx.fs.mkdir(&p, true).await {
                     return fail(format!("cannot create directory '{d}': {e}"));
                 }
@@ -126,6 +128,9 @@ impl Builtin for Install {
 
         let (sources, dest_dir, dest_file): (Vec<String>, Option<String>, Option<String>) =
             if let Some(t) = target {
+                if t.is_empty() {
+                    return fail("target directory '': No such file or directory".into());
+                }
                 (operands, Some(t), None)
             } else {
                 if operands.len() < 2 {
@@ -135,7 +140,9 @@ impl Builtin for Install {
                     });
                 }
                 let dest = operands.pop().unwrap_or_default();
-                let dest_path = super::resolve_path(ctx.cwd, &dest);
+                let Some(dest_path) = super::resolve_file_operand(ctx.cwd, &dest) else {
+                    return fail("cannot create regular file '': No such file or directory".into());
+                };
                 let is_dir = !no_target
                     && ctx
                         .fs
@@ -159,7 +166,9 @@ impl Builtin for Install {
             }
         }
         for src in &sources {
-            let sp = super::resolve_path(ctx.cwd, src);
+            let Some(sp) = super::resolve_file_operand(ctx.cwd, src) else {
+                return fail("cannot stat '': No such file or directory".into());
+            };
             let data = match ctx.fs.stat(&sp).await {
                 Ok(m) if m.file_type.is_dir() => {
                     return fail(format!("omitting directory '{src}'"));

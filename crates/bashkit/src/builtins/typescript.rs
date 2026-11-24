@@ -1368,7 +1368,7 @@ async fn handle_external_call(
 /// Extract a path string from the first arg, resolve relative to cwd.
 fn extract_path(args: &[Value], cwd: &Path) -> Option<PathBuf> {
     match args.first()? {
-        Value::String(s) => {
+        Value::String(s) if !s.is_empty() => {
             let p = Path::new(s.as_ref());
             if p.has_root() {
                 Some(p.to_owned())
@@ -1840,6 +1840,17 @@ mod tests {
         let r = run(&["-c", "await exists('/tmp/nope.txt')"], None).await;
         assert_eq!(r.exit_code, 0);
         assert_eq!(r.stdout, "false\n");
+    }
+
+    #[tokio::test]
+    async fn test_vfs_empty_path_does_not_select_cwd() {
+        let result = run_with_vfs(
+            &["-c", "await exists('')"],
+            &[("/home/user/sentinel", "data")],
+        )
+        .await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "false\n");
     }
 
     #[tokio::test]

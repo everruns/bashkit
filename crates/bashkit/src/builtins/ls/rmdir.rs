@@ -3,7 +3,7 @@
 use async_trait::async_trait;
 
 use crate::builtins::arg_parser::OptArg;
-use crate::builtins::{Builtin, Context, resolve_path};
+use crate::builtins::{Builtin, Context, resolve_file_operand};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
 
@@ -100,7 +100,9 @@ async fn remove_empty_dir(
     ctx: &Context<'_>,
     dir: &str,
 ) -> Result<std::result::Result<(), &'static str>> {
-    let path = resolve_path(ctx.cwd, dir);
+    let Some(path) = resolve_file_operand(ctx.cwd, dir) else {
+        return Ok(Err("No such file or directory"));
+    };
     let Ok(metadata) = ctx.fs.lstat(&path).await else {
         return Ok(Err("No such file or directory"));
     };

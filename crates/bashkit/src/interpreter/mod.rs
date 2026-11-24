@@ -6052,49 +6052,21 @@ impl Interpreter {
             match args.len() {
                 1 => !args[0].is_empty(),
                 2 => {
-                    // Unary operators
-                    let resolve = |p: &str| -> std::path::PathBuf {
-                        let path = std::path::Path::new(p);
-                        let joined = if path.has_root() {
-                            path.to_path_buf()
-                        } else {
-                            crate::fs::vfs_join(&self.cwd, path)
-                        };
-                        crate::fs::normalize_path(&joined)
-                    };
+                    let arg = &args[1];
                     match args[0].as_str() {
-                        "-z" => args[1].is_empty(),
-                        "-n" => !args[1].is_empty(),
-                        "-v" => self.cond_var_is_set(&args[1]),
-                        "-e" | "-a" => self.fs.exists(&resolve(&args[1])).await.unwrap_or(false),
-                        "-f" => self
-                            .fs
-                            .stat(&resolve(&args[1]))
-                            .await
-                            .map(|m| m.file_type.is_file())
-                            .unwrap_or(false),
-                        "-d" => self
-                            .fs
-                            .stat(&resolve(&args[1]))
-                            .await
-                            .map(|m| m.file_type.is_dir())
-                            .unwrap_or(false),
-                        "-r" | "-w" | "-x" => {
-                            self.fs.exists(&resolve(&args[1])).await.unwrap_or(false)
+                        "-z" => arg.is_empty(),
+                        "-n" => !arg.is_empty(),
+                        "-v" => self.cond_var_is_set(arg),
+                        // The conditional's executable predicate uses VFS existence.
+                        "-x" => {
+                            !arg.is_empty()
+                                && self
+                                    .fs
+                                    .exists(&self.resolve_path(arg))
+                                    .await
+                                    .unwrap_or(false)
                         }
-                        "-O" | "-G" => self.fs.stat(&resolve(&args[1])).await.is_ok_and(|meta| {
-                            if args[0] == "-O" {
-                                meta.uid == builtins::SANDBOX_UID
-                            } else {
-                                meta.gid == builtins::SANDBOX_GID
-                            }
-                        }),
-                        "-s" => self
-                            .fs
-                            .stat(&resolve(&args[1]))
-                            .await
-                            .map(|m| m.size > 0)
-                            .unwrap_or(false),
+                        "-N" if arg.is_empty() => false,
                         "-t" => {
                             // fd is a terminal — configurable via _TTY_N variables
                             let fd_key = format!("_TTY_{}", args[1]);
@@ -6104,7 +6076,9 @@ impl Interpreter {
                                 .map(|v| v == "1")
                                 .unwrap_or(false)
                         }
-                        _ => !args[0].is_empty(),
+                        op => builtins::test_file_unary(op, arg, &self.fs, &self.cwd)
+                            .await
+                            .unwrap_or(!op.is_empty()),
                     }
                 }
                 3 => {
@@ -6136,34 +6110,9 @@ impl Interpreter {
                         "-gt" => self.cond_int_cmp(&args[0], &args[2], |a, b| a > b),
                         "-ge" => self.cond_int_cmp(&args[0], &args[2], |a, b| a >= b),
                         "=~" => self.regex_match(&args[0], &args[2]),
-                        "-nt" => {
-                            let lm = self.fs.stat(std::path::Path::new(&args[0])).await;
-                            let rm = self.fs.stat(std::path::Path::new(&args[2])).await;
-                            match (lm, rm) {
-                                (Ok(l), Ok(r)) => l.modified > r.modified,
-                                (Ok(_), Err(_)) => true,
-                                _ => false,
-                            }
-                        }
-                        "-ot" => {
-                            let lm = self.fs.stat(std::path::Path::new(&args[0])).await;
-                            let rm = self.fs.stat(std::path::Path::new(&args[2])).await;
-                            match (lm, rm) {
-                                (Ok(l), Ok(r)) => l.modified < r.modified,
-                                (Err(_), Ok(_)) => true,
-                                _ => false,
-                            }
-                        }
-                        "-ef" => {
-                            let lp = crate::builtins::resolve_path(
-                                &std::path::PathBuf::from("/"),
-                                &args[0],
-                            );
-                            let rp = crate::builtins::resolve_path(
-                                &std::path::PathBuf::from("/"),
-                                &args[2],
-                            );
-                            lp == rp
+                        op @ ("-nt" | "-ot" | "-ef") => {
+                            builtins::test_file_binary(&args[0], op, &args[2], &self.fs, &self.cwd)
+                                .await
                         }
                         _ => false,
                     }

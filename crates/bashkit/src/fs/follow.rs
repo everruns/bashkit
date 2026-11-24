@@ -80,6 +80,7 @@ impl FollowFs {
     /// component is kept as-is (lstat semantics). Resolution stops at the
     /// first missing component; the rest of the path is appended unchanged.
     async fn resolve(&self, path: &Path, follow_last: bool) -> Result<PathBuf> {
+        super::reject_empty_path(path)?;
         let mut pending: Vec<String> = split(path);
         pending.reverse();
         let mut done: Vec<String> = Vec::new();

@@ -44,6 +44,21 @@ pub async fn certify_path_and_data_contract(name: &str, fs: &dyn FileSystem) {
         "{name}"
     );
 
+    let empty_path = Path::new("");
+    let existing_file = Path::new("/cert/data");
+    for error in [
+        fs.remove(empty_path, true).await.unwrap_err(),
+        fs.rename(empty_path, existing_file).await.unwrap_err(),
+        fs.rename(existing_file, empty_path).await.unwrap_err(),
+    ] {
+        assert_eq!(io_kind(error), ErrorKind::InvalidInput, "{name}");
+    }
+    assert_eq!(
+        fs.read_file(existing_file).await.unwrap(),
+        content,
+        "{name}"
+    );
+
     let unsafe_path = Path::new("/cert/bad\0name");
     let errors = [
         fs.read_file(unsafe_path).await.unwrap_err(),

@@ -84,6 +84,7 @@ pub mod dd_tests;
 pub mod dev_fd_path_tests;
 pub mod dev_null_tests;
 pub mod diagnostic_prefix_tests;
+pub mod empty_path_tests;
 pub mod exec_options_tests;
 pub mod execution_budget_tests;
 pub mod execution_capability_tests;

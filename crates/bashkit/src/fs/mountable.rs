@@ -417,6 +417,7 @@ impl MountableFs {
 
     /// THREAT[TM-DOS-046]: Validate path using root filesystem limits before delegation.
     fn validate_path(&self, path: &Path) -> Result<()> {
+        super::reject_empty_path(path)?;
         self.root
             .limits()
             .validate_path(path)

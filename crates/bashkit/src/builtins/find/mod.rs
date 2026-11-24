@@ -47,7 +47,8 @@ use parse::{Cmp, Expr, Follow, Identity, NewerRef, Options, PermKind, TimeField}
 use super::limits::FIND_MAX_OUTPUT_BYTES;
 use super::walk_cache::WalkCache;
 use super::{
-    Builtin, Context, Date, ExecutionPlan, PlanDriver, PlanStep, SubCommand, fnmatch, resolve_path,
+    Builtin, Context, Date, ExecutionPlan, PlanDriver, PlanStep, SubCommand, fnmatch,
+    resolve_file_operand, resolve_path,
 };
 use crate::StreamData;
 use crate::error::Result;
@@ -762,7 +763,10 @@ impl FindRun {
 
     async fn start_root(&mut self, index: usize) {
         let root = self.cfg.roots[index].clone();
-        let abs = resolve_path(&self.cwd, &root);
+        let Some(abs) = resolve_file_operand(&self.cwd, &root) else {
+            self.error("find: '': No such file or directory\n".into());
+            return;
+        };
         let Ok(lmeta) = self.cfg.fs.lstat(&abs).await else {
             self.error(format!("find: '{root}': No such file or directory\n"));
             return;
