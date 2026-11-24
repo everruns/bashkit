@@ -26,7 +26,7 @@
 //!   at once. Such threads block a runtime worker (or the JS thread) until
 //!   they finish and cannot be reached by the execution deadline, so waiting
 //!   on a promise there can starve or hang the runtime. They are served from
-//!   the cache only; scripts load content first (`cat file > /dev/null`).
+//!   the cache only; scripts load content first (for example `cp` it out).
 //!
 //! Lazy handles are mounted directly (`mountLazyFileSystem`) and refuse
 //! `toExternal()`: the C ABI bridge blocks a runtime worker per operation,

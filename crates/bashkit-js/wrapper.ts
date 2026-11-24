@@ -833,8 +833,8 @@ export class FileSystem {
    * Callbacks run on the JS event loop, so use `execute()` (async).
    * Synchronous access (`executeSync()`, `bash.readFile()`, `fs.readFile()`)
    * to a path that is not cached yet fails with an error instead of
-   * deadlocking. Helper threads (sqlite `-backend vfs`) only see files a
-   * script has already read. Lazy handles cannot be exported with
+   * deadlocking, as do `ctx.fs` reads in custom builtins. Helper threads
+   * (sqlite `-backend vfs`) only see files a script has already read. Lazy handles cannot be exported with
    * `toExternal()`.
    *
    * @example

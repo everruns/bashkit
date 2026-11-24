@@ -594,8 +594,8 @@ runs in that scope); any other (helper threads such as sqlite's VFS I/O) fails
 at once and is served from the cache only. Helper threads block a runtime
 worker or the JS thread until they finish and the execution deadline cannot
 reach them, so waiting on a promise there starves or hangs the runtime; scripts
-load the file first (`cat f > /dev/null`), and sqlite reports an unloaded file
-as an empty database.
+load the file first (for sqlite, `cp` it out of the read-only mount), and
+sqlite reports an unloaded file as an empty database.
 Threats: TM-DOS-148, TM-INF-036. TODO: Python parity, a writable mode (needs an
 overlay with an empty upper layer), cache invalidation, and cancellation of
 pending callbacks (needs the execution budget in `FsBackend` calls).

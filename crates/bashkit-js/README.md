@@ -260,10 +260,13 @@ await bash.execute("grep -rl TODO /repo/src"); // lists /, /src, then reads matc
 - Callbacks run on the JS event loop, so use `execute()` (with or without
   live output); reads there wait for the loop if it is busy. Synchronous
   access (`executeSync()`, `bash.readFile()`) to a path that is not cached
-  yet fails with an error instead of deadlocking. Helper threads (sqlite's
-  `-backend vfs`) never call back into JS: they see only files a script has
-  already read, so run `cat db > /dev/null` first. Otherwise sqlite reports
-  the file as an empty database.
+  yet fails with an error instead of deadlocking; so do `ctx.fs` reads in
+  custom builtins and command callbacks, which run on the JS thread. Helper
+  threads (sqlite's `-backend vfs`) never call back into JS either: they see
+  only files a script has already read, otherwise sqlite reports an empty
+  database. For sqlite, copy the database out first
+  (`cp /repo/app.db /tmp/ && sqlite3 /tmp/app.db ...`), since sqlite on any
+  read-only mount also fails to flush.
 - `timeoutMs` bounds a pending callback. `cancel()` takes effect once pending
   callbacks settle. Each pending callback holds one of 10 process-wide
   callback slots (shared with custom builtins), so a callback that never
