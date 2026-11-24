@@ -1,0 +1,767 @@
+{
+  "source_base": "abc42a7cd4b5ef0af7f60002fda698517a9db417",
+  "platform": "Linux x86_64; CPU affinity 2 for original adapter and hotpath; four-core CPU quota",
+  "native_profile": {
+    "opt_level": 3,
+    "lto": "fat",
+    "codegen_units": 1,
+    "features": "default, execution plan disabled"
+  },
+  "original_adapter": {
+    "repository": "https://github.com/rivet-dev/code-mode-language-benchmark",
+    "source_sha256": "a2fb92741e17a3e0c6701ecca17288f7fa217879589795d67235332ea3d5ad4e",
+    "harness_sha256": "8a8e05a77dd85a6177a6186f43c37c14adccd9d3500fefe7ecaf0e812dc38900",
+    "lock_sha256": "7218713be22ba9de683bcf697ff40705a6e567c7d2a79795486a87a26af77722",
+    "regex": "1.13.2",
+    "regex_automata": "0.4.19",
+    "protocol": "ExecutionHandle HostCall/resume, JSON stdout, ordinary command substitution, regex and BASH_REMATCH validation",
+    "rounds": {
+      "baseline": [
+        {
+          "key": "event-json",
+          "language": "Shell",
+          "crate": "bashkit",
+          "version": "0.21.1",
+          "startUs": 58.577,
+          "startRuns": 2000,
+          "memoryBytesPerSession": 36651,
+          "memorySessions": 1000,
+          "memoryStoppedBy": "target",
+          "memoryExtraStackBytes": 0,
+          "toolCallWallUs": 33.0726,
+          "toolCallWallMeanUs": 33.7907,
+          "toolCallSlowestBatchUs": 76.1327,
+          "toolCallCpuUs": 33.7674,
+          "toolCallMeasuredCalls": 122000,
+          "toolCallWarmupCalls": 20000,
+          "toolCallBatches": 122,
+          "toolCallBatchSize": 1000,
+          "callKind": "async",
+          "limitsEnabled": "max_work_units=10000000000, max_commands/max_loop_iterations/max_total_loop_iterations=2000000, timeout=600s, session max_total_commands=2000000, session max_exec_calls=20; all other ExecutionLimits, MemoryLimits, filesystem quotas and default-deny network policy remain at defaults",
+          "notes": [
+            "Session = Bash::builder() with the normal virtual root filesystem, default features, raised benchmark fuel limits, and one host builtin; then exec(\"echo $((1 + 1))\").",
+            "The Tokio current-thread runtime is host infrastructure shared by every session and is created before the measured phases.",
+            "The builtin suspends execution through ExecutionHandle and the host resumes it.",
+            "The guest captures the JSON reply with $(...) and validates its ID with a regex and BASH_REMATCH.",
+            "The loaded shell function runs once for calibration and once for all warm-up and measured calls. Timing starts at the first measured host call and records batches of 1,000 calls."
+          ]
+        },
+        {
+          "key": "event-json",
+          "language": "Shell",
+          "crate": "bashkit",
+          "version": "0.21.1",
+          "startUs": 58.405,
+          "startRuns": 2000,
+          "memoryBytesPerSession": 36651,
+          "memorySessions": 1000,
+          "memoryStoppedBy": "target",
+          "memoryExtraStackBytes": 0,
+          "toolCallWallUs": 31.8415,
+          "toolCallWallMeanUs": 33.3096,
+          "toolCallSlowestBatchUs": 94.1381,
+          "toolCallCpuUs": 32.4032,
+          "toolCallMeasuredCalls": 120000,
+          "toolCallWarmupCalls": 20000,
+          "toolCallBatches": 120,
+          "toolCallBatchSize": 1000,
+          "callKind": "async",
+          "limitsEnabled": "max_work_units=10000000000, max_commands/max_loop_iterations/max_total_loop_iterations=2000000, timeout=600s, session max_total_commands=2000000, session max_exec_calls=20; all other ExecutionLimits, MemoryLimits, filesystem quotas and default-deny network policy remain at defaults",
+          "notes": [
+            "Session = Bash::builder() with the normal virtual root filesystem, default features, raised benchmark fuel limits, and one host builtin; then exec(\"echo $((1 + 1))\").",
+            "The Tokio current-thread runtime is host infrastructure shared by every session and is created before the measured phases.",
+            "The builtin suspends execution through ExecutionHandle and the host resumes it.",
+            "The guest captures the JSON reply with $(...) and validates its ID with a regex and BASH_REMATCH.",
+            "The loaded shell function runs once for calibration and once for all warm-up and measured calls. Timing starts at the first measured host call and records batches of 1,000 calls."
+          ]
+        },
+        {
+          "key": "event-json",
+          "language": "Shell",
+          "crate": "bashkit",
+          "version": "0.21.1",
+          "startUs": 58.551,
+          "startRuns": 2000,
+          "memoryBytesPerSession": 36651,
+          "memorySessions": 1000,
+          "memoryStoppedBy": "target",
+          "memoryExtraStackBytes": 0,
+          "toolCallWallUs": 32.5796,
+          "toolCallWallMeanUs": 34.5178,
+          "toolCallSlowestBatchUs": 84.9963,
+          "toolCallCpuUs": 33.2485,
+          "toolCallMeasuredCalls": 124000,
+          "toolCallWarmupCalls": 20000,
+          "toolCallBatches": 124,
+          "toolCallBatchSize": 1000,
+          "callKind": "async",
+          "limitsEnabled": "max_work_units=10000000000, max_commands/max_loop_iterations/max_total_loop_iterations=2000000, timeout=600s, session max_total_commands=2000000, session max_exec_calls=20; all other ExecutionLimits, MemoryLimits, filesystem quotas and default-deny network policy remain at defaults",
+          "notes": [
+            "Session = Bash::builder() with the normal virtual root filesystem, default features, raised benchmark fuel limits, and one host builtin; then exec(\"echo $((1 + 1))\").",
+            "The Tokio current-thread runtime is host infrastructure shared by every session and is created before the measured phases.",
+            "The builtin suspends execution through ExecutionHandle and the host resumes it.",
+            "The guest captures the JSON reply with $(...) and validates its ID with a regex and BASH_REMATCH.",
+            "The loaded shell function runs once for calibration and once for all warm-up and measured calls. Timing starts at the first measured host call and records batches of 1,000 calls."
+          ]
+        },
+        {
+          "key": "event-json",
+          "language": "Shell",
+          "crate": "bashkit",
+          "version": "0.21.1",
+          "startUs": 58.344,
+          "startRuns": 2000,
+          "memoryBytesPerSession": 36651,
+          "memorySessions": 1000,
+          "memoryStoppedBy": "target",
+          "memoryExtraStackBytes": 0,
+          "toolCallWallUs": 32.1082,
+          "toolCallWallMeanUs": 33.4447,
+          "toolCallSlowestBatchUs": 95.8092,
+          "toolCallCpuUs": 32.5161,
+          "toolCallMeasuredCalls": 126000,
+          "toolCallWarmupCalls": 20000,
+          "toolCallBatches": 126,
+          "toolCallBatchSize": 1000,
+          "callKind": "async",
+          "limitsEnabled": "max_work_units=10000000000, max_commands/max_loop_iterations/max_total_loop_iterations=2000000, timeout=600s, session max_total_commands=2000000, session max_exec_calls=20; all other ExecutionLimits, MemoryLimits, filesystem quotas and default-deny network policy remain at defaults",
+          "notes": [
+            "Session = Bash::builder() with the normal virtual root filesystem, default features, raised benchmark fuel limits, and one host builtin; then exec(\"echo $((1 + 1))\").",
+            "The Tokio current-thread runtime is host infrastructure shared by every session and is created before the measured phases.",
+            "The builtin suspends execution through ExecutionHandle and the host resumes it.",
+            "The guest captures the JSON reply with $(...) and validates its ID with a regex and BASH_REMATCH.",
+            "The loaded shell function runs once for calibration and once for all warm-up and measured calls. Timing starts at the first measured host call and records batches of 1,000 calls."
+          ]
+        }
+      ],
+      "candidate": [
+        {
+          "key": "event-json",
+          "language": "Shell",
+          "crate": "bashkit",
+          "version": "0.21.1",
+          "startUs": 58.949,
+          "startRuns": 2000,
+          "memoryBytesPerSession": 36573,
+          "memorySessions": 1000,
+          "memoryStoppedBy": "target",
+          "memoryExtraStackBytes": 0,
+          "toolCallWallUs": 21.0282,
+          "toolCallWallMeanUs": 23.0849,
+          "toolCallSlowestBatchUs": 193.2313,
+          "toolCallCpuUs": 21.3282,
+          "toolCallMeasuredCalls": 181000,
+          "toolCallWarmupCalls": 20000,
+          "toolCallBatches": 181,
+          "toolCallBatchSize": 1000,
+          "callKind": "async",
+          "limitsEnabled": "max_work_units=10000000000, max_commands/max_loop_iterations/max_total_loop_iterations=2000000, timeout=600s, session max_total_commands=2000000, session max_exec_calls=20; all other ExecutionLimits, MemoryLimits, filesystem quotas and default-deny network policy remain at defaults",
+          "notes": [
+            "Session = Bash::builder() with the normal virtual root filesystem, default features, raised benchmark fuel limits, and one host builtin; then exec(\"echo $((1 + 1))\").",
+            "The Tokio current-thread runtime is host infrastructure shared by every session and is created before the measured phases.",
+            "The builtin suspends execution through ExecutionHandle and the host resumes it.",
+            "The guest captures the JSON reply with $(...) and validates its ID with a regex and BASH_REMATCH.",
+            "The loaded shell function runs once for calibration and once for all warm-up and measured calls. Timing starts at the first measured host call and records batches of 1,000 calls."
+          ]
+        },
+        {
+          "key": "event-json",
+          "language": "Shell",
+          "crate": "bashkit",
+          "version": "0.21.1",
+          "startUs": 58.773,
+          "startRuns": 2000,
+          "memoryBytesPerSession": 36573,
+          "memorySessions": 1000,
+          "memoryStoppedBy": "target",
+          "memoryExtraStackBytes": 0,
+          "toolCallWallUs": 21.0617,
+          "toolCallWallMeanUs": 22.006,
+          "toolCallSlowestBatchUs": 59.7978,
+          "toolCallCpuUs": 21.4044,
+          "toolCallMeasuredCalls": 181000,
+          "toolCallWarmupCalls": 20000,
+          "toolCallBatches": 181,
+          "toolCallBatchSize": 1000,
+          "callKind": "async",
+          "limitsEnabled": "max_work_units=10000000000, max_commands/max_loop_iterations/max_total_loop_iterations=2000000, timeout=600s, session max_total_commands=2000000, session max_exec_calls=20; all other ExecutionLimits, MemoryLimits, filesystem quotas and default-deny network policy remain at defaults",
+          "notes": [
+            "Session = Bash::builder() with the normal virtual root filesystem, default features, raised benchmark fuel limits, and one host builtin; then exec(\"echo $((1 + 1))\").",
+            "The Tokio current-thread runtime is host infrastructure shared by every session and is created before the measured phases.",
+            "The builtin suspends execution through ExecutionHandle and the host resumes it.",
+            "The guest captures the JSON reply with $(...) and validates its ID with a regex and BASH_REMATCH.",
+            "The loaded shell function runs once for calibration and once for all warm-up and measured calls. Timing starts at the first measured host call and records batches of 1,000 calls."
+          ]
+        },
+        {
+          "key": "event-json",
+          "language": "Shell",
+          "crate": "bashkit",
+          "version": "0.21.1",
+          "startUs": 58.864,
+          "startRuns": 2000,
+          "memoryBytesPerSession": 36573,
+          "memorySessions": 1000,
+          "memoryStoppedBy": "target",
+          "memoryExtraStackBytes": 0,
+          "toolCallWallUs": 20.9216,
+          "toolCallWallMeanUs": 21.681,
+          "toolCallSlowestBatchUs": 61.4303,
+          "toolCallCpuUs": 21.1371,
+          "toolCallMeasuredCalls": 177000,
+          "toolCallWarmupCalls": 20000,
+          "toolCallBatches": 177,
+          "toolCallBatchSize": 1000,
+          "callKind": "async",
+          "limitsEnabled": "max_work_units=10000000000, max_commands/max_loop_iterations/max_total_loop_iterations=2000000, timeout=600s, session max_total_commands=2000000, session max_exec_calls=20; all other ExecutionLimits, MemoryLimits, filesystem quotas and default-deny network policy remain at defaults",
+          "notes": [
+            "Session = Bash::builder() with the normal virtual root filesystem, default features, raised benchmark fuel limits, and one host builtin; then exec(\"echo $((1 + 1))\").",
+            "The Tokio current-thread runtime is host infrastructure shared by every session and is created before the measured phases.",
+            "The builtin suspends execution through ExecutionHandle and the host resumes it.",
+            "The guest captures the JSON reply with $(...) and validates its ID with a regex and BASH_REMATCH.",
+            "The loaded shell function runs once for calibration and once for all warm-up and measured calls. Timing starts at the first measured host call and records batches of 1,000 calls."
+          ]
+        },
+        {
+          "key": "event-json",
+          "language": "Shell",
+          "crate": "bashkit",
+          "version": "0.21.1",
+          "startUs": 58.781,
+          "startRuns": 2000,
+          "memoryBytesPerSession": 36573,
+          "memorySessions": 1000,
+          "memoryStoppedBy": "target",
+          "memoryExtraStackBytes": 0,
+          "toolCallWallUs": 21.228,
+          "toolCallWallMeanUs": 22.1823,
+          "toolCallSlowestBatchUs": 66.1193,
+          "toolCallCpuUs": 21.6811,
+          "toolCallMeasuredCalls": 187000,
+          "toolCallWarmupCalls": 20000,
+          "toolCallBatches": 187,
+          "toolCallBatchSize": 1000,
+          "callKind": "async",
+          "limitsEnabled": "max_work_units=10000000000, max_commands/max_loop_iterations/max_total_loop_iterations=2000000, timeout=600s, session max_total_commands=2000000, session max_exec_calls=20; all other ExecutionLimits, MemoryLimits, filesystem quotas and default-deny network policy remain at defaults",
+          "notes": [
+            "Session = Bash::builder() with the normal virtual root filesystem, default features, raised benchmark fuel limits, and one host builtin; then exec(\"echo $((1 + 1))\").",
+            "The Tokio current-thread runtime is host infrastructure shared by every session and is created before the measured phases.",
+            "The builtin suspends execution through ExecutionHandle and the host resumes it.",
+            "The guest captures the JSON reply with $(...) and validates its ID with a regex and BASH_REMATCH.",
+            "The loaded shell function runs once for calibration and once for all warm-up and measured calls. Timing starts at the first measured host call and records batches of 1,000 calls."
+          ]
+        }
+      ]
+    },
+    "summary": {
+      "baseline": {
+        "toolCallWallUs": 32.3439,
+        "toolCallWallMeanUs": 33.6177,
+        "toolCallCpuUs": 32.8823,
+        "startUs": 58.478,
+        "memoryBytesPerSession": 36651.0
+      },
+      "candidate": {
+        "toolCallWallUs": 21.04495,
+        "toolCallWallMeanUs": 22.09415,
+        "toolCallCpuUs": 21.3663,
+        "startUs": 58.8225,
+        "memoryBytesPerSession": 36573.0
+      }
+    },
+    "reproducer_files": {
+      "candidate/src/main.rs": "//! Bashkit: one in-process `Bash` interpreter per session. The guest calls a registered host\n//! builtin and receives its result through ordinary shell command substitution.\n\nuse std::time::Duration;\n\nuse bashkit::{\n    async_trait, Bash, Builtin, BuiltinContext, ExecResult, ExecutionEvent, ExecutionLimits,\n    SessionLimits,\n};\nuse bench_common::{run_owned, tick, Info};\nuse tokio::runtime::{Builder, Runtime};\n\nconst GUEST: &str = r#\"\nrun() {\n    local start=$1 count=$2 id reply\n    local end=$((start + count))\n    for ((id = start; id < end; id++)); do\n        __CALL_BODY__\n    done\n}\n\"#;\n\nconst MAX_CALLS: usize = 2_000_000;\nconst MAX_WORK_UNITS: u64 = 10_000_000_000;\n\n#[derive(Clone, Copy)]\nenum CallPath {\n    Event,\n    Direct,\n}\n\n#[derive(Clone, Copy)]\nenum Reply {\n    Json,\n    Text,\n    Variable,\n    Empty,\n}\n\nimpl Reply {\n    fn call_body(self) -> &'static str {\n        match self {\n            Self::Json => {\n                r#\"reply=$(call_tool \"$id\" \"hello from the sandbox\") || return\n        [[ $reply =~ \\\"id\\\":([0-9]+) ]] || return 3\n        ((BASH_REMATCH[1] == id)) || return 4\"#\n            }\n            Self::Text => {\n                r#\"reply=$(call_tool \"$id\" \"hello from the sandbox\") || return\n        [[ $reply == \"$id:22\" ]] || return 4\"#\n            }\n            Self::Variable => {\n                r#\"call_tool \"$id\" \"hello from the sandbox\" || return\n        [[ $reply == \"$id:22\" ]] || return 4\"#\n            }\n            Self::Empty => r#\"call_tool \"$id\" \"hello from the sandbox\" || return\"#,\n        }\n    }\n\n    fn host_call(self, args: &[String]) -> ExecResult {\n        tick();\n        let [id, value] = args else {\n            panic!(\"call_tool expects an ID and a string\");\n        };\n        let length = value.len();\n        ExecResult::ok(match self {\n            Self::Json => format!(\"{{\\\"id\\\":{id},\\\"ok\\\":true,\\\"value\\\":{length}}}\\n\"),\n            Self::Text | Self::Variable => format!(\"{id}:{length}\\n\"),\n            Self::Empty => {\n                let numeric_id: i64 = id.parse().expect(\"numeric call ID\");\n                std::hint::black_box((numeric_id, length));\n                String::new()\n            }\n        })\n    }\n}\n\nstruct Lookup(Reply);\n\n#[async_trait]\nimpl Builtin for Lookup {\n    async fn execute(&self, context: BuiltinContext<'_>) -> bashkit::Result<ExecResult> {\n        if matches!(self.0, Reply::Variable) {\n            tick();\n            let [id, value] = context.args else {\n                panic!(\"call_tool expects an ID and a string\");\n            };\n            context\n                .variables\n                .insert(\"reply\".to_string(), format!(\"{id}:{}\", value.len()));\n            return Ok(ExecResult::ok(\"\"));\n        }\n        Ok(self.0.host_call(context.args))\n    }\n}\n\nstruct Session {\n    bash: Option<Bash>,\n}\n\nfn exec(runtime: &Runtime, session: &mut Session, script: &str) -> ExecResult {\n    runtime\n        .block_on(session.bash.as_mut().expect(\"session\").exec(script))\n        .unwrap_or_else(|error| panic!(\"bashkit exec failed for {script:?}: {error}\"))\n}\n\nfn exec_host_calls(\n    runtime: &Runtime,\n    session: &mut Session,\n    script: String,\n    reply: Reply,\n) -> ExecResult {\n    let bash = session.bash.take().expect(\"session\");\n    let mut execution = bash.start_execution(script);\n    let result = runtime.block_on(async {\n        loop {\n            match execution.next_event().await.expect(\"next execution event\") {\n                ExecutionEvent::HostCall(request) => {\n                    assert_eq!(request.command(), \"call_tool\");\n                    execution\n                        .resume(request.id(), reply.host_call(request.args()))\n                        .expect(\"resume host call\");\n                }\n                ExecutionEvent::Complete(result) => break result,\n            }\n        }\n    });\n    session.bash = Some(execution.into_bash().expect(\"completed Bash session\"));\n    result\n}\n\nfn new_session(runtime: &Runtime, call_path: CallPath, reply: Reply) -> Session {\n    let limits = ExecutionLimits::new()\n        .max_work_units(MAX_WORK_UNITS)\n        .max_commands(MAX_CALLS)\n        .max_loop_iterations(MAX_CALLS)\n        .max_total_loop_iterations(MAX_CALLS)\n        .timeout(Duration::from_secs(600));\n    let session_limits = SessionLimits::new()\n        .max_total_commands(MAX_CALLS as u64)\n        .max_exec_calls(20);\n    let builder = Bash::builder()\n        .limits(limits)\n        .session_limits(session_limits);\n    let builder = match call_path {\n        CallPath::Event => builder.host_call_builtin(\"call_tool\"),\n        CallPath::Direct => builder.builtin(\"call_tool\", Box::new(Lookup(reply))),\n    };\n    let mut session = Session {\n        bash: Some(builder.build()),\n    };\n    let result = exec(runtime, &mut session, \"echo $((1 + 1))\");\n    assert_eq!(result.exit_code, 0, \"{}\", result.stderr);\n    assert_eq!(result.stdout, \"2\\n\");\n    session\n}\n\nfn main() {\n    let (key, call_path, reply) = match std::env::args().nth(1).as_deref() {\n        None => (\"bashkit\", CallPath::Event, Reply::Json),\n        Some(\"event-json\") => (\"event-json\", CallPath::Event, Reply::Json),\n        Some(\"event-text\") => (\"event-text\", CallPath::Event, Reply::Text),\n        Some(\"direct-json\") => (\"direct-json\", CallPath::Direct, Reply::Json),\n        Some(\"direct-text\") => (\"direct-text\", CallPath::Direct, Reply::Text),\n        Some(\"direct-variable\") => (\"direct-variable\", CallPath::Direct, Reply::Variable),\n        Some(\"direct-empty\") => (\"direct-empty\", CallPath::Direct, Reply::Empty),\n        Some(variant) => panic!(\"unknown Bashkit benchmark variant: {variant}\"),\n    };\n    let guest = GUEST.replace(\"__CALL_BODY__\", reply.call_body());\n    let runtime = Builder::new_current_thread()\n        .enable_time()\n        .build()\n        .expect(\"build Tokio runtime\");\n    let info = Info {\n        key,\n        language: \"Shell\",\n        crate_name: \"bashkit\",\n        version: bashkit::VERSION,\n        call_kind: match call_path {\n            CallPath::Event => \"async\",\n            CallPath::Direct => \"sync\",\n        },\n        limits_enabled: format!(\n            \"max_work_units={MAX_WORK_UNITS}, max_commands/max_loop_iterations/\\\n             max_total_loop_iterations={MAX_CALLS}, timeout=600s, session max_total_commands=\\\n             {MAX_CALLS}, session max_exec_calls=20; all other ExecutionLimits, MemoryLimits, \\\n             filesystem quotas and default-deny network policy remain at defaults\"\n        ),\n        notes: vec![\n            \"Session = Bash::builder() with the normal virtual root filesystem, default features, raised \\\n             benchmark fuel limits, and one host builtin; then exec(\\\"echo $((1 + 1))\\\").\"\n                .into(),\n            \"The Tokio current-thread runtime is host infrastructure shared by every session and is created \\\n             before the measured phases.\"\n                .into(),\n            match call_path {\n                CallPath::Event => \"The builtin suspends execution through ExecutionHandle and the host resumes it.\",\n                CallPath::Direct => \"The builtin calls the same Rust reply handler inline with no suspension or event bridge.\",\n            }.into(),\n            match reply {\n                Reply::Json => \"The guest captures the JSON reply with $(...) and validates its ID with a regex and BASH_REMATCH.\",\n                Reply::Text => \"The guest captures the plain-text ID:length reply with $(...) and checks it with string comparison.\",\n                Reply::Variable => \"The builtin writes ID:length directly to a shell variable, which the guest checks with string comparison.\",\n                Reply::Empty => \"The builtin reads the ID and string arguments and returns no payload; the guest performs no reply validation.\",\n            }.into(),\n            \"The loaded shell function runs once for calibration and once for all warm-up and measured calls. \\\n             Timing starts at the first measured host call and records batches of 1,000 calls.\"\n                .into(),\n        ],\n    };\n    run_owned(\n        info,\n        || new_session(&runtime, call_path, reply),\n        |session| {\n            let result = exec(&runtime, session, &guest);\n            assert_eq!(result.exit_code, 0, \"{}\", result.stderr);\n        },\n        |session, start, count| {\n            let script = format!(\"run {start} {count}\");\n            let result = match call_path {\n                CallPath::Event => exec_host_calls(&runtime, session, script, reply),\n                CallPath::Direct => exec(&runtime, session, &script),\n            };\n            assert_eq!(result.exit_code, 0, \"{}\", result.stderr);\n            assert!(\n                result.stdout.is_empty(),\n                \"unexpected stdout: {}\",\n                result.stdout\n            );\n        },\n    );\n}\n",
+      "candidate/Cargo.toml": "[package]\nname=\"bench-bashkit\"\nversion=\"0.1.0\"\nedition=\"2021\"\npublish=false\n[dependencies]\nbench-common={path=\"../common\"}\nbashkit={path=\"PATH_TO_BASHKIT\"}\ntokio={version=\"1\",features=[\"rt\",\"time\"]}\n[profile.release]\nopt-level=3\nlto=\"fat\"\ncodegen-units=1\ndebug=false\n[workspace]\n\n[features]\nexecution-plan = [\"bashkit/experimental_execution_plan\"]\n",
+      "candidate/Cargo.lock": "# This file is automatically @generated by Cargo.\n# It is not intended for manual editing.\nversion = 4\n\n[[package]]\nname = \"adler2\"\nversion = \"2.0.1\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa\"\n\n[[package]]\nname = \"aho-corasick\"\nversion = \"1.1.5\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"c982642fa9e8606056828ee9a8505737230110bb1099153c79efe865c59d12ba\"\ndependencies = [\n \"memchr\",\n]\n\n[[package]]\nname = \"android_system_properties\"\nversion = \"0.1.6\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"ae221649c9976a6f6c56ae1facf410f3ddb33cc661c4b7b61020a912d4237fbc\"\ndependencies = [\n \"libc\",\n]\n\n[[package]]\nname = \"anstyle\"\nversion = \"1.0.14\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"940b3a0ca603d1eade50a4846a2afffd5ef57a9feac2c0e2ec2e14f9ead76000\"\n\n[[package]]\nname = \"anyhow\"\nversion = \"1.0.104\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470\"\n\n[[package]]\nname = \"ar_archive_writer\"\nversion = \"0.5.5\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"523e5e187fff36fcb8d1d19ccf0ca4ca43ec3d158316057f66dc6f72716bc5ec\"\ndependencies = [\n \"object\",\n]\n\n[[package]]\nname = \"async-trait\"\nversion = \"0.1.92\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"82f6aeea286b8eb4dd3431a1be1b59d290ace00f5bfd8e2a159bc2a05e2c1667\"\ndependencies = [\n \"proc-macro2\",\n \"quote\",\n \"syn 3.0.10\",\n]\n\n[[package]]\nname = \"autocfg\"\nversion = \"1.5.1\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53\"\n\n[[package]]\nname = \"base64\"\nversion = \"0.23.1\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"ac07cdecf99051d9a5238b80f35af32cdeba5b336e55d957b318b50137e18da5\"\n\n[[package]]\nname = \"bashkit\"\nversion = \"0.21.1\"\ndependencies = [\n \"anyhow\",\n \"async-trait\",\n \"base64\",\n \"bigdecimal\",\n \"bitflags\",\n \"blake2\",\n \"bzip2\",\n \"chrono\",\n \"chrono-tz\",\n \"clap\",\n \"encoding_rs\",\n \"fancy-regex\",\n \"flate2\",\n \"futures-core\",\n \"futures-util\",\n \"getrandom 0.4.3\",\n \"hmac\",\n \"md-5\",\n \"num-traits\",\n \"os_display\",\n \"regex\",\n \"regex-automata\",\n \"rustls\",\n \"serde\",\n \"serde_json\",\n \"sha1\",\n \"sha2\",\n \"stacker\",\n \"thiserror\",\n \"tokio\",\n \"tower\",\n \"unit-prefix\",\n \"url\",\n]\n\n[[package]]\nname = \"bench-bashkit\"\nversion = \"0.1.0\"\ndependencies = [\n \"bashkit\",\n \"bench-common\",\n \"tokio\",\n]\n\n[[package]]\nname = \"bench-common\"\nversion = \"0.1.0\"\ndependencies = [\n \"libc\",\n]\n\n[[package]]\nname = \"bigdecimal\"\nversion = \"0.4.11\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"8fa3f3d8cbf4dffcfe4991de61d012bef509a409ecbe9dd41049bfe32b4d4653\"\ndependencies = [\n \"autocfg\",\n \"libm\",\n \"num-bigint\",\n \"num-integer\",\n \"num-traits\",\n]\n\n[[package]]\nname = \"bit-set\"\nversion = \"0.8.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"08807e080ed7f9d5433fa9b275196cfc35414f66a0c79d864dc51a0d825231a3\"\ndependencies = [\n \"bit-vec\",\n]\n\n[[package]]\nname = \"bit-vec\"\nversion = \"0.8.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"5e764a1d40d510daf35e07be9eb06e75770908c27d411ee6c92109c9840eaaf7\"\n\n[[package]]\nname = \"bitflags\"\nversion = \"2.13.2\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"3ded4057c258ba199e2d26386d3af3780957ecaee6c4ef4041c6b4b8b97c0b06\"\n\n[[package]]\nname = \"blake2\"\nversion = \"0.11.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"5b5d4d889834ee8ecfc0f8426ad30faf7cdcb10f741a8e6d7224d95325479f6f\"\ndependencies = [\n \"digest\",\n]\n\n[[package]]\nname = \"block-buffer\"\nversion = \"0.12.1\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"d2f6c7dbe95a6ed67ad9f18e57daf93a2f034c524b99fd2b76d18fdfeb6660aa\"\ndependencies = [\n \"hybrid-array\",\n]\n\n[[package]]\nname = \"bumpalo\"\nversion = \"3.20.4\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"87a0cf66fd1eb2fb7b822cb78370d82303750809bc6ba855f3f58e517d3238db\"\n\n[[package]]\nname = \"bytes\"\nversion = \"1.12.2\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"776dfebd015e2d8732c684a2c71003674ccb49457b539b9e82151ba38e96dd7c\"\n\n[[package]]\nname = \"bzip2\"\nversion = \"0.6.1\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"f3a53fac24f34a81bc9954b5d6cfce0c21e18ec6959f44f56e8e90e4bb7c346c\"\ndependencies = [\n \"libbz2-rs-sys\",\n]\n\n[[package]]\nname = \"cc\"\nversion = \"1.11.2\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"33ef9e3e8154a45c7a95cff4c1299702106ad94062d7bb85fdc5d3a5afd91d45\"\ndependencies = [\n \"find-msvc-tools\",\n \"shlex\",\n]\n\n[[package]]\nname = \"cfg-if\"\nversion = \"1.0.5\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"4e7648175b45a9a48536d676f68d918270699102aa8dab5496df06904c914600\"\n\n[[package]]\nname = \"chrono\"\nversion = \"0.4.45\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"1aa79e62e7697b8e29b513a68abacf485adcd1fe8284a4316c5ae868e6633327\"\ndependencies = [\n \"iana-time-zone\",\n \"num-traits\",\n \"windows-link\",\n]\n\n[[package]]\nname = \"chrono-tz\"\nversion = \"0.10.4\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"a6139a8597ed92cf816dfb33f5dd6cf0bb93a6adc938f11039f371bc5bcd26c3\"\ndependencies = [\n \"chrono\",\n \"phf\",\n]\n\n[[package]]\nname = \"clap\"\nversion = \"4.6.8\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"ac230478587d0269d8d6998b82ae69ea51509d55df66d9e92edd1f986904cd4a\"\ndependencies = [\n \"clap_builder\",\n \"clap_derive\",\n]\n\n[[package]]\nname = \"clap_builder\"\nversion = \"4.6.7\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"ec0797fb7aeb1406c84efac526901f7ec3ead2124f946b494e72879d4b54704d\"\ndependencies = [\n \"anstyle\",\n \"clap_lex\",\n]\n\n[[package]]\nname = \"clap_derive\"\nversion = \"4.6.8\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"895c9d8d2ac2dd8b8a29f3724a14e72aaaa6debcf8c38c82f97305c6a172767a\"\ndependencies = [\n \"heck\",\n \"proc-macro2\",\n \"quote\",\n \"syn 3.0.10\",\n]\n\n[[package]]\nname = \"clap_lex\"\nversion = \"1.1.2\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"e0921b3876b3a1df8a1c9f912e7f94342458022c2e84288015893d83c4d62a79\"\n\n[[package]]\nname = \"cmov\"\nversion = \"0.5.4\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"0c9ea0ac24bc397ab3c98583a3c9ba74fa56b09a4449bbe172b9b1ddb016027a\"\n\n[[package]]\nname = \"const-oid\"\nversion = \"0.10.3\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"be95d4a884358a21a199689323c29e9256b4a1b315e22f183d155422041d3a9a\"\n\n[[package]]\nname = \"core-foundation-sys\"\nversion = \"0.8.7\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b\"\n\n[[package]]\nname = \"core_detect\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"7f8f80099a98041a3d1622845c271458a2d73e688351bf3cb999266764b81d48\"\n\n[[package]]\nname = \"cpufeatures\"\nversion = \"0.3.1\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"5ca28b0ae3115b884660db4118d803791fd6756b6e88f39c0f3f7859060d7566\"\ndependencies = [\n \"libc\",\n]\n\n[[package]]\nname = \"crc32fast\"\nversion = \"1.5.5\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"2b929dd2a135771f40afabd1073f85eed59c800b7c61901e5c254270497dad64\"\ndependencies = [\n \"cfg-if\",\n]\n\n[[package]]\nname = \"crypto-common\"\nversion = \"0.2.2\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"ce6e4c961d6cd6c9a86db418387425e8bdeaf05b3c8bc1411e6dca4c252f1453\"\ndependencies = [\n \"hybrid-array\",\n]\n\n[[package]]\nname = \"ctutils\"\nversion = \"0.4.8\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"261af4dc7a06ea8a527a8717d8cbba3417530d6ea14e1edb3de6b67806be474f\"\ndependencies = [\n \"cmov\",\n]\n\n[[package]]\nname = \"digest\"\nversion = \"0.11.3\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"f1dd6dbb5841937940781866fa1281a1ff7bd3bf827091440879f9994983d5c2\"\ndependencies = [\n \"block-buffer\",\n \"const-oid\",\n \"crypto-common\",\n \"ctutils\",\n]\n\n[[package]]\nname = \"displaydoc\"\nversion = \"0.2.7\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"c6232dd377dcc64799954cbd3a9bb882e9cdc1308ccd87b1c098f1fb2eaf82a8\"\ndependencies = [\n \"proc-macro2\",\n \"quote\",\n \"syn 3.0.10\",\n]\n\n[[package]]\nname = \"encoding_rs\"\nversion = \"0.8.44\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"89253175e704ab869b04f9db224d38630e0211a53841a79181deae0889e169f5\"\ndependencies = [\n \"cfg-if\",\n \"core_detect\",\n \"multiversion_no_op\",\n \"rustversion\",\n \"scopeguard\",\n \"simdutf8\",\n]\n\n[[package]]\nname = \"fancy-regex\"\nversion = \"0.20.2\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"0a2e16b9a584b602f1e0e5e22c30ca0906786088c27500653e432d086def8b53\"\ndependencies = [\n \"bit-set\",\n \"regex-automata\",\n \"regex-syntax\",\n]\n\n[[package]]\nname = \"find-msvc-tools\"\nversion = \"0.1.15\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"1c66915cc5391097de7a2b0b972e8505aa33c0df401fd3a6811dbdb32881ba48\"\n\n[[package]]\nname = \"flate2\"\nversion = \"1.1.11\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"626d4928326b646e70f65ed36fc7cf9f206bdb68a0019ee7c6b4709da4e084c4\"\ndependencies = [\n \"crc32fast\",\n \"miniz_oxide\",\n \"zlib-rs\",\n]\n\n[[package]]\nname = \"form_urlencoded\"\nversion = \"1.2.2\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"cb4cb245038516f5f85277875cdaa4f7d2c9a0fa0468de06ed190163b1581fcf\"\ndependencies = [\n \"percent-encoding\",\n]\n\n[[package]]\nname = \"futures-core\"\nversion = \"0.3.34\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"92d699e522242e69e3003b94ecc1f960f3a5e015aa7c5d7486e65ad01dd94f5e\"\n\n[[package]]\nname = \"futures-task\"\nversion = \"0.3.34\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"cd417de3d1d015fc3bfd2b1ea46dfc7bab72ef86f1cc7cc9c78e728b34a6d1fd\"\n\n[[package]]\nname = \"futures-util\"\nversion = \"0.3.34\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"0d50a92467f8ba5dd6e3ee5d4bd04d73ab2e4e1c44474a0674821dfce14b79bc\"\ndependencies = [\n \"futures-core\",\n \"futures-task\",\n \"pin-project-lite\",\n \"slab\",\n]\n\n[[package]]\nname = \"getrandom\"\nversion = \"0.2.17\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"ff2abc00be7fca6ebc474524697ae276ad847ad0a6b3faa4bcb027e9a4614ad0\"\ndependencies = [\n \"cfg-if\",\n \"libc\",\n \"wasi\",\n]\n\n[[package]]\nname = \"getrandom\"\nversion = \"0.4.3\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"300e883d756b2e4ec94e02791f39b04b522276138852cfc41d9fb7e904106099\"\ndependencies = [\n \"cfg-if\",\n \"libc\",\n \"r-efi\",\n]\n\n[[package]]\nname = \"heck\"\nversion = \"0.5.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea\"\n\n[[package]]\nname = \"hmac\"\nversion = \"0.13.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"6303bc9732ae41b04cb554b844a762b4115a61bfaa81e3e83050991eeb56863f\"\ndependencies = [\n \"digest\",\n]\n\n[[package]]\nname = \"hybrid-array\"\nversion = \"0.4.15\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"27f864f10dfb56725ce5ce5472bc52252c8f93a4ab86327122cebf62c5f59a17\"\ndependencies = [\n \"typenum\",\n]\n\n[[package]]\nname = \"iana-time-zone\"\nversion = \"0.1.65\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"e31bc9ad994ba00e440a8aa5c9ef0ec67d5cb5e5cb0cc7f8b744a35b389cc470\"\ndependencies = [\n \"android_system_properties\",\n \"core-foundation-sys\",\n \"iana-time-zone-haiku\",\n \"js-sys\",\n \"log\",\n \"wasm-bindgen\",\n \"windows-core\",\n]\n\n[[package]]\nname = \"iana-time-zone-haiku\"\nversion = \"0.1.2\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"f31827a206f56af32e590ba56d5d2d085f558508192593743f16b2306495269f\"\ndependencies = [\n \"cc\",\n]\n\n[[package]]\nname = \"icu_collections\"\nversion = \"2.4.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"fe090a42a0d3140fed8c63263ed1fecc02422cb2f4bfe55cd8de2de1b8e105dd\"\ndependencies = [\n \"displaydoc\",\n \"potential_utf\",\n \"utf8_iter\",\n \"yoke\",\n \"zerofrom\",\n \"zerovec\",\n]\n\n[[package]]\nname = \"icu_locale_core\"\nversion = \"2.4.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"25d29b57c17c6528d0dc4c2141cfa2d08200465acb537a3909c8b9b8a4a984c0\"\ndependencies = [\n \"displaydoc\",\n \"litemap\",\n \"tinystr\",\n \"writeable\",\n \"zerovec\",\n]\n\n[[package]]\nname = \"icu_normalizer\"\nversion = \"2.4.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"404a3b8c486f205c87fe7f23ab6894d84a4ad76d6e4671ae1981ba7def87c599\"\ndependencies = [\n \"icu_collections\",\n \"icu_normalizer_data\",\n \"icu_properties\",\n \"icu_provider\",\n \"smallvec\",\n \"zerovec\",\n]\n\n[[package]]\nname = \"icu_normalizer_data\"\nversion = \"2.4.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"20f0088bfb7441f7a37fa0c9e20cb1e9cba1cac6b9ce8cd2a6dc44294f8e8cbc\"\n\n[[package]]\nname = \"icu_properties\"\nversion = \"2.4.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"2ea83d991c56158f7cf898bf86436c1dfe7c07ee82fe88951f2695c9f37a379f\"\ndependencies = [\n \"displaydoc\",\n \"icu_collections\",\n \"icu_locale_core\",\n \"icu_properties_data\",\n \"icu_provider\",\n \"zerotrie\",\n \"zerovec\",\n]\n\n[[package]]\nname = \"icu_properties_data\"\nversion = \"2.4.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"b98f29af82d02b163fe50161388350e743bb3107cc8e8c2f7314cb505faddfcf\"\n\n[[package]]\nname = \"icu_provider\"\nversion = \"2.4.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"413099315636c588ee8f011190b329b971a09a8fae9d157e01dcae8379468514\"\ndependencies = [\n \"displaydoc\",\n \"icu_locale_core\",\n \"writeable\",\n \"yoke\",\n \"zerofrom\",\n \"zerotrie\",\n \"zerovec\",\n]\n\n[[package]]\nname = \"idna\"\nversion = \"1.1.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"3b0875f23caa03898994f6ddc501886a45c7d3d62d04d2d90788d47be1b1e4de\"\ndependencies = [\n \"idna_adapter\",\n \"smallvec\",\n \"utf8_iter\",\n]\n\n[[package]]\nname = \"idna_adapter\"\nversion = \"1.2.2\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"cb68373c0d6620ef8105e855e7745e18b0d00d3bdb07fb532e434244cdb9a714\"\ndependencies = [\n \"icu_normalizer\",\n \"icu_properties\",\n]\n\n[[package]]\nname = \"itoa\"\nversion = \"1.0.19\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"3bd1574e617a9a6c1f8f8181bd7e841e1f20e4277607ef28945765188d6284d4\"\n\n[[package]]\nname = \"js-sys\"\nversion = \"0.3.107\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"8dc09d2154098bbf4ef54eab6b117a3c24cbbffe94046b16ee6d6d4510584d3a\"\ndependencies = [\n \"cfg-if\",\n \"futures-util\",\n \"wasm-bindgen\",\n]\n\n[[package]]\nname = \"libbz2-rs-sys\"\nversion = \"0.2.7\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"a5314d1d545fce0307c770d791adf20d997e0b63b64e1ffeed8a920e290eabe4\"\n\n[[package]]\nname = \"libc\"\nversion = \"0.2.191\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"65cd87c9a6d60536580b316ad985726104730a5151c99845f2490428ef91240a\"\n\n[[package]]\nname = \"libm\"\nversion = \"0.2.16\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981\"\n\n[[package]]\nname = \"litemap\"\nversion = \"0.8.3\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"47d9d19d1d6efa0109d2f65ff4c85cddd50bd572e5a00127ab10987290bcefae\"\n\n[[package]]\nname = \"log\"\nversion = \"0.4.35\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"5d15f86d12da44cd8d4ec3c73984537eb7f4cadcb9776a575a0a8a05ca11005c\"\n\n[[package]]\nname = \"md-5\"\nversion = \"0.11.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"69b6441f590336821bb897fb28fc622898ccceb1d6cea3fde5ea86b090c4de98\"\ndependencies = [\n \"cfg-if\",\n \"digest\",\n]\n\n[[package]]\nname = \"memchr\"\nversion = \"2.8.3\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98\"\n\n[[package]]\nname = \"miniz_oxide\"\nversion = \"0.9.1\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"b63fbc4a50860e98e7b2aa7804ded1db5cbc3aff9193adaff57a6931bf7c4b4c\"\ndependencies = [\n \"adler2\",\n \"simd-adler32\",\n]\n\n[[package]]\nname = \"multiversion_no_op\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"743fb55ba31b18fb1ecef6bdc9aa2743314978ac084044301a7eee33fb99a20d\"\n\n[[package]]\nname = \"num-bigint\"\nversion = \"0.4.8\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"c89e69e7e0f03bea5ef08013795c25018e101932225a656383bd384495ecc367\"\ndependencies = [\n \"num-integer\",\n \"num-traits\",\n]\n\n[[package]]\nname = \"num-integer\"\nversion = \"0.1.47\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"7ce2d95d4b3734dc35aa2f45e1aa22cd416814592a4f9d9205e11affd5b8e10b\"\ndependencies = [\n \"num-traits\",\n]\n\n[[package]]\nname = \"num-traits\"\nversion = \"0.2.19\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"071dfc062690e90b734c0b2273ce72ad0ffa95f0c74596bc250dcfd960262841\"\ndependencies = [\n \"autocfg\",\n]\n\n[[package]]\nname = \"object\"\nversion = \"0.39.1\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"2e5a6c098c7a3b6547378093f5cc30bc54fd361ce711e05293a5cc589562739b\"\ndependencies = [\n \"memchr\",\n]\n\n[[package]]\nname = \"once_cell\"\nversion = \"1.21.4\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50\"\n\n[[package]]\nname = \"os_display\"\nversion = \"0.1.4\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"ad5fd71b79026fb918650dde6d125000a233764f1c2f1659a1c71118e33ea08f\"\ndependencies = [\n \"unicode-width\",\n]\n\n[[package]]\nname = \"percent-encoding\"\nversion = \"2.3.2\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220\"\n\n[[package]]\nname = \"phf\"\nversion = \"0.12.1\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"913273894cec178f401a31ec4b656318d95473527be05c0752cc41cdc32be8b7\"\ndependencies = [\n \"phf_shared\",\n]\n\n[[package]]\nname = \"phf_shared\"\nversion = \"0.12.1\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"06005508882fb681fd97892ecff4b7fd0fee13ef1aa569f8695dae7ab9099981\"\ndependencies = [\n \"siphasher\",\n]\n\n[[package]]\nname = \"pin-project-lite\"\nversion = \"0.2.18\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"c938015719552d665fd0553b90d96cd7ff58e83e4c061ca99e6bb78865a72752\"\n\n[[package]]\nname = \"potential_utf\"\nversion = \"0.1.6\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"d83eb9bc6d8e5cf568e7a1101d60ee05e81ed50ea106026f3d18deeb046d7661\"\ndependencies = [\n \"zerovec\",\n]\n\n[[package]]\nname = \"proc-macro2\"\nversion = \"1.0.107\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"985e7ec9bb745e6ce6535b544d84d6cd6f7ad8bd711c398938ae983b91a766d9\"\ndependencies = [\n \"unicode-ident\",\n]\n\n[[package]]\nname = \"psm\"\nversion = \"0.1.32\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"4dcd034599e63b970727f70d79e02d62390a4a84f7c6b827c27c46d5ac3fa622\"\ndependencies = [\n \"ar_archive_writer\",\n \"cc\",\n]\n\n[[package]]\nname = \"quote\"\nversion = \"1.0.47\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"1fbf4db142a473a8d80c26bbf18454ed458bf8d26c8219c331daecfdbd079001\"\ndependencies = [\n \"proc-macro2\",\n]\n\n[[package]]\nname = \"r-efi\"\nversion = \"6.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf\"\n\n[[package]]\nname = \"regex\"\nversion = \"1.13.2\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"9807af0e638c12e753aa1b4e601791bf2a8f71274023c8bbeec12fc149950857\"\ndependencies = [\n \"aho-corasick\",\n \"memchr\",\n \"regex-automata\",\n \"regex-syntax\",\n]\n\n[[package]]\nname = \"regex-automata\"\nversion = \"0.4.19\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"41d60ef07df457506a0a1a2073112eb4aae5733dbd2813c3da77d1b0fd441158\"\ndependencies = [\n \"aho-corasick\",\n \"memchr\",\n \"regex-syntax\",\n]\n\n[[package]]\nname = \"regex-syntax\"\nversion = \"0.8.12\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"d902046e6a28a1e4c3cab97258a0ce11e994903f01c2d97a9447a0b3df85f4f6\"\n\n[[package]]\nname = \"ring\"\nversion = \"0.17.14\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"a4689e6c2294d81e88dc6261c768b63bc4fcdb852be6d1352498b114f61383b7\"\ndependencies = [\n \"cc\",\n \"cfg-if\",\n \"getrandom 0.2.17\",\n \"libc\",\n \"untrusted\",\n \"windows-sys 0.52.0\",\n]\n\n[[package]]\nname = \"rustls\"\nversion = \"0.23.46\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"48e13bd8c0e9365c43cfa5c9e8f9ad49d3c8444926c9aac819e0e4dc503c8fdf\"\ndependencies = [\n \"log\",\n \"once_cell\",\n \"ring\",\n \"rustls-pki-types\",\n \"rustls-webpki\",\n \"subtle\",\n \"zeroize\",\n]\n\n[[package]]\nname = \"rustls-pki-types\"\nversion = \"1.16.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"102f35f7de7b06d8c61f1cff6592f5253e0dea431c74867aad5dfd70f44663fb\"\ndependencies = [\n \"zeroize\",\n]\n\n[[package]]\nname = \"rustls-webpki\"\nversion = \"0.103.17\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"e3a0760a887c14823fca5a1c970b01d47c328c696c0c64829d1df50e8f853fd5\"\ndependencies = [\n \"ring\",\n \"rustls-pki-types\",\n \"untrusted\",\n]\n\n[[package]]\nname = \"rustversion\"\nversion = \"1.0.23\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f\"\n\n[[package]]\nname = \"scopeguard\"\nversion = \"1.2.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49\"\n\n[[package]]\nname = \"serde\"\nversion = \"1.0.229\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"4148590afebada386688f18773da617792bf2ef03ffc1e4cbd2b1d45b023e0ba\"\ndependencies = [\n \"serde_core\",\n \"serde_derive\",\n]\n\n[[package]]\nname = \"serde_core\"\nversion = \"1.0.229\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"67dca2c9c51e58a4791a4b1ed58308b39c64224d349a935ab5039aa360942a48\"\ndependencies = [\n \"serde_derive\",\n]\n\n[[package]]\nname = \"serde_derive\"\nversion = \"1.0.229\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"e7a5d71263a5a7d47b41f6b3f06ba276f10cc18b0931f1799f710578e2309348\"\ndependencies = [\n \"proc-macro2\",\n \"quote\",\n \"syn 3.0.10\",\n]\n\n[[package]]\nname = \"serde_json\"\nversion = \"1.0.154\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"e7e9cc8b1b85264074fbcc02a88680c4096b1e47df8f739dceb03bf482f04bd6\"\ndependencies = [\n \"itoa\",\n \"memchr\",\n \"serde\",\n \"serde_core\",\n \"zmij\",\n]\n\n[[package]]\nname = \"sha1\"\nversion = \"0.11.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"aacc4cc499359472b4abe1bf11d0b12e688af9a805fa5e3016f9a386dc2d0214\"\ndependencies = [\n \"cfg-if\",\n \"cpufeatures\",\n \"digest\",\n]\n\n[[package]]\nname = \"sha2\"\nversion = \"0.11.1\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"47d7069beb7d6ac7b9acd1039986e73443f24234f41074da099d6f994ac9ad19\"\ndependencies = [\n \"cfg-if\",\n \"cpufeatures\",\n \"digest\",\n]\n\n[[package]]\nname = \"shlex\"\nversion = \"2.0.1\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba\"\n\n[[package]]\nname = \"simd-adler32\"\nversion = \"0.3.10\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"3a219298ac11a56ea9a6d2120044824d6f01aeb034955e7af7bc16858527deea\"\n\n[[package]]\nname = \"simdutf8\"\nversion = \"0.1.5\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"e3a9fe34e3e7a50316060351f37187a3f546bce95496156754b601a5fa71b76e\"\n\n[[package]]\nname = \"siphasher\"\nversion = \"1.0.4\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"33f4fe9184a62d842c9ef383018f3306d8ba224fd9d836f56d7288308847c256\"\n\n[[package]]\nname = \"slab\"\nversion = \"0.4.12\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5\"\n\n[[package]]\nname = \"smallvec\"\nversion = \"1.16.6\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"3244542535d5de959d90ec55d1b5ff0fd2bb7b1310223907d5f11932847f7b59\"\n\n[[package]]\nname = \"stable_deref_trait\"\nversion = \"1.2.1\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596\"\n\n[[package]]\nname = \"stacker\"\nversion = \"0.1.25\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"707f49d46706bacf8a2b00d51dace3f9de527c13eec3778f570c411f89e69967\"\ndependencies = [\n \"cc\",\n \"cfg-if\",\n \"libc\",\n \"psm\",\n \"windows-sys 0.61.2\",\n]\n\n[[package]]\nname = \"subtle\"\nversion = \"2.6.1\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292\"\n\n[[package]]\nname = \"syn\"\nversion = \"2.0.119\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"872831b642d1a07999a962a351ed35b955ea2cfc8f3862091e2a240a84f17297\"\ndependencies = [\n \"proc-macro2\",\n \"quote\",\n \"unicode-ident\",\n]\n\n[[package]]\nname = \"syn\"\nversion = \"3.0.10\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"4ae9ccbea3a7b0b09443036490c8f34a8b1b760fd345e5c0dae0aac718faea79\"\ndependencies = [\n \"proc-macro2\",\n \"quote\",\n \"unicode-ident\",\n]\n\n[[package]]\nname = \"sync_wrapper\"\nversion = \"1.0.2\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"0bf256ce5efdfa370213c1dabab5935a12e49f2c58d15e9eac2870d3b4f27263\"\n\n[[package]]\nname = \"synstructure\"\nversion = \"0.14.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"901704edd0dfe137f1987838ee4f259e4e063c31371bdb423f7ae38ec6f77f02\"\ndependencies = [\n \"proc-macro2\",\n \"quote\",\n \"syn 3.0.10\",\n]\n\n[[package]]\nname = \"thiserror\"\nversion = \"2.0.21\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"09e52cb86a36cede5cb101bf8908837b3e4c6e5e59fe7fd85c23fb56200d189e\"\ndependencies = [\n \"thiserror-impl\",\n]\n\n[[package]]\nname = \"thiserror-impl\"\nversion = \"2.0.21\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"fe5197923287db20a58125f0bc85c062f7f2c892de97b18c356f9efb14b28524\"\ndependencies = [\n \"proc-macro2\",\n \"quote\",\n \"syn 3.0.10\",\n]\n\n[[package]]\nname = \"tinystr\"\nversion = \"0.8.5\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"abc840c238154d58f9e86b2792261edfde565a17696e1cda1a449de27979801a\"\ndependencies = [\n \"displaydoc\",\n \"zerovec\",\n]\n\n[[package]]\nname = \"tokio\"\nversion = \"1.54.1\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"b52fd3255258d26fac7264ab5a76b53c13367136dc011d3d6ad4f8ed070396a3\"\ndependencies = [\n \"bytes\",\n \"pin-project-lite\",\n \"tokio-macros\",\n]\n\n[[package]]\nname = \"tokio-macros\"\nversion = \"2.7.2\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"78773a2a397f451582ce068015985c33193cf6dea8b74d2a639fe457b2f07b0e\"\ndependencies = [\n \"proc-macro2\",\n \"quote\",\n \"syn 3.0.10\",\n]\n\n[[package]]\nname = \"tower\"\nversion = \"0.5.3\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"ebe5ef63511595f1344e2d5cfa636d973292adc0eec1f0ad45fae9f0851ab1d4\"\ndependencies = [\n \"futures-core\",\n \"futures-util\",\n \"pin-project-lite\",\n \"sync_wrapper\",\n \"tower-layer\",\n \"tower-service\",\n]\n\n[[package]]\nname = \"tower-layer\"\nversion = \"0.3.3\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"121c2a6cda46980bb0fcd1647ffaf6cd3fc79a013de288782836f6df9c48780e\"\n\n[[package]]\nname = \"tower-service\"\nversion = \"0.3.3\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"8df9b6e13f2d32c91b9bd719c00d1958837bc7dec474d94952798cc8e69eeec3\"\n\n[[package]]\nname = \"typenum\"\nversion = \"1.20.1\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20\"\n\n[[package]]\nname = \"unicode-ident\"\nversion = \"1.0.27\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"a2c754d6c33795a1c324727428e5a7dedb5b06195f9890bdbcba760d3e246563\"\n\n[[package]]\nname = \"unicode-width\"\nversion = \"0.2.3\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"ca718471876992059f251e33aafc334346ada08042b7661dd1fe313a9bced557\"\n\n[[package]]\nname = \"unit-prefix\"\nversion = \"0.5.2\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"81e544489bf3d8ef66c953931f56617f423cd4b5494be343d9b9d3dda037b9a3\"\n\n[[package]]\nname = \"untrusted\"\nversion = \"0.9.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"8ecb6da28b8a351d773b68d5825ac39017e680750f980f3a1a85cd8dd28a47c1\"\n\n[[package]]\nname = \"url\"\nversion = \"2.5.8\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"ff67a8a4397373c3ef660812acab3268222035010ab8680ec4215f38ba3d0eed\"\ndependencies = [\n \"form_urlencoded\",\n \"idna\",\n \"percent-encoding\",\n \"serde\",\n]\n\n[[package]]\nname = \"utf8_iter\"\nversion = \"1.1.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"af3bd9d3e571c26fcce9d033b87ea5ab061b8d2ffe9b7a5675d810d68f03edf0\"\ndependencies = [\n \"utf_types\",\n]\n\n[[package]]\nname = \"utf_types\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"3a3b425286980a367278453f3b6d28cdcb134b574e5a35824a6ff5eebad50bb6\"\n\n[[package]]\nname = \"wasi\"\nversion = \"0.11.1+wasi-snapshot-preview1\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"ccf3ec651a847eb01de73ccad15eb7d99f80485de043efb2f370cd654f4ea44b\"\n\n[[package]]\nname = \"wasm-bindgen\"\nversion = \"0.2.130\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"a0181c14ddd6c7b8b0b0132a5f1ea2f32be0d893cd3ea97b6e3b28886b8a3d1c\"\ndependencies = [\n \"cfg-if\",\n \"rustversion\",\n \"wasm-bindgen-macro\",\n \"wasm-bindgen-shared\",\n]\n\n[[package]]\nname = \"wasm-bindgen-macro\"\nversion = \"0.2.130\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"6e931a02a39abdbf66966fc35902b5ed58344750a70885bed4ebb3d8eaf28ed9\"\ndependencies = [\n \"quote\",\n \"wasm-bindgen-macro-support\",\n]\n\n[[package]]\nname = \"wasm-bindgen-macro-support\"\nversion = \"0.2.130\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"2ca4b54280e455bd831e33a6b8e734baf432fe63fbc35c42ac14ce67a043a53a\"\ndependencies = [\n \"bumpalo\",\n \"proc-macro2\",\n \"quote\",\n \"syn 3.0.10\",\n \"wasm-bindgen-shared\",\n]\n\n[[package]]\nname = \"wasm-bindgen-shared\"\nversion = \"0.2.130\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"3b1f9c3798725016c6ee5f2f57869ec0831e8bbc0ab0310a86e787e97f41389e\"\ndependencies = [\n \"unicode-ident\",\n]\n\n[[package]]\nname = \"windows-core\"\nversion = \"0.62.2\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"b8e83a14d34d0623b51dce9581199302a221863196a1dde71a7663a4c2be9deb\"\ndependencies = [\n \"windows-implement\",\n \"windows-interface\",\n \"windows-link\",\n \"windows-result\",\n \"windows-strings\",\n]\n\n[[package]]\nname = \"windows-implement\"\nversion = \"0.60.2\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"053e2e040ab57b9dc951b72c264860db7eb3b0200ba345b4e4c3b14f67855ddf\"\ndependencies = [\n \"proc-macro2\",\n \"quote\",\n \"syn 2.0.119\",\n]\n\n[[package]]\nname = \"windows-interface\"\nversion = \"0.59.3\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"3f316c4a2570ba26bbec722032c4099d8c8bc095efccdc15688708623367e358\"\ndependencies = [\n \"proc-macro2\",\n \"quote\",\n \"syn 2.0.119\",\n]\n\n[[package]]\nname = \"windows-link\"\nversion = \"0.2.1\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"f0805222e57f7521d6a62e36fa9163bc891acd422f971defe97d64e70d0a4fe5\"\n\n[[package]]\nname = \"windows-result\"\nversion = \"0.4.1\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"7781fa89eaf60850ac3d2da7af8e5242a5ea78d1a11c49bf2910bb5a73853eb5\"\ndependencies = [\n \"windows-link\",\n]\n\n[[package]]\nname = \"windows-strings\"\nversion = \"0.5.1\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"7837d08f69c77cf6b07689544538e017c1bfcf57e34b4c0ff58e6c2cd3b37091\"\ndependencies = [\n \"windows-link\",\n]\n\n[[package]]\nname = \"windows-sys\"\nversion = \"0.52.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"282be5f36a8ce781fad8c8ae18fa3f9beff57ec1b52cb3de0789201425d9a33d\"\ndependencies = [\n \"windows-targets\",\n]\n\n[[package]]\nname = \"windows-sys\"\nversion = \"0.61.2\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"ae137229bcbd6cdf0f7b80a31df61766145077ddf49416a728b02cb3921ff3fc\"\ndependencies = [\n \"windows-link\",\n]\n\n[[package]]\nname = \"windows-targets\"\nversion = \"0.52.6\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"9b724f72796e036ab90c1021d4780d4d3d648aca59e491e6b98e725b84e99973\"\ndependencies = [\n \"windows_aarch64_gnullvm\",\n \"windows_aarch64_msvc\",\n \"windows_i686_gnu\",\n \"windows_i686_gnullvm\",\n \"windows_i686_msvc\",\n \"windows_x86_64_gnu\",\n \"windows_x86_64_gnullvm\",\n \"windows_x86_64_msvc\",\n]\n\n[[package]]\nname = \"windows_aarch64_gnullvm\"\nversion = \"0.52.6\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"32a4622180e7a0ec044bb555404c800bc9fd9ec262ec147edd5989ccd0c02cd3\"\n\n[[package]]\nname = \"windows_aarch64_msvc\"\nversion = \"0.52.6\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"09ec2a7bb152e2252b53fa7803150007879548bc709c039df7627cabbd05d469\"\n\n[[package]]\nname = \"windows_i686_gnu\"\nversion = \"0.52.6\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"8e9b5ad5ab802e97eb8e295ac6720e509ee4c243f69d781394014ebfe8bbfa0b\"\n\n[[package]]\nname = \"windows_i686_gnullvm\"\nversion = \"0.52.6\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"0eee52d38c090b3caa76c563b86c3a4bd71ef1a819287c19d586d7334ae8ed66\"\n\n[[package]]\nname = \"windows_i686_msvc\"\nversion = \"0.52.6\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"240948bc05c5e7c6dabba28bf89d89ffce3e303022809e73deaefe4f6ec56c66\"\n\n[[package]]\nname = \"windows_x86_64_gnu\"\nversion = \"0.52.6\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"147a5c80aabfbf0c7d901cb5895d1de30ef2907eb21fbbab29ca94c5b08b1a78\"\n\n[[package]]\nname = \"windows_x86_64_gnullvm\"\nversion = \"0.52.6\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"24d5b23dc417412679681396f2b49f3de8c1473deb516bd34410872eff51ed0d\"\n\n[[package]]\nname = \"windows_x86_64_msvc\"\nversion = \"0.52.6\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec\"\n\n[[package]]\nname = \"writeable\"\nversion = \"0.6.4\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"3ad82d2a33cdc9674dc7465672f271e096168fcdbe0f799d9e6db8c5892679dc\"\n\n[[package]]\nname = \"yoke\"\nversion = \"0.8.4\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"417ef3fcf6c300b7dbd25c85531a746931c02ad536f3cf4786ed1e88223340b3\"\ndependencies = [\n \"stable_deref_trait\",\n \"yoke-derive\",\n \"zerofrom\",\n]\n\n[[package]]\nname = \"yoke-derive\"\nversion = \"0.8.4\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"ec8ebde2db3681e8c9980cc27822030e68752690ddfa9473e739aeb4dbde6d71\"\ndependencies = [\n \"proc-macro2\",\n \"quote\",\n \"syn 3.0.10\",\n \"synstructure\",\n]\n\n[[package]]\nname = \"zerofrom\"\nversion = \"0.1.8\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"0ec05a11813ea801ff6d75110ad09cd0824ddba17dfe17128ea0d5f68e6c5272\"\ndependencies = [\n \"zerofrom-derive\",\n]\n\n[[package]]\nname = \"zerofrom-derive\"\nversion = \"0.1.8\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"f75b4683f6c7f45248d4d64056a24298c6281e0993356d7d1b4a1a962ef10d4a\"\ndependencies = [\n \"proc-macro2\",\n \"quote\",\n \"syn 3.0.10\",\n \"synstructure\",\n]\n\n[[package]]\nname = \"zeroize\"\nversion = \"1.9.2\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"85ccff8a4805aba1eaa4cd4afcd49f7557dd2cf5fd79ffc37f8959466effc5aa\"\n\n[[package]]\nname = \"zerotrie\"\nversion = \"0.2.5\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"4ea269c3bd32f0a32c321907a2ae912ba6f4649bb0fc764a15627e99a7095a3f\"\ndependencies = [\n \"displaydoc\",\n \"yoke\",\n \"zerofrom\",\n]\n\n[[package]]\nname = \"zerovec\"\nversion = \"0.11.9\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"f58a2799cfe9a1670c7ea8edbd52ef8edb93cb37a7f83bf31ba9e35d9dae6a40\"\ndependencies = [\n \"yoke\",\n \"zerofrom\",\n \"zerovec-derive\",\n]\n\n[[package]]\nname = \"zerovec-derive\"\nversion = \"0.11.7\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"c3743ddbf47738d929cd1ae2e199d40d0162979dfe31aef8ae646d2bf00bf97a\"\ndependencies = [\n \"proc-macro2\",\n \"quote\",\n \"syn 3.0.10\",\n]\n\n[[package]]\nname = \"zlib-rs\"\nversion = \"0.6.8\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"b268e58e7c693d7c271f93ffc4ba3b380412554231c85bf61ca7af91042a4112\"\n\n[[package]]\nname = \"zmij\"\nversion = \"1.0.23\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b\"\n",
+      "common/src/lib.rs": "//! Shared harness so every engine binary applies the same three definitions.\n//!\n//! start: a fresh session through the value of `1 + 1` read back in Rust.\n//! memory: resident growth per live session, each kept alive after its first response.\n//! tool call: guest code loops calling a host `call(x)`; the host function calls [`tick`],\n//! which records batch means the same way the C Lua harness does in its host loop.\n\nuse std::cell::RefCell;\nuse std::fmt::Write as _;\nuse std::time::{Duration, Instant};\n\n/// Calls per timed batch.\npub const BATCH: u64 = 1_000;\n\nconst START_MAX_RUNS: usize = 2_000;\nconst START_MIN_RUNS: usize = 40;\nconst MEMORY_MIN_SESSIONS: usize = 50;\nconst MEMORY_GROWTH_BUDGET: i64 = 3 << 30;\nconst MEMORY_HARD_STOP: i64 = 6 << 30;\nconst MEMORY_TIME_BUDGET: Duration = Duration::from_secs(120);\nconst TOOL_CALIBRATION_CALLS: i64 = 2_000;\nconst TOOL_MIN_WARMUP: u64 = 20 * BATCH;\n\n/// `BENCH_QUICK=1` shrinks every phase for smoke tests; results from it are not reported.\nfn quick() -> bool {\n\tstatic QUICK: std::sync::OnceLock<bool> = std::sync::OnceLock::new();\n\t*QUICK.get_or_init(|| std::env::var_os(\"BENCH_QUICK\").is_some())\n}\n\nfn memory_target_sessions() -> usize {\n\tif quick() { 60 } else { 1_000 }\n}\n\nfn start_time_budget() -> Duration {\n\tif quick() { Duration::from_secs(1) } else { Duration::from_secs(15) }\n}\n\nfn tool_time_budget() -> Duration {\n\tif quick() { Duration::from_millis(200) } else { Duration::from_secs(4) }\n}\n\nfn tool_batch_bounds() -> (u64, u64) {\n\tif quick() { (10, 50) } else { (100, 1_000) }\n}\n\n/// Static description of one engine row.\npub struct Info {\n\tpub key: &'static str,\n\tpub language: &'static str,\n\tpub crate_name: &'static str,\n\tpub version: &'static str,\n\tpub call_kind: &'static str,\n\tpub limits_enabled: String,\n\tpub notes: Vec<String>,\n}\n\npub struct MemoryResult {\n\tpub bytes_per_session: f64,\n\tpub sessions: usize,\n\tpub stopped_by: &'static str,\n\tpub extra_stack_bytes: i64,\n}\n\npub struct StartResult {\n\tpub median_us: f64,\n\tpub runs: usize,\n}\n\npub struct ToolResult {\n\tpub wall_us: f64,\n\t/// Total measured wall time divided by calls, so pauses that the median skips still show.\n\tpub wall_mean_us: f64,\n\t/// Mean per-call time of the slowest batch.\n\tpub slowest_batch_us: f64,\n\tpub cpu_us: f64,\n\tpub measured_calls: u64,\n\tpub warmup_calls: u64,\n\tpub batches: usize,\n}\n\npub fn monotonic() -> Instant {\n\tInstant::now()\n}\n\n/// Process CPU time across all threads, in nanoseconds.\npub fn process_cpu_ns() -> f64 {\n\tlet mut now = libc::timespec { tv_sec: 0, tv_nsec: 0 };\n\t// SAFETY: `now` is a valid, writable timespec.\n\tlet status = unsafe { libc::clock_gettime(libc::CLOCK_PROCESS_CPUTIME_ID, &mut now) };\n\tassert_eq!(status, 0, \"clock_gettime(CLOCK_PROCESS_CPUTIME_ID) failed\");\n\tnow.tv_sec as f64 * 1e9 + now.tv_nsec as f64\n}\n\n/// Resident set size from /proc/self/statm, in bytes.\npub fn resident_bytes() -> i64 {\n\tlet statm = std::fs::read_to_string(\"/proc/self/statm\").expect(\"read /proc/self/statm\");\n\tlet mut fields = statm.split_whitespace();\n\tlet _size = fields.next();\n\tlet resident: i64 = fields.next().expect(\"statm resident\").parse().expect(\"statm parse\");\n\t// SAFETY: sysconf has no preconditions.\n\tlet page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as i64;\n\tresident * page\n}\n\n/// Returns freed heap pages to the kernel so later growth is not served from reused memory.\npub fn trim_heap() {\n\t// SAFETY: malloc_trim has no preconditions.\n\tunsafe {\n\t\tlibc::malloc_trim(0);\n\t}\n}\n\nfn median(values: &mut [f64]) -> f64 {\n\tvalues.sort_by(|a, b| a.partial_cmp(b).expect(\"no NaN samples\"));\n\tvalues[values.len() / 2]\n}\n\n// ---------------------------------------------------------------------------\n// Tool-call batch timer, driven from inside each engine's host function.\n\nstruct Timer {\n\tindex: u64,\n\twarmup: u64,\n\tbatch_started: Instant,\n\tmeasured_started: Instant,\n\tcpu_started_ns: f64,\n\tbatch_means_ns: Vec<f64>,\n}\n\nthread_local! {\n\tstatic TIMER: RefCell<Timer> = RefCell::new(Timer {\n\t\tindex: 0,\n\t\twarmup: u64::MAX,\n\t\tbatch_started: Instant::now(),\n\t\tmeasured_started: Instant::now(),\n\t\tcpu_started_ns: 0.0,\n\t\tbatch_means_ns: Vec::new(),\n\t});\n}\n\n/// Called once at the top of every host `call(x)`, like the C harness's host loop.\n#[inline]\npub fn tick() {\n\tTIMER.with(|cell| {\n\t\tlet mut timer = cell.borrow_mut();\n\t\tlet index = timer.index;\n\t\ttimer.index = index + 1;\n\t\tif index < timer.warmup {\n\t\t\treturn;\n\t\t}\n\t\tif index == timer.warmup {\n\t\t\ttimer.cpu_started_ns = process_cpu_ns();\n\t\t\ttimer.batch_started = Instant::now();\n\t\t\ttimer.measured_started = timer.batch_started;\n\t\t\treturn;\n\t\t}\n\t\tif (index - timer.warmup) % BATCH == 0 {\n\t\t\tlet now = Instant::now();\n\t\t\tlet mean = (now - timer.batch_started).as_nanos() as f64 / BATCH as f64;\n\t\t\ttimer.batch_means_ns.push(mean);\n\t\t\ttimer.batch_started = now;\n\t\t}\n\t});\n}\n\n/// Number of host calls seen since the timer was last reset.\npub fn calls_seen() -> u64 {\n\tTIMER.with(|cell| cell.borrow().index)\n}\n\nfn timer_reset(warmup: u64, expected_batches: usize) {\n\tTIMER.with(|cell| {\n\t\tlet mut timer = cell.borrow_mut();\n\t\ttimer.index = 0;\n\t\ttimer.warmup = warmup;\n\t\ttimer.batch_means_ns = Vec::with_capacity(expected_batches + 1);\n\t});\n}\n\n/// Closes the final batch; returns (batch means in ns, process CPU ns and wall ns since the first\n/// measured call, calls).\nfn timer_finish() -> (Vec<f64>, f64, f64, u64) {\n\tlet cpu_now = process_cpu_ns();\n\tlet now = Instant::now();\n\tTIMER.with(|cell| {\n\t\tlet mut timer = cell.borrow_mut();\n\t\tlet mean = (now - timer.batch_started).as_nanos() as f64 / BATCH as f64;\n\t\ttimer.batch_means_ns.push(mean);\n\t\tlet means = std::mem::take(&mut timer.batch_means_ns);\n\t\tlet cpu = cpu_now - timer.cpu_started_ns;\n\t\tlet wall = (now - timer.measured_started).as_nanos() as f64;\n\t\tlet calls = timer.index;\n\t\ttimer.warmup = u64::MAX;\n\t\t(means, cpu, wall, calls)\n\t})\n}\n\n// ---------------------------------------------------------------------------\n// Phases.\n\n/// Memory for engines whose sessions are owned values.\npub fn measure_memory<S>(mut new_session: impl FnMut() -> S) -> MemoryResult {\n\t// One warm-up session absorbs one-time process initialization such as lazily built\n\t// global tables; it is dropped and trimmed before the baseline is read.\n\tdrop(new_session());\n\tlet mut sessions: Vec<S> = Vec::with_capacity(memory_target_sessions());\n\ttrim_heap();\n\tlet before = resident_bytes();\n\tlet started = Instant::now();\n\tlet mut stopped_by = \"target\";\n\twhile sessions.len() < memory_target_sessions() {\n\t\tsessions.push(new_session());\n\t\tlet growth = resident_bytes() - before;\n\t\tif growth > MEMORY_HARD_STOP {\n\t\t\tstopped_by = \"hard memory stop\";\n\t\t\tbreak;\n\t\t}\n\t\tif sessions.len() >= MEMORY_MIN_SESSIONS {\n\t\t\tif growth > MEMORY_GROWTH_BUDGET {\n\t\t\t\tstopped_by = \"memory budget\";\n\t\t\t\tbreak;\n\t\t\t}\n\t\t\tif started.elapsed() > MEMORY_TIME_BUDGET {\n\t\t\t\tstopped_by = \"time budget\";\n\t\t\t\tbreak;\n\t\t\t}\n\t\t}\n\t}\n\tlet after = resident_bytes();\n\tlet count = sessions.len();\n\tdrop(sessions);\n\ttrim_heap();\n\tMemoryResult {\n\t\tbytes_per_session: (after - before) as f64 / count as f64,\n\t\tsessions: count,\n\t\tstopped_by,\n\t\textra_stack_bytes: 0,\n\t}\n}\n\n/// Session creator for engines whose sessions only live inside a closure.\n/// It must create a fresh session, get its first response, then call `inside` while it is alive.\npub type ScopedSession<'a> = dyn Fn(&mut dyn FnMut()) + 'a;\n\nconst NESTED_STACK_RESERVE: usize = 64 << 20;\n\n/// Memory for engines with scoped sessions: sessions nest by recursion so all stay alive.\n/// The stack region the recursion will use is touched before the baseline is read, so stack\n/// pages are not counted as session memory. Runs on a thread with a large stack.\npub fn measure_memory_nested(with_session: &ScopedSession<'_>) -> MemoryResult {\n\tstruct State {\n\t\tbefore: i64,\n\t\tstarted: Instant,\n\t\tcount: usize,\n\t\tafter: i64,\n\t\tstopped_by: &'static str,\n\t\ttop_of_stack: usize,\n\t\tdeepest_stack: usize,\n\t}\n\n\tfn nest(with_session: &ScopedSession<'_>, state: &mut State) {\n\t\twith_session(&mut || {\n\t\t\tstate.count += 1;\n\t\t\tlet marker = 0u8;\n\t\t\tlet address = std::hint::black_box(&marker) as *const u8 as usize;\n\t\t\tstate.deepest_stack = state.deepest_stack.min(address);\n\t\t\tlet growth = resident_bytes() - state.before;\n\t\t\tlet mut stop = None;\n\t\t\tif growth > MEMORY_HARD_STOP {\n\t\t\t\tstop = Some(\"hard memory stop\");\n\t\t\t} else if state.count >= memory_target_sessions() {\n\t\t\t\tstop = Some(\"target\");\n\t\t\t} else if state.count >= MEMORY_MIN_SESSIONS {\n\t\t\t\tif growth > MEMORY_GROWTH_BUDGET {\n\t\t\t\t\tstop = Some(\"memory budget\");\n\t\t\t\t} else if state.started.elapsed() > MEMORY_TIME_BUDGET {\n\t\t\t\t\tstop = Some(\"time budget\");\n\t\t\t\t}\n\t\t\t}\n\t\t\tmatch stop {\n\t\t\t\tSome(reason) => {\n\t\t\t\t\t// Read while every session is still alive.\n\t\t\t\t\tstate.after = resident_bytes();\n\t\t\t\t\tstate.stopped_by = reason;\n\t\t\t\t}\n\t\t\t\tNone => nest(with_session, state),\n\t\t\t}\n\t\t});\n\t}\n\n\t#[inline(never)]\n\tfn touch_stack() {\n\t\tlet mut block = [0u8; NESTED_STACK_RESERVE];\n\t\tfor index in (0..block.len()).step_by(4096) {\n\t\t\tblock[index] = 1;\n\t\t}\n\t\tstd::hint::black_box(&mut block);\n\t}\n\n\t// Warm-up session for one-time initialization, as in `measure_memory`.\n\twith_session(&mut || {});\n\ttouch_stack();\n\ttrim_heap();\n\tlet marker = 0u8;\n\tlet top = std::hint::black_box(&marker) as *const u8 as usize;\n\tlet mut state = State {\n\t\tbefore: resident_bytes(),\n\t\tstarted: Instant::now(),\n\t\tcount: 0,\n\t\tafter: 0,\n\t\tstopped_by: \"target\",\n\t\ttop_of_stack: top,\n\t\tdeepest_stack: top,\n\t};\n\tnest(with_session, &mut state);\n\ttrim_heap();\n\tlet used_stack = state.top_of_stack.saturating_sub(state.deepest_stack);\n\tMemoryResult {\n\t\tbytes_per_session: (state.after - state.before) as f64 / state.count as f64,\n\t\tsessions: state.count,\n\t\tstopped_by: state.stopped_by,\n\t\textra_stack_bytes: used_stack as i64 - NESTED_STACK_RESERVE as i64,\n\t}\n}\n\n/// Runs `body` on a thread with a stack big enough for `measure_memory_nested`.\npub fn on_big_stack<T: Send + 'static>(body: impl FnOnce() -> T + Send + 'static) -> T {\n\tstd::thread::Builder::new()\n\t\t.stack_size(1 << 30)\n\t\t.spawn(body)\n\t\t.expect(\"spawn big-stack thread\")\n\t\t.join()\n\t\t.expect(\"big-stack thread panicked\")\n}\n\n/// Start time. `cycle` creates a fresh session, returns the time from creation through the\n/// first response, then drops the session outside the timed region.\npub fn measure_start(mut cycle: impl FnMut() -> Duration) -> StartResult {\n\tlet probe_started = Instant::now();\n\tlet probes = 5;\n\tfor _ in 0..probes {\n\t\tcycle();\n\t}\n\tlet per_cycle = probe_started.elapsed() / probes;\n\tlet budget_runs = (start_time_budget().as_secs_f64() / per_cycle.as_secs_f64().max(1e-9)) as usize;\n\tlet runs = budget_runs.clamp(START_MIN_RUNS, START_MAX_RUNS);\n\tlet warmup = if per_cycle > Duration::from_millis(50) { 5 } else { 20 };\n\tfor _ in 0..warmup {\n\t\tcycle();\n\t}\n\tlet mut samples: Vec<f64> = (0..runs).map(|_| cycle().as_nanos() as f64).collect();\n\tStartResult {\n\t\tmedian_us: median(&mut samples) / 1e3,\n\t\truns,\n\t}\n}\n\n/// Tool calls in one already-created session. `run_calls(start, count)` makes the guest loop\n/// `count` times calling the host function, whose body calls [`tick`].\npub fn measure_tool_calls(mut run_calls: impl FnMut(i64, i64)) -> ToolResult {\n\ttimer_reset(u64::MAX, 0);\n\tlet calibration_started = Instant::now();\n\trun_calls(0, TOOL_CALIBRATION_CALLS);\n\tlet per_call = calibration_started.elapsed().as_secs_f64() / TOOL_CALIBRATION_CALLS as f64;\n\tassert_eq!(calls_seen(), TOOL_CALIBRATION_CALLS as u64, \"calibration call count\");\n\n\tlet affordable = (tool_time_budget().as_secs_f64() / (per_call * BATCH as f64)) as u64;\n\tlet (min_batches, max_batches) = tool_batch_bounds();\n\tlet batches = affordable.clamp(min_batches, max_batches);\n\tlet measured = batches * BATCH;\n\tlet warmup = (measured / 10).max(TOOL_MIN_WARMUP);\n\n\ttimer_reset(warmup, batches as usize);\n\trun_calls(TOOL_CALIBRATION_CALLS, (warmup + measured) as i64);\n\tlet (mut means, cpu_ns, wall_ns, calls) = timer_finish();\n\tassert_eq!(calls, warmup + measured, \"guest stopped early\");\n\tassert_eq!(means.len() as u64, batches, \"batch count\");\n\tlet slowest_batch_us = means.iter().cloned().fold(0.0, f64::max) / 1e3;\n\tToolResult {\n\t\twall_us: median(&mut means) / 1e3,\n\t\twall_mean_us: wall_ns / measured as f64 / 1e3,\n\t\tslowest_batch_us,\n\t\tcpu_us: cpu_ns / measured as f64 / 1e3,\n\t\tmeasured_calls: measured,\n\t\twarmup_calls: warmup,\n\t\tbatches: batches as usize,\n\t}\n}\n\n/// Memory first (fresh process), then start, then tool calls, then one JSON line on stdout.\npub fn run_owned<S>(\n\tinfo: Info,\n\tmut new_session: impl FnMut() -> S,\n\tload_guest: impl FnOnce(&mut S),\n\tmut run_calls: impl FnMut(&mut S, i64, i64),\n) {\n\teprintln!(\"[{}] memory\", info.key);\n\tlet memory = measure_memory(&mut new_session);\n\teprintln!(\"[{}] start\", info.key);\n\tlet start = measure_start(|| {\n\t\tlet started = Instant::now();\n\t\tlet session = new_session();\n\t\tlet elapsed = started.elapsed();\n\t\tdrop(session);\n\t\telapsed\n\t});\n\teprintln!(\"[{}] tool calls\", info.key);\n\tlet mut session = new_session();\n\tload_guest(&mut session);\n\tlet tool = measure_tool_calls(|start, count| run_calls(&mut session, start, count));\n\tdrop(session);\n\temit(&info, &memory, &start, &tool);\n}\n\nfn json_string(out: &mut String, value: &str) {\n\tout.push('\"');\n\tfor character in value.chars() {\n\t\tmatch character {\n\t\t\t'\"' => out.push_str(\"\\\\\\\"\"),\n\t\t\t'\\\\' => out.push_str(\"\\\\\\\\\"),\n\t\t\t'\\n' => out.push_str(\"\\\\n\"),\n\t\t\t'\\t' => out.push_str(\"\\\\t\"),\n\t\t\tcontrol if (control as u32) < 0x20 => {\n\t\t\t\tlet _ = write!(out, \"\\\\u{:04x}\", control as u32);\n\t\t\t}\n\t\t\tother => out.push(other),\n\t\t}\n\t}\n\tout.push('\"');\n}\n\npub fn emit(info: &Info, memory: &MemoryResult, start: &StartResult, tool: &ToolResult) {\n\tlet mut out = String::new();\n\tout.push('{');\n\tlet field = |out: &mut String, name: &str| {\n\t\tif !out.ends_with('{') {\n\t\t\tout.push(',');\n\t\t}\n\t\tjson_string(out, name);\n\t\tout.push(':');\n\t};\n\tfield(&mut out, \"key\");\n\tjson_string(&mut out, info.key);\n\tfield(&mut out, \"language\");\n\tjson_string(&mut out, info.language);\n\tfield(&mut out, \"crate\");\n\tjson_string(&mut out, info.crate_name);\n\tfield(&mut out, \"version\");\n\tjson_string(&mut out, info.version);\n\tfield(&mut out, \"startUs\");\n\tlet _ = write!(out, \"{:.3}\", start.median_us);\n\tfield(&mut out, \"startRuns\");\n\tlet _ = write!(out, \"{}\", start.runs);\n\tfield(&mut out, \"memoryBytesPerSession\");\n\tlet _ = write!(out, \"{:.0}\", memory.bytes_per_session);\n\tfield(&mut out, \"memorySessions\");\n\tlet _ = write!(out, \"{}\", memory.sessions);\n\tfield(&mut out, \"memoryStoppedBy\");\n\tjson_string(&mut out, memory.stopped_by);\n\tfield(&mut out, \"memoryExtraStackBytes\");\n\tlet _ = write!(out, \"{}\", memory.extra_stack_bytes);\n\tfield(&mut out, \"toolCallWallUs\");\n\tlet _ = write!(out, \"{:.4}\", tool.wall_us);\n\tfield(&mut out, \"toolCallWallMeanUs\");\n\tlet _ = write!(out, \"{:.4}\", tool.wall_mean_us);\n\tfield(&mut out, \"toolCallSlowestBatchUs\");\n\tlet _ = write!(out, \"{:.4}\", tool.slowest_batch_us);\n\tfield(&mut out, \"toolCallCpuUs\");\n\tlet _ = write!(out, \"{:.4}\", tool.cpu_us);\n\tfield(&mut out, \"toolCallMeasuredCalls\");\n\tlet _ = write!(out, \"{}\", tool.measured_calls);\n\tfield(&mut out, \"toolCallWarmupCalls\");\n\tlet _ = write!(out, \"{}\", tool.warmup_calls);\n\tfield(&mut out, \"toolCallBatches\");\n\tlet _ = write!(out, \"{}\", tool.batches);\n\tfield(&mut out, \"toolCallBatchSize\");\n\tlet _ = write!(out, \"{}\", BATCH);\n\tfield(&mut out, \"callKind\");\n\tjson_string(&mut out, info.call_kind);\n\tfield(&mut out, \"limitsEnabled\");\n\tjson_string(&mut out, &info.limits_enabled);\n\tfield(&mut out, \"notes\");\n\tout.push('[');\n\tfor (index, note) in info.notes.iter().enumerate() {\n\t\tif index > 0 {\n\t\t\tout.push(',');\n\t\t}\n\t\tjson_string(&mut out, note);\n\t}\n\tout.push(']');\n\tout.push('}');\n\tprintln!(\"{out}\");\n}\n",
+      "common/Cargo.toml": "[package]\nname = \"bench-common\"\nversion = \"0.1.0\"\nedition = \"2021\"\npublish = false\n\n[dependencies]\nlibc = \"0.2\"\n"
+    }
+  },
+  "criterion": {
+    "samples": 100,
+    "warmup_seconds": 3,
+    "measurement_seconds": 5,
+    "regex": "1.13.1",
+    "regex_automata": "0.4.18",
+    "estimates": {
+      "startup/empty": {
+        "baseline": {
+          "mean": {
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 88638.48172558994,
+              "upper_bound": 97628.79368708296
+            },
+            "point_estimate": 93031.73470919472,
+            "standard_error": 2291.4214791116915
+          },
+          "median": {
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 77224.76785714286,
+              "upper_bound": 91540.39393939394
+            },
+            "point_estimate": 82711.67810457517,
+            "standard_error": 3676.616025636832
+          },
+          "median_abs_dev": {
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 6445.33291806839,
+              "upper_bound": 24598.745225377592
+            },
+            "point_estimate": 14020.69462462531,
+            "standard_error": 4734.519161578527
+          },
+          "slope": {
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 82716.73306567835,
+              "upper_bound": 91751.6317701764
+            },
+            "point_estimate": 86957.77225087435,
+            "standard_error": 2309.4585873934543
+          },
+          "std_dev": {
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 19499.032857595033,
+              "upper_bound": 25897.341805868655
+            },
+            "point_estimate": 23046.45878782905,
+            "standard_error": 1634.61588846889
+          }
+        },
+        "candidate": {
+          "mean": {
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 70541.74595688982,
+              "upper_bound": 74637.53012082202
+            },
+            "point_estimate": 72191.68799862686,
+            "standard_error": 1074.881247856759
+          },
+          "median": {
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 70011.16071428571,
+              "upper_bound": 70947.52350675118
+            },
+            "point_estimate": 70609.22661272748,
+            "standard_error": 241.31140053870897
+          },
+          "median_abs_dev": {
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 1372.0015404432845,
+              "upper_bound": 2344.292009422622
+            },
+            "point_estimate": 1727.3809427094832,
+            "standard_error": 247.63488426651566
+          },
+          "slope": {
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 70811.77231693831,
+              "upper_bound": 76091.67887324431
+            },
+            "point_estimate": 73031.03200130888,
+            "standard_error": 1371.4979249258952
+          },
+          "std_dev": {
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 2057.3750890668803,
+              "upper_bound": 17560.202331584485
+            },
+            "point_estimate": 10805.375522487582,
+            "standard_error": 4389.506288977898
+          }
+        }
+      },
+      "startup/echo_hi": {
+        "baseline": {
+          "mean": {
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 78537.88614139425,
+              "upper_bound": 80986.95448409842
+            },
+            "point_estimate": 79598.34138439252,
+            "standard_error": 627.0874523218354
+          },
+          "median": {
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 77927.55613305613,
+              "upper_bound": 79403.0
+            },
+            "point_estimate": 79049.18190614416,
+            "standard_error": 372.0762197391094
+          },
+          "median_abs_dev": {
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 2455.6745688537244,
+              "upper_bound": 4210.647782971836
+            },
+            "point_estimate": 3223.5253827702763,
+            "standard_error": 452.7150663531694
+          },
+          "slope": {
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 77972.58326387014,
+              "upper_bound": 80794.09031724841
+            },
+            "point_estimate": 79182.2387441316,
+            "standard_error": 727.9869121785804
+          },
+          "std_dev": {
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 3120.6845879756906,
+              "upper_bound": 9591.094652570346
+            },
+            "point_estimate": 6299.339689075055,
+            "standard_error": 1963.1931066372397
+          }
+        },
+        "candidate": {
+          "mean": {
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 73503.34891095638,
+              "upper_bound": 78278.5080302106
+            },
+            "point_estimate": 75309.53245234398,
+            "standard_error": 1308.1310749051756
+          },
+          "median": {
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 72925.3623725672,
+              "upper_bound": 74042.99834919817
+            },
+            "point_estimate": 73552.68668839215,
+            "standard_error": 258.6510617155592
+          },
+          "median_abs_dev": {
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 1747.7621018001864,
+              "upper_bound": 2921.532872262289
+            },
+            "point_estimate": 2274.1015799307393,
+            "standard_error": 293.6561828028395
+          },
+          "slope": {
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 73587.316257863,
+              "upper_bound": 75266.86291210493
+            },
+            "point_estimate": 74329.9506939787,
+            "standard_error": 431.2374993177315
+          },
+          "std_dev": {
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 2920.4097193622133,
+              "upper_bound": 22038.088345580007
+            },
+            "point_estimate": 13179.49052426551,
+            "standard_error": 6451.03264459872
+          }
+        }
+      },
+      "startup/assign_echo": {
+        "baseline": {
+          "mean": {
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 85289.52080809166,
+              "upper_bound": 88757.32043599153
+            },
+            "point_estimate": 86789.67035498127,
+            "standard_error": 894.8115566447551
+          },
+          "median": {
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 83973.28132086167,
+              "upper_bound": 86531.9436936937
+            },
+            "point_estimate": 84897.91720545977,
+            "standard_error": 589.6342301755649
+          },
+          "median_abs_dev": {
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 2961.402179069765,
+              "upper_bound": 4791.296530433341
+            },
+            "point_estimate": 3524.557846058547,
+            "standard_error": 459.36656867866867
+          },
+          "slope": {
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 84518.71246364745,
+              "upper_bound": 90344.61242546489
+            },
+            "point_estimate": 86833.81169351263,
+            "standard_error": 1535.4282105554964
+          },
+          "std_dev": {
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 3933.022721762615,
+              "upper_bound": 13820.922470970647
+            },
+            "point_estimate": 8988.793755061153,
+            "standard_error": 2852.4685032964458
+          }
+        },
+        "candidate": {
+          "mean": {
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 81743.86170554596,
+              "upper_bound": 88672.2265901457
+            },
+            "point_estimate": 84878.79242004348,
+            "standard_error": 1791.538485311851
+          },
+          "median": {
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 79688.1514693172,
+              "upper_bound": 80410.5835813123
+            },
+            "point_estimate": 79906.28717948718,
+            "standard_error": 175.51823203023775
+          },
+          "median_abs_dev": {
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 1641.667189124931,
+              "upper_bound": 2657.922399290183
+            },
+            "point_estimate": 2028.0679868792063,
+            "standard_error": 245.51136068779618
+          },
+          "slope": {
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 83363.24157220866,
+              "upper_bound": 101471.95011071634
+            },
+            "point_estimate": 92155.66178422434,
+            "standard_error": 4588.116148625055
+          },
+          "std_dev": {
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 9111.66129039417,
+              "upper_bound": 24244.393322280153
+            },
+            "point_estimate": 17999.411575965434,
+            "standard_error": 3693.5922147809406
+          }
+        }
+      },
+      "conditional_regex/capture_1k": {
+        "baseline": {
+          "mean": {
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 18671111.095916666,
+              "upper_bound": 19846312.448500004
+            },
+            "point_estimate": 19219561.39,
+            "standard_error": 300570.5685270536
+          },
+          "median": {
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 17817492.0,
+              "upper_bound": 18269926.666666664
+            },
+            "point_estimate": 17993618.166666664,
+            "standard_error": 123919.37584896288
+          },
+          "median_abs_dev": {
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 545852.5326316799,
+              "upper_bound": 1135054.076948762
+            },
+            "point_estimate": 817460.1590871764,
+            "standard_error": 154790.70214154397
+          },
+          "slope": null,
+          "std_dev": {
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 2006190.0209257968,
+              "upper_bound": 3915714.593133033
+            },
+            "point_estimate": 3018286.0851335158,
+            "standard_error": 491227.6885859171
+          }
+        },
+        "candidate": {
+          "mean": {
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 18471879.295166664,
+              "upper_bound": 19884861.835166667
+            },
+            "point_estimate": 19074585.39666666,
+            "standard_error": 365264.4954236369
+          },
+          "median": {
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 18121658.666666668,
+              "upper_bound": 18564342.333333332
+            },
+            "point_estimate": 18356118.0,
+            "standard_error": 110394.8984340816
+          },
+          "median_abs_dev": {
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 597492.978492382,
+              "upper_bound": 926236.8882960083
+            },
+            "point_estimate": 793511.7217123518,
+            "standard_error": 85430.21124280932
+          },
+          "slope": null,
+          "std_dev": {
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 1144939.530138727,
+              "upper_bound": 5669047.016247435
+            },
+            "point_estimate": 3686863.316051183,
+            "standard_error": 1205961.7983401897
+          }
+        }
+      },
+      "conditional_regex/nonmatch_1k": {
+        "baseline": {
+          "mean": {
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 4711410.572386364,
+              "upper_bound": 4790790.494659093
+            },
+            "point_estimate": 4747744.9763636375,
+            "standard_error": 20379.623246587278
+          },
+          "median": {
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 4684880.136363637,
+              "upper_bound": 4726539.7272727275
+            },
+            "point_estimate": 4700683.818181818,
+            "standard_error": 11309.951936119855
+          },
+          "median_abs_dev": {
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 68936.72053976468,
+              "upper_bound": 134360.28566008227
+            },
+            "point_estimate": 101152.13536782673,
+            "standard_error": 16253.88511578614
+          },
+          "slope": null,
+          "std_dev": {
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 125290.50207423461,
+              "upper_bound": 288759.9182120864
+            },
+            "point_estimate": 205422.93724314496,
+            "standard_error": 45167.29757852757
+          }
+        },
+        "candidate": {
+          "mean": {
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 4474933.031607143,
+              "upper_bound": 4541569.483785717
+            },
+            "point_estimate": 4505586.277142858,
+            "standard_error": 17042.21148925391
+          },
+          "median": {
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 4441765.357142856,
+              "upper_bound": 4498870.571428572
+            },
+            "point_estimate": 4461568.857142856,
+            "standard_error": 13763.273010448747
+          },
+          "median_abs_dev": {
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 62239.864595021914,
+              "upper_bound": 110125.61984487982
+            },
+            "point_estimate": 79130.49069515395,
+            "standard_error": 12374.91254879338
+          },
+          "slope": null,
+          "std_dev": {
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 103641.42478970802,
+              "upper_bound": 237558.24329636848
+            },
+            "point_estimate": 171526.34185365494,
+            "standard_error": 35316.6617901826
+          }
+        }
+      }
+    }
+  },
+  "binaries": {
+    "baseline": {
+      "path": "/workspace/scratch/code-mode-rerun-20261123/bench-current",
+      "sha256": "a05a2944ed67085e6f6ce1bd250cec4ee883a2dd339c3a99d7d337c0840bf8a1"
+    },
+    "candidate": {
+      "path": "/workspace/scratch/bashkit-tool-profile/candidate-v2-default",
+      "sha256": "3d316c06655d7790590b6ccd49ba531a5fcb2605cda55f81e2d48b9f0391c861"
+    }
+  },
+  "runtime_sources_sha256": {
+    "crates/bashkit/src/builtins/search_common.rs": "e380652940d147e0a9e375e9a936b90559ebb221645092c7fc03506dea4004b1",
+    "crates/bashkit/src/builtins/limits.rs": "281e608720a23137087a571e896ae7412867a7f1240d145d74ec6a58288bfd03",
+    "crates/bashkit/src/interpreter/mod.rs": "59ef1821ff0ebf3a7f10ccbc7a35f2153bdeb8b0dfb13a9109b185a22893323b"
+  },
+  "hotpath_binaries_sha256": {
+    "baseline": "5881b3951ed86384cb1f50d91712cc509ec4761a772cdf7db1383bc656b2579b",
+    "candidate": "3196bfbce9e83f15b33b1f69b552f72550f37bbc0d704cda8d971442924d629f"
+  },
+  "validation": {
+    "pre_pr": 0,
+    "just_test": 0,
+    "all_features_clippy": 0,
+    "asan_fuzz": {
+      "inputs": 10571,
+      "seconds": 61,
+      "failures": 0
+    },
+    "cli": "matches real Bash"
+  }
+}
