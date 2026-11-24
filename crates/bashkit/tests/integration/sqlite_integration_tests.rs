@@ -257,6 +257,54 @@ async fn cached_engine_keeps_in_flight_transaction_across_exec_calls() {
 }
 
 #[tokio::test]
+async fn full_transaction_cache_rejects_new_paths_until_a_slot_is_reusable() {
+    let mut bash = make_bash();
+    for index in 0..8 {
+        let result = bash
+            .exec(&format!("sqlite /tmp/tx-{index}.sqlite 'BEGIN'"))
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, 0, "stderr: {}", result.stderr);
+    }
+
+    let query = "sqlite /tmp/extra.sqlite 'SELECT 42'";
+    let result = bash.exec(query).await.unwrap();
+    assert_eq!(result.exit_code, 1);
+    assert_eq!(result.stderr, "sqlite: too many active databases\n");
+
+    let result = bash.exec("sqlite /tmp/tx-0.sqlite 'COMMIT'").await.unwrap();
+    assert_eq!(result.exit_code, 0, "stderr: {}", result.stderr);
+    let result = bash.exec(query).await.unwrap();
+    assert_eq!(result.exit_code, 0, "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "42\n");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn committed_databases_reopen_after_cache_eviction() {
+    for mut bash in [make_bash(), make_bash_vfs()] {
+        for index in 0..9 {
+            let result = bash
+                .exec(&format!(
+                    "sqlite /tmp/cache-{index}.sqlite 'CREATE TABLE t(a); INSERT INTO t VALUES ({index})'"
+                ))
+                .await
+                .unwrap();
+            assert_eq!(result.exit_code, 0, "stderr: {}", result.stderr);
+        }
+        for index in 0..9 {
+            let result = bash
+                .exec(&format!(
+                    "sqlite /tmp/cache-{index}.sqlite 'SELECT a FROM t'"
+                ))
+                .await
+                .unwrap();
+            assert_eq!(result.exit_code, 0, "stderr: {}", result.stderr);
+            assert_eq!(result.stdout, format!("{index}\n"));
+        }
+    }
+}
+
+#[tokio::test]
 async fn cached_engine_isolated_per_database_path() {
     // Two different DB paths must not collide in the cache. Schema
     // changes to `/tmp/a.sqlite` are invisible from `/tmp/b.sqlite`.

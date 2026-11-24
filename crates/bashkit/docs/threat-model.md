@@ -203,6 +203,7 @@ handling, including discarded output. Stdout cached text shares that budget
 | Command-substitution stack overflow (TM-DOS-089) | ~20-30 nested `$()` levels | `Box::pin` expansion/subst caps per-level stack | FIXED |
 | `shuf` range/repeat materialization (TM-DOS-090) | Huge `--input-range`/`--head-count` | Sample without full collection; reject oversized ranges | FIXED |
 | SQLite `.dump` output bypass (TM-DOS-091) | `.dump` builds full string before the cap check | `bounded_append()` enforces `max_output_bytes` per row | FIXED |
+| SQLite session cache retention (TM-DOS-149) | File-backed connections can retain memory between invocations | Limit each session to eight cached connections and discard connections after persistence errors | MITIGATED |
 | Subshell snapshot amplification (TM-DOS-092) | Deeply nested `( … )` | `max_subshell_depth` counter (default 32) | MITIGATED |
 | jq unbounded generator (TM-DOS-093) | `jq -n 'repeat(1)'` / `range(0;1e18)` | Cap output at `max_stdout_bytes`; poll deadline every 4096 values | FIXED |
 | Persistent history memory DoS (TM-DOS-094) | Unbounded command history in long-lived instances | `ExecutionLimits` caps history entries/bytes/output | FIXED |

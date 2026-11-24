@@ -1124,3 +1124,50 @@ async fn bounded_recursive_cte_still_runs() {
     assert_eq!(r.exit_code, 0, "stderr: {}", r.stderr);
     assert_eq!(r.stdout, "1\n2\n3\n4\n5\n");
 }
+
+#[tokio::test]
+async fn failed_snapshot_write_leaves_no_cached_engine() {
+    let sqlite = Sqlite::new();
+    let fs = Arc::new(InMemoryFs::new());
+    fs.mkdir(Path::new("/database"), false).await.unwrap();
+    let args = ["/database".to_owned(), "SELECT 1".to_owned()];
+    let env = opt_in_env();
+    let mut variables = HashMap::new();
+    let mut cwd = PathBuf::from("/");
+    let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs, None);
+
+    let result = sqlite.execute(ctx).await.unwrap();
+
+    assert_eq!(result.exit_code, 1);
+    assert!(result.stderr.contains("persist failed"));
+    let key = (SqliteBackend::Memory, PathBuf::from("/database"));
+    let cache = sqlite.engine_cache.lock().unwrap();
+    assert!(cache[&key].try_lock().unwrap().is_none());
+}
+
+#[tokio::test]
+async fn cache_preserves_in_use_handles_and_open_transactions() {
+    let sqlite = Sqlite::new();
+    let key = |index| (SqliteBackend::Memory, PathBuf::from(format!("/db{index}")));
+    let tx_key = key(0);
+    let fs = Arc::new(InMemoryFs::new());
+    let args = ["/db0".to_owned(), "BEGIN".to_owned()];
+    let env = opt_in_env();
+    let mut variables = HashMap::new();
+    let mut cwd = PathBuf::from("/");
+    let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs, None);
+    assert_eq!(sqlite.execute(ctx).await.unwrap().exit_code, 0);
+
+    let mut in_use: Vec<_> = (1..super::MAX_CACHED_ENGINES)
+        .map(|index| sqlite.cache_handle(&key(index)).unwrap())
+        .collect();
+    let extra_key = key(super::MAX_CACHED_ENGINES);
+    assert!(sqlite.cache_handle(&extra_key).is_none());
+
+    drop(in_use.pop());
+    assert!(sqlite.cache_handle(&extra_key).is_some());
+    let cache = sqlite.engine_cache.lock().unwrap();
+    assert_eq!(cache.len(), super::MAX_CACHED_ENGINES);
+    assert!(cache.contains_key(&tx_key));
+    assert!(!cache.contains_key(&key(super::MAX_CACHED_ENGINES - 1)));
+}

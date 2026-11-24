@@ -396,6 +396,10 @@ impl SqliteEngine {
         }
     }
 
+    pub(super) fn is_autocommit(&self) -> bool {
+        self.conn.get_auto_commit()
+    }
+
     /// Close the connection, releasing any cached pages. Best-effort.
     pub(super) fn close(&self) {
         let _ = self.conn.close();
