@@ -21,6 +21,7 @@
 
 use reqwest::Client;
 use reqwest::dns::{Name, Resolve, Resolving};
+use reqwest::header::{HeaderName, HeaderValue};
 use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
@@ -28,6 +29,16 @@ use std::time::Duration;
 use super::allowlist::{NetworkAllowlist, UrlMatch, is_private_ip};
 use super::transport::{HttpTransport, HttpTransportRequest};
 use crate::error::{Error, Result};
+
+// Use the same syntax rules as reqwest without changing header spelling,
+// order, or duplicate values for custom transports.
+fn validate_header(name: &str, value: &str) -> Result<()> {
+    HeaderName::from_bytes(name.as_bytes())
+        .map_err(|_| Error::Network("invalid HTTP header name".to_string()))?;
+    HeaderValue::from_bytes(value.as_bytes())
+        .map_err(|_| Error::Network("invalid HTTP header value".to_string()))?;
+    Ok(())
+}
 
 /// THREAT[TM-NET-002 TOCTOU]: DNS resolver wrapper that rejects any
 /// hostname whose addresses include a private/reserved IP at connect time.
@@ -609,6 +620,11 @@ impl HttpClient {
             .collect();
         let headers: &[(String, String)] = &caller_headers;
 
+        // Validate the remaining caller headers before hooks can add credentials.
+        for (name, value) in headers {
+            validate_header(name, value)?;
+        }
+
         // Fire before_http hooks — may modify URL/headers or cancel the request
         let (url, headers) = if !self.before_http.is_empty() {
             let event = crate::hooks::HttpRequestEvent {
@@ -642,6 +658,11 @@ impl HttpClient {
         let signing_headers = self.bot_auth_headers(method, url);
         #[cfg(not(feature = "bot-auth"))]
         let signing_headers: Vec<(String, String)> = Vec::new();
+
+        // Hooks can replace headers, so validate the final headers as well.
+        for (name, value) in headers.iter().chain(&signing_headers) {
+            validate_header(name, value)?;
+        }
 
         // Clamp timeout values to safe range [MIN_TIMEOUT_SECS, MAX_TIMEOUT_SECS]
         let clamp_timeout = |secs: u64| secs.clamp(MIN_TIMEOUT_SECS, MAX_TIMEOUT_SECS);
@@ -895,6 +916,20 @@ mod tests {
                 headers: vec![],
                 body: b"ok".to_vec(),
             })
+        }
+    }
+
+    #[test]
+    fn validates_http_header_syntax() {
+        assert!(validate_header("X-Example", "ordinary value: café").is_ok());
+        assert!(validate_header("X-Example", "").is_ok());
+        assert!(validate_header("X-Example", "one\ttwo").is_ok());
+
+        for name in ["", "X Example", "X:Example", "X-É"] {
+            assert!(validate_header(name, "value").is_err());
+        }
+        for value in ["\r", "\n", "\0", "\x7f"] {
+            assert!(validate_header("X-Example", value).is_err());
         }
     }
 

@@ -728,10 +728,12 @@ async fn execute_curl_request(
     // Parse headers and add custom ones
     let mut header_pairs: Vec<(String, String)> = Vec::new();
     for header in headers {
-        if let Some(colon_pos) = header.find(':') {
-            let name = header[..colon_pos].trim().to_string();
-            let value = header[colon_pos + 1..].trim().to_string();
-            header_pairs.push((name, value));
+        if let Some((name, value)) = header.split_once(':') {
+            // Preserve invalid syntax for the HTTP client to reject.
+            header_pairs.push((
+                name.to_string(),
+                value.trim_matches([' ', '\t']).to_string(),
+            ));
         }
     }
 
@@ -1440,10 +1442,12 @@ async fn execute_wget_request(
     // Build header pairs
     let mut header_pairs: Vec<(String, String)> = Vec::new();
     for header in headers {
-        if let Some(colon_pos) = header.find(':') {
-            let name = header[..colon_pos].trim().to_string();
-            let value = header[colon_pos + 1..].trim().to_string();
-            header_pairs.push((name, value));
+        if let Some((name, value)) = header.split_once(':') {
+            // Preserve invalid syntax for the HTTP client to reject.
+            header_pairs.push((
+                name.to_string(),
+                value.trim_matches([' ', '\t']).to_string(),
+            ));
         }
     }
 

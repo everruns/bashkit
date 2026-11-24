@@ -36,8 +36,8 @@ pub struct HttpTransportRequest {
     pub method: Method,
     /// Absolute request URL (already allowlist-validated).
     pub url: String,
-    /// Request headers, including bot-auth signing headers and injected
-    /// credentials.
+    /// Syntax-validated request headers, including bot-auth signing headers
+    /// and injected credentials.
     pub headers: Vec<(String, String)>,
     /// Optional request body.
     pub body: Option<Vec<u8>>,
