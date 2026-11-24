@@ -157,12 +157,19 @@ fn reject_on_output_reentry(state: &Arc<SharedState>) -> napi::Result<()> {
 struct SyncExecuteScope {
     depth: Arc<AtomicUsize>,
     wake: Option<Arc<tokio::sync::Notify>>,
+    /// Lets lazy filesystem calls from other threads see that this JS thread
+    /// is blocked (see `lazy_fs::JsThreadBlocked`).
+    _js_blocked: lazy_fs::JsThreadBlocked,
 }
 
 impl SyncExecuteScope {
     fn enter(depth: Arc<AtomicUsize>) -> Self {
         depth.fetch_add(1, Ordering::SeqCst);
-        Self { depth, wake: None }
+        Self {
+            depth,
+            wake: None,
+            _js_blocked: lazy_fs::JsThreadBlocked::enter(),
+        }
     }
 }
 
@@ -236,6 +243,9 @@ enum FileSystemHandle {
 // receives mutable handle bytes or function pointers.
 pub struct NativeFileSystemState {
     inner: FileSystemHandle,
+    /// Lazy filesystems wait on JS promises, so they must never cross the
+    /// blocking C ABI bridge (see `mount_lazy_file_system`).
+    requires_event_loop: bool,
 }
 
 impl NativeFileSystemState {
@@ -246,12 +256,21 @@ impl NativeFileSystemState {
     fn from_static(fs: Arc<dyn BashFileSystem>) -> Self {
         Self {
             inner: FileSystemHandle::Static(fs),
+            requires_event_loop: false,
+        }
+    }
+
+    fn lazy(fs: Arc<dyn BashFileSystem>) -> Self {
+        Self {
+            inner: FileSystemHandle::Static(fs),
+            requires_event_loop: true,
         }
     }
 
     fn from_live(state: Arc<SharedState>) -> Self {
         Self {
             inner: FileSystemHandle::Live(state),
+            requires_event_loop: false,
         }
     }
 
@@ -260,7 +279,10 @@ impl NativeFileSystemState {
         Fut: std::future::Future<Output = napi::Result<T>>,
     {
         match &self.inner {
-            FileSystemHandle::Static(fs) => callback_runtime().block_on(f(fs.clone())),
+            FileSystemHandle::Static(fs) => {
+                let _js_blocked = lazy_fs::JsThreadBlocked::enter();
+                callback_runtime().block_on(f(fs.clone()))
+            }
             FileSystemHandle::Live(state) => block_on_with(state, |s| async move {
                 let bash = s.inner.lock().await;
                 f(bash.fs()).await
@@ -387,6 +409,11 @@ impl NativeFileSystemState {
     }
 
     fn to_external(&self, env: Env) -> napi::Result<Unknown<'static>> {
+        if self.requires_event_loop {
+            return Err(napi::Error::from_reason(
+                "lazy filesystems cannot be exported with toExternal(); mount them with bash.mount() instead",
+            ));
+        }
         let fs = self.export_fs()?;
         let handle = export_filesystem(fs).map_err(|e| napi::Error::from_reason(e.to_string()))?;
         create_file_system_external(&env, handle)
@@ -599,7 +626,7 @@ pub fn lazy_file_system(
         .build()?;
     let lazy: Arc<dyn BashFileSystem> = Arc::new(PosixFs::new(lazy_fs::JsLazyBackend::new(tsfn)));
     let fs: Arc<dyn BashFileSystem> = Arc::new(ReadOnlyFs::new(lazy));
-    Ok(External::new(NativeFileSystemState::from_static(fs)))
+    Ok(External::new(NativeFileSystemState::lazy(fs)))
 }
 
 #[napi(js_name = "__importFileSystem")]
@@ -2669,20 +2696,27 @@ impl Bash {
         mount_fs_arc(&self.state, vfs_path, mounted_fs, read_only)
     }
 
-    /// Mount a filesystem handle created by this addon without the C ABI.
+    /// Mount a `FileSystem.lazy()` handle without the C ABI.
     ///
     /// Decision: the ABI import blocks a runtime worker on every operation
     /// until it completes. That is harmless for in-memory and real
     /// filesystems, but a lazy filesystem waits on JS promises, so the ABI
-    /// path would park workers and starve unrelated executions. Same-addon
-    /// handles therefore mount their `Arc<dyn FileSystem>` directly.
+    /// path would park workers and starve unrelated executions. Lazy handles
+    /// therefore mount their `Arc<dyn FileSystem>` directly. Other handles
+    /// keep the ABI path so their mount semantics (usage, cycles) are
+    /// unchanged.
     #[napi(ts_args_type = "vfsPath: string, fs: unknown, readOnly?: boolean")]
-    pub fn mount_native_file_system(
+    pub fn mount_lazy_file_system(
         &self,
         vfs_path: String,
         fs: &External<NativeFileSystemState>,
         read_only: Option<bool>,
     ) -> napi::Result<()> {
+        if !fs.requires_event_loop {
+            return Err(napi::Error::from_reason(
+                "mountLazyFileSystem requires a FileSystem.lazy() handle",
+            ));
+        }
         let mounted_fs = fs.export_fs()?;
         mount_fs_arc(&self.state, vfs_path, mounted_fs, read_only)
     }
@@ -3464,20 +3498,27 @@ impl BashTool {
         mount_fs_arc(&self.state, vfs_path, mounted_fs, read_only)
     }
 
-    /// Mount a filesystem handle created by this addon without the C ABI.
+    /// Mount a `FileSystem.lazy()` handle without the C ABI.
     ///
     /// Decision: the ABI import blocks a runtime worker on every operation
     /// until it completes. That is harmless for in-memory and real
     /// filesystems, but a lazy filesystem waits on JS promises, so the ABI
-    /// path would park workers and starve unrelated executions. Same-addon
-    /// handles therefore mount their `Arc<dyn FileSystem>` directly.
+    /// path would park workers and starve unrelated executions. Lazy handles
+    /// therefore mount their `Arc<dyn FileSystem>` directly. Other handles
+    /// keep the ABI path so their mount semantics (usage, cycles) are
+    /// unchanged.
     #[napi(ts_args_type = "vfsPath: string, fs: unknown, readOnly?: boolean")]
-    pub fn mount_native_file_system(
+    pub fn mount_lazy_file_system(
         &self,
         vfs_path: String,
         fs: &External<NativeFileSystemState>,
         read_only: Option<bool>,
     ) -> napi::Result<()> {
+        if !fs.requires_event_loop {
+            return Err(napi::Error::from_reason(
+                "mountLazyFileSystem requires a FileSystem.lazy() handle",
+            ));
+        }
         let mounted_fs = fs.export_fs()?;
         mount_fs_arc(&self.state, vfs_path, mounted_fs, read_only)
     }

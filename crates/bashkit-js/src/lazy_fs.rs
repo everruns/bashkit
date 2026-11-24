@@ -13,13 +13,19 @@
 //! merged view. TODO: add `writable` once an empty-upper overlay exists.
 //!
 //! Decision: callbacks dispatch through a threadsafe function onto the Node
-//! event loop. Sync entry points (`executeSync()`, `bash.readFile()`, ...) run
-//! their future on the JS thread with `block_on`, so a callback queued from
-//! there could never run. The backend records its owning JS thread at
-//! construction and fails fast when an operation runs on that thread, instead
-//! of deadlocking (same contract as custom builtins). Same-addon handles are
-//! mounted directly (`mountNativeFileSystem`), never through the C ABI, whose
-//! blocking per-operation bridge would park runtime workers on pending promises.
+//! event loop. Sync entry points (`executeSync()`, `bash.readFile()`, ...)
+//! block that loop, so a callback they wait on could never run. Two checks
+//! turn that deadlock into an error:
+//! - an operation polled on the owning JS thread itself fails at once;
+//! - an operation on another thread (sqlite's VFS I/O thread, for example)
+//!   while the owning JS thread is inside a sync entry point waits up to
+//!   [`SYNC_BLOCK_GRACE`] for the thread to unblock, then fails. Unrelated
+//!   short sync calls therefore only delay async reads; a sync call that is
+//!   waiting on this very operation ends with an error instead of hanging.
+//!
+//! Lazy handles are mounted directly (`mountLazyFileSystem`) and refuse
+//! `toExternal()`: the C ABI bridge blocks a runtime worker per operation,
+//! which pending promises would starve.
 //!
 //! `timeoutMs` bounds a pending callback (the interpreter future is dropped).
 //! `bash.cancel()` is cooperative and filesystem backends cannot observe it,
@@ -28,19 +34,24 @@
 //! (like `RuntimeCallContext`) so pending callbacks can race cancellation.
 //!
 //! THREAT[TM-DOS-148]: callback output is host data, but scripts drive which
-//! paths are requested, so every response is bounded. Only paths a parent
-//! listing declared reach the host; entry names pass the same `validate_path`
-//! rules as in-memory files (TM-DOS-013/015); listings are capped; declared
-//! sizes over `max_file_size` are rejected before fetching; the cache is
-//! capped in bytes and entries and evicts oldest-first; concurrent host calls
-//! share the process-wide callback semaphore (#982).
+//! paths are requested, so responses and caches are bounded. Only paths a
+//! parent listing declared reach the host; entry names pass the same
+//! `validate_path` rules as in-memory files (TM-DOS-013/015); one listing is
+//! capped at 100k entries and all cached listings at 1M entries; declared
+//! sizes over `max_file_size` are rejected before fetching; file content is
+//! capped by `max_total_bytes`/`max_file_count`; negative entries are capped;
+//! concurrent host calls share the process-wide callback semaphore (#982).
+//! Residual: the number of host calls is not capped (eviction can make
+//! repeated walks re-fetch), and a callback that never settles holds a
+//! semaphore permit until `timeoutMs` drops it.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{Error as IoError, ErrorKind};
 use std::path::{Component, Path, PathBuf};
+use std::sync::OnceLock;
 use std::sync::{Arc, Mutex as StdMutex};
 use std::thread::ThreadId;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use base64::Engine;
 use bashkit::time::{SystemTime, UNIX_EPOCH};
@@ -52,6 +63,82 @@ use serde::Deserialize;
 const MAX_DIR_ENTRIES: usize = 100_000;
 /// Upper bound on cached directory listings before oldest-first eviction.
 const MAX_CACHED_DIRS: usize = 10_000;
+/// Upper bound on entries across all cached listings.
+const MAX_CACHED_DIR_ENTRIES: usize = 1_000_000;
+/// Upper bound on remembered missing paths before the sets are cleared.
+const MAX_NEGATIVE_ENTRIES: usize = 100_000;
+/// How long an off-thread operation waits for a blocked owning JS thread.
+const SYNC_BLOCK_GRACE: Duration = Duration::from_secs(2);
+
+/// A JS thread inside one or more nested synchronous native calls.
+#[derive(Default)]
+struct BlockedThread {
+    depth: usize,
+    /// An off-thread operation already timed out during this blocked period,
+    /// so later ones fail at once instead of each waiting the full grace.
+    gave_up: bool,
+}
+
+/// JS threads currently inside a synchronous native call.
+fn blocked_js_threads() -> &'static StdMutex<HashMap<ThreadId, BlockedThread>> {
+    static BLOCKED: OnceLock<StdMutex<HashMap<ThreadId, BlockedThread>>> = OnceLock::new();
+    BLOCKED.get_or_init(|| StdMutex::new(HashMap::new()))
+}
+
+enum JsThreadState {
+    Free,
+    Blocked,
+    GaveUp,
+}
+
+fn js_thread_state(id: ThreadId) -> JsThreadState {
+    let map = blocked_js_threads()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    match map.get(&id) {
+        None => JsThreadState::Free,
+        Some(b) if b.gave_up => JsThreadState::GaveUp,
+        Some(_) => JsThreadState::Blocked,
+    }
+}
+
+fn mark_gave_up(id: ThreadId) {
+    let mut map = blocked_js_threads()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    if let Some(b) = map.get_mut(&id) {
+        b.gave_up = true;
+    }
+}
+
+/// Marks the current (JS) thread as blocked for the guard's lifetime. Held by
+/// every sync entry point that blocks the event loop.
+pub(crate) struct JsThreadBlocked(ThreadId);
+
+impl JsThreadBlocked {
+    pub(crate) fn enter() -> Self {
+        let id = std::thread::current().id();
+        let mut map = blocked_js_threads()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        map.entry(id).or_default().depth += 1;
+        Self(id)
+    }
+}
+
+impl Drop for JsThreadBlocked {
+    fn drop(&mut self) {
+        let mut map = blocked_js_threads()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if let Some(b) = map.get_mut(&self.0) {
+            b.depth -= 1;
+            if b.depth == 0 {
+                map.remove(&self.0);
+            }
+        }
+    }
+}
 
 pub(crate) const LAZY_FS_SYNC_ERROR: &str = "lazy filesystem callbacks require async access (execute()); synchronous calls such as executeSync() or bash.readFile() would deadlock because the JS event loop is blocked";
 
@@ -90,25 +177,63 @@ struct WireResponse {
 struct Cache {
     dirs: HashMap<PathBuf, Arc<Vec<DirEntry>>>,
     dir_order: VecDeque<PathBuf>,
+    dir_entries: usize,
     files: HashMap<PathBuf, Arc<Vec<u8>>>,
     file_order: VecDeque<PathBuf>,
     file_bytes: u64,
-    /// Paths the host reported missing, or that exceed `max_file_size`.
+    /// Paths the host reported missing.
     missing_files: HashSet<PathBuf>,
     missing_dirs: HashSet<PathBuf>,
+    /// Files whose fetched content exceeded `max_file_size`, with that size.
+    oversize: HashMap<PathBuf, u64>,
 }
 
 impl Cache {
     fn insert_dir(&mut self, dir: PathBuf, entries: Arc<Vec<DirEntry>>) {
-        if self.dirs.insert(dir.clone(), entries).is_none() {
-            self.dir_order.push_back(dir);
+        self.dir_entries += entries.len();
+        match self.dirs.insert(dir.clone(), entries) {
+            Some(prev) => self.dir_entries -= prev.len(),
+            None => self.dir_order.push_back(dir),
         }
-        while self.dirs.len() > MAX_CACHED_DIRS {
+        while (self.dirs.len() > MAX_CACHED_DIRS || self.dir_entries > MAX_CACHED_DIR_ENTRIES)
+            && self.dirs.len() > 1
+        {
             let Some(old) = self.dir_order.pop_front() else {
                 break;
             };
-            self.dirs.remove(&old);
+            if let Some(evicted) = self.dirs.remove(&old) {
+                self.dir_entries -= evicted.len();
+            }
         }
+    }
+
+    fn remember_missing_file(&mut self, path: PathBuf) {
+        if self.missing_files.len() >= MAX_NEGATIVE_ENTRIES {
+            self.missing_files.clear();
+        }
+        self.missing_files.insert(path);
+    }
+
+    fn remember_missing_dir(&mut self, dir: PathBuf) {
+        if self.missing_dirs.len() >= MAX_NEGATIVE_ENTRIES {
+            self.missing_dirs.clear();
+        }
+        self.missing_dirs.insert(dir);
+    }
+
+    /// Size learned by fetching: cached content or a rejected oversize file.
+    fn known_size(&self, path: &Path) -> Option<u64> {
+        self.files
+            .get(path)
+            .map(|c| c.len() as u64)
+            .or_else(|| self.oversize.get(path).copied())
+    }
+
+    fn remember_oversize(&mut self, path: PathBuf, size: u64) {
+        if self.oversize.len() >= MAX_NEGATIVE_ENTRIES {
+            self.oversize.clear();
+        }
+        self.oversize.insert(path, size);
     }
 
     fn insert_file(&mut self, path: PathBuf, bytes: Arc<Vec<u8>>, limits: &FsLimits) {
@@ -134,6 +259,20 @@ impl Cache {
 }
 
 type InflightKey = (&'static str, PathBuf);
+
+/// Holds a per-path in-flight lock entry and removes it from the map when
+/// dropped, including when the waiting future is dropped (timeout).
+struct InflightEntry<'a> {
+    backend: &'a JsLazyBackend,
+    key: InflightKey,
+    lock: Arc<tokio::sync::Mutex<()>>,
+}
+
+impl Drop for InflightEntry<'_> {
+    fn drop(&mut self) {
+        self.backend.release_inflight(&self.key, &self.lock);
+    }
+}
 
 pub(crate) struct JsLazyBackend {
     callback: Arc<LazyFsTsfn>,
@@ -209,26 +348,58 @@ impl JsLazyBackend {
         self.cache.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    fn inflight_lock(&self, op: &'static str, path: &Path) -> Arc<tokio::sync::Mutex<()>> {
+    fn inflight_entry(&self, op: &'static str, path: &Path) -> InflightEntry<'_> {
+        let key = (op, path.to_path_buf());
         let mut map = self.inflight.lock().unwrap_or_else(|e| e.into_inner());
-        map.entry((op, path.to_path_buf()))
+        let lock = map
+            .entry(key.clone())
             .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
-            .clone()
+            .clone();
+        InflightEntry {
+            backend: self,
+            key,
+            lock,
+        }
     }
 
-    fn release_inflight(&self, op: &'static str, path: &Path, lock: &Arc<tokio::sync::Mutex<()>>) {
+    fn release_inflight(&self, key: &InflightKey, lock: &Arc<tokio::sync::Mutex<()>>) {
         let mut map = self.inflight.lock().unwrap_or_else(|e| e.into_inner());
         // Two strong refs: the map's and the caller's. More means waiters
-        // still hold the entry; the last one out removes it.
+        // still hold the entry; the last one out removes it. Runs under the
+        // map mutex, so the count cannot change underneath us.
         if Arc::strong_count(lock) <= 2 {
-            map.remove(&(op, path.to_path_buf()));
+            map.remove(key);
+        }
+    }
+
+    /// Fail fast instead of deadlocking when the owning JS thread cannot run
+    /// callbacks (see the module docs).
+    fn wait_for_event_loop(&self) -> bashkit::Result<()> {
+        let sync_error = || IoError::new(ErrorKind::WouldBlock, LAZY_FS_SYNC_ERROR).into();
+        if std::thread::current().id() == self.js_thread {
+            return Err(sync_error());
+        }
+        // Decision: a plain thread sleep, not a tokio timer. On a helper
+        // thread driving a current-thread runtime (sqlite's VFS I/O), the
+        // timer driver belongs to the blocked JS thread and would never fire.
+        // This only runs while the owning JS thread is blocked, and is bounded
+        // by SYNC_BLOCK_GRACE.
+        let started = Instant::now();
+        loop {
+            match js_thread_state(self.js_thread) {
+                JsThreadState::Free => return Ok(()),
+                JsThreadState::GaveUp => return Err(sync_error()),
+                JsThreadState::Blocked if started.elapsed() >= SYNC_BLOCK_GRACE => {
+                    mark_gave_up(self.js_thread);
+                    return Err(sync_error());
+                }
+                JsThreadState::Blocked => std::thread::sleep(Duration::from_millis(2)),
+            }
         }
     }
 
     async fn call(&self, op: &str, path: &Path) -> bashkit::Result<WireResponse> {
-        if std::thread::current().id() == self.js_thread {
-            return Err(IoError::new(ErrorKind::WouldBlock, LAZY_FS_SYNC_ERROR).into());
-        }
+        self.wait_for_event_loop()?;
         // Bound concurrent JS callbacks across all instances (issue #982).
         let _permit = crate::callback_semaphore()
             .acquire()
@@ -338,27 +509,22 @@ impl JsLazyBackend {
                 return Err(not_a_directory());
             }
         }
-        let lock = self.inflight_lock("readDir", dir);
-        let result = async {
-            let _guard = lock.lock().await;
-            if let Some(hit) = self.cached_listing(dir) {
-                return hit;
-            }
-            let resp = self.call("readDir", dir).await?;
-            if resp.missing {
-                self.cache().missing_dirs.insert(dir.to_path_buf());
-                return Err(not_found());
-            }
-            let wire = resp
-                .entries
-                .ok_or_else(|| invalid("lazy filesystem readDir returned no entries"))?;
-            let entries = Arc::new(self.parse_listing(dir, wire)?);
-            self.cache().insert_dir(dir.to_path_buf(), entries.clone());
-            Ok(entries)
+        let entry = self.inflight_entry("readDir", dir);
+        let _guard = entry.lock.lock().await;
+        if let Some(hit) = self.cached_listing(dir) {
+            return hit;
         }
-        .await;
-        self.release_inflight("readDir", dir, &lock);
-        result
+        let resp = self.call("readDir", dir).await?;
+        if resp.missing {
+            self.cache().remember_missing_dir(dir.to_path_buf());
+            return Err(not_found());
+        }
+        let wire = resp
+            .entries
+            .ok_or_else(|| invalid("lazy filesystem readDir returned no entries"))?;
+        let entries = Arc::new(self.parse_listing(dir, wire)?);
+        self.cache().insert_dir(dir.to_path_buf(), entries.clone());
+        Ok(entries)
     }
 
     async fn stat_inner(&self, path: &Path) -> bashkit::Result<Metadata> {
@@ -381,9 +547,9 @@ impl JsLazyBackend {
             .ok_or_else(not_found)?;
         let mut meta = entry.metadata.clone();
         if meta.file_type.is_file()
-            && let Some(hit) = self.cache().files.get(path)
+            && let Some(len) = self.cache().known_size(path)
         {
-            meta.size = hit.len() as u64;
+            meta.size = len;
         }
         Ok(meta)
     }
@@ -391,7 +557,7 @@ impl JsLazyBackend {
     async fn fetch_file(&self, path: &Path) -> bashkit::Result<Arc<Vec<u8>>> {
         let resp = self.call("readFile", path).await?;
         if resp.missing {
-            self.cache().missing_files.insert(path.to_path_buf());
+            self.cache().remember_missing_file(path.to_path_buf());
             return Err(not_found());
         }
         let bytes = match (resp.text, resp.base64) {
@@ -402,7 +568,8 @@ impl JsLazyBackend {
             (None, None) => return Err(invalid("lazy filesystem readFile returned no content")),
         };
         if bytes.len() as u64 > self.limits.max_file_size {
-            self.cache().missing_files.insert(path.to_path_buf());
+            self.cache()
+                .remember_oversize(path.to_path_buf(), bytes.len() as u64);
             return Err(self.too_large());
         }
         let bytes = Arc::new(bytes);
@@ -433,23 +600,23 @@ impl FsBackend for JsLazyBackend {
         if meta.size > self.limits.max_file_size {
             return Err(self.too_large());
         }
-        let lock = self.inflight_lock("readFile", &path);
-        let result = async {
-            let _guard = lock.lock().await;
-            {
-                let cache = self.cache();
-                if let Some(hit) = cache.files.get(&path) {
-                    return Ok(hit.clone());
-                }
-                if cache.missing_files.contains(&path) {
-                    return Err(not_found());
-                }
+        let entry = self.inflight_entry("readFile", &path);
+        let _guard = entry.lock.lock().await;
+        {
+            let cache = self.cache();
+            if let Some(hit) = cache.files.get(&path) {
+                return Ok(hit.as_ref().clone());
             }
-            self.fetch_file(&path).await
+            if cache.missing_files.contains(&path) {
+                return Err(not_found());
+            }
+            if cache.oversize.contains_key(&path) {
+                return Err(self.too_large());
+            }
         }
-        .await;
-        self.release_inflight("readFile", &path, &lock);
-        result.map(|bytes| bytes.as_ref().clone())
+        self.fetch_file(&path)
+            .await
+            .map(|bytes| bytes.as_ref().clone())
     }
 
     async fn write(&self, _path: &Path, _content: &[u8]) -> bashkit::Result<()> {
@@ -481,9 +648,9 @@ impl FsBackend for JsLazyBackend {
             .map(|e| {
                 let mut e = e.clone();
                 if e.metadata.file_type.is_file()
-                    && let Some(hit) = cache.files.get(&dir.join(&e.name))
+                    && let Some(len) = cache.known_size(&dir.join(&e.name))
                 {
-                    e.metadata.size = hit.len() as u64;
+                    e.metadata.size = len;
                 }
                 e
             })
@@ -554,6 +721,20 @@ mod tests {
         assert_eq!(whole(Some(-1.0)), None);
         assert_eq!(whole(Some(f64::NAN)), None);
         assert_eq!(whole(None), None);
+    }
+
+    #[test]
+    fn blocked_period_resets_after_last_guard() {
+        let id = std::thread::current().id();
+        assert!(matches!(js_thread_state(id), JsThreadState::Free));
+        let outer = JsThreadBlocked::enter();
+        let inner = JsThreadBlocked::enter();
+        assert!(matches!(js_thread_state(id), JsThreadState::Blocked));
+        mark_gave_up(id);
+        drop(inner);
+        assert!(matches!(js_thread_state(id), JsThreadState::GaveUp));
+        drop(outer);
+        assert!(matches!(js_thread_state(id), JsThreadState::Free));
     }
 
     #[test]

@@ -692,7 +692,26 @@ export interface LazyFileSystemSource {
   readFile(path: string): MaybePromise<string | Uint8Array | null | undefined>;
 }
 
+/**
+ * Native handles of `FileSystem.lazy()` instances. Module-private so lazy
+ * handles mount directly (see `mountLazyFileSystem`) without exposing a
+ * public accessor; other filesystems keep the `toExternal()` path.
+ */
+const lazyFileSystemNatives = new WeakMap<object, unknown>();
+
 function bytesToBase64(bytes: Uint8Array): string {
+  const NodeBuffer = (
+    globalThis as {
+      Buffer?: {
+        from(b: ArrayBufferLike, o: number, l: number): { toString(e: string): string };
+      };
+    }
+  ).Buffer;
+  if (NodeBuffer) {
+    return NodeBuffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString(
+      "base64",
+    );
+  }
   let binary = "";
   const chunk = 0x8000;
   for (let i = 0; i < bytes.length; i += chunk) {
@@ -704,7 +723,8 @@ function bytesToBase64(bytes: Uint8Array): string {
 /**
  * THREAT[TM-INF-036]: callback errors reach script stderr, so expose only a
  * bounded message with host paths and IPv4 addresses stripped, never a
- * stack.
+ * stack. Hostnames and other text pass through: hosts must not put secrets
+ * in error messages.
  */
 function sanitizeLazyFsError(error: unknown): string {
   const raw = error instanceof Error ? error.message : String(error);
@@ -812,7 +832,9 @@ export class FileSystem {
    *
    * Callbacks run on the JS event loop, so use `execute()` (async).
    * Synchronous access (`executeSync()`, `bash.readFile()`, `fs.readFile()`)
-   * fails with an error instead of deadlocking.
+   * to a path that is not cached yet fails with an error instead of
+   * deadlocking (after up to 2 s when the read runs on a helper thread, as
+   * sqlite does). Lazy handles cannot be exported with `toExternal()`.
    *
    * @example
    * ```typescript
@@ -837,20 +859,16 @@ export class FileSystem {
         "FileSystem.lazy requires readDir and readFile callbacks",
       );
     }
-    return FileSystem.fromNative(
-      nativeLazyFileSystem(makeLazyFsDispatcher(source)),
-    );
+    const native = nativeLazyFileSystem(makeLazyFsDispatcher(source));
+    const fs = FileSystem.fromNative(native);
+    lazyFileSystemNatives.set(fs, native);
+    return fs;
   }
 
   static fromExternal(external: unknown): FileSystem {
     const fs = FileSystem.fromNative(nativeImportFileSystem(external));
     fs.external = external;
     return fs;
-  }
-
-  /** @internal Native handle for same-addon mounts (no C ABI round-trip). */
-  nativeHandle(): unknown {
-    return this.native;
   }
 
   toExternal(): unknown {
@@ -1880,10 +1898,11 @@ export class Bash {
     writableOrReadOnly?: boolean,
   ): void {
     if (isFileSystemLike(vfsPathOrFs)) {
-      if (vfsPathOrFs instanceof FileSystem) {
-        this.native.mountNativeFileSystem(
+      const lazyNative = lazyFileSystemNatives.get(vfsPathOrFs as object);
+      if (lazyNative !== undefined) {
+        this.native.mountLazyFileSystem(
           hostPathOrVfsPath,
-          vfsPathOrFs.nativeHandle(),
+          lazyNative,
           writableOrReadOnly,
         );
       } else {
@@ -2443,10 +2462,11 @@ export class BashTool {
     writableOrReadOnly?: boolean,
   ): void {
     if (isFileSystemLike(vfsPathOrFs)) {
-      if (vfsPathOrFs instanceof FileSystem) {
-        this.native.mountNativeFileSystem(
+      const lazyNative = lazyFileSystemNatives.get(vfsPathOrFs as object);
+      if (lazyNative !== undefined) {
+        this.native.mountLazyFileSystem(
           hostPathOrVfsPath,
-          vfsPathOrFs.nativeHandle(),
+          lazyNative,
           writableOrReadOnly,
         );
       } else {

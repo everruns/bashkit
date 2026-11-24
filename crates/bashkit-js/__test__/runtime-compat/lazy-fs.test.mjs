@@ -57,4 +57,9 @@ describe("lazy filesystem", () => {
     assert.notEqual(r.exitCode, 0);
     assert.match(r.stderr, /require async access/);
   });
+
+  it("cannot be exported with toExternal()", () => {
+    const fs = FileSystem.lazy(source([]));
+    assert.throws(() => fs.toExternal(), /cannot be exported/);
+  });
 });

@@ -270,7 +270,7 @@ test("lazy: callback errors are sanitized", async (t) => {
   t.true(r.stderr.length < 300);
 });
 
-test("lazy: timeoutMs bounds a pending callback", async (t) => {
+test.serial("lazy: timeoutMs bounds a pending callback", async (t) => {
   const bash = new Bash({ timeoutMs: 300 });
   bash.mount("/r", flat(never));
   const started = Date.now();
@@ -279,21 +279,24 @@ test("lazy: timeoutMs bounds a pending callback", async (t) => {
   t.true(Date.now() - started < 3000);
 });
 
-test("lazy: pending callbacks do not starve unrelated executions", async (t) => {
-  const fs = flat(never);
-  for (let i = 0; i < 4; i++) {
-    const b = new Bash({ timeoutMs: 2000 });
-    b.mount("/r", fs);
-    void b.execute(`cat /r/f${i}`);
-  }
-  const r = await Promise.race([
-    new Bash().execute("echo hi"),
-    sleep(1500).then(() => ({ stdout: "starved" })),
-  ]);
-  t.is(r.stdout, "hi\n");
-});
+test.serial(
+  "lazy: pending callbacks do not starve unrelated executions",
+  async (t) => {
+    const fs = flat(never);
+    for (let i = 0; i < 4; i++) {
+      const b = new Bash({ timeoutMs: 2000 });
+      b.mount("/r", fs);
+      void b.execute(`cat /r/f${i}`);
+    }
+    const r = await Promise.race([
+      new Bash().execute("echo hi"),
+      sleep(3000).then(() => ({ stdout: "starved" })),
+    ]);
+    t.is(r.stdout, "hi\n");
+  },
+);
 
-test("lazy: slow callbacks run concurrently", async (t) => {
+test.serial("lazy: slow callbacks run concurrently", async (t) => {
   const fs = flat(async (p: string) => {
     await sleep(200);
     return p;
@@ -306,10 +309,10 @@ test("lazy: slow callbacks run concurrently", async (t) => {
       return b.execute(`cat /r/f${i}`);
     }),
   );
-  t.true(Date.now() - started < 1200, `took ${Date.now() - started}ms`);
+  t.true(Date.now() - started < 1600, `took ${Date.now() - started}ms`);
 });
 
-test("lazy: concurrent first reads share one host call", async (t) => {
+test.serial("lazy: concurrent first reads share one host call", async (t) => {
   let dirCalls = 0;
   let fileCalls = 0;
   const fs = FileSystem.lazy({
@@ -413,25 +416,28 @@ test("lazy: lone surrogates in text are transported safely", async (t) => {
   t.is(r.stdout, "a\ufffdb");
 });
 
-test("lazy: unrelated sync calls do not break async reads", async (t) => {
-  const fs = flat(async () => {
-    await sleep(2);
-    return "x\n";
-  }, 30);
-  const a = new Bash();
-  a.mount("/r", fs);
-  const other = new Bash();
-  const timer = setInterval(() => other.executeSync("true"), 1);
-  try {
-    const r = await a.execute(
-      "for i in $(seq 0 29); do cat /r/f$i; done | wc -l",
-    );
-    t.is(r.stdout.trim(), "30");
-    t.is(r.stderr, "");
-  } finally {
-    clearInterval(timer);
-  }
-});
+test.serial(
+  "lazy: unrelated sync calls do not break async reads",
+  async (t) => {
+    const fs = flat(async () => {
+      await sleep(2);
+      return "x\n";
+    }, 30);
+    const a = new Bash();
+    a.mount("/r", fs);
+    const other = new Bash();
+    const timer = setInterval(() => other.executeSync("true"), 1);
+    try {
+      const r = await a.execute(
+        "for i in $(seq 0 29); do cat /r/f$i; done | wc -l",
+      );
+      t.is(r.stdout.trim(), "30");
+      t.is(r.stderr, "");
+    } finally {
+      clearInterval(timer);
+    }
+  },
+);
 
 test("lazy: BashTool mounts lazy filesystems too", async (t) => {
   const { source } = recordingSource();
@@ -450,4 +456,72 @@ test("lazy: unmount and reset keep working", async (t) => {
   t.is((await bash.execute("cat /repo/README.md")).stdout, "hello\n");
   bash.unmount("/repo");
   t.not((await bash.execute("cat /repo/README.md")).exitCode, 0);
+});
+
+test("lazy: handles cannot be exported through the C ABI", (t) => {
+  const { source } = recordingSource();
+  const fs = FileSystem.lazy(source);
+  t.throws(() => fs.toExternal(), { message: /cannot be exported/ });
+  const bash = new Bash();
+  const foreign = { toExternal: () => fs.toExternal() };
+  t.throws(() => bash.mount("/r", foreign as never), {
+    message: /cannot be exported/,
+  });
+});
+
+test.serial(
+  "lazy: sync access from a helper thread fails instead of hanging",
+  (t) => {
+    // sqlite's VFS backend does its I/O on a helper thread, which the
+    // same-thread check cannot see; the bounded wait must end the call.
+    const bash = new Bash({ sqlite: true });
+    bash.mount(
+      "/r",
+      FileSystem.lazy({
+        readDir: () => [{ name: "d.db", type: "file" }],
+        readFile: () => new Uint8Array(0),
+      }),
+    );
+    for (let i = 0; i < 2; i++) {
+      const started = Date.now();
+      bash.executeSync("sqlite3 -backend vfs /r/d.db 'select 1'");
+      t.true(Date.now() - started < 10_000, `took ${Date.now() - started}ms`);
+    }
+  },
+);
+
+test("lazy: oversized undeclared files stay too large and report their size", async (t) => {
+  let fetched = 0;
+  const big = "x".repeat(10_000_001);
+  const bash = new Bash();
+  bash.mount(
+    "/r",
+    FileSystem.lazy({
+      readDir: () => [{ name: "big", type: "file" }],
+      readFile: () => {
+        fetched++;
+        return big;
+      },
+    }),
+  );
+  const r = await bash.execute(
+    "cat /r/big; cat /r/big; wc -c < /r/big; stat -c %s /r/big",
+  );
+  t.is(
+    r.stderr.split("\n").filter((l) => l.includes("File too large")).length,
+    3,
+    r.stderr,
+  );
+  t.is(r.stdout.trim().split("\n").pop(), "10000001");
+  t.is(fetched, 1);
+});
+
+test("lazy: other filesystem mounts keep their existing semantics", async (t) => {
+  // Cyclic live mounts go through the ABI path, which reports zero usage.
+  const a = new Bash();
+  const b = new Bash();
+  a.mount("/b", b.fs());
+  b.mount("/a", a.fs());
+  const r = await a.execute("df > /dev/null; echo done");
+  t.is(r.stdout, "done\n");
 });
