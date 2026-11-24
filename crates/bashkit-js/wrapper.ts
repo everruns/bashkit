@@ -81,6 +81,10 @@ const nativeRealFileSystem: (
 ) => any = native.__realFileSystem;
 const nativeImportFileSystem: (external: unknown) => any =
   native.__importFileSystem;
+const nativeLazyFileSystem: (
+  dispatcher: (request: string) => Promise<string>,
+  writable?: boolean,
+) => any = native.__lazyFileSystem;
 const nativeFileSystemToExternal: (fs: any) => unknown =
   native.__fileSystemToExternal;
 const nativeFileSystemReadFile: (fs: any, path: string) => string =
@@ -662,6 +666,79 @@ export interface FileSystemRealOptions {
   allowedMountPaths: string[];
 }
 
+/** One entry returned by {@link LazyFileSystemSource.readDir}. */
+export interface LazyDirEntry {
+  /** Entry name: a single path component (no `/`, not `.` or `..`). */
+  name: string;
+  type: "file" | "dir";
+  /** File size in bytes, reported by `stat`/`ls -l` until the file is read. */
+  size?: number;
+  /** Permission bits, e.g. `0o644`. */
+  mode?: number;
+  /** Modification time in milliseconds since the Unix epoch. */
+  modified?: number;
+}
+
+type MaybePromise<T> = T | Promise<T>;
+
+/**
+ * Host callbacks behind {@link FileSystem.lazy}. Paths are absolute within the
+ * lazy filesystem (a mount at `/repo` sees `/repo/src` as `/src`).
+ * Return `null`/`undefined` for a path that does not exist.
+ */
+export interface LazyFileSystemSource {
+  /** List one directory. Called at most once per directory. */
+  readDir(path: string): MaybePromise<LazyDirEntry[] | null | undefined>;
+  /** Return one file's content. Called at most once per file. */
+  readFile(path: string): MaybePromise<string | Uint8Array | null | undefined>;
+}
+
+export interface FileSystemLazyOptions {
+  /**
+   * Accept writes into an in-memory overlay. Writes never reach the
+   * callbacks. Default `false` (writes fail with "read-only").
+   */
+  writable?: boolean;
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary);
+}
+
+/** Adapt {@link LazyFileSystemSource} to the native JSON dispatcher ABI. */
+function makeLazyFsDispatcher(
+  source: LazyFileSystemSource,
+): (request: string) => Promise<string> {
+  return async (request: string) => {
+    const { op, path } = JSON.parse(request) as { op: string; path: string };
+    if (op === "readDir") {
+      const entries = await source.readDir(path);
+      if (entries == null) return JSON.stringify({ missing: true });
+      if (!Array.isArray(entries)) {
+        throw new TypeError(`readDir(${path}) must return an array`);
+      }
+      return JSON.stringify({ entries });
+    }
+    if (op === "readFile") {
+      const content = await source.readFile(path);
+      if (content == null) return JSON.stringify({ missing: true });
+      if (typeof content === "string") return JSON.stringify({ text: content });
+      if (content instanceof Uint8Array) {
+        return JSON.stringify({ base64: bytesToBase64(content) });
+      }
+      throw new TypeError(
+        `readFile(${path}) must return a string or Uint8Array`,
+      );
+    }
+    throw new Error(`unknown lazy filesystem op: ${op}`);
+  };
+}
+
 export class FileSystem {
   private nativeValue: any;
   private owner?: object;
@@ -696,6 +773,49 @@ export class FileSystem {
         options.writable,
         options.allowedMountPaths,
       ),
+    );
+  }
+
+  /**
+   * Create a filesystem whose layout and contents are loaded on demand.
+   *
+   * Nothing is fetched up front. A directory is listed (via `readDir`) the
+   * first time a script lists, stats or opens something inside it, and a
+   * file's content is fetched (via `readFile`) the first time it is read.
+   * Results are cached for the lifetime of the handle.
+   *
+   * Callbacks run on the JS event loop, so use `execute()` (async).
+   * Synchronous access (`executeSync()`, `bash.readFile()`, `fs.readFile()`)
+   * fails with an error instead of deadlocking.
+   *
+   * @example
+   * ```typescript
+   * const repo = FileSystem.lazy({
+   *   readDir: async (path) => (await s3.list(path)).map((o) => ({
+   *     name: o.name, type: o.isDir ? "dir" : "file", size: o.size,
+   *   })),
+   *   readFile: (path) => s3.getText(path),
+   * });
+   * const bash = new Bash();
+   * bash.mount("/repo", repo);
+   * await bash.execute("grep -rl TODO /repo/src");
+   * ```
+   */
+  static lazy(
+    source: LazyFileSystemSource,
+    options?: FileSystemLazyOptions,
+  ): FileSystem {
+    if (
+      !source ||
+      typeof source.readDir !== "function" ||
+      typeof source.readFile !== "function"
+    ) {
+      throw new TypeError(
+        "FileSystem.lazy requires readDir and readFile callbacks",
+      );
+    }
+    return FileSystem.fromNative(
+      nativeLazyFileSystem(makeLazyFsDispatcher(source), options?.writable),
     );
   }
 

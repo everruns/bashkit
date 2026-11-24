@@ -214,6 +214,44 @@ console.log(bash.executeSync("ls /workspace").stdout);
 bash.unmount("/workspace");
 ```
 
+### Lazy Filesystems
+
+`FileSystem.lazy()` loads a tree on demand from two callbacks, so a large
+or remote tree (an object store, a git host, a database) never has to be
+listed up front. A directory is listed the first time a script lists, stats
+or opens something inside it, and a file is fetched the first time a script
+reads it. Each result is cached for the lifetime of the handle.
+
+```typescript
+import { Bash, FileSystem } from "@everruns/bashkit";
+
+const repo = FileSystem.lazy({
+  // Return null/undefined for a directory that does not exist.
+  readDir: async (path) =>
+    (await store.list(path)).map((o) => ({
+      name: o.name,
+      type: o.isDir ? "dir" : "file",
+      size: o.size, // optional: shown by stat / ls -l before the file is read
+    })),
+  // Return a string or Uint8Array, or null/undefined if missing.
+  readFile: (path) => store.get(path),
+});
+
+const bash = new Bash();
+bash.mount("/repo", repo);
+await bash.execute("grep -rl TODO /repo/src"); // lists /, /src, then reads matches
+```
+
+- Paths are absolute within the lazy filesystem, so a mount at `/repo`
+  passes `/src` for `/repo/src`.
+- Read-only by default. Pass `{ writable: true }` to accept writes into an
+  in-memory overlay; writes never reach the callbacks.
+- Scripts can only ask for paths the parent listing declared, so callbacks
+  never see invented paths. Entry names must be single path components.
+- Callbacks run on the JS event loop, so use `execute()`. Synchronous access
+  (`executeSync()`, `bash.readFile()`) fails with an error instead of
+  deadlocking.
+
 ## Error Handling
 
 ```typescript

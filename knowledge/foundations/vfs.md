@@ -576,6 +576,14 @@ Runtime methods:
 - filesystem mount: `mount(vfs_path, filesystem)`
 - `unmount(vfs_path)`
 
+Lazy filesystems (Node.js only for now): `FileSystem.lazy({ readDir, readFile },
+{ writable? })` builds a read-only `FsBackend` over host callbacks. Listings and
+contents are fetched on first use and cached per handle; `stat` resolves through
+the parent listing, so only declared paths reach the host. `writable` wraps it in
+`OverlayFs`. Callbacks dispatch on the JS event loop, so every sync entry point
+marks its JS thread blocked and the backend fails fast instead of deadlocking.
+TODO: Python parity (`FileSystem.lazy` with sync and async callables).
+
 Native-extension interop is binding-specific but must preserve bashkit-owned
 filesystem objects when crossing the language runtime boundary:
 - Python: `FileSystem.from_capsule(capsule)`, `FileSystem.to_capsule()`

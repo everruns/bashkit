@@ -13,6 +13,7 @@
 //! work. This prevents CodeQL `rust/access-invalid-pointer` alerts caused by
 //! holding a raw-pointer-derived `&self` across `block_on` or `.await` points.
 
+mod lazy_fs;
 mod runtime_functions;
 mod streaming;
 mod terminal;
@@ -156,12 +157,18 @@ fn reject_on_output_reentry(state: &Arc<SharedState>) -> napi::Result<()> {
 struct SyncExecuteScope {
     depth: Arc<AtomicUsize>,
     wake: Option<Arc<tokio::sync::Notify>>,
+    /// Lets lazy filesystem callbacks fail fast while this JS thread blocks.
+    _js_blocked: lazy_fs::JsThreadBlocked,
 }
 
 impl SyncExecuteScope {
     fn enter(depth: Arc<AtomicUsize>) -> Self {
         depth.fetch_add(1, Ordering::SeqCst);
-        Self { depth, wake: None }
+        Self {
+            depth,
+            wake: None,
+            _js_blocked: lazy_fs::JsThreadBlocked::enter(),
+        }
     }
 }
 
@@ -259,7 +266,10 @@ impl NativeFileSystemState {
         Fut: std::future::Future<Output = napi::Result<T>>,
     {
         match &self.inner {
-            FileSystemHandle::Static(fs) => callback_runtime().block_on(f(fs.clone())),
+            FileSystemHandle::Static(fs) => {
+                let _js_blocked = lazy_fs::JsThreadBlocked::enter();
+                callback_runtime().block_on(f(fs.clone()))
+            }
             FileSystemHandle::Live(state) => block_on_with(state, |s| async move {
                 let bash = s.inner.lock().await;
                 f(bash.fs()).await
@@ -579,6 +589,33 @@ pub fn real_file_system(
         writable,
         allowed_mount_paths,
     )?))
+}
+
+/// Create a lazy filesystem backed by a JS dispatcher.
+///
+/// The dispatcher receives `{"op":"readDir"|"readFile","path":...}` as JSON
+/// and resolves with a JSON response (see `lazy_fs.rs`). Read-only unless
+/// `writable`, in which case writes go to an in-memory overlay and never reach
+/// the host callbacks.
+#[napi(
+    js_name = "__lazyFileSystem",
+    ts_args_type = "dispatcher: (request: string) => Promise<string>, writable?: boolean"
+)]
+pub fn lazy_file_system(
+    dispatcher: napi::bindgen_prelude::Function<String, napi::bindgen_prelude::Promise<String>>,
+    writable: Option<bool>,
+) -> napi::Result<External<NativeFileSystemState>> {
+    let tsfn: lazy_fs::LazyFsTsfn = dispatcher
+        .build_threadsafe_function::<String>()
+        .weak::<true>()
+        .build()?;
+    let lower: Arc<dyn BashFileSystem> = Arc::new(PosixFs::new(lazy_fs::JsLazyBackend::new(tsfn)));
+    let fs: Arc<dyn BashFileSystem> = if writable.unwrap_or(false) {
+        Arc::new(bashkit::OverlayFs::new(lower))
+    } else {
+        Arc::new(ReadOnlyFs::new(lower))
+    };
+    Ok(External::new(NativeFileSystemState::from_static(fs)))
 }
 
 #[napi(js_name = "__importFileSystem")]
