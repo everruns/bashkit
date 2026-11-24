@@ -745,23 +745,64 @@ function toWellFormedText(text: string): string {
   return new TextDecoder().decode(new TextEncoder().encode(text));
 }
 
-/** Adapt {@link LazyFileSystemSource} to the native JSON dispatcher ABI. */
+/** UTF-8 size of `text` without encoding it (a lone surrogate counts as U+FFFD). */
+function utf8ByteLength(text: string): number {
+  const NodeBuffer = (
+    globalThis as { Buffer?: { byteLength(s: string, e: string): number } }
+  ).Buffer;
+  if (NodeBuffer) return NodeBuffer.byteLength(text, "utf8");
+  let bytes = 0;
+  for (let i = 0; i < text.length; i++) {
+    const code = text.codePointAt(i)!;
+    if (code > 0xffff) i++;
+    bytes += code < 0x80 ? 1 : code < 0x800 ? 2 : code > 0xffff ? 4 : 3;
+  }
+  return bytes;
+}
+
+function numberOrUndefined(value: unknown): number | undefined {
+  return typeof value === "number" ? value : undefined;
+}
+
+/** Longer than any valid entry name, so a cut name is still rejected natively. */
+const LAZY_MAX_NAME_UNITS = 1024;
+
+/**
+ * THREAT[TM-DOS-148]: sizes are checked before content is escaped, base64
+ * encoded or copied to the native side, because a listing may omit or
+ * understate `size`. Adapt {@link LazyFileSystemSource} to the native JSON dispatcher ABI.
+ */
 function makeLazyFsDispatcher(
   source: LazyFileSystemSource,
 ): (request: string) => Promise<string> {
   return async (request: string) => {
     try {
-      const { op, path } = JSON.parse(request) as { op: string; path: string };
+      const { op, path, limit } = JSON.parse(request) as {
+        op: string;
+        path: string;
+        limit: number;
+      };
       if (op === "readDir") {
         const entries = await source.readDir(path);
         if (entries == null) return JSON.stringify({ missing: true });
         if (!Array.isArray(entries)) {
           throw new TypeError("readDir must return an array");
         }
+        if (entries.length > limit) {
+          throw new Error(
+            `lazy filesystem readDir returned more than ${limit} entries`,
+          );
+        }
         return JSON.stringify({
           entries: entries.map((e) => ({
-            ...e,
-            name: typeof e?.name === "string" ? toWellFormedText(e.name) : "",
+            name:
+              typeof e?.name === "string"
+                ? toWellFormedText(e.name.slice(0, LAZY_MAX_NAME_UNITS))
+                : "",
+            type: typeof e?.type === "string" ? e.type.slice(0, 32) : "",
+            size: numberOrUndefined(e?.size),
+            mode: numberOrUndefined(e?.mode),
+            modified: numberOrUndefined(e?.modified),
           })),
         });
       }
@@ -769,9 +810,14 @@ function makeLazyFsDispatcher(
         const content = await source.readFile(path);
         if (content == null) return JSON.stringify({ missing: true });
         if (typeof content === "string") {
+          const size = utf8ByteLength(content);
+          if (size > limit) return JSON.stringify({ oversize: size });
           return JSON.stringify({ text: toWellFormedText(content) });
         }
         if (content instanceof Uint8Array) {
+          if (content.byteLength > limit) {
+            return JSON.stringify({ oversize: content.byteLength });
+          }
           return JSON.stringify({ base64: bytesToBase64(content) });
         }
         throw new TypeError("readFile must return a string or Uint8Array");

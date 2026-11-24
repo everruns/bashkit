@@ -253,7 +253,8 @@ await bash.execute("grep -rl TODO /repo/src"); // lists /, /src, then reads matc
 - The filesystem is read-only. Scripts can only reach paths a parent listing
   declared, entry names follow the same rules as in-memory files, and files
   whose declared `size` exceeds the 10 MB file limit fail with
-  `File too large` without being fetched.
+  `File too large` without being fetched. Content that turns out larger is
+  rejected after `readFile` returns it, so declare `size` when you know it.
 - Callback errors reach the script as a short message with host paths and
   IPv4 addresses removed; stacks are never exposed. Other text (hostnames,
   credentials) passes through, so keep secrets out of error messages.

@@ -43,7 +43,9 @@
 //! parent listing declared reach the host; entry names pass the same
 //! `validate_path` rules as in-memory files (TM-DOS-013/015); one listing is
 //! capped at 100k entries and all cached listings at 1M entries; declared
-//! sizes over `max_file_size` are rejected before fetching; file content is
+//! sizes over `max_file_size` are rejected before fetching, and undeclared
+//! ones before the TS dispatcher encodes them; raw responses are length-checked
+//! before parsing; file content is
 //! capped by `max_total_bytes`/`max_file_count`; negative entries are capped;
 //! concurrent host calls share the process-wide callback semaphore (#982).
 //! Residual: the number of host calls is not capped (eviction can make
@@ -52,7 +54,7 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{Error as IoError, ErrorKind};
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::thread::ThreadId;
@@ -60,12 +62,22 @@ use std::time::Duration;
 
 use base64::Engine;
 use bashkit::time::{SystemTime, UNIX_EPOCH};
-use bashkit::{DirEntry, FileType, FsBackend, FsLimits, FsUsage, Metadata, async_trait};
+use bashkit::{
+    DirEntry, FileType, FsBackend, FsLimits, FsUsage, Metadata, async_trait, normalize_path,
+    vfs_join,
+};
 use napi::bindgen_prelude::Promise;
 use serde::Deserialize;
 
 /// Upper bound on entries returned by one `readDir` call.
 const MAX_DIR_ENTRIES: usize = 100_000;
+/// Upper bound on one raw `readDir` response: `MAX_DIR_ENTRIES` maximum-length
+/// names, fully escaped, plus their fields, fit well below it.
+const MAX_LISTING_RESPONSE_BYTES: u64 = 128 * 1024 * 1024;
+/// JSON escapes one content byte to at most six (`\u0001`); base64 needs 4/3.
+const MAX_JSON_EXPANSION: u64 = 6;
+/// Room for the response envelope and bounded error messages.
+const RESPONSE_OVERHEAD_BYTES: u64 = 4096;
 /// Upper bound on cached directory listings before oldest-first eviction.
 const MAX_CACHED_DIRS: usize = 10_000;
 /// Upper bound on entries across all cached listings.
@@ -95,10 +107,14 @@ impl LazyMountGuard {
         Ok(())
     }
 
-    pub(crate) fn note_lazy_mount(&self) -> Result<(), &'static str> {
+    /// Run `mount` unless the instance was exported. The flag is set only
+    /// once the mount succeeded; exports run on the same JS thread, so none
+    /// can slip in between.
+    pub(crate) fn mount_lazy(&self, mount: impl FnOnce() -> napi::Result<()>) -> napi::Result<()> {
         if self.exported.load(Ordering::SeqCst) {
-            return Err(LAZY_AFTER_EXPORT_ERROR);
+            return Err(napi::Error::from_reason(LAZY_AFTER_EXPORT_ERROR));
         }
+        mount()?;
         self.has_lazy_mounts.store(true, Ordering::SeqCst);
         Ok(())
     }
@@ -150,6 +166,8 @@ struct WireResponse {
     entries: Option<Vec<WireEntry>>,
     text: Option<String>,
     base64: Option<String>,
+    /// Byte size of content the dispatcher refused to encode.
+    oversize: Option<f64>,
 }
 
 #[derive(Default)]
@@ -200,6 +218,12 @@ impl Cache {
         self.missing_dirs.insert(dir);
     }
 
+    /// Whether the host returned `null` for this path, which overrides the
+    /// parent listing.
+    fn is_missing(&self, path: &Path) -> bool {
+        self.missing_files.contains(path) || self.missing_dirs.contains(path)
+    }
+
     /// Size learned by fetching: cached content or a rejected oversize file.
     fn known_size(&self, path: &Path) -> Option<u64> {
         self.files
@@ -239,12 +263,49 @@ impl Cache {
 
 type InflightKey = (&'static str, PathBuf);
 
+/// A failed host call, kept for the requests that were already waiting on it.
+struct FlightError {
+    kind: ErrorKind,
+    message: String,
+}
+
+impl FlightError {
+    fn new(error: &bashkit::Error) -> Self {
+        let kind = match error {
+            bashkit::Error::Io(e) => e.kind(),
+            _ => ErrorKind::Other,
+        };
+        let message = match error {
+            bashkit::Error::Io(e) => e.to_string(),
+            other => other.to_string(),
+        };
+        Self { kind, message }
+    }
+
+    fn to_error(&self) -> bashkit::Error {
+        IoError::new(self.kind, self.message.clone()).into()
+    }
+}
+
+/// Per-path lock holding the error of a failed call. Successes and missing
+/// paths are shared through the cache instead.
+type Flight = tokio::sync::Mutex<Option<FlightError>>;
+
 /// Holds a per-path in-flight lock entry and removes it from the map when
 /// dropped, including when the waiting future is dropped (timeout).
 struct InflightEntry<'a> {
     backend: &'a JsLazyBackend,
     key: InflightKey,
-    lock: Arc<tokio::sync::Mutex<()>>,
+    lock: Arc<Flight>,
+}
+
+impl InflightEntry<'_> {
+    /// Share `error` with current waiters and retire this flight, so requests
+    /// that arrive later start a new call.
+    fn fail(&self, outcome: &mut Option<FlightError>, error: &bashkit::Error) {
+        *outcome = Some(FlightError::new(error));
+        self.backend.retire_inflight(&self.key, &self.lock);
+    }
 }
 
 impl Drop for InflightEntry<'_> {
@@ -259,7 +320,7 @@ pub(crate) struct JsLazyBackend {
     limits: FsLimits,
     cache: StdMutex<Cache>,
     /// Per-request locks so concurrent first accesses share one host call.
-    inflight: StdMutex<HashMap<InflightKey, Arc<tokio::sync::Mutex<()>>>>,
+    inflight: StdMutex<HashMap<InflightKey, Arc<Flight>>>,
 }
 
 fn not_found() -> bashkit::Error {
@@ -305,22 +366,6 @@ async fn dispatch(callback: Arc<LazyFsTsfn>, request: String) -> bashkit::Result
     promise.await.map_err(|_| callback_failed())
 }
 
-/// Normalize to an absolute path without `.`/`..` (MountableFs already strips
-/// the mount prefix; this guards direct handle use too).
-fn normalize(path: &Path) -> PathBuf {
-    let mut out = PathBuf::from("/");
-    for comp in path.components() {
-        match comp {
-            Component::Normal(c) => out.push(c),
-            Component::ParentDir => {
-                out.pop();
-            }
-            _ => {}
-        }
-    }
-    out
-}
-
 fn path_str(path: &Path) -> String {
     path.to_string_lossy().into_owned()
 }
@@ -328,6 +373,13 @@ fn path_str(path: &Path) -> String {
 /// Non-negative finite number truncated to an integer, else `None`.
 fn whole(n: Option<f64>) -> Option<u64> {
     n.filter(|v| v.is_finite() && *v >= 0.0).map(|v| v as u64)
+}
+
+/// Largest raw response accepted for a `readFile` of up to `max_file_size` bytes.
+fn max_file_response_bytes(max_file_size: u64) -> u64 {
+    max_file_size
+        .saturating_mul(MAX_JSON_EXPANSION)
+        .saturating_add(RESPONSE_OVERHEAD_BYTES)
 }
 
 impl JsLazyBackend {
@@ -350,7 +402,7 @@ impl JsLazyBackend {
         let mut map = self.inflight.lock().unwrap_or_else(|e| e.into_inner());
         let lock = map
             .entry(key.clone())
-            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+            .or_insert_with(|| Arc::new(Flight::new(None)))
             .clone();
         InflightEntry {
             backend: self,
@@ -359,12 +411,27 @@ impl JsLazyBackend {
         }
     }
 
-    fn release_inflight(&self, key: &InflightKey, lock: &Arc<tokio::sync::Mutex<()>>) {
+    fn retire_inflight(&self, key: &InflightKey, lock: &Arc<Flight>) {
+        let mut map = self.inflight.lock().unwrap_or_else(|e| e.into_inner());
+        if map
+            .get(key)
+            .is_some_and(|current| Arc::ptr_eq(current, lock))
+        {
+            map.remove(key);
+        }
+    }
+
+    fn release_inflight(&self, key: &InflightKey, lock: &Arc<Flight>) {
         let mut map = self.inflight.lock().unwrap_or_else(|e| e.into_inner());
         // Two strong refs: the map's and the caller's. More means waiters
         // still hold the entry; the last one out removes it. Runs under the
         // map mutex, so the count cannot change underneath us.
-        if Arc::strong_count(lock) <= 2 {
+        // A retired flight must not remove its successor.
+        if Arc::strong_count(lock) <= 2
+            && map
+                .get(key)
+                .is_some_and(|current| Arc::ptr_eq(current, lock))
+        {
             map.remove(key);
         }
     }
@@ -382,12 +449,22 @@ impl JsLazyBackend {
         Err(IoError::new(ErrorKind::WouldBlock, LAZY_FS_HELPER_THREAD_ERROR).into())
     }
 
-    async fn call(&self, op: &str, path: &Path) -> bashkit::Result<WireResponse> {
+    async fn call(
+        &self,
+        op: &str,
+        path: &Path,
+        limit: u64,
+        max_response_bytes: u64,
+    ) -> bashkit::Result<WireResponse> {
         self.preflight()?;
-        let request = serde_json::json!({ "op": op, "path": path_str(path) }).to_string();
+        let request =
+            serde_json::json!({ "op": op, "path": path_str(path), "limit": limit }).to_string();
         // Inside an execution, so the execution deadline (`timeoutMs`) drops
         // this future if the callback never settles.
         let raw = dispatch(self.callback.clone(), request).await?;
+        if raw.len() as u64 > max_response_bytes {
+            return Err(invalid("lazy filesystem callback response is too large"));
+        }
         let resp: WireResponse = serde_json::from_str(&raw)
             .map_err(|_| invalid("lazy filesystem callback returned a malformed response"))?;
         if let Some(message) = resp.error {
@@ -412,7 +489,7 @@ impl JsLazyBackend {
                 && e.name != ".."
                 && !e.name.contains('/')
                 && !e.name.contains('\0')
-                && self.limits.validate_path(&dir.join(&e.name)).is_ok();
+                && self.limits.validate_path(&vfs_join(dir, &e.name)).is_ok();
             if !name_ok {
                 return Err(invalid(format!(
                     "lazy filesystem readDir returned an invalid entry name {:?}",
@@ -485,11 +562,27 @@ impl JsLazyBackend {
         }
         self.preflight()?;
         let entry = self.inflight_entry("readDir", dir);
-        let _guard = entry.lock.lock().await;
+        let mut outcome = entry.lock.lock().await;
         if let Some(hit) = self.cached_listing(dir) {
             return hit;
         }
-        let resp = self.call("readDir", dir).await?;
+        if let Some(failed) = outcome.as_ref() {
+            return Err(failed.to_error());
+        }
+        self.fetch_listing(dir)
+            .await
+            .inspect_err(|e| entry.fail(&mut outcome, e))
+    }
+
+    async fn fetch_listing(&self, dir: &Path) -> bashkit::Result<Arc<Vec<DirEntry>>> {
+        let resp = self
+            .call(
+                "readDir",
+                dir,
+                MAX_DIR_ENTRIES as u64,
+                MAX_LISTING_RESPONSE_BYTES,
+            )
+            .await?;
         if resp.missing {
             self.cache().remember_missing_dir(dir.to_path_buf());
             return Err(not_found());
@@ -521,8 +614,12 @@ impl JsLazyBackend {
             .find(|e| e.name == name)
             .ok_or_else(not_found)?;
         let mut meta = entry.metadata.clone();
+        let cache = self.cache();
+        if cache.is_missing(path) {
+            return Err(not_found());
+        }
         if meta.file_type.is_file()
-            && let Some(len) = self.cache().known_size(path)
+            && let Some(len) = cache.known_size(path)
         {
             meta.size = len;
         }
@@ -530,7 +627,14 @@ impl JsLazyBackend {
     }
 
     async fn fetch_file(&self, path: &Path) -> bashkit::Result<Arc<Vec<u8>>> {
-        let resp = self.call("readFile", path).await?;
+        let limit = self.limits.max_file_size;
+        let resp = self
+            .call("readFile", path, limit, max_file_response_bytes(limit))
+            .await?;
+        if let Some(size) = whole(resp.oversize) {
+            self.cache().remember_oversize(path.to_path_buf(), size);
+            return Err(self.too_large());
+        }
         if resp.missing {
             self.cache().remember_missing_file(path.to_path_buf());
             return Err(not_found());
@@ -562,7 +666,7 @@ impl JsLazyBackend {
 #[async_trait]
 impl FsBackend for JsLazyBackend {
     async fn read(&self, path: &Path) -> bashkit::Result<Vec<u8>> {
-        let path = normalize(path);
+        let path = normalize_path(path);
         if let Some(hit) = self.cache().files.get(&path) {
             return Ok(hit.as_ref().clone());
         }
@@ -577,7 +681,7 @@ impl FsBackend for JsLazyBackend {
         }
         self.preflight()?;
         let entry = self.inflight_entry("readFile", &path);
-        let _guard = entry.lock.lock().await;
+        let mut outcome = entry.lock.lock().await;
         {
             let cache = self.cache();
             if let Some(hit) = cache.files.get(&path) {
@@ -590,8 +694,12 @@ impl FsBackend for JsLazyBackend {
                 return Err(self.too_large());
             }
         }
+        if let Some(failed) = outcome.as_ref() {
+            return Err(failed.to_error());
+        }
         self.fetch_file(&path)
             .await
+            .inspect_err(|e| entry.fail(&mut outcome, e))
             .map(|bytes| bytes.as_ref().clone())
     }
 
@@ -612,29 +720,33 @@ impl FsBackend for JsLazyBackend {
     }
 
     async fn stat(&self, path: &Path) -> bashkit::Result<Metadata> {
-        self.stat_inner(&normalize(path)).await
+        self.stat_inner(&normalize_path(path)).await
     }
 
     async fn read_dir(&self, path: &Path) -> bashkit::Result<Vec<DirEntry>> {
-        let dir = normalize(path);
+        let dir = normalize_path(path);
         let listing = self.list(&dir).await?;
         let cache = self.cache();
         Ok(listing
             .iter()
-            .map(|e| {
+            .filter_map(|e| {
+                let path = vfs_join(&dir, &e.name);
+                if cache.is_missing(&path) {
+                    return None;
+                }
                 let mut e = e.clone();
                 if e.metadata.file_type.is_file()
-                    && let Some(len) = cache.known_size(&dir.join(&e.name))
+                    && let Some(len) = cache.known_size(&path)
                 {
                     e.metadata.size = len;
                 }
-                e
+                Some(e)
             })
             .collect())
     }
 
     async fn exists(&self, path: &Path) -> bashkit::Result<bool> {
-        match self.stat_inner(&normalize(path)).await {
+        match self.stat_inner(&normalize_path(path)).await {
             Ok(_) => Ok(true),
             Err(bashkit::Error::Io(e))
                 if matches!(e.kind(), ErrorKind::NotFound | ErrorKind::NotADirectory) =>
@@ -684,11 +796,12 @@ impl FsBackend for JsLazyBackend {
 mod tests {
     use super::*;
 
+    /// Compared as strings: `Path` equality hides `\` separators on Windows.
     #[test]
-    fn normalize_strips_dot_segments() {
-        assert_eq!(normalize(Path::new("/a/./b/../c")), PathBuf::from("/a/c"));
-        assert_eq!(normalize(Path::new("/../..")), PathBuf::from("/"));
-        assert_eq!(normalize(Path::new("rel/x")), PathBuf::from("/rel/x"));
+    fn windows_containment_paths_use_forward_slashes() {
+        let path = normalize_path(Path::new("/a/../src/./index.ts"));
+        assert_eq!(path_str(&path), "/src/index.ts");
+        assert_eq!(path_str(&vfs_join(Path::new("/src"), "x")), "/src/x");
     }
 
     #[test]

@@ -2738,12 +2738,10 @@ impl Bash {
                 "mountLazyFileSystem requires a FileSystem.lazy() handle",
             ));
         }
+        let mounted_fs = fs.export_fs()?;
         self.state
             .lazy_guard
-            .note_lazy_mount()
-            .map_err(napi::Error::from_reason)?;
-        let mounted_fs = fs.export_fs()?;
-        mount_fs_arc(&self.state, vfs_path, mounted_fs, read_only)
+            .mount_lazy(|| mount_fs_arc(&self.state, vfs_path, mounted_fs, read_only))
     }
 
     /// Unmount a previously mounted filesystem.
@@ -3545,12 +3543,10 @@ impl BashTool {
                 "mountLazyFileSystem requires a FileSystem.lazy() handle",
             ));
         }
+        let mounted_fs = fs.export_fs()?;
         self.state
             .lazy_guard
-            .note_lazy_mount()
-            .map_err(napi::Error::from_reason)?;
-        let mounted_fs = fs.export_fs()?;
-        mount_fs_arc(&self.state, vfs_path, mounted_fs, read_only)
+            .mount_lazy(|| mount_fs_arc(&self.state, vfs_path, mounted_fs, read_only))
     }
 
     /// Unmount a previously mounted filesystem.

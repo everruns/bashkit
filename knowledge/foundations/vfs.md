@@ -579,7 +579,8 @@ Runtime methods:
 Lazy filesystems (Node.js only for now): `FileSystem.lazy({ readDir, readFile })`
 builds a read-only `FsBackend` over host callbacks. Listings and contents are
 fetched on first use and cached per handle (bounded, oldest-first eviction,
-negative entries for missing and oversized paths, one shared call per in-flight
+negative entries for missing and oversized paths, which also hide missing paths
+from `stat` and listings, one shared call, failures included, per in-flight
 path); `stat` resolves through the parent listing, so only declared paths reach
 the host. Lazy handles mount directly (`mountLazyFileSystem`) and refuse
 `toExternal()` (as do `bash.fs()` and callback `ctx.fs` of an instance with a

@@ -516,6 +516,147 @@ test("lazy: oversized undeclared files stay too large and report their size", as
   t.is(fetched, 1);
 });
 
+test.serial("lazy: oversized responses are rejected before they are encoded", async (t) => {
+  const sources: Record<string, () => string | Uint8Array> = {
+    text: () => "x".repeat(10_000_001),
+    multibyte: () => "\u00e9".repeat(5_000_001),
+    binary: () => new Uint8Array(10_000_001),
+  };
+  const bash = new Bash();
+  bash.mount(
+    "/r",
+    FileSystem.lazy({
+      readDir: (path) =>
+        path === "/"
+          ? [
+              ...Object.keys(sources).map((name) => ({
+                name,
+                type: "file" as const,
+                size: 1,
+                extra: "x".repeat(100_000),
+              })),
+              { name: "many", type: "dir" as const },
+            ]
+          : Array.from({ length: 100_001 }, (_, i) => ({
+              name: `f${i}`,
+              type: "file" as const,
+            })),
+      readFile: (path) => sources[path.slice(1)](),
+    }),
+  );
+  const stringify = JSON.stringify;
+  let longest = 0;
+  JSON.stringify = ((...args: Parameters<typeof stringify>) => {
+    const out = stringify(...args);
+    longest = Math.max(longest, out?.length ?? 0);
+    return out;
+  }) as typeof stringify;
+  try {
+    for (const [name, size] of [
+      ["text", 10_000_001],
+      ["multibyte", 10_000_002],
+      ["binary", 10_000_001],
+    ]) {
+      const r = await bash.execute(`cat /r/${name}; stat -c %s /r/${name}`);
+      t.regex(r.stderr, /File too large/);
+      t.is(r.stdout, `${size}\n`);
+    }
+    const r = await bash.execute("ls /r/many");
+    t.regex(r.stderr, /more than 100000 entries/);
+  } finally {
+    JSON.stringify = stringify;
+  }
+  t.true(longest < 10_000, `longest response: ${longest}`);
+});
+
+test("lazy: files at the size limit load even when JSON escaping expands them", async (t) => {
+  const bash = new Bash();
+  bash.mount(
+    "/r",
+    FileSystem.lazy({
+      readDir: () => [{ name: "f", type: "file" }],
+      readFile: () => "\u0001".repeat(10_000_000),
+    }),
+  );
+  const r = await bash.execute("wc -c < /r/f");
+  t.is(r.stdout.trim(), "10000000", r.stderr);
+});
+
+test.serial("lazy: concurrent reads share one failed call and later reads retry", async (t) => {
+  let files = 0;
+  let dirs = 0;
+  let failing = true;
+  const fs = FileSystem.lazy({
+    readDir: async (path) => {
+      if (path === "/") {
+        return [
+          { name: "f", type: "file" },
+          { name: "d", type: "dir" },
+        ];
+      }
+      dirs++;
+      await sleep(300);
+      if (failing) throw new Error("backend down");
+      return [];
+    },
+    readFile: async () => {
+      files++;
+      await sleep(300);
+      if (failing) throw new Error("backend down");
+      return "F\n";
+    },
+  });
+  const shells = Array.from({ length: 5 }, () => {
+    const bash = new Bash();
+    bash.mount("/r", fs);
+    return bash;
+  });
+  await shells[0].execute("ls /r");
+  for (const command of ["cat /r/f", "ls /r/d"]) {
+    const results = await Promise.all(shells.map((b) => b.execute(command)));
+    for (const r of results) t.regex(r.stderr, /backend down/);
+  }
+  t.is(files, 1);
+  t.is(dirs, 1);
+  failing = false;
+  t.is((await shells[1].execute("cat /r/f")).stdout, "F\n");
+  t.is((await shells[1].execute("ls /r/d")).exitCode, 0);
+  t.is(files, 2);
+  t.is(dirs, 2);
+});
+
+test("lazy: paths the host reports missing disappear from stat, test and ls", async (t) => {
+  const bash = new Bash();
+  bash.mount(
+    "/r",
+    FileSystem.lazy({
+      readDir: (p) =>
+        p === "/"
+          ? [
+              { name: "gone", type: "file" },
+              { name: "gonedir", type: "dir" },
+              { name: "kept", type: "file" },
+            ]
+          : null,
+      readFile: () => null,
+    }),
+  );
+  t.is((await bash.execute("ls /r")).stdout, "gone\ngonedir\nkept\n");
+  await bash.execute("cat /r/gone; ls /r/gonedir");
+  const r = await bash.execute(
+    "test -e /r/gone || echo nofile; test -d /r/gonedir || echo nodir; stat /r/gone 2>/dev/null || echo nostat; ls /r",
+  );
+  t.is(r.stdout, "nofile\nnodir\nnostat\nkept\n");
+});
+
+test("lazy: a failed lazy mount does not block toExternal", (t) => {
+  for (const shell of [new Bash(), new BashTool()]) {
+    const lazy = FileSystem.lazy({ readDir: () => [], readFile: () => null });
+    t.throws(() => shell.mount("relative", lazy));
+    t.notThrows(() => shell.fs().toExternal());
+  }
+});
+
 test("lazy: other filesystem mounts keep their existing semantics", async (t) => {
   // Cyclic live mounts go through the ABI path, which reports zero usage.
   const a = new Bash();
