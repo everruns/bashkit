@@ -257,16 +257,22 @@ await bash.execute("grep -rl TODO /repo/src"); // lists /, /src, then reads matc
 - Callback errors reach the script as a short message with host paths and
   IPv4 addresses removed; stacks are never exposed. Other text (hostnames,
   credentials) passes through, so keep secrets out of error messages.
-- Callbacks run on the JS event loop, so use `execute()`; reads there wait
-  for the loop if it is busy. Synchronous access (`executeSync()`,
-  `bash.readFile()`) to a path that is not cached yet fails with an error
-  instead of deadlocking; when the read runs on a helper thread (sqlite's
-  file backend) it fails after waiting up to 2 seconds.
+- Callbacks run on the JS event loop, so use `execute()` (with or without
+  live output); reads there wait for the loop if it is busy. Synchronous
+  access (`executeSync()`, `bash.readFile()`) to a path that is not cached
+  yet fails with an error instead of deadlocking. Reads on a helper thread
+  (sqlite's `-backend vfs`) wait up to 2 seconds while the loop is blocked by
+  a sync call, then fail; sqlite reports such a failed read as an empty
+  database.
 - `timeoutMs` bounds a pending callback. `cancel()` takes effect once pending
-  callbacks settle, and a callback that never settles holds one of the
-  process-wide callback slots, so give slow callbacks their own timeouts.
-- Lazy handles mount only through `bash.mount()`. `toExternal()` throws, on
-  the handle and on `bash.fs()` of an instance with a lazy mount.
+  callbacks settle. Each pending callback holds one of 10 process-wide
+  callback slots (shared with custom builtins), so a callback that never
+  settles, or ten callbacks that each wait on a nested `execute()` needing
+  another lazy read, stall every callback until `timeoutMs`. Give slow
+  callbacks their own timeouts.
+- Lazy handles mount only through `bash.mount()`. `toExternal()` throws on
+  the handle, and on `bash.fs()` and callback `ctx.fs` of an instance that
+  has had a lazy mount (also after it is unmounted).
 - Use `files: { path: () => content }` for a small, fixed set of paths; it is
   resolved when the instance is created. Use `FileSystem.lazy()` when the
   layout itself should be loaded on demand.

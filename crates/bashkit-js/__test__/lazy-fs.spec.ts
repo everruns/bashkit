@@ -577,3 +577,76 @@ test("lazy: instances with lazy mounts cannot export their filesystem", (t) => {
   bash.mount("/r", FileSystem.lazy(source));
   t.throws(() => bash.fs().toExternal(), { message: /cannot be exported/ });
 });
+
+test.serial(
+  "lazy: live-output executions wait out an unrelated sync call",
+  async (t) => {
+    const a = new Bash();
+    a.mount(
+      "/r",
+      FileSystem.lazy({
+        readDir: () => [
+          { name: "f", type: "file" },
+          { name: "g", type: "file" },
+        ],
+        readFile: async (p) => `${p}\n`,
+      }),
+    );
+    const chunks: string[] = [];
+    const decoder = new TextDecoder();
+    const pending = a.execute("sleep 0.3; cat /r/f; cat /r/g", {
+      stdout: (bytes) => {
+        chunks.push(decoder.decode(bytes));
+      },
+      capture: 1024,
+    });
+    setTimeout(() => new Bash().executeSync("sleep 2.5"), 0);
+    const r = await pending;
+    t.is(r.exitCode, 0, r.stderr);
+    t.is(chunks.join(""), "/f\n/g\n");
+  },
+);
+
+test.serial(
+  "lazy: sqlite reads during an unrelated sync call do not hang",
+  async (t) => {
+    const a = new Bash({ sqlite: true });
+    a.mount(
+      "/r",
+      FileSystem.lazy({
+        readDir: () => [{ name: "x.db", type: "file" }],
+        readFile: () => new Uint8Array(0),
+      }),
+    );
+    const pending = a.execute(
+      "sleep 0.2; sqlite3 -backend vfs /r/x.db 'select 1'",
+    );
+    setTimeout(() => new Bash().executeSync("sleep 0.5"), 0);
+    const r = await Promise.race([
+      pending,
+      sleep(8000).then(() => ({ exitCode: -1, stdout: "hung" })),
+    ]);
+    t.not(r.stdout, "hung");
+  },
+);
+
+test("lazy: builtin ctx.fs of an instance with a lazy mount cannot be exported", async (t) => {
+  const { source } = recordingSource();
+  let message = "";
+  const bash = new Bash({
+    customBuiltins: {
+      "try-export": (ctx) => {
+        try {
+          ctx.fs.toExternal();
+          message = "exported";
+        } catch (e) {
+          message = (e as Error).message;
+        }
+        return "";
+      },
+    },
+  });
+  bash.mount("/r", FileSystem.lazy(source));
+  await bash.execute("try-export");
+  t.regex(message, /cannot be exported/);
+});

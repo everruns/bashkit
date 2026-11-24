@@ -402,13 +402,12 @@ impl JsLazyBackend {
         if in_execution_scope() {
             return Ok(());
         }
-        // Decision: on a multi-thread runtime yield to the timer; elsewhere
-        // (a helper thread driving the blocked JS thread's current-thread
-        // runtime, as sqlite's VFS I/O does) the timer driver belongs to the
-        // blocked thread and would never fire, so sleep the helper thread.
-        let multi_thread = tokio::runtime::Handle::try_current()
-            .map(|h| h.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread)
-            .unwrap_or(false);
+        // Decision: a plain thread sleep, never a tokio timer. Callers here
+        // are helper threads (sqlite's VFS I/O, the C ABI export runtime)
+        // whose runtime's timer may be driven by nobody: the JS thread is
+        // blocked, or the only other worker is parked in a thread join. Such
+        // threads are dedicated, so blocking them for the bounded grace is
+        // safe; execution tasks never reach this loop (`in_execution`).
         let started = Instant::now();
         loop {
             match js_thread_state(self.js_thread) {
@@ -417,9 +416,6 @@ impl JsLazyBackend {
                 JsThreadState::Blocked if started.elapsed() >= SYNC_BLOCK_GRACE => {
                     mark_gave_up(self.js_thread);
                     return Err(sync_error());
-                }
-                JsThreadState::Blocked if multi_thread => {
-                    tokio::time::sleep(Duration::from_millis(2)).await;
                 }
                 JsThreadState::Blocked => std::thread::sleep(Duration::from_millis(2)),
             }

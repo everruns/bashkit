@@ -34,6 +34,8 @@ struct JsCommand {
     name: String,
     callback: Arc<CommandTsfn>,
     in_sync: Arc<AtomicUsize>,
+    /// See `JsCustomBuiltinAdapter::has_lazy_mounts`.
+    has_lazy_mounts: Arc<std::sync::atomic::AtomicBool>,
 }
 
 #[async_trait]
@@ -50,7 +52,10 @@ impl Command for JsCommand {
         .map_err(|e| bashkit::Error::Execution(e.to_string()))?;
         let args = (
             payload,
-            External::new(NativeFileSystemState::from_static(ctx.fs.clone())),
+            External::new(NativeFileSystemState::for_context(
+                ctx.fs.clone(),
+                self.has_lazy_mounts.load(Ordering::SeqCst),
+            )),
             External::new(ctx.stdin.clone()),
             External::new(ctx.stdout.clone()),
             External::new(ctx.stderr.clone()),
@@ -85,6 +90,7 @@ pub(super) fn register(
             name,
             callback: Arc::new(callback),
             in_sync: state.in_sync_execute_depth.clone(),
+            has_lazy_mounts: state.has_lazy_mounts.clone(),
         },
     );
     Ok(())
@@ -141,7 +147,9 @@ pub(super) fn execute<'env>(
             execution =
                 execution.stderr_fn(move |bytes| deliver(callback.clone(), depth.clone(), bytes));
         }
-        Ok(js_exec_result_from_bash_result(execution.await))
+        let result =
+            crate::lazy_fs::in_execution(std::future::IntoFuture::into_future(execution)).await;
+        Ok(js_exec_result_from_bash_result(result))
     })
 }
 

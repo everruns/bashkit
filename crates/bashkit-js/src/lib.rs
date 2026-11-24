@@ -260,6 +260,15 @@ impl NativeFileSystemState {
         }
     }
 
+    /// A callback's `ctx.fs`: refuses the C ABI bridge when the instance
+    /// has a lazy mount, like `bash.fs()` (see `to_external`).
+    pub(crate) fn for_context(fs: Arc<dyn BashFileSystem>, has_lazy_mounts: bool) -> Self {
+        Self {
+            inner: FileSystemHandle::Static(fs),
+            requires_event_loop: has_lazy_mounts,
+        }
+    }
+
     fn lazy(fs: Arc<dyn BashFileSystem>) -> Self {
         Self {
             inner: FileSystemHandle::Static(fs),
@@ -1653,7 +1662,7 @@ struct SharedState {
     sync_idle: Arc<tokio::sync::Notify>,
     /// Set once a `FileSystem.lazy()` handle is mounted. Such an instance's
     /// live filesystem must not cross the blocking C ABI bridge.
-    has_lazy_mounts: AtomicBool,
+    has_lazy_mounts: Arc<AtomicBool>,
     username: Option<String>,
     profile: Option<ExecutionProfileName>,
     hostname: Option<String>,
@@ -2202,6 +2211,7 @@ impl Bash {
                 name,
                 callback: Arc::new(tsfn),
                 in_sync_execute_depth: self.state.in_sync_execute_depth.clone(),
+                has_lazy_mounts: self.state.has_lazy_mounts.clone(),
             }),
         );
         Ok(())
@@ -3078,6 +3088,7 @@ impl BashTool {
                 name,
                 callback: Arc::new(tsfn),
                 in_sync_execute_depth: self.state.in_sync_execute_depth.clone(),
+                has_lazy_mounts: self.state.has_lazy_mounts.clone(),
             }),
         );
         Ok(())
@@ -3655,6 +3666,9 @@ struct JsCustomBuiltinAdapter {
     /// TSFN callback would never resolve. We surface a real error in that case
     /// instead of hanging.
     in_sync_execute_depth: Arc<AtomicUsize>,
+    /// Whether the instance has a lazy mount, so `ctx.fs` must refuse the
+    /// blocking C ABI bridge like `bash.fs()` does.
+    has_lazy_mounts: Arc<AtomicBool>,
 }
 
 #[async_trait]
@@ -3687,7 +3701,10 @@ impl Builtin for JsCustomBuiltinAdapter {
         // Wrap the interpreter's live VFS as a `Static` handle so the JS
         // callback reads and writes the same filesystem without re-locking
         // the interpreter (mirrors the Python binding's `BuiltinContext.fs`).
-        let fs_handle = External::new(NativeFileSystemState::from_static(ctx.fs.clone()));
+        let fs_handle = External::new(NativeFileSystemState::for_context(
+            ctx.fs.clone(),
+            self.has_lazy_mounts.load(Ordering::SeqCst),
+        ));
 
         // Two-step await: first call_async returns the `Promise<String>`
         // handle from JS, then awaiting the Promise resolves to its value.
@@ -4316,7 +4333,7 @@ fn shared_state_from_opts(opts: BashOptions) -> napi::Result<SharedState> {
         async_execute_semaphore: Arc::new(Semaphore::new(MAX_PENDING_ASYNC_EXECUTIONS)),
         async_execute_depth: Arc::new(AtomicUsize::new(0)),
         sync_idle: Arc::new(tokio::sync::Notify::new()),
-        has_lazy_mounts: AtomicBool::new(false),
+        has_lazy_mounts: Arc::new(AtomicBool::new(false)),
         username: opts.username.clone(),
         profile: opts.profile,
         hostname: opts.hostname.clone(),
@@ -4378,7 +4395,7 @@ fn shared_state_from_opts(opts: BashOptions) -> napi::Result<SharedState> {
         async_execute_semaphore: Arc::new(Semaphore::new(MAX_PENDING_ASYNC_EXECUTIONS)),
         async_execute_depth: Arc::new(AtomicUsize::new(0)),
         sync_idle: Arc::new(tokio::sync::Notify::new()),
-        has_lazy_mounts: AtomicBool::new(false),
+        has_lazy_mounts: Arc::new(AtomicBool::new(false)),
         username: opts.username,
         profile: opts.profile,
         hostname: opts.hostname,
