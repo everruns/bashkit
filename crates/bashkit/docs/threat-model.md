@@ -233,13 +233,14 @@ Scripts may attempt to break out of the sandbox to access the host system.
 | Path traversal (TM-ESC-001) | `cat /../../../etc/passwd` | Path normalization | MITIGATED |
 | Symlink escape (TM-ESC-002) | `ln -s /etc/passwd /tmp/x` | Links resolve to VFS paths only; real-mount containment still applies to the result | MITIGATED |
 | Real FS access (TM-ESC-003) | Direct syscalls | No real FS by default | MITIGATED |
+| RealFs check/use race (TM-ESC-035) | Swap a checked directory for an outward symlink mid-operation | Every host operation resolves beneath the root directory handle in one kernel call | MITIGATED |
 | Mount escape (TM-ESC-004) | Mount real paths | MountableFs controlled by caller | MITIGATED |
 | VFS limit bypass (TM-ESC-012) | `add_file()` skips limits | Restrict API visibility | **MITIGATED** |
 | OverlayFs upper() exposed (TM-ESC-013) | `upper()` returns unlimited FS | Restrict visibility | **MITIGATED** |
 | Custom builtins lost (TM-ESC-014) | `std::mem::take` empties builtins | Arc-cloned builtins | **FIXED** |
 | Symlink overlay rename (TM-ESC-016) | `ln -s /etc/passwd x; mv x y` | Overlay rename/copy preserve symlinks | **FIXED** |
 | Namespace source-root or policy escape (TM-ESC-031) | `..` escapes a rebased or nested mount | Normalize before longest-prefix selection; join only the stripped suffix; enforce both mutation endpoints | MITIGATED |
-| Windows host-path namespace escape (TM-ESC-033) | Drive/UNC/device path or reparse point discards the RealFS root | Normalize into the POSIX VFS root; canonicalize existing ancestors; component-aware root check; Windows CI | MITIGATED |
+| Windows host-path namespace escape (TM-ESC-033) | Drive/UNC/device path or reparse point discards the RealFS root | Normalize into the POSIX VFS root; resolve beneath the root directory handle; Windows CI | MITIGATED |
 | Host mount resolver traversal (TM-ESC-034) | `/workspace/../secret` passed to `host_path_for` keeps an unnormalized suffix that escapes the selected host mount when joined | Normalize mount points and lookup paths with the shared POSIX VFS normalizer before longest-prefix selection and host joining | MITIGATED |
 
 **Process Escape:**
