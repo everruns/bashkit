@@ -59,7 +59,7 @@ ssh/scp/sftp builtins (parse args, validate host, delegate)
 |----|--------|-----------|
 | TM-SSH-001 | Unauthorized host access | Host allowlist (default-deny) |
 | TM-SSH-002 | Credential leakage | Keys from VFS only, no host ~/.ssh/ |
-| TM-SSH-003 | Session exhaustion | Max concurrent sessions limit |
+| TM-SSH-003 | Session exhaustion | Max concurrent sessions limit, with permits released when handler futures complete or are dropped |
 | TM-SSH-004 | Response size bomb | Max response bytes limit |
 | TM-SSH-005 | Connection hang | Connect + read timeouts |
 | TM-SSH-006 | Host key MITM | Configurable host key verification; CA-signed host certificates always rejected in strict mode (L-SSH-001) |

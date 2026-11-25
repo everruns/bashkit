@@ -20,6 +20,15 @@ pub struct SshClient {
     active_sessions: AtomicUsize,
 }
 
+// Return the permit when the handler future completes or is dropped.
+struct SessionPermit<'a>(&'a AtomicUsize);
+
+impl Drop for SessionPermit<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
 impl std::fmt::Debug for SshClient {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SshClient")
@@ -69,9 +78,10 @@ impl SshClient {
     /// or greeting on connect without requiring a command.
     pub async fn shell(&self, target: &SshTarget) -> std::result::Result<SshOutput, String> {
         self.check_allowed(&target.host, target.port)?;
-        self.acquire_session()?;
-        let result = self.handler().shell(target).await;
-        self.release_session();
+        let result = {
+            let _permit = self.acquire_session()?;
+            self.handler().shell(target).await
+        };
 
         if let Ok(ref output) = result {
             let total = output.stdout.len() + output.stderr.len();
@@ -100,9 +110,10 @@ impl SshClient {
         self.check_allowed(&target.host, target.port)?;
 
         // THREAT[TM-SSH-003]: Check session limit
-        self.acquire_session()?;
-        let result = self.exec_inner(target, command).await;
-        self.release_session();
+        let result = {
+            let _permit = self.acquire_session()?;
+            self.exec_inner(target, command).await
+        };
 
         // THREAT[TM-SSH-004]: Enforce response size limit
         if let Ok(ref output) = result {
@@ -127,10 +138,8 @@ impl SshClient {
         mode: u32,
     ) -> std::result::Result<(), String> {
         self.check_allowed(&target.host, target.port)?;
-        self.acquire_session()?;
-        let result = self.upload_inner(target, remote_path, content, mode).await;
-        self.release_session();
-        result
+        let _permit = self.acquire_session()?;
+        self.upload_inner(target, remote_path, content, mode).await
     }
 
     /// Download a file from a remote host.
@@ -140,9 +149,10 @@ impl SshClient {
         remote_path: &str,
     ) -> std::result::Result<Vec<u8>, String> {
         self.check_allowed(&target.host, target.port)?;
-        self.acquire_session()?;
-        let result = self.download_inner(target, remote_path).await;
-        self.release_session();
+        let result = {
+            let _permit = self.acquire_session()?;
+            self.download_inner(target, remote_path).await
+        };
 
         // THREAT[TM-SSH-004]: Enforce response size limit
         if let Ok(ref data) = result
@@ -165,20 +175,18 @@ impl SshClient {
         }
     }
 
-    fn acquire_session(&self) -> std::result::Result<(), String> {
-        let current = self.active_sessions.fetch_add(1, Ordering::SeqCst);
-        if current >= self.config.max_sessions {
-            self.active_sessions.fetch_sub(1, Ordering::SeqCst);
-            return Err(format!(
-                "ssh: too many active sessions ({}, max {})",
-                current, self.config.max_sessions
-            ));
-        }
-        Ok(())
-    }
-
-    fn release_session(&self) {
-        self.active_sessions.fetch_sub(1, Ordering::SeqCst);
+    fn acquire_session(&self) -> std::result::Result<SessionPermit<'_>, String> {
+        self.active_sessions
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
+                (current < self.config.max_sessions).then(|| current + 1)
+            })
+            .map_err(|current| {
+                format!(
+                    "ssh: too many active sessions ({}, max {})",
+                    current, self.config.max_sessions
+                )
+            })?;
+        Ok(SessionPermit(&self.active_sessions))
     }
 
     /// Get the handler: custom if set, otherwise default RusshHandler.
@@ -267,6 +275,17 @@ mod tests {
             err.contains("connection failed") || err.contains("no authentication"),
             "unexpected error: {err}"
         );
+    }
+
+    #[test]
+    fn test_session_permit_lifetime() {
+        let client = SshClient::new(SshConfig::new().max_sessions(1));
+        let permit = client.acquire_session().expect("first permit");
+        assert!(client.acquire_session().is_err());
+
+        drop(permit);
+        assert!(client.acquire_session().is_ok());
+        assert_eq!(client.active_sessions.load(Ordering::SeqCst), 0);
     }
 
     #[tokio::test]
