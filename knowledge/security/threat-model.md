@@ -590,6 +590,25 @@ kept: the pre-filter saves the execution, the attribution check covers every
 target that inlines input, including those with no pre-filter. A canary in
 output that the script does not contain still fails, unchanged.
 
+Run 304 showed the opt-in half of that design does not hold, and the banned
+shapes now follow the canary's rule. The pre-filter was reaching only 6 of 25
+targets, so five went red in one night on shapes libFuzzer had harvested from
+the detector's own `contains`: `envsubst_fuzz` and `archive_fuzz` on
+`Undefined::`, `csv_fuzz` and `tomlq_fuzz` on `/.rustup/toolchains/`, and
+`printf_fuzz` on `builtin failed unexpectedly`. None of the echoes came from a
+template `strip_real_shell_error_lines` knows -- they were *builtin*
+diagnostics quoting their operand (`tomlq: path '<input>' not found`) or, for
+`archive_fuzz`, a `gzip | gunzip` roundtrip handing the input straight back --
+so neither existing defense applied, and enumerating every builtin's format
+string does not scale. `assert_fuzz_invariants` now skips a banned shape the
+executed script itself spells (`script_explains`, NUL-stripped and padded with
+`DIAGNOSTIC_ECHO_PAD` like the input gate), exactly as it already skips an
+attributable canary. The harness applies this to every caller, so a new target
+cannot forget it; the stderr byte cap stays absolute, because attribution
+excuses an echoed shape and never a flood. The per-target pre-filters stay for
+the case attribution cannot see: a shape spelled where the quoted slot meets
+script text *inside* the script, as in run 295.
+
 Display of a **Bashkit** error is not a safe formatter either: `Error`'s own
 variants stringify as Rust enum shapes (`io error: `, `internal error: `) that
 no shell prints, and `internal error:` is in `UNIVERSAL_BANNED`. Builtins
