@@ -194,11 +194,21 @@ macro_rules! arithmetic_for_body {
                 }
             }
 
+            // The final step/false-condition traps follow every completed
+            // body. Preserve that order in buffered execution too; prepending
+            // them to the finished loop moves them ahead of its first output.
+            if let Some(debug) = debug.take() {
+                acc.append_output(&ExecResult {
+                    stdout: debug.stdout,
+                    stderr: debug.stderr,
+                    ..Default::default()
+                }, &$shell.execution_budget)?;
+            }
             Ok(acc.finish())
         }
         .await;
         $shell.counters.exit_loop();
-        DebugTrapOutput::prepend_opt(debug, result)
+        result
     }};
 }
 

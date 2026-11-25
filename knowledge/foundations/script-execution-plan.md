@@ -50,7 +50,8 @@ and background-job handling around compiled regions. Shell control nodes carry
 prepared child sequences, including `if`, word and arithmetic `for`, `while`,
 `until`, and braces. Their output routing, condition
 suppression, traps, loop control and error cleanup use the same orchestration
-as ordinary execution. Both dispatchers reserve compound output against the
+as ordinary execution. Buffered arithmetic loops append final step/condition
+DEBUG output after completed bodies, matching streamed output order. Both dispatchers reserve compound output against the
 shared live-byte budget, including condition output and stderr merges. Capture
 limits still preserve full streams for substitutions and redirects. Individual unsupported leaves (tools, pipelines,
 substitutions, regexes and arrays) retain their existing executor. Safe arithmetic
