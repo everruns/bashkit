@@ -940,6 +940,29 @@ impl FileSystem for PythonLazyFilesFs {
         self.overlay.read_file(path).await
     }
 
+    async fn read_file_bounded(
+        &self,
+        path: &Path,
+        charge: bashkit::ReadCharge<'_>,
+    ) -> bashkit::Result<Vec<u8>> {
+        if charge.is_none() {
+            return self.read_file(path).await;
+        }
+        if self
+            .providers
+            .read()
+            .unwrap()
+            .contains_key(&Self::normalize_path(path))
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "lazy file does not support bounded reads",
+            )
+            .into());
+        }
+        self.overlay.read_file_bounded(path, charge).await
+    }
+
     async fn write_file(&self, path: &Path, content: &[u8]) -> bashkit::Result<()> {
         self.remove_provider_paths(path, false);
         self.overlay.write_file(path, content).await
@@ -965,6 +988,14 @@ impl FileSystem for PythonLazyFilesFs {
 
     async fn read_dir(&self, path: &Path) -> bashkit::Result<Vec<FsDirEntry>> {
         self.overlay.read_dir(path).await
+    }
+
+    async fn read_dir_bounded(
+        &self,
+        path: &Path,
+        charge: bashkit::ReadCharge<'_>,
+    ) -> bashkit::Result<Vec<FsDirEntry>> {
+        self.overlay.read_dir_bounded(path, charge).await
     }
 
     async fn exists(&self, path: &Path) -> bashkit::Result<bool> {

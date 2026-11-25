@@ -121,6 +121,15 @@ impl FileSystem for CheckedFs {
         self.record("read_file", path);
         self.inner.read_file(path).await
     }
+
+    async fn read_file_bounded(
+        &self,
+        path: &Path,
+        charge: crate::ReadCharge<'_>,
+    ) -> Result<Vec<u8>> {
+        self.record("read_file", path);
+        self.inner.read_file_bounded(path, charge).await
+    }
     async fn write_file(&self, path: &Path, content: &[u8]) -> Result<()> {
         self.record("write_file", path);
         self.inner.write_file(path, content).await
@@ -148,6 +157,15 @@ impl FileSystem for CheckedFs {
     async fn read_dir(&self, path: &Path) -> Result<Vec<DirEntry>> {
         self.record("read_dir", path);
         self.inner.read_dir(path).await
+    }
+
+    async fn read_dir_bounded(
+        &self,
+        path: &Path,
+        charge: crate::ReadCharge<'_>,
+    ) -> Result<Vec<DirEntry>> {
+        self.record("read_dir", path);
+        self.inner.read_dir_bounded(path, charge).await
     }
     async fn exists(&self, path: &Path) -> Result<bool> {
         self.record("exists", path);
