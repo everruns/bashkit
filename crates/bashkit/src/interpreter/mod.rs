@@ -2084,6 +2084,18 @@ pub struct Interpreter {
     /// Element words of `name=(...)` arguments of the command being run;
     /// see `declare::COMPOUND_MARK`.
     pending_compound_args: Vec<Vec<Word>>,
+    /// THREAT[TM-INJ-027]: `failglob` refused the command being expanded:
+    /// the rendered `no match: <pattern>` diagnostic, waiting for the
+    /// dispatch site.
+    ///
+    /// Out of band on purpose. This used to ride the expanded argument
+    /// vector as a `\0ERR\0`-prefixed first word, which made it forgeable:
+    /// `echo '<NUL>ERR<NUL>X'` expanded to a word carrying those bytes, so
+    /// script data chose the exit code, put its own tail on stderr and
+    /// abandoned the rest of the line. The `$empty cmd` path, which promotes
+    /// the first argument field to the command name, never checked the
+    /// prefix at all and ran the sentinel as a command.
+    pending_failglob: Option<String>,
     /// Set while prefix assignments (`x=1 cmd`) run: bash stores those
     /// without applying `-i`/`-l`/`-u`.
     assign_raw: bool,
@@ -2660,6 +2672,7 @@ impl Interpreter {
             builtin_discard: false,
             subscript_warnings: StdMutex::new(String::new()),
             pending_compound_args: Vec::new(),
+            pending_failglob: None,
             assign_raw: false,
         }
     }
@@ -2886,6 +2899,7 @@ impl Interpreter {
             builtin_discard: false,
             subscript_warnings: StdMutex::new(String::new()),
             pending_compound_args: Vec::new(),
+            pending_failglob: None,
             assign_raw: false,
         }
     }
@@ -8542,6 +8556,11 @@ impl Interpreter {
                 return Ok(self.expansion_error_result(err_msg));
             }
 
+            // A command that aborted between setting `pending_failglob` and
+            // reading it (an arithmetic abort raised earlier in the same
+            // expansion, say) must not hand its refusal to this one.
+            self.pending_failglob = None;
+
             // `$empty cmd args`: the name word expanded to no fields, so
             // the first argument word that yields a field is the command.
             let mut args_consumed = false;
@@ -8689,11 +8708,10 @@ impl Interpreter {
 
             let args = pre_expanded_args.unwrap_or_default();
 
-            // Check for glob error sentinel
-            if let Some(first) = args.first()
-                && first.starts_with("\x00ERR\x00")
-            {
-                let err_msg = first.trim_start_matches("\x00ERR\x00").to_string();
+            // THREAT[TM-INJ-027]: `failglob` refused this command during
+            // argument expansion. Read out of band: a word that merely looks
+            // like an error must stay data, whatever bytes it carries.
+            if let Some(err_msg) = self.pending_failglob.take() {
                 self.last_exit_code = 1;
                 self.restore_variables(var_saves);
                 self.discard_deferred_proc_subs_from(deferred_proc_sub_start);
@@ -8829,12 +8847,12 @@ impl Interpreter {
                             {
                                 Ok(items) => args.extend(items),
                                 Err(pat) => {
+                                    // THREAT[TM-INJ-027]: report out of band;
+                                    // never as a prefix on an expanded word.
                                     self.last_exit_code = 1;
-                                    return Ok(vec![format!(
-                                        "\x00ERR\x00{}no match: {}\n",
-                                        self.diag_prefix(),
-                                        pat
-                                    )]);
+                                    self.pending_failglob =
+                                        Some(format!("{}no match: {}\n", self.diag_prefix(), pat));
+                                    return Ok(Vec::new());
                                 }
                             }
                         }

