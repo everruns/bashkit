@@ -1,0 +1,54 @@
+{
+  "runtime_revision": "cc622ef229eecd469e1068bbb87ae065e1bb8b81",
+  "test_revision": "8e739c583a784acaeef7be40d654910e189f5d2c",
+  "baseline_revision": "c7098c393a6957dbb8c9888b9fb9de9f6ffd42ff",
+  "upstream_revision": "258b364ed8c3281667149f7beed69b3d28c1e1b3",
+  "rustc": "rustc 1.100.0 (0ef1bc386 2026-11-09)",
+  "host": "454522b0b8c5",
+  "architecture": "x86_64",
+  "cpu": "Intel Xeon Platinum 8370C @ 2.80GHz",
+  "cpu_quota": "400000 100000",
+  "affinity": {
+    "mixed": [
+      2
+    ],
+    "original": [
+      2
+    ],
+    "broad": "unpinned",
+    "parallel": "unpinned"
+  },
+  "profiles": {
+    "original": "opt3, fat LTO, codegen1; compiler enabled in both binaries",
+    "mixed": "opt3, lto=false, codegen16; same diagnostic binary with Auto/InterpreterOnly extensions",
+    "broad": "workspace release, default features",
+    "parallel": "workspace bench, experimental_execution_plan"
+  },
+  "locks": {
+    "Cargo.lock": "69026399b277a5eefe82d58ab68e888f254b9b3991da1656b867b83087460d5f",
+    "experiments/mixed-execution-plan/Cargo.lock": "276af8394b1d2cdd6f6975a6431e2832f1ef7b93f2a4672680cbfdaa1bc7534d",
+    "experiments/mixed-execution-plan/original-adapter.lock": "7218713be22ba9de683bcf697ff40705a6e567c7d2a79795486a87a26af77722"
+  },
+  "binaries": {
+    "original_baseline": {
+      "path": "/workspace/scratch/2983-original/bench-baseline",
+      "sha256": "007da90dcd9d25f1bcced2d19b1ad6dff2bd06eefec3247116856390a57f62a3"
+    },
+    "original_candidate": {
+      "path": "/workspace/scratch/2983-original/bench-candidate",
+      "sha256": "f46645c72a80dfbf52f9ae06b340c58162a09c8854de2b0b3779a6905712e4a3"
+    },
+    "mixed": {
+      "path": "/workspace/scratch/2983-release-target/release/mixed-plan-loops",
+      "sha256": "9437d4e32c02bbf107f0dcb72fdc6fc17ade066cc37a5ae8e11ef486f7e06bf6"
+    },
+    "broad": {
+      "path": "/workspace/scratch/2983-release-target/release/bashkit-bench",
+      "sha256": "0fa052e0ff15ab96cfaf235fc5b0b71d6de3b314cfbe571cd80281274d0c68da"
+    },
+    "parallel": {
+      "path": "/workspace/scratch/2983-release-target/release/build/bashkit/0f47ad9c7dd7f7be/out/parallel_execution-0f47ad9c7dd7f7be",
+      "sha256": "6695d6df1b8e2eb35c3c75fecb4a5ac4a1dbe189837803cb518fca6ded5cc311"
+    }
+  }
+}

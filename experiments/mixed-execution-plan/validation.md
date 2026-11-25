@@ -1,5 +1,46 @@
 # Validation record
 
+## Rebase and review fixes (2026-11-24)
+
+Runtime source: `cc622ef229eecd469e1068bbb87ae065e1bb8b81`, based on
+`c7098c393a6957dbb8c9888b9fb9de9f6ffd42ff`. The later `8e739c58` test-only
+change updates the exact work-counter expectation after opaque loops stopped
+paying for rejected lowering. The compiler remains disabled by default.
+
+- Revision `8e739c58` passed all 102 GitHub checks (101 successful, one expected
+  skip), including feature-on/off workspace, security/failpoint, optional-runtime
+  and discovered fuzz-target suites. [CI run](https://github.com/everruns/bashkit/actions/runs/45541437938).
+- Local focused validation: 20 execution-plan unit tests, the serialized
+  command-boundary failpoint parity regression, and two mixed-function
+  integration tests pass. GNU Bash cases cover DEBUG/RETURN/ERR, suppressed and
+  unsuppressed errexit, variable attributes, loop control and incoming status.
+- Review-driven regressions first reproduced the wasted opaque-loop lowering
+  and buffered final DEBUG-output ordering. Both fixes are verified; the latter
+  fixes the shared ordinary/prepared executor and preserves budgeted accumulation.
+- Local all-target/all-feature Clippy passes. Ordinary `just run-script` and the
+  compiler-enabled CLI produce the expected `45` / `47` output for a function
+  using substitutions, JSON regex captures and dynamically bound jq.
+- Final clean browser runtime: 86 Node tests, 24/24 GNU Bash comparisons and
+  all profile/budget checks pass. [Exact size/build identity](../../crates/bashkit-wasm/bench/results/wasm-mixed-plan-rebase-2026-11-24.json).
+- Earlier local ASan checks on the initial rebase completed 192 script-plan
+  differential inputs and 1,024 conditional-regex inputs without failures;
+  final-source CI rebuilds and smokes all discovered targets in both modes.
+- Fresh single-threaded measurements retain the unchanged original tool and
+  fan-out scripts, identical lockfiles/profiles, four alternating rounds and
+  CPU 2 affinity. Raw samples and identities are in [results/](results/).
+- The saved broad suite completed all 96 cases with zero errors and 100% Bash
+  output agreement. The full compiler-enabled Criterion parallel suite also
+  completed through 1,000 sessions. Both reports and generated site data are
+  retained in the standard result directories.
+
+The local sandbox exposes synthetic ancestor `.git` directories under the
+workspace and `/tmp`, affecting the real-ripgrep oracle. `/dev/shm` additionally
+matches the host-mount policy's sensitive-prefix rule. Full-suite local reruns
+use an explicitly writable `/var/tmp/bashkit-2983` fixture directory instead;
+no test or security policy is relaxed.
+
+## Original implementation (2026-11-23)
+
 Implementation tested: `9cab5a45e22f6cf9dc8f6322078ae6087cd935a1`
 (Rust sources; subsequent experiment documentation/results are separate).
 Compiler remains disabled by default.

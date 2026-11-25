@@ -1,9 +1,9 @@
 {
-  "base_revision": "d07ba00d",
+  "base_revision": "c7098c393a6957dbb8c9888b9fb9de9f6ffd42ff",
   "build": {
     "version": "0.21.1",
-    "sourceRevision": "09709afd34b84e82e4e7b969950355737fc59cfa",
-    "sourceDirty": true,
+    "sourceRevision": "cc622ef229eecd469e1068bbb87ae065e1bb8b81",
+    "sourceDirty": false,
     "profile": "wasm-release",
     "features": [
       "bashkit/experimental_execution_plan",
@@ -12,7 +12,7 @@
     "rustc": "rustc 1.100.0 (0ef1bc386 2026-11-09)",
     "wasmBindgen": "wasm-bindgen 0.2.128",
     "wasmOpt": "wasm-opt version 125 (version_125)",
-    "wasmSha256": "7622b4c89487fa8e24e354af679eb821ca38351ad95a675c0677e86e780fa625"
+    "wasmSha256": "9025319f62e60db34c5aeda1452faa32b97f58ffa99883a745f9a2080c90d9ff"
   },
   "artifact": {
     "files": [
@@ -32,23 +32,23 @@
       },
       {
         "name": "bashkit_wasm.js",
-        "sha256": "3fc61cac871a73733ef2e5b5551d87b7508e0f336ca019b1e216299d951b1b20",
+        "sha256": "fcc8f82bb310e816054f27df4bfae129c03bb8e78c048ec18eaa0b1e0e2080ab",
         "raw": 71478,
         "gzip": 9809,
-        "brotli": 8418
+        "brotli": 8421
       },
       {
         "name": "bashkit_wasm_bg.wasm",
-        "sha256": "7622b4c89487fa8e24e354af679eb821ca38351ad95a675c0677e86e780fa625",
-        "raw": 7855839,
-        "gzip": 3116868,
-        "brotli": 2210205
+        "sha256": "9025319f62e60db34c5aeda1452faa32b97f58ffa99883a745f9a2080c90d9ff",
+        "raw": 7867593,
+        "gzip": 3119253,
+        "brotli": 2213028
       }
     ],
     "total": {
-      "raw": 7936464,
-      "gzip": 3130093,
-      "brotli": 2221467
+      "raw": 7948218,
+      "gzip": 3132478,
+      "brotli": 2224293
     },
     "sections": [
       {
@@ -61,7 +61,7 @@
       },
       {
         "name": "section-3",
-        "raw": 11086
+        "raw": 11139
       },
       {
         "name": "section-4",
@@ -81,7 +81,7 @@
       },
       {
         "name": "section-9",
-        "raw": 8363
+        "raw": 8449
       },
       {
         "name": "section-12",
@@ -89,11 +89,11 @@
       },
       {
         "name": "code",
-        "raw": 6700537
+        "raw": 6711319
       },
       {
         "name": "data",
-        "raw": 1128458
+        "raw": 1129291
       },
       {
         "name": "custom:producers",

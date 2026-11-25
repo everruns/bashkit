@@ -1,18 +1,19 @@
 # Mixed-plan browser rebase validation
 
-Rebased onto `d07ba00d`, including conditional-regex scratch reuse (#2984)
-and compound-output memory metering (#2996). Built with Rust 1.100.0,
+Rebased onto `c7098c39`, including conditional-regex scratch reuse (#2984),
+compound-output memory metering (#2996) and bounded runtime VFS reads (#3002).
+Final runtime source: `cc622ef2`, clean tree. Built with Rust 1.100.0,
 wasm-bindgen 0.2.128, Binaryen 125 and the unchanged `wasm-release` pipeline.
 The compiler remains opt-in. [Build identity and measurements](wasm-mixed-plan-rebase-2026-11-24.json).
 
 | Transfer format | Measured compiler bundle | Compiler cap | Default cap (unchanged) |
 |---|---:|---:|---:|
-| Raw | 7,936,464 | 8,000,000 | 8,000,000 |
-| Gzip | 3,130,093 | 3,140,000 | 3,120,000 |
-| Brotli | 2,221,467 | 2,230,000 | 2,220,000 |
+| Raw | 7,948,218 | 8,000,000 | 8,000,000 |
+| Gzip | 3,132,478 | 3,140,000 | 3,120,000 |
+| Brotli | 2,224,293 | 2,230,000 | 2,220,000 |
 
-The combined compiler and output-metering build exceeded the prior experimental
-caps by 10,093 gzip bytes and 1,467 Brotli bytes. Only the compiler profile's
+The combined build exceeds the prior experimental compressed caps (equal to
+the current default caps) by 12,478 gzip bytes and 4,293 Brotli bytes. Only the compiler profile's
 compressed allowances change; default-package caps and runtime limits remain
 unchanged. No additional optimization pass or runtime feature removal was used.
 This is a size/compatibility check, not a browser speedup measurement.

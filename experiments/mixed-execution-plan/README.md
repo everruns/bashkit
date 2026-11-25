@@ -36,7 +36,7 @@ access, jq with changing bindings, the original fan-out script with 100 warehous
 a short function and short arithmetic.
 
 To compare the original event-JSON workload against the previous compiler,
-create a separate baseline checkout at `abc42a7cd4b5ef0af7f60002fda698517a9db417`
+create a separate baseline checkout at `c7098c393a6957dbb8c9888b9fb9de9f6ffd42ff`
 and run:
 
 ```sh
@@ -57,6 +57,35 @@ Run timings without competing builds. Same-binary diagnostic measurements and
 separate production-baseline builds answer different questions and should both
 be retained. The compiler remains experimental; gains on arithmetic loops alone
 do not establish an end-to-end speedup for agent workloads.
+
+## Rebase measurements (2026-11-24)
+
+Runtime source `cc622ef2`, based on `c7098c39` (including #2984, #2996 and
+#3002). Rust 1.100.0, Linux x86-64, four-CPU quota; single-threaded experiments
+pinned to CPU 2. The same scripts, profiles, four alternating rounds and
+fresh-shell methodology above were retained. Timings ran after builds and before
+the final local test rerun, without competing builds or tests.
+
+| Same-binary case | AST (ms) | Auto (ms) | Time change |
+|---|---:|---:|---:|
+| arithmetic-function | 19.3058 | 8.7628 | -54.6% |
+| substitution-function | 17.7876 | 17.7411 | -0.3% |
+| jq-function | 2.2571 | 2.1939 | -2.8% |
+| fanout-100 | 7.9948 | 7.8886 | -1.3% |
+| short-function | 0.0314 | 0.0317 | +0.8% |
+| short-arithmetic | 0.0296 | 0.0299 | +1.1% |
+
+The original event-JSON workload measured **20.3159 µs/call on the baseline
+versus 20.4339 µs/call with mixed plans (+0.6%)**. Both production adapters use
+the same frozen lockfile, fat-LTO profile and compiler feature. There is no clear
+end-to-end tool-call gain. The arithmetic gain is substantial; the smaller
+workload differences do not justify enabling the compiler by default. jq still
+uses the same existing compiler and execution-local filter cache.
+
+The rebase also preserves current output-memory accounting, skips lowering
+wholly opaque loops, and fixes buffered final DEBUG-trap output order in the
+shared arithmetic-loop executor. Raw samples and build identities are retained
+in [results/](results/); earlier results below remain historical comparisons.
 
 ## Measured results (2026-11-23)
 
