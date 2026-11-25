@@ -142,8 +142,9 @@ over a copy of the bashkit repository.
 
 An overlay checks its traversal and whiteout budgets before recursively
 deleting a lower-layer directory. Custom lower filesystems must implement
-`FileSystem::read_dir_limited` to support this operation. If the check fails,
-the directory remains in place and `rm -rf` reports the error.
+`FileSystem::read_dir_limited` to support this operation. If the overlay
+refuses the deletion because of a budget or missing backend support, the
+directory remains in place and `rm -rf` reports the error.
 
 ## Mounting host directories
 

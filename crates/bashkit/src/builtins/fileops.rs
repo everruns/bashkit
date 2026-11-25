@@ -240,7 +240,11 @@ impl Builtin for Rm {
             }
 
             if let Err(e) = ctx.fs.remove(&path, recursive).await
-                && !(force && matches!(&e, Error::Io(io) if io.kind() == ErrorKind::NotFound))
+                && (!force
+                    || matches!(&e, Error::Io(io)
+                        if (recursive && matches!(io.kind(),
+                            ErrorKind::StorageFull | ErrorKind::Unsupported | ErrorKind::InvalidData))
+                        || (cfg!(feature = "realfs") && io.kind() == ErrorKind::ResourceBusy)))
             {
                 stderr.push_str(&format!(
                     "rm: cannot remove '{file}': {}\n",

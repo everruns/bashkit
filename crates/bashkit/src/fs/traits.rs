@@ -62,7 +62,7 @@ pub mod fs_errors {
     use super::*;
 
     pub(crate) fn directory_entry_limit() -> crate::error::Error {
-        IoError::other("directory entry limit exceeded").into()
+        IoError::new(ErrorKind::StorageFull, "directory entry limit exceeded").into()
     }
 
     pub(crate) fn bounded_listing_unsupported() -> crate::error::Error {

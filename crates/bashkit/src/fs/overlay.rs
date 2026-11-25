@@ -502,7 +502,11 @@ impl OverlayFs {
     }
 
     fn recursive_delete_limit() -> crate::error::Error {
-        IoError::other("overlay recursive delete limit exceeded").into()
+        IoError::new(
+            ErrorKind::StorageFull,
+            "overlay recursive delete limit exceeded",
+        )
+        .into()
     }
 
     /// Check limits before writing.
