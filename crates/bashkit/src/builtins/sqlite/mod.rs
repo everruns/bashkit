@@ -21,8 +21,8 @@
 //! Limits enforced (see [`SqliteLimits`]):
 //! - SQL script length capped at `max_script_bytes` (4 MiB default).
 //! - Per-result-set row count capped at `max_rows_per_query` (1M default).
-//! - Per-cell, raw result, and rendered-output bytes capped before values can
-//!   grow beyond the builtin's memory budget.
+//! - Per-cell and raw result limits bound the values Bashkit copies from
+//!   Turso. The rendered-output limit is checked while writing stdout.
 //! - Per-database file size capped at `max_db_bytes` (256 MiB default).
 //! - Wall-clock budget per invocation at `max_duration` (30 s default; pass
 //!   [`std::time::Duration::ZERO`] to opt out).
@@ -51,7 +51,7 @@ use super::{Builtin, Context, check_help_version, resolve_path};
 use crate::fs::vfs_join;
 use dot_commands::{DotError, DotOutcome};
 use engine::{QueryLimits, SqliteEngine};
-use formatter::{OutputMode, OutputOpts, render};
+use formatter::{OutputMode, OutputOpts, render_bounded};
 use parser::Stmt;
 
 const SQLITE_OPT_IN_ENV: &str = "BASHKIT_ALLOW_INPROCESS_SQLITE";
@@ -842,8 +842,13 @@ async fn run_statements(
                         query_limits(limits, execution_budget.clone()),
                     )
                     .map_err(|e| sanitize(&e))?;
-                let rendered = render(&outcome.columns, &outcome.rows, opts);
-                push_stdout_bounded(stdout, &rendered, limits.max_output_bytes)?;
+                render_bounded(
+                    stdout,
+                    &outcome.columns,
+                    &outcome.rows,
+                    opts,
+                    limits.max_output_bytes,
+                )?;
             }
             Stmt::Dot(line) => {
                 // Pass the *remaining* output budget so .dump can enforce it

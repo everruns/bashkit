@@ -3,6 +3,8 @@
 //! Mirrors the `sqlite3` shell modes that LLM agents and humans actually use:
 //! list (default), csv, tabs, line, column/box, json, markdown.
 
+use std::fmt::Write;
+
 use turso_core::{Numeric, Value};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -62,285 +64,356 @@ impl Default for OutputOpts {
     }
 }
 
-/// Render a single value with the given NULL placeholder. NULL is the only
-/// value that depends on `null_text`; all others use turso's `Display`.
-fn render_value(v: &Value, null_text: &str) -> String {
-    match v {
-        Value::Null => null_text.to_string(),
-        _ => format!("{v}"),
+/// Append a result to stdout, rolling it back if it exceeds the byte budget.
+pub(super) fn render_bounded(
+    stdout: &mut String,
+    cols: &[String],
+    rows: &[Vec<Value>],
+    opts: &OutputOpts,
+    max_bytes: usize,
+) -> Result<(), String> {
+    let start = stdout.len();
+    let mut out = BoundedOutput {
+        text: stdout,
+        remaining: max_bytes.saturating_sub(start),
+        rejected_at: None,
+    };
+    if render_into(&mut out, cols, rows, opts).is_err() {
+        let next = out.rejected_at.unwrap_or(out.text.len());
+        out.text.truncate(start);
+        return Err(format!(
+            "sqlite output exceeds byte cap ({next} > {max_bytes})"
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+fn render(cols: &[String], rows: &[Vec<Value>], opts: &OutputOpts) -> String {
+    let mut stdout = String::new();
+    render_bounded(&mut stdout, cols, rows, opts, usize::MAX).unwrap();
+    stdout
+}
+
+struct BoundedOutput<'a> {
+    text: &'a mut String,
+    remaining: usize,
+    rejected_at: Option<usize>,
+}
+
+impl BoundedOutput<'_> {
+    fn check_bytes(&mut self, bytes: usize) -> std::fmt::Result {
+        if bytes > self.remaining {
+            self.rejected_at = Some(self.text.len().saturating_add(bytes));
+            return Err(std::fmt::Error);
+        }
+        Ok(())
+    }
+
+    fn reserve_bytes(&mut self, bytes: usize) -> std::fmt::Result {
+        self.check_bytes(bytes)?;
+        self.remaining -= bytes;
+        Ok(())
+    }
+
+    fn repeat(&mut self, ch: char, count: usize) -> std::fmt::Result {
+        let bytes = ch.len_utf8().saturating_mul(count);
+        self.reserve_bytes(bytes)?;
+        self.text.extend(std::iter::repeat_n(ch, count));
+        Ok(())
+    }
+
+    fn json_string(&mut self, text: &str) -> std::fmt::Result {
+        serde_json::to_writer(self, text).map_err(|_| std::fmt::Error)
     }
 }
 
-/// CSV-quote per RFC 4180 when the field contains the separator, a quote, CR,
-/// or LF. Empty fields are written as-is (sqlite3 matches this).
-fn csv_quote(field: &str, sep: &str) -> String {
-    let needs_quote =
-        field.contains(sep) || field.contains('"') || field.contains('\n') || field.contains('\r');
-    if !needs_quote {
-        return field.to_string();
-    }
-    let escaped = field.replace('"', "\"\"");
-    format!("\"{escaped}\"")
-}
-
-/// JSON-encode a single Value in the same way sqlite3's `json` mode does:
-/// numbers are emitted unquoted, NULLs become `null`, blobs become a hex
-/// string, and text/everything else is JSON-encoded.
-fn json_value(v: &Value) -> String {
-    match v {
-        Value::Null => "null".to_string(),
-        Value::Numeric(Numeric::Integer(i)) => i.to_string(),
-        Value::Numeric(Numeric::Float(f)) => {
-            let f64v: f64 = (*f).into();
-            if f64v.is_finite() {
-                // Prefer compact representation matching sqlite3.
-                let s = format!("{f64v}");
-                // Force a `.0` suffix when serialising whole numbers so we
-                // can round-trip type information.
-                if s.contains('.') || s.contains('e') || s.contains('E') {
-                    s
-                } else {
-                    format!("{s}.0")
-                }
-            } else {
-                "null".to_string()
-            }
-        }
-        Value::Text(t) => serde_json::to_string(t.as_str()).unwrap_or_else(|_| "\"\"".to_string()),
-        Value::Blob(b) => {
-            // sqlite3's CLI emits blobs as hex strings in json mode.
-            let mut hex = String::with_capacity(b.len() * 2 + 2);
-            hex.push('"');
-            for byte in b {
-                use std::fmt::Write as _;
-                let _ = write!(hex, "{byte:02x}");
-            }
-            hex.push('"');
-            hex
-        }
+impl std::fmt::Write for BoundedOutput<'_> {
+    fn write_str(&mut self, text: &str) -> std::fmt::Result {
+        self.reserve_bytes(text.len())?;
+        self.text.push_str(text);
+        Ok(())
     }
 }
 
-/// Render a complete result set into the chosen output mode.
-///
-/// Statements that produce no columns at all (CREATE / INSERT / UPDATE / DELETE)
-/// render to the empty string. Statements with columns but zero rows also
-/// render to the empty string in row-oriented modes — matching sqlite3's
-/// behaviour, which never prints a lonely header row in list mode.
-pub(super) fn render(column_names: &[String], rows: &[Vec<Value>], opts: &OutputOpts) -> String {
-    if column_names.is_empty() {
-        return String::new();
+impl std::io::Write for BoundedOutput<'_> {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        // serde_json emits complete UTF-8 fragments for strings and ASCII escapes.
+        let text = std::str::from_utf8(bytes).map_err(std::io::Error::other)?;
+        self.write_str(text).map_err(std::io::Error::other)?;
+        Ok(bytes.len())
     }
-    if rows.is_empty() {
-        // json mode is the one exception: an empty array is meaningful.
-        if matches!(opts.mode, OutputMode::Json) {
-            return "[]\n".to_string();
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+fn display_value<'a>(
+    out: &mut BoundedOutput<'_>,
+    value: &'a Value,
+    null_text: &'a str,
+) -> Result<std::borrow::Cow<'a, str>, std::fmt::Error> {
+    Ok(match value {
+        Value::Null => null_text.into(),
+        Value::Text(text) => text.as_str().into(),
+        Value::Blob(bytes) => {
+            // Each invalid UTF-8 sequence consumes at most three input bytes
+            // and is replaced by a three-byte replacement character.
+            out.check_bytes(bytes.len())?;
+            String::from_utf8_lossy(bytes)
         }
-        return String::new();
+        Value::Numeric(_) => value.to_string().into(),
+    })
+}
+
+fn display_width(value: &Value, null_text: &str) -> usize {
+    match value {
+        Value::Null => null_text.chars().count(),
+        Value::Text(text) => text.as_str().chars().count(),
+        Value::Blob(bytes) => bytes
+            .utf8_chunks()
+            .map(|chunk| chunk.valid().chars().count() + usize::from(!chunk.invalid().is_empty()))
+            .sum(),
+        Value::Numeric(_) => value.to_string().chars().count(),
+    }
+}
+
+fn write_field(
+    out: &mut BoundedOutput<'_>,
+    field: &str,
+    separator: &str,
+    csv: bool,
+) -> std::fmt::Result {
+    if !csv || !(field.contains(separator) || field.contains(['"', '\n', '\r'])) {
+        return out.write_str(field);
+    }
+    out.write_char('"')?;
+    for (index, part) in field.split('"').enumerate() {
+        if index > 0 {
+            out.write_str("\"\"")?;
+        }
+        out.write_str(part)?;
+    }
+    out.write_char('"')
+}
+
+fn render_into(
+    out: &mut BoundedOutput<'_>,
+    cols: &[String],
+    rows: &[Vec<Value>],
+    opts: &OutputOpts,
+) -> std::fmt::Result {
+    if cols.is_empty() || (rows.is_empty() && opts.mode != OutputMode::Json) {
+        return Ok(());
     }
     match opts.mode {
-        OutputMode::List => render_separated(column_names, rows, &opts.separator, opts),
-        OutputMode::Tabs => render_separated(column_names, rows, "\t", opts),
-        OutputMode::Csv => render_csv(column_names, rows, &opts.separator, opts),
-        OutputMode::Line => render_line(column_names, rows, opts),
-        OutputMode::Column => render_column(column_names, rows, opts),
-        OutputMode::Box => render_box(column_names, rows, opts),
-        OutputMode::Json => render_json(column_names, rows, opts),
-        OutputMode::Markdown => render_markdown(column_names, rows, opts),
-    }
-}
-
-fn render_separated(cols: &[String], rows: &[Vec<Value>], sep: &str, opts: &OutputOpts) -> String {
-    let mut out = String::new();
-    if opts.headers {
-        out.push_str(&cols.join(sep));
-        out.push('\n');
-    }
-    for row in rows {
-        let line: Vec<String> = row
-            .iter()
-            .map(|v| render_value(v, &opts.null_text))
-            .collect();
-        out.push_str(&line.join(sep));
-        out.push('\n');
-    }
-    out
-}
-
-fn render_csv(cols: &[String], rows: &[Vec<Value>], sep: &str, opts: &OutputOpts) -> String {
-    // sqlite3 always quotes header in csv mode regardless of headers setting,
-    // but only if `.headers on` is set we emit it at all.
-    let mut out = String::new();
-    if opts.headers {
-        let line: Vec<String> = cols.iter().map(|c| csv_quote(c, sep)).collect();
-        out.push_str(&line.join(sep));
-        out.push('\n');
-    }
-    for row in rows {
-        let line: Vec<String> = row
-            .iter()
-            .map(|v| {
-                let s = render_value(v, &opts.null_text);
-                csv_quote(&s, sep)
-            })
-            .collect();
-        out.push_str(&line.join(sep));
-        out.push('\n');
-    }
-    out
-}
-
-fn render_line(cols: &[String], rows: &[Vec<Value>], opts: &OutputOpts) -> String {
-    let mut out = String::new();
-    let max_name = cols.iter().map(|c| c.len()).max().unwrap_or(0);
-    for (i, row) in rows.iter().enumerate() {
-        if i > 0 {
-            out.push('\n');
+        OutputMode::List | OutputMode::Tabs | OutputMode::Csv => {
+            let sep = if matches!(opts.mode, OutputMode::Tabs) {
+                "\t"
+            } else {
+                &opts.separator
+            };
+            let csv = matches!(opts.mode, OutputMode::Csv);
+            if opts.headers {
+                for (index, col) in cols.iter().enumerate() {
+                    if index > 0 {
+                        out.write_str(sep)?;
+                    }
+                    write_field(out, col, sep, csv)?;
+                }
+                out.write_char('\n')?;
+            }
+            for row in rows {
+                for (index, value) in row.iter().enumerate() {
+                    if index > 0 {
+                        out.write_str(sep)?;
+                    }
+                    let field = display_value(out, value, &opts.null_text)?;
+                    write_field(out, &field, sep, csv)?;
+                }
+                out.write_char('\n')?;
+            }
+            Ok(())
         }
-        for (col, v) in cols.iter().zip(row.iter()) {
-            let _ = std::fmt::Write::write_fmt(
-                &mut out,
-                format_args!(
-                    "{col:>width$} = {val}\n",
-                    col = col,
-                    width = max_name,
-                    val = render_value(v, &opts.null_text)
-                ),
-            );
+        OutputMode::Line => {
+            let width = cols.iter().map(String::len).max().unwrap_or_default();
+            for (index, row) in rows.iter().enumerate() {
+                if index > 0 {
+                    out.write_char('\n')?;
+                }
+                for (col, value) in cols.iter().zip(row) {
+                    out.repeat(' ', width - col.chars().count())?;
+                    out.write_str(col)?;
+                    out.write_str(" = ")?;
+                    let field = display_value(out, value, &opts.null_text)?;
+                    out.write_str(&field)?;
+                    out.write_char('\n')?;
+                }
+            }
+            Ok(())
+        }
+        OutputMode::Column | OutputMode::Box | OutputMode::Markdown => {
+            render_table(out, cols, rows, opts)
+        }
+        OutputMode::Json => render_json(out, cols, rows),
+    }
+}
+
+fn render_table(
+    out: &mut BoundedOutput<'_>,
+    cols: &[String],
+    rows: &[Vec<Value>],
+    opts: &OutputOpts,
+) -> std::fmt::Result {
+    let mut widths: Vec<_> = cols.iter().map(|col| col.chars().count()).collect();
+    for row in rows {
+        for (value, width) in row.iter().zip(&mut widths) {
+            *width = (*width).max(display_width(value, &opts.null_text));
         }
     }
-    out
-}
-
-fn col_widths(cols: &[String], rows: &[Vec<Value>], opts: &OutputOpts) -> Vec<usize> {
-    let mut widths: Vec<usize> = cols.iter().map(|c| c.chars().count()).collect();
-    for row in rows {
-        for (i, v) in row.iter().enumerate() {
-            let s = render_value(v, &opts.null_text);
-            if let Some(w) = widths.get_mut(i) {
-                *w = (*w).max(s.chars().count());
+    let (edge, divider, padding) = match opts.mode {
+        OutputMode::Box => ("│", "│", " "),
+        OutputMode::Markdown => ("|", "|", " "),
+        _ => ("", "  ", ""),
+    };
+    if matches!(opts.mode, OutputMode::Box) {
+        write_border(out, &widths, ('┌', '┬', '┐'), '─', 2)?;
+    }
+    if opts.headers || !matches!(opts.mode, OutputMode::Column) {
+        write_table_row(
+            out,
+            cols.iter().map(|col| TableCell::Header(col)),
+            &widths,
+            edge,
+            divider,
+            padding,
+        )?;
+        match opts.mode {
+            OutputMode::Box => write_border(out, &widths, ('├', '┼', '┤'), '─', 2)?,
+            OutputMode::Markdown => write_border(out, &widths, ('|', '|', '|'), '-', 2)?,
+            _ => {
+                for (index, width) in widths.iter().enumerate() {
+                    if index > 0 {
+                        out.write_str(divider)?;
+                    }
+                    out.repeat('-', *width)?;
+                }
+                out.write_char('\n')?;
             }
         }
     }
-    widths
-}
-
-fn render_column(cols: &[String], rows: &[Vec<Value>], opts: &OutputOpts) -> String {
-    let widths = col_widths(cols, rows, opts);
-    let mut out = String::new();
-    if opts.headers {
-        let pieces: Vec<String> = cols
-            .iter()
-            .zip(&widths)
-            .map(|(c, w)| format!("{c:<w$}", c = c, w = *w))
-            .collect();
-        out.push_str(&pieces.join("  "));
-        out.push('\n');
-        let dashes: Vec<String> = widths.iter().map(|w| "-".repeat(*w)).collect();
-        out.push_str(&dashes.join("  "));
-        out.push('\n');
-    }
     for row in rows {
-        let pieces: Vec<String> = row
-            .iter()
-            .zip(&widths)
-            .map(|(v, w)| {
-                let s = render_value(v, &opts.null_text);
-                format!("{s:<w$}", s = s, w = *w)
-            })
-            .collect();
-        out.push_str(&pieces.join("  "));
-        out.push('\n');
+        write_table_row(
+            out,
+            row.iter()
+                .map(|value| TableCell::Value(value, &opts.null_text)),
+            &widths,
+            edge,
+            divider,
+            padding,
+        )?;
     }
-    out
+    if matches!(opts.mode, OutputMode::Box) {
+        write_border(out, &widths, ('└', '┴', '┘'), '─', 2)?;
+    }
+    Ok(())
 }
 
-fn render_box(cols: &[String], rows: &[Vec<Value>], opts: &OutputOpts) -> String {
-    let widths = col_widths(cols, rows, opts);
-    let mut out = String::new();
-    let top = widths
-        .iter()
-        .map(|w| "─".repeat(w + 2))
-        .collect::<Vec<_>>()
-        .join("┬");
-    out.push_str(&format!("┌{top}┐\n"));
-    let header_pieces: Vec<String> = cols
-        .iter()
-        .zip(&widths)
-        .map(|(c, w)| format!(" {c:<w$} ", c = c, w = *w))
-        .collect();
-    out.push_str(&format!("│{}│\n", header_pieces.join("│")));
-    let mid = widths
-        .iter()
-        .map(|w| "─".repeat(w + 2))
-        .collect::<Vec<_>>()
-        .join("┼");
-    out.push_str(&format!("├{mid}┤\n"));
-    for row in rows {
-        let pieces: Vec<String> = row
-            .iter()
-            .zip(&widths)
-            .map(|(v, w)| {
-                let s = render_value(v, &opts.null_text);
-                format!(" {s:<w$} ", s = s, w = *w)
-            })
-            .collect();
-        out.push_str(&format!("│{}│\n", pieces.join("│")));
-    }
-    let bot = widths
-        .iter()
-        .map(|w| "─".repeat(w + 2))
-        .collect::<Vec<_>>()
-        .join("┴");
-    out.push_str(&format!("└{bot}┘\n"));
-    out
+enum TableCell<'a> {
+    Header(&'a str),
+    Value(&'a Value, &'a str),
 }
 
-fn render_json(cols: &[String], rows: &[Vec<Value>], _opts: &OutputOpts) -> String {
-    let mut out = String::from("[");
-    for (i, row) in rows.iter().enumerate() {
-        if i > 0 {
-            out.push(',');
+fn write_table_row<'a>(
+    out: &mut BoundedOutput<'_>,
+    cells: impl Iterator<Item = TableCell<'a>>,
+    widths: &[usize],
+    edge: &str,
+    divider: &str,
+    padding: &str,
+) -> std::fmt::Result {
+    out.write_str(edge)?;
+    for (index, (cell, width)) in cells.zip(widths).enumerate() {
+        if index > 0 {
+            out.write_str(divider)?;
         }
-        out.push('{');
-        for (j, (c, v)) in cols.iter().zip(row.iter()).enumerate() {
-            if j > 0 {
-                out.push(',');
+        out.write_str(padding)?;
+        let cell = match cell {
+            TableCell::Header(col) => col.into(),
+            TableCell::Value(value, null_text) => display_value(out, value, null_text)?,
+        };
+        out.write_str(&cell)?;
+        out.repeat(' ', width - cell.chars().count())?;
+        out.write_str(padding)?;
+    }
+    out.write_str(edge)?;
+    out.write_char('\n')
+}
+
+fn write_border(
+    out: &mut BoundedOutput<'_>,
+    widths: &[usize],
+    (left, middle, right): (char, char, char),
+    fill: char,
+    padding: usize,
+) -> std::fmt::Result {
+    out.write_char(left)?;
+    for (index, width) in widths.iter().enumerate() {
+        if index > 0 {
+            out.write_char(middle)?;
+        }
+        out.repeat(fill, width.saturating_add(padding))?;
+    }
+    out.write_char(right)?;
+    out.write_char('\n')
+}
+
+fn render_json(
+    out: &mut BoundedOutput<'_>,
+    cols: &[String],
+    rows: &[Vec<Value>],
+) -> std::fmt::Result {
+    out.write_char('[')?;
+    for (index, row) in rows.iter().enumerate() {
+        if index > 0 {
+            out.write_char(',')?;
+        }
+        out.write_char('{')?;
+        for (index, (col, value)) in cols.iter().zip(row).enumerate() {
+            if index > 0 {
+                out.write_char(',')?;
             }
-            let key = serde_json::to_string(c).unwrap_or_else(|_| "\"\"".to_string());
-            out.push_str(&key);
-            out.push(':');
-            out.push_str(&json_value(v));
+            out.json_string(col)?;
+            out.write_char(':')?;
+            match value {
+                Value::Null => out.write_str("null")?,
+                Value::Numeric(Numeric::Integer(i)) => write!(out, "{i}")?,
+                Value::Numeric(Numeric::Float(f)) => {
+                    let value: f64 = (*f).into();
+                    if value.is_finite() {
+                        let text = value.to_string();
+                        out.write_str(&text)?;
+                        if !text.contains(['.', 'e', 'E']) {
+                            out.write_str(".0")?;
+                        }
+                    } else {
+                        out.write_str("null")?;
+                    }
+                }
+                Value::Text(text) => out.json_string(text.as_str())?,
+                Value::Blob(bytes) => {
+                    out.write_char('"')?;
+                    for byte in bytes {
+                        write!(out, "{byte:02x}")?;
+                    }
+                    out.write_char('"')?;
+                }
+            }
         }
-        out.push('}');
+        out.write_char('}')?;
     }
-    out.push_str("]\n");
-    out
-}
-
-fn render_markdown(cols: &[String], rows: &[Vec<Value>], opts: &OutputOpts) -> String {
-    let widths = col_widths(cols, rows, opts);
-    let mut out = String::new();
-    let header_pieces: Vec<String> = cols
-        .iter()
-        .zip(&widths)
-        .map(|(c, w)| format!(" {c:<w$} ", c = c, w = *w))
-        .collect();
-    out.push_str(&format!("|{}|\n", header_pieces.join("|")));
-    let sep_pieces: Vec<String> = widths.iter().map(|w| "-".repeat(w + 2)).collect();
-    out.push_str(&format!("|{}|\n", sep_pieces.join("|")));
-    for row in rows {
-        let pieces: Vec<String> = row
-            .iter()
-            .zip(&widths)
-            .map(|(v, w)| {
-                let s = render_value(v, &opts.null_text);
-                format!(" {s:<w$} ", s = s, w = *w)
-            })
-            .collect();
-        out.push_str(&format!("|{}|\n", pieces.join("|")));
-    }
-    out
+    out.write_str("]\n")
 }
 
 #[cfg(test)]
@@ -513,5 +586,32 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(render(&cols, &rows, &opts), "");
+    }
+    #[test]
+    fn rendered_byte_limit_is_cumulative_in_every_mode() {
+        let cols = vec!["é".to_string(), "label".to_string()];
+        let rows = vec![
+            vec![v_text("short"), v_text("\"quoted\"")],
+            vec![v_text("a longer value"), Value::Null],
+        ];
+        for mode in [
+            "list", "tabs", "csv", "line", "column", "box", "markdown", "json",
+        ] {
+            let opts = OutputOpts {
+                mode: OutputMode::parse(mode).unwrap(),
+                headers: true,
+                ..OutputOpts::default()
+            };
+            let expected = render(&cols, &rows, &opts);
+            let mut stdout = String::from("prior");
+            render_bounded(&mut stdout, &cols, &rows, &opts, expected.len() + 5).unwrap();
+            assert_eq!(stdout, format!("prior{expected}"), "{mode}");
+
+            let mut stdout = String::from("prior");
+            let err =
+                render_bounded(&mut stdout, &cols, &rows, &opts, expected.len() + 4).unwrap_err();
+            assert!(err.contains("output exceeds byte cap"), "{mode}: {err}");
+            assert_eq!(stdout, "prior", "{mode}");
+        }
     }
 }
