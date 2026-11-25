@@ -176,7 +176,17 @@ exact boundaries, array/object updates, removal/COW cache invalidation, shared
 trees, `fromjson`, sticky failure and session recovery. Python's
 `test_jq_depth.py` runs the original 100,000-iteration case and related cleanup
 paths in timed child processes. `jq_fuzz` generates structured reductions near
-the boundary in addition to mutating filter text. Treat unbounded stack growth
+the boundary in addition to mutating filter text.
+`jq_value_depth_tests::generated_depth_bounded` replays the full-scale
+filters in the Rust suite inside a supervised child on a 2 MiB stack, so a
+regression fails one test instead of aborting the integration binary.
+`jq_value_depth_tests::container_mutation_sites_are_reviewed` inventories
+every line under `builtins/jq` that creates an `Rc`/`Metered` body or reaches
+into one mutably (`make_mut`, `get_mut`, `iter_mut`, ...). A vendor sync or
+new native that adds such a site fails that test; admit depth at the site (or
+show the operation preserves the maximum depth of admitted operands), then add
+it to the inventory. `MAX_JQ_JSON_DEPTH <= MAX_VALUE_DEPTH` is a compile-time
+assertion so accepted input always passes value admission. Treat unbounded stack growth
 in any lifecycle phase (parse/build/traverse/format/compare/drop/unwind) as an
 open containment defect, even when another resource dimension is bounded.
 
@@ -212,7 +222,8 @@ Part of the [maintenance](../operations/maintenance.md) pass:
 3. Re-check every `BASHKIT PATCH`: new growth paths (new natives, new
    container mutations) need a meter check or `resync()`. New containers must
    pass `metered`; mutations attaching arbitrary values must check child depth
-   and invalidate cached depth. Review recursive parsers before descent and
+   and invalidate cached depth. `container_mutation_sites_are_reviewed`
+   flags every new site; update its inventory only after that review. Review recursive parsers before descent and
    cover cleanup during errors as well as successful output.
 4. Match jaq-json's `Cargo.toml` dependency ranges in
    `crates/bashkit/Cargo.toml`, and keep `jaq-core`/`jaq-std` at the versions

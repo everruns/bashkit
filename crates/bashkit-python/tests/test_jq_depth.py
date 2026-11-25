@@ -31,8 +31,12 @@ def test_jq_generated_depth_does_not_abort_host(filter_text):
         assert recovered.stdout == "2\\n"
         assert recovered.stderr == ""
     """)
+    # CI runs pytest from the package directory, where a bare `python -c`
+    # child would import the source tree without `_bashkit`. Reuse the
+    # parent's import paths so the child loads the same built extension.
+    preamble = "import sys; sys.path[:0] = %r\n" % [p for p in sys.path if p]
     child = subprocess.run(
-        [sys.executable, "-c", code, filter_text],
+        [sys.executable, "-c", preamble + code, filter_text],
         capture_output=True,
         text=True,
         timeout=30,

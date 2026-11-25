@@ -65,7 +65,11 @@ sticky failure and session recovery. Python's `test_jq_depth.py` runs #3013's
 overflow fails the test without killing pytest. Keep pre-fix probes bounded;
 deep crash regressions belong in supervised children. `jq_fuzz` synthesizes
 short reductions around the depth boundary, since random source mutation
-rarely generates valid filters that amplify runtime structure. Review each
+rarely generates valid filters that amplify runtime structure. The Rust suite
+replays the same full-scale filters in
+`jq_value_depth_tests::generated_depth_bounded` (supervised child, 2 MiB
+stack), and `container_mutation_sites_are_reviewed` fails when a new
+container construction or mutation site appears under `builtins/jq`. Review each
 recursive lifecycle phase, including destruction while unwinding; panic
 catching alone is not a stack-overflow boundary. See
 [Vendored jaq-json](../runtimes/jaq-json-vendor.md#structural-depth-3013).
