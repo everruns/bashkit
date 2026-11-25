@@ -306,6 +306,70 @@ fn carries_through_expansion(text: &str, needle: &str) -> bool {
     text.contains(needle) || (text.contains('\0') && text.replace('\0', "").contains(needle))
 }
 
+/// True when `script` itself spells `pat`, so a diagnostic that quotes any
+/// slice of the script can reproduce `pat` with no internal formatter having
+/// run.
+///
+/// This is the banned-shape twin of the canary rule in
+/// [`assert_fuzz_invariants`], and it exists for the same reason: the
+/// detector arms the fuzzer against itself. Every `contains(pat)` below is
+/// instrumented, so libFuzzer harvests [`UNIVERSAL_BANNED`] into its
+/// dictionary and splices the shapes back into its own input. The targets
+/// that inline raw bytes then echo them, and the detector reports its own
+/// dictionary as a leak.
+///
+/// [`input_echo_would_trip`] gates that at the input layer, but it is opt-in
+/// and only 6 of 25 targets called it, so nightly fuzz run 304 went red on
+/// five at once: `envsubst_fuzz` and `archive_fuzz` on `Undefined::`,
+/// `csv_fuzz` and `tomlq_fuzz` on `/.rustup/toolchains/`, and `printf_fuzz`
+/// on `builtin failed unexpectedly`. Each echo came from a *builtin*
+/// diagnostic (`tomlq: path '<input>' not found`) rather than one of the
+/// real-shell templates [`strip_real_shell_error_lines`] knows, and
+/// enumerating every builtin's format string does not scale. Attribution
+/// does: the harness applies it to every caller, so a new target cannot
+/// forget it.
+///
+/// Padding mirrors [`DIAGNOSTIC_ECHO_PAD`] — a diagnostic wraps the quoted
+/// slot in `: ` on both sides, so a shape can be spelled across the join.
+/// A shape formed where the slot meets script text *inside* the script is
+/// not covered here; [`input_echo_would_trip`] remains the precise gate for
+/// that case (run 295's `wZTok:`), which is why the targets that call it
+/// keep doing so.
+///
+/// # Residual false negative
+///
+/// Attribution is whole-script and whole-stderr: once the script spells a
+/// shape, *every* occurrence of it in that stderr is excused, so a genuine
+/// leak of the same shape in the same execution is missed. Unlike the canary
+/// — a random per-run token — these are short dictionary strings, so the
+/// collision rate is not negligible.
+///
+/// Scoping the excuse to occurrences that sit next to quoted script text was
+/// considered and rejected on evidence: a diagnostic supplies its own
+/// punctuation around the slot, so the neighbouring bytes are template text,
+/// not script text. `printf '%d' 'Undefined::'` — the minimized form of one
+/// of the five run-304 failures — renders
+/// `bash: line 1: printf: Undefined::: invalid number`, where the shape is
+/// framed by `printf: ` and `: invalid number` while the script frames it
+/// with `'`. An adjacency rule finds no common run beyond the shape itself
+/// and reports a leak, so it would re-break `printf_fuzz` (and `yq`, whose
+/// `yq: /home/user/<slot>: No such file or directory` prefixes the slot with
+/// a host path). The run-304 units pass an adjacency test only because their
+/// surrounding bytes happened to come from the input.
+///
+/// What remains uncovered is narrow because the miss is per-input, not
+/// per-bug: carrying the shape is a feature of the input, not a precondition
+/// of the leak, so the fuzzer reaches the same formatter through inputs that
+/// do not carry it, and the static scan
+/// (`builtins::tests::no_debug_fmt_in_builtin_source`) plus the per-tool
+/// [`assert_no_leak`] cases are absolute either way. The one case genuinely
+/// hidden is a formatter whose leak is *triggered* by parsing the shape.
+fn script_explains(script: &str, pat: &str) -> bool {
+    let (lead, trail) = DIAGNOSTIC_ECHO_PAD;
+    carries_through_expansion(script, pat)
+        || carries_through_expansion(&format!("{lead}{}{trail}", script.trim()), pat)
+}
+
 /// Trailing halves of the real-shell diagnostic templates that quote user
 /// input. A line ending in one of these closes such a diagnostic.
 const SHELL_ERROR_SUFFIXES: &[&str] = &[
@@ -408,9 +472,13 @@ fn is_clap_error_chrome_line(line: &str) -> bool {
 }
 
 /// Full fuzz-invariant check. Like [`assert_no_leak`] but tolerates
-/// real-shell-style error lines (which echo user input verbatim) and
+/// real-shell-style error lines (which echo user input verbatim), skips a
+/// banned shape the `script` itself spells (see `script_explains`), and
 /// adds the host-canary check (TM-INF-013): the canary must not appear
 /// in stdout or stderr unless `script` accounts for it.
+///
+/// The stderr byte cap is absolute and applies either way — attribution
+/// excuses an echoed shape, never a flood.
 ///
 /// `script` is the script that produced `result`. The canary check is
 /// attribution-based rather than absolute because the detector arms the
@@ -433,6 +501,11 @@ pub fn assert_fuzz_invariants(result: &ExecResult, script: &str, ctx: &str, tool
     );
     let stripped = strip_real_shell_error_lines(stderr);
     for pat in UNIVERSAL_BANNED.iter().chain(tool_banned.iter()) {
+        // Only a shape the script cannot explain is an internal leak. See
+        // `script_explains` for why this is attribution and not an absolute.
+        if script_explains(script, pat) {
+            continue;
+        }
         assert!(
             !stripped.contains(pat),
             "[{ctx}] stderr leaks banned shape `{pat}` (after stripping shell echoes):\n\
@@ -544,6 +617,124 @@ mod tests {
             ..Default::default()
         };
         assert_fuzz_invariants(&result, "env", "canary_leak_stdout", &[]);
+    }
+
+    #[test]
+    fn banned_shape_the_script_spells_is_an_echo() {
+        // Nightly fuzz run 304: `envsubst_fuzz` and `archive_fuzz` inlined an
+        // input holding the literal `Undefined::`, the builtin echoed it back,
+        // and the detector called its own dictionary entry a Debug leak. No
+        // real-shell template wraps the echo, so `strip_real_shell_error_lines`
+        // cannot see it; attribution against the script can.
+        let result = ExecResult {
+            stderr: "\0Undefined::\0\0\0~?".into(),
+            ..Default::default()
+        };
+        assert_fuzz_invariants(
+            &result,
+            "echo '\0Undefined::\0' | envsubst",
+            "script_echo",
+            &[],
+        );
+    }
+
+    #[test]
+    fn banned_shape_echoed_by_a_builtin_diagnostic_is_not_a_leak() {
+        // Same run, `tomlq_fuzz`: the builtin quotes the user-supplied path
+        // verbatim, and the path was `/.rustup/toolchains/`. Also `printf_fuzz`,
+        // whose `invalid number` diagnostic quoted `builtin failed unexpectedly`
+        // straight out of the input.
+        let result = ExecResult {
+            stderr: "tomlq: path '/.rustup/toolchains/x' not found\n".into(),
+            ..Default::default()
+        };
+        assert_fuzz_invariants(
+            &result,
+            "tomlq '/.rustup/toolchains/x' f.toml",
+            "script_echo_tomlq",
+            &[],
+        );
+
+        let result = ExecResult {
+            stderr: "bash: line 1: printf:  )builtin failed unexpectedlyT: invalid number".into(),
+            ..Default::default()
+        };
+        assert_fuzz_invariants(
+            &result,
+            "printf '%d' ' )builtin failed unexpectedlyT'",
+            "script_echo_printf",
+            &[],
+        );
+    }
+
+    #[test]
+    fn banned_shape_the_script_spells_across_a_nul_is_an_echo() {
+        // The shell drops NUL during word expansion, so a script carrying
+        // `/.rustup/tool\0chains/` renders the banned shape on stderr while
+        // no literal match exists in the script. Same transformation
+        // `input_echo_would_trip` already accounts for.
+        let result = ExecResult {
+            stderr: "'\n_/.rustup/toolchains/\0\0".into(),
+            ..Default::default()
+        };
+        assert_fuzz_invariants(
+            &result,
+            "csvlook '/.rustup/tool\0chains/'",
+            "script_echo_nul",
+            &[],
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "stderr leaks banned shape `Undefined::`")]
+    fn banned_shape_absent_from_the_script_is_still_a_leak() {
+        // The point of the attribution rule: a shape the script never spells
+        // can only have come from an internal formatter (TM-INF-022).
+        let result = ExecResult {
+            stderr: "unexpected Undefined::Ident at offset 3".into(),
+            ..Default::default()
+        };
+        assert_fuzz_invariants(&result, "jq '.a' f.json", "real_leak", &[]);
+    }
+
+    #[test]
+    #[should_panic(expected = "stderr leaks banned shape `/rustc/`")]
+    fn host_path_absent_from_the_script_is_still_a_leak() {
+        let result = ExecResult {
+            stderr: "panic at /rustc/abc/library/core/src/option.rs:1".into(),
+            ..Default::default()
+        };
+        assert_fuzz_invariants(&result, "yq '.a' f.yaml", "real_host_path", &[]);
+    }
+
+    #[test]
+    #[should_panic(expected = "stderr leaks banned shape `Mapping {`")]
+    fn tool_banned_shape_absent_from_the_script_is_still_a_leak() {
+        // Attribution applies to the per-tool list too, and must not weaken it
+        // when the script is clean.
+        let result = ExecResult {
+            stderr: "Mapping { keys: 2 }".into(),
+            ..Default::default()
+        };
+        assert_fuzz_invariants(&result, "yq '.a' f.yaml", "real_tool_leak", &["Mapping {"]);
+    }
+
+    #[test]
+    fn attribution_does_not_relax_the_stderr_cap() {
+        // A script that spells a banned shape still may not flood stderr.
+        let result = ExecResult {
+            stderr: "Undefined::".repeat(200).into(),
+            ..Default::default()
+        };
+        let err = std::panic::catch_unwind(|| {
+            assert_fuzz_invariants(&result, "echo Undefined::", "cap_still_on", &[]);
+        })
+        .expect_err("the byte cap must still fire");
+        let msg = err
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .unwrap_or_default();
+        assert!(msg.contains("stderr exceeds"), "{msg}");
     }
 
     #[test]

@@ -229,6 +229,14 @@ using `bashkit::testing::assert_no_leak` with malformed input. Run fuzz
 cases through `bashkit::testing::fuzz_exec` so they check output invariants.
 See the [threat model](threat-model.md) and the `bashkit::testing` rustdoc.
 
+A banned shape the executed script itself spells is an echo, not a leak, and
+`assert_fuzz_invariants` skips it for that script only (`script_explains`).
+A diagnostic that quotes its operand therefore needs no new strip template.
+`assert_no_leak` has no script to attribute against and stays absolute, so
+hand-written `no_leak_*` cases must not put a banned shape in their input.
+Replays of the inputs that turned nightly fuzz runs red live in
+`crates/bashkit/tests/fuzz_crash_regressions.rs`.
+
 ## Filesystem Certification
 
 The backend-neutral helper in
