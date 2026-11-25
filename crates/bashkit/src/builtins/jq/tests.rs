@@ -1716,7 +1716,12 @@ mod differential {
     fn run_real_jq(args: &[&str], input: &str) -> Option<(String, i32)> {
         use std::io::Write;
         use std::process::{Command, Stdio};
-        let mut child = Command::new("jq")
+        let mut command = Command::new("jq");
+        // Bashkit streams have Unix newlines on every host. Native Windows jq
+        // otherwise translates stdout to CRLF before the oracle can compare it.
+        #[cfg(windows)]
+        command.arg("--binary");
+        let mut child = command
             .args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

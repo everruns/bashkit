@@ -474,12 +474,7 @@ impl Val {
                 #[cfg(feature = "experimental_jq")]
                 {
                     let o = Rc::make_mut(o);
-                    let old = o.take(index).unwrap_or_default();
-                    if let Some(value) = f(old).next().transpose()? {
-                        o.insert(index.clone(), value)?;
-                    } else {
-                        o.remove(index);
-                    }
+                    o.update(index.clone(), |old| f(old).next().transpose())?;
                 }
                 #[cfg(not(feature = "experimental_jq"))]
                 {

@@ -38,7 +38,11 @@ impl<T: Footprint + Clone + ValueDepth + Default> Clone for Container<T> {
         if !meter::require(self.body.footprint()) {
             return Self::default(); // panic-abort: do not copy rejected storage
         }
-        Self::admit(self.body.clone())
+        // A copy of an admitted body has the same children and depth. Scanning
+        // it again adds linear work immediately before COW invalidates depth.
+        Self {
+            body: self.body.clone(),
+        }
     }
 }
 
@@ -85,9 +89,21 @@ fn child(value: &Val) -> Result<(), Error> {
 impl Container<Vec<Val>> {
     fn reserve(&mut self, len: usize) -> Result<(), Error> {
         if len > self.body.capacity() {
-            let additional = len - self.body.capacity();
+            // Keep append-by-index amortized, while admitting exact growth
+            // when the geometric spare capacity would exceed the byte budget.
+            let geometric = len.max(self.body.capacity().max(1).saturating_mul(2));
+            let capacity = if geometric
+                .saturating_sub(self.body.capacity())
+                .saturating_mul(size_of::<Val>())
+                <= meter::headroom()
+            {
+                geometric
+            } else {
+                len
+            };
+            let additional = capacity - self.body.capacity();
             meter::check(additional.saturating_mul(size_of::<Val>()))?;
-            let additional_len = len - self.body.len();
+            let additional_len = capacity - self.body.len();
             self.body.reserve_exact(additional_len);
             self.body.resync();
         }
@@ -97,7 +113,7 @@ impl Container<Vec<Val>> {
     pub(super) fn push(&mut self, value: Val) -> Result<(), Error> {
         child(&value)?;
         if self.len() == self.capacity() {
-            self.reserve(self.capacity().max(1).saturating_mul(2))?;
+            self.reserve(self.len().saturating_add(1))?;
         }
         self.body.push(value);
         Ok(())
@@ -155,30 +171,54 @@ impl Container<Vec<Val>> {
 
 impl Container<Map> {
     pub(super) fn insert(&mut self, key: Val, value: Val) -> Result<(), Error> {
+        self.update(key, |_| Ok(Some(value)))
+    }
+
+    /// Transform one owned child without exposing a mutable entry. IndexMap's
+    /// entry lookup does not allocate; only vacant insertion can grow storage.
+    /// Admit that growth before insertion and reconcile it before returning.
+    pub(super) fn update<E: From<Error>>(
+        &mut self,
+        key: Val,
+        change: impl FnOnce(Val) -> Result<Option<Val>, E>,
+    ) -> Result<(), E> {
+        use indexmap::map::Entry;
         child(&key)?;
-        child(&value)?;
-        if !self.body.contains_key(&key) && self.len() == self.capacity() {
-            // IndexMap chooses geometric capacities for its entry/index tables.
-            // Admit a conservative full replacement while the old body lives.
-            // Include IndexMap's minimum table allocation even at len == 0.
+        let may_grow = self.len() == self.capacity();
+        let growth = if may_grow {
+            // Include IndexMap's minimum table and geometric replacement.
             let capacity = self.len().saturating_add(1).next_power_of_two().max(4);
-            let bytes = capacity
+            capacity
                 .saturating_mul(2)
-                .saturating_mul(size_of::<(Val, Val)>() + 2 * size_of::<usize>());
-            meter::check(bytes)?;
-            self.body.reserve(1);
-            self.body.resync();
+                .saturating_mul(size_of::<(Val, Val)>() + 2 * size_of::<usize>())
+        } else {
+            0
+        };
+        match self.body.entry(key) {
+            Entry::Occupied(mut entry) => {
+                // Taking preserves string-buffer uniqueness in update folds.
+                let old = std::mem::take(entry.get_mut());
+                if let Some(value) = change(old)? {
+                    child(&value)?;
+                    entry.insert(value);
+                } else {
+                    entry.swap_remove();
+                }
+            }
+            Entry::Vacant(entry) => {
+                if let Some(value) = change(Val::Null)? {
+                    child(&value)?;
+                    if may_grow {
+                        meter::check(growth)?;
+                    }
+                    entry.insert(value);
+                    if may_grow {
+                        self.body.resync();
+                    }
+                }
+            }
         }
-        self.body.insert(key, value);
         Ok(())
-    }
-
-    pub(super) fn take(&mut self, key: &Val) -> Option<Val> {
-        self.body.get_mut(key).map(std::mem::take)
-    }
-
-    pub(super) fn remove(&mut self, key: &Val) {
-        self.body.swap_remove(key);
     }
 
     pub(super) fn append(&mut self, values: &Self) -> Result<(), Error> {
@@ -223,14 +263,16 @@ pub(super) fn entries(object: &Container<Map>) -> Metered<Vec<(&Val, &Val)>> {
 pub(super) fn merge(left: &mut Rc<Container<Map>>, right: Rc<Container<Map>>) -> Result<(), Error> {
     let left = Rc::make_mut(left);
     for (key, value) in super::jaq_json::rc_unwrap_or_clone(right) {
-        let value = match (left.take(&key), value) {
-            (Some(Val::Obj(mut left)), Val::Obj(right)) => {
-                merge(&mut left, right)?;
-                Val::Obj(left)
-            }
-            (_, value) => value,
-        };
-        left.insert(key, value)?;
+        left.update(key, |old| {
+            let value = match (old, value) {
+                (Val::Obj(mut left), Val::Obj(right)) => {
+                    merge(&mut left, right)?;
+                    Val::Obj(left)
+                }
+                (_, value) => value,
+            };
+            Ok::<_, Error>(Some(value))
+        })?;
     }
     Ok(())
 }
