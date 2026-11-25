@@ -74,6 +74,15 @@ Do you need a custom filesystem?
 - Uses the same POSIX-rooted path normalization as `InMemoryFs` on every host.
   On Windows, `\` is accepted as an alternate separator, host drive/UNC/device
   prefixes are discarded, and VFS lookup remains case-sensitive.
+- Recursive lower-layer directory deletion stages whiteouts before changing the
+  overlay. The entry budget is the sum of the configured file and directory
+  counts, capped at 20,000. The budget also limits how many paths recursive
+  deletion can add to the overlay's retained whiteout and usage records.
+  Descendant paths must fit the configured path limits and the default path
+  length and depth limits. If preflight fails, the overlay remains intact.
+  The lower backend must support `read_dir_limited` so it can enforce the
+  listing cap during enumeration. Recursive deletion returns an error if the
+  backend lacks that support.
 
 #### MountableFs
 - Mount multiple filesystems at different paths

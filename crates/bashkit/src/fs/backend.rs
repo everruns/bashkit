@@ -180,6 +180,13 @@ pub trait FsBackend: Send + Sync {
     /// - `NotFound` if path doesn't exist
     async fn read_dir(&self, path: &Path) -> Result<Vec<DirEntry>>;
 
+    /// List a complete directory with at most `max_entries` entries.
+    ///
+    /// Implementations must stop enumeration if the limit is exceeded.
+    async fn read_dir_limited(&self, _path: &Path, _max_entries: usize) -> Result<Vec<DirEntry>> {
+        Err(super::traits::fs_errors::bounded_listing_unsupported())
+    }
+
     /// Check if path exists.
     async fn exists(&self, path: &Path) -> Result<bool>;
 

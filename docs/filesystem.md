@@ -140,6 +140,11 @@ over a copy of the bashkit repository.
 | **ReadOnlyFs** | Delegates reads, denies every mutation with `PermissionDenied`, even writes to `/tmp`, `cp`, `mv`, `rm`, `chmod`. For inspection-only sessions. |
 | **RealFs** (`realfs` feature) | Direct access to a host directory. Read-only (safe) or read-write (dangerous); path traversal blocked by canonicalisation + root-prefix checks. |
 
+An overlay checks its traversal and whiteout budgets before recursively
+deleting a lower-layer directory. Custom lower filesystems must implement
+`FileSystem::read_dir_limited` to support this operation. If the check fails,
+the directory remains in place and `rm -rf` reports the error.
+
 ## Mounting host directories
 
 Real host access is **opt-in and read-only by default**. The `realfs` feature

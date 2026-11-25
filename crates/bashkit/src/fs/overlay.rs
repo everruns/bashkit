@@ -44,6 +44,9 @@ use super::traits::{DirEntry, FileSystem, FileSystemExt, FileType, Metadata};
 use super::vfs_join;
 use crate::error::Result;
 
+// Keep the recursive-delete budget finite even with unlimited filesystem limits.
+const MAX_RECURSIVE_DELETE_ENTRIES: usize = 20_000;
+
 /// Copy-on-write overlay filesystem.
 ///
 /// `OverlayFs` layers a writable upper filesystem on top of a read-only base
@@ -134,6 +137,10 @@ use crate::error::Result;
 /// # }
 /// ```
 ///
+/// Recursive deletion of a lower-layer directory requires support for
+/// [`FileSystem::read_dir_limited`] on the lower layer. The overlay checks its
+/// traversal and retained whiteout budgets before removing any upper entries.
+///
 /// # Directory Listing
 ///
 /// When listing directories, entries from both layers are merged, with the
@@ -172,6 +179,8 @@ pub struct OverlayFs {
     upper: InMemoryFs,
     /// Paths that have been deleted (whiteouts)
     whiteouts: RwLock<HashSet<PathBuf>>,
+    // Serialize deletes so they cannot concurrently spend the whiteout budget.
+    remove_lock: tokio::sync::Mutex<()>,
     /// Combined limits for the overlay view
     limits: FsLimits,
     // Tracks lower-layer usage that is hidden by upper overrides or whiteouts.
@@ -265,6 +274,7 @@ impl OverlayFs {
             lower,
             upper: InMemoryFs::with_limits(limits.clone()),
             whiteouts: RwLock::new(HashSet::new()),
+            remove_lock: tokio::sync::Mutex::new(()),
             limits,
             lower_hidden: RwLock::new(FsUsage::default()),
             lower_hidden_paths: RwLock::new(HashSet::new()),
@@ -318,6 +328,14 @@ impl OverlayFs {
         FsUsage::new(total_bytes, file_count, dir_count)
     }
 
+    fn hide_lower_entry(&self, path: &Path, metadata: &Metadata) {
+        if metadata.file_type.is_dir() {
+            self.hide_lower_dir(path);
+        } else {
+            self.hide_lower_file(path, metadata.size);
+        }
+    }
+
     /// Record a lower-layer file as hidden (overridden or whited out).
     fn hide_lower_file(&self, path: &Path, size: u64) {
         if !self.record_hidden_path(path) {
@@ -344,35 +362,147 @@ impl OverlayFs {
         hidden_paths.insert(path)
     }
 
-    /// Recursively enumerate lower-layer children and record them as hidden.
-    /// Called during recursive directory delete so usage stays accurate.
-    async fn hide_lower_children_recursive(&self, dir: &Path) {
-        if let Ok(entries) = self.lower.read_dir(dir).await {
-            for entry in entries {
-                let child = vfs_join(dir, &entry.name);
-                if self.is_whiteout(&child) {
-                    continue;
+    async fn read_dir_with_limit(
+        &self,
+        path: &Path,
+        limit: Option<usize>,
+    ) -> Result<Vec<DirEntry>> {
+        // THREAT[TM-DOS-039]: Validate path before use
+        self.limits
+            .validate_path(path)
+            .map_err(|e| IoError::new(ErrorKind::InvalidInput, e.to_string()))?;
+        let path = Self::normalize_path(path);
+
+        // Check for whiteout
+        if self.is_whiteout(&path) {
+            return Err(IoError::new(ErrorKind::NotFound, "not found").into());
+        }
+
+        // Overlay precedence: upper layer decides path type when present.
+        let is_dir_upper = if let Ok(meta) = self.upper.stat(&path).await {
+            if !meta.file_type.is_dir() {
+                return Err(IoError::other("not a directory").into());
+            }
+            true
+        } else {
+            false
+        };
+        let is_dir_lower = if let Ok(meta) = self.lower.stat(&path).await {
+            if !meta.file_type.is_dir() {
+                if !is_dir_upper {
+                    return Err(IoError::other("not a directory").into());
                 }
-                if let Ok(meta) = self.lower.stat(&child).await {
-                    match meta.file_type {
-                        FileType::File | FileType::Symlink | FileType::Fifo
-                            if !self.upper.exists(&child).await.unwrap_or(false) =>
-                        {
-                            self.hide_lower_file(&child, meta.size);
-                            self.add_whiteout(&child);
-                        }
-                        FileType::Directory => {
-                            self.hide_lower_dir(&child);
-                            // THREAT[TM-DOS-038]: Materialize child whiteouts so
-                            // recreating the parent does not reveal accounted children.
-                            Box::pin(self.hide_lower_children_recursive(&child)).await;
-                            self.add_whiteout(&child);
-                        }
-                        _ => {}
-                    }
+                false
+            } else {
+                true
+            }
+        } else {
+            false
+        };
+
+        if !is_dir_lower && !is_dir_upper {
+            return Err(IoError::new(ErrorKind::NotFound, "not found").into());
+        }
+
+        let mut entries: std::collections::HashMap<String, DirEntry> =
+            std::collections::HashMap::new();
+
+        // Get entries from lower (if not whited out)
+        if is_dir_lower {
+            let lower_entries = match limit {
+                Some(limit) => self.lower.read_dir_limited(&path, limit).await?,
+                None => self.lower.read_dir(&path).await.unwrap_or_default(),
+            };
+            for entry in lower_entries {
+                // Skip whited out entries
+                let entry_path = vfs_join(&path, &entry.name);
+                if !self.is_whiteout(&entry_path) {
+                    entries.insert(entry.name.clone(), entry);
                 }
             }
         }
+
+        // Overlay with entries from upper (overriding lower)
+        if is_dir_upper {
+            let upper_entries = match limit {
+                Some(limit) => self.upper.read_dir_limited(&path, limit).await?,
+                None => self.upper.read_dir(&path).await.unwrap_or_default(),
+            };
+            for entry in upper_entries {
+                entries.insert(entry.name.clone(), entry);
+            }
+        }
+
+        if limit.is_some_and(|limit| entries.len() > limit) {
+            return Err(super::traits::fs_errors::directory_entry_limit());
+        }
+        Ok(entries.into_values().collect())
+    }
+
+    /// THREAT[TM-DOS-038]: Stage bounded descendant whiteouts before changing either layer.
+    /// Keeping child markers prevents the lower subtree from reappearing on recreation.
+    async fn stage_recursive_delete(&self, root: &Path) -> Result<Vec<(PathBuf, Metadata)>> {
+        let limit = self
+            .limits
+            .max_file_count
+            .saturating_add(self.limits.max_dir_count)
+            .min(MAX_RECURSIVE_DELETE_ENTRIES as u64) as usize;
+        let retained = self
+            .whiteouts
+            .read()
+            .unwrap()
+            .len()
+            .max(self.lower_hidden_paths.read().unwrap().len());
+        let available = limit
+            .saturating_sub(retained)
+            .checked_sub(1) // Reserve the root marker.
+            .ok_or_else(Self::recursive_delete_limit)?;
+        let path_limits = FsLimits::default();
+        path_limits
+            .validate_path(root)
+            .map_err(|_| Self::recursive_delete_limit())?;
+
+        let mut remaining = limit - 1;
+        let mut dirs = vec![root.to_path_buf()];
+        let mut staged = Vec::new();
+        while let Some(dir) = dirs.pop() {
+            tokio::task::yield_now().await;
+            let entries = self.lower.read_dir_limited(&dir, remaining).await?;
+            remaining = remaining
+                .checked_sub(entries.len())
+                .ok_or_else(Self::recursive_delete_limit)?;
+            for entry in entries {
+                if entry.name.len() > path_limits.max_filename_length {
+                    return Err(Self::recursive_delete_limit());
+                }
+                let child = vfs_join(&dir, &entry.name);
+                if Self::normalize_path(&child) != child || child.parent() != Some(dir.as_path()) {
+                    return Err(
+                        IoError::new(ErrorKind::InvalidData, "invalid directory entry").into(),
+                    );
+                }
+                for limits in [&self.limits, &path_limits] {
+                    limits
+                        .validate_path(&child)
+                        .map_err(|_| Self::recursive_delete_limit())?;
+                }
+                if self.is_whiteout(&child) {
+                    continue;
+                }
+                if staged.len() == available {
+                    return Err(Self::recursive_delete_limit());
+                }
+                if entry.metadata.file_type.is_dir() {
+                    dirs.push(child.clone());
+                }
+                staged.push((child, entry.metadata));
+            }
+        }
+        Ok(staged)
+    }
+
+    fn recursive_delete_limit() -> crate::error::Error {
+        IoError::other("overlay recursive delete limit exceeded").into()
     }
 
     /// Check limits before writing.
@@ -645,7 +775,7 @@ impl FileSystem for OverlayFs {
             .map_err(|e| IoError::new(ErrorKind::InvalidInput, e.to_string()))?;
         let path = Self::normalize_path(path);
 
-        // Check if exists in either layer
+        let _remove_guard = self.remove_lock.lock().await;
         let in_upper = self.upper.exists(&path).await.unwrap_or(false);
         let in_lower = !self.is_whiteout(&path) && self.lower.exists(&path).await.unwrap_or(false);
 
@@ -653,33 +783,32 @@ impl FileSystem for OverlayFs {
             return Err(IoError::new(ErrorKind::NotFound, "not found").into());
         }
 
-        // Remove from upper if present
+        let lower_metadata = if in_lower {
+            Some(self.lower.stat(&path).await?)
+        } else {
+            None
+        };
+        let staged = if recursive
+            && lower_metadata
+                .as_ref()
+                .is_some_and(|meta| meta.file_type.is_dir())
+        {
+            self.stage_recursive_delete(&path).await?
+        } else {
+            Vec::new()
+        };
+
         if in_upper {
             self.upper.remove(&path, recursive).await?;
         }
 
-        // If was in lower, add whiteout and track hiding.
-        // File upper overrides already hide the lower file. Recursive directory
-        // deletes must still materialize child whiteouts because upper directory
-        // overlays merge lower children instead of replacing the subtree.
-        if in_lower {
-            if let Ok(meta) = self.lower.stat(&path).await {
-                match meta.file_type {
-                    FileType::File | FileType::Symlink | FileType::Fifo if !in_upper => {
-                        self.hide_lower_file(&path, meta.size)
-                    }
-                    FileType::Directory => {
-                        if !in_upper {
-                            self.hide_lower_dir(&path);
-                        }
-                        // THREAT[TM-DOS-038]: Recursive delete must track all
-                        // lower children for accurate usage deduction.
-                        if recursive {
-                            self.hide_lower_children_recursive(&path).await;
-                        }
-                    }
-                    _ => {}
-                }
+        if let Some(meta) = lower_metadata {
+            if !in_upper {
+                self.hide_lower_entry(&path, &meta);
+            }
+            for (child, metadata) in staged {
+                self.hide_lower_entry(&child, &metadata);
+                self.add_whiteout(&child);
             }
             self.add_whiteout(&path);
         }
@@ -709,65 +838,11 @@ impl FileSystem for OverlayFs {
     }
 
     async fn read_dir(&self, path: &Path) -> Result<Vec<DirEntry>> {
-        // THREAT[TM-DOS-039]: Validate path before use
-        self.limits
-            .validate_path(path)
-            .map_err(|e| IoError::new(ErrorKind::InvalidInput, e.to_string()))?;
-        let path = Self::normalize_path(path);
+        self.read_dir_with_limit(path, None).await
+    }
 
-        // Check for whiteout
-        if self.is_whiteout(&path) {
-            return Err(IoError::new(ErrorKind::NotFound, "not found").into());
-        }
-
-        // Overlay precedence: upper layer decides path type when present.
-        let is_dir_upper = if let Ok(meta) = self.upper.stat(&path).await {
-            if !meta.file_type.is_dir() {
-                return Err(IoError::other("not a directory").into());
-            }
-            true
-        } else {
-            false
-        };
-        let is_dir_lower = if let Ok(meta) = self.lower.stat(&path).await {
-            if !meta.file_type.is_dir() {
-                if !is_dir_upper {
-                    return Err(IoError::other("not a directory").into());
-                }
-                false
-            } else {
-                true
-            }
-        } else {
-            false
-        };
-
-        if !is_dir_lower && !is_dir_upper {
-            return Err(IoError::new(ErrorKind::NotFound, "not found").into());
-        }
-
-        let mut entries: std::collections::HashMap<String, DirEntry> =
-            std::collections::HashMap::new();
-
-        // Get entries from lower (if not whited out)
-        if is_dir_lower && let Ok(lower_entries) = self.lower.read_dir(&path).await {
-            for entry in lower_entries {
-                // Skip whited out entries
-                let entry_path = vfs_join(&path, &entry.name);
-                if !self.is_whiteout(&entry_path) {
-                    entries.insert(entry.name.clone(), entry);
-                }
-            }
-        }
-
-        // Overlay with entries from upper (overriding lower)
-        if is_dir_upper && let Ok(upper_entries) = self.upper.read_dir(&path).await {
-            for entry in upper_entries {
-                entries.insert(entry.name.clone(), entry);
-            }
-        }
-
-        Ok(entries.into_values().collect())
+    async fn read_dir_limited(&self, path: &Path, max_entries: usize) -> Result<Vec<DirEntry>> {
+        self.read_dir_with_limit(path, Some(max_entries)).await
     }
 
     async fn exists(&self, path: &Path) -> Result<bool> {
@@ -1764,6 +1839,102 @@ mod tests {
             result.is_err(),
             "should reject when combined file count exceeds limit"
         );
+    }
+
+    #[tokio::test]
+    async fn recursive_delete_budget_preserves_overlay_on_refusal() {
+        let lower = Arc::new(InMemoryFs::new());
+        lower.mkdir(Path::new("/dir/sub"), true).await.unwrap();
+        for name in 'a'..='l' {
+            let path = format!("/dir/sub/{name}");
+            lower.write_file(Path::new(&path), b"a").await.unwrap();
+        }
+        let limits = FsLimits::new().max_file_count(4).max_dir_count(8);
+        let overlay = Arc::new(OverlayFs::with_limits(lower, limits));
+        overlay.upper.mkdir(Path::new("/dir"), false).await.unwrap();
+        overlay
+            .upper
+            .write_file(Path::new("/dir/local"), b"local")
+            .await
+            .unwrap();
+        let before = overlay.usage();
+
+        let mut bash = crate::Bash::builder().fs(overlay.clone()).build();
+        let result = bash.exec("rm -rf /dir").await.unwrap();
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("directory entry limit exceeded"));
+
+        let after = overlay.usage();
+        assert_eq!(after.total_bytes, before.total_bytes);
+        assert_eq!(after.file_count, before.file_count);
+        assert_eq!(after.dir_count, before.dir_count);
+        assert_eq!(
+            overlay.read_file(Path::new("/dir/local")).await.unwrap(),
+            b"local"
+        );
+        assert_eq!(
+            overlay.read_file(Path::new("/dir/sub/a")).await.unwrap(),
+            b"a"
+        );
+        assert!(overlay.whiteouts.read().unwrap().is_empty());
+        assert!(overlay.lower_hidden_paths.read().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn recursive_deletes_share_the_retained_path_budget() {
+        let lower = Arc::new(InMemoryFs::new());
+        for dir in ["/left", "/right"] {
+            lower.mkdir(Path::new(dir), false).await.unwrap();
+            for name in 'a'..='e' {
+                let path = format!("{dir}/{name}");
+                lower.write_file(Path::new(&path), b"a").await.unwrap();
+            }
+        }
+        let limits = FsLimits::new().max_file_count(3).max_dir_count(8);
+        let overlay = OverlayFs::with_limits(lower, limits);
+
+        let (left, right) = tokio::join!(
+            overlay.remove(Path::new("/left"), true),
+            overlay.remove(Path::new("/right"), true),
+        );
+
+        assert!(left.is_ok() ^ right.is_ok());
+        assert_eq!(overlay.whiteouts.read().unwrap().len(), 6);
+        assert_eq!(overlay.lower_hidden_paths.read().unwrap().len(), 6);
+    }
+
+    #[tokio::test]
+    async fn recursive_delete_requires_bounded_lower_listings() {
+        let lower = Arc::new(InMemoryFs::new());
+        lower.mkdir(Path::new("/dir"), false).await.unwrap();
+        let overlay = OverlayFs::new(Arc::new(ReadTrackingFs::new(lower)));
+
+        let err = overlay.remove(Path::new("/dir"), true).await.unwrap_err();
+
+        assert!(matches!(err, crate::Error::Io(err) if err.kind() == ErrorKind::Unsupported));
+        assert!(overlay.exists(Path::new("/dir")).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn recursive_delete_works_with_a_text_mount_overlay() {
+        let lower = Arc::new(InMemoryFs::new());
+        lower.mkdir(Path::new("/dir"), false).await.unwrap();
+        lower
+            .write_file(Path::new("/dir/file"), b"data")
+            .await
+            .unwrap();
+        let mut bash = crate::Bash::builder()
+            .fs(Arc::new(OverlayFs::new(lower)))
+            .mount_text("/mounted", "text")
+            .build();
+
+        let result = bash
+            .exec("rm -rf /dir; mkdir /dir; test ! -e /dir/file")
+            .await
+            .unwrap();
+
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stderr.is_empty());
     }
 
     // Issue #420: recursive delete should whiteout child paths from lower layer

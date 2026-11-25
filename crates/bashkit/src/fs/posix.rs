@@ -110,6 +110,15 @@ impl<B: FsBackend> PosixFs<B> {
         Ok(normalize_path(path))
     }
 
+    async fn check_directory(&self, path: &Path) -> Result<()> {
+        if let Ok(meta) = self.backend.stat(path).await
+            && !meta.file_type.is_dir()
+        {
+            return Err(fs_errors::not_a_directory());
+        }
+        Ok(())
+    }
+
     /// Check if parent directory exists.
     async fn check_parent_exists(&self, path: &Path) -> Result<()> {
         if let Some(parent) = path.parent()
@@ -222,13 +231,14 @@ impl<B: FsBackend + 'static> FileSystem for PosixFs<B> {
 
     async fn read_dir(&self, path: &Path) -> Result<Vec<DirEntry>> {
         let path = Self::normalize(path)?;
-        // Check if it's actually a directory
-        if let Ok(meta) = self.backend.stat(&path).await
-            && !meta.file_type.is_dir()
-        {
-            return Err(fs_errors::not_a_directory());
-        }
+        self.check_directory(&path).await?;
         self.backend.read_dir(&path).await
+    }
+
+    async fn read_dir_limited(&self, path: &Path, max_entries: usize) -> Result<Vec<DirEntry>> {
+        let path = Self::normalize(path)?;
+        self.check_directory(&path).await?;
+        self.backend.read_dir_limited(&path, max_entries).await
     }
 
     async fn exists(&self, path: &Path) -> Result<bool> {

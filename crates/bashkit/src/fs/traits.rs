@@ -61,6 +61,18 @@ use crate::error::Result;
 pub mod fs_errors {
     use super::*;
 
+    pub(crate) fn directory_entry_limit() -> crate::error::Error {
+        IoError::other("directory entry limit exceeded").into()
+    }
+
+    pub(crate) fn bounded_listing_unsupported() -> crate::error::Error {
+        IoError::new(
+            ErrorKind::Unsupported,
+            "bounded directory listing is unsupported",
+        )
+        .into()
+    }
+
     /// Error for attempting to write to a directory.
     ///
     /// Use when `write_file` or `append_file` is called on a directory path.
@@ -345,6 +357,15 @@ pub trait FileSystem: FileSystemExt {
     /// - The path does not exist
     /// - The path is not a directory
     async fn read_dir(&self, path: &Path) -> Result<Vec<DirEntry>>;
+
+    /// List a complete directory with at most `max_entries` entries.
+    ///
+    /// Implementations must stop enumeration if this limit is exceeded.
+    /// The default returns `Unsupported` so bounded callers can safely refuse
+    /// the operation on backends that only provide an unbounded listing.
+    async fn read_dir_limited(&self, _path: &Path, _max_entries: usize) -> Result<Vec<DirEntry>> {
+        Err(fs_errors::bounded_listing_unsupported())
+    }
 
     /// Check if a path exists.
     ///
