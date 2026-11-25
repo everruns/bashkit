@@ -165,6 +165,13 @@ contract as Python). `TypeScriptExtension::with_external_handler_and_prelude`
 (public) adds a source prelude and `(from, to)` call rewrites so hosts can
 expose namespaced APIs (`tools.orders.list(...)`) without core knowing them.
 
+Registered callbacks receive at most 100,000 argument values and 10,000,000
+UTF-8 bytes of strings and object keys per call, with a nesting limit of 64
+from the argument array. The shared dispatch checks these limits before
+calling the host and transfers ownership of the checked arguments. String
+bytes are counted for each occurrence because binding conversions allocate
+outside the VM meter (TM-TS-029).
+
 ### Security
 
 See [Threat Model](../security/threat-model.md) section "TypeScript / ZapCode Security (TM-TS)"
@@ -248,7 +255,8 @@ tenant. Bashkit enforces `max_memory` itself with the meter Monty uses
   limit (a tab or isolate OOM, not a shared host abort).
 
 Not metered: memory allocated by the host between steps (VFS bridging, the
-external-function callbacks), which is bounded by Bashkit's own limits.
+external-function callbacks). The shared dispatch bounds registered callback
+arguments separately. Host callback allocations remain the host's responsibility.
 
 ### Wall-clock limit and stress
 

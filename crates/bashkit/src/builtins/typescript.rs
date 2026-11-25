@@ -255,6 +255,8 @@ impl TypeScriptLimits {
 /// Async handler for external TypeScript function calls.
 ///
 /// Receives `(function_name, args)` when TypeScript calls a registered external function.
+/// Arguments are limited to 100,000 values and 10,000,000 UTF-8 bytes of strings
+/// and object keys per call, with a nesting limit of 64 from the argument array.
 /// Return `Ok(Value)` for success or `Err(String)` for an error thrown in TypeScript.
 pub type TypeScriptExternalFnHandler = Arc<
     dyn Fn(
@@ -1287,7 +1289,7 @@ async fn process_vm_result(
                 let outcome = {
                     let call = handle_external_call(
                         &function_name,
-                        &args,
+                        args,
                         fs,
                         cwd,
                         external_fns,
@@ -1349,7 +1351,7 @@ async fn process_vm_result(
 /// Handle an external function call — either VFS operation or user-registered function.
 async fn handle_external_call(
     function_name: &str,
-    args: &[Value],
+    args: Vec<Value>,
     fs: &Arc<dyn FileSystem>,
     cwd: &Path,
     external_fns: Option<&TypeScriptExternalFns>,
@@ -1358,18 +1360,19 @@ async fn handle_external_call(
 ) -> std::result::Result<Value, String> {
     // Try VFS functions first
     match function_name {
-        "readFile" => Ok(handle_read_file(args, fs, cwd, read, meter).await),
-        "writeFile" => Ok(handle_write_file(args, fs, cwd).await),
-        "exists" => Ok(handle_exists(args, fs, cwd).await),
-        "readDir" => Ok(handle_read_dir(args, fs, cwd, read, meter).await),
-        "mkdir" => Ok(handle_mkdir(args, fs, cwd).await),
-        "remove" => Ok(handle_remove(args, fs, cwd).await),
-        "stat" => Ok(handle_stat(args, fs, cwd).await),
+        "readFile" => Ok(handle_read_file(&args, fs, cwd, read, meter).await),
+        "writeFile" => Ok(handle_write_file(&args, fs, cwd).await),
+        "exists" => Ok(handle_exists(&args, fs, cwd).await),
+        "readDir" => Ok(handle_read_dir(&args, fs, cwd, read, meter).await),
+        "mkdir" => Ok(handle_mkdir(&args, fs, cwd).await),
+        "remove" => Ok(handle_remove(&args, fs, cwd).await),
+        "stat" => Ok(handle_stat(&args, fs, cwd).await),
         _ => {
             // Try user-registered external functions
             if let Some(ef) = external_fns {
                 if ef.names.contains(&function_name.to_string()) {
-                    (ef.handler)(function_name.to_string(), args.to_vec()).await
+                    check_external_arguments(&args)?;
+                    (ef.handler)(function_name.to_string(), args).await
                 } else {
                     Err(format!("unknown external function '{function_name}'"))
                 }
@@ -1378,6 +1381,59 @@ async fn handle_external_call(
             }
         }
     }
+}
+
+// THREAT[TM-TS-029]: Foreign bindings materialize each array or object entry
+// outside the VM meter. Charge every occurrence of a string, including keys,
+// because separate entries may share the same Arc-backed text in the VM.
+fn check_external_arguments(args: &[Value]) -> std::result::Result<(), &'static str> {
+    const MAX_VALUES: usize = 100_000;
+    const MAX_STRING_BYTES: usize = 10_000_000;
+
+    fn charge_bytes(remaining: &mut usize, bytes: usize) -> std::result::Result<(), &'static str> {
+        *remaining = remaining
+            .checked_sub(bytes)
+            .ok_or("TypeScript external call arguments exceed 10000000 string bytes")?;
+        Ok(())
+    }
+
+    fn visit(
+        value: &Value,
+        depth: usize,
+        values: &mut usize,
+        bytes: &mut usize,
+    ) -> std::result::Result<(), &'static str> {
+        if depth > crate::runtime_value::MAX_DEPTH {
+            return Err("TypeScript external call arguments exceed nesting depth of 64");
+        }
+        *values = values
+            .checked_sub(1)
+            .ok_or("TypeScript external call arguments exceed 100000 values")?;
+        match value {
+            Value::String(text) => charge_bytes(bytes, text.len())?,
+            Value::Array(items) => {
+                for item in items {
+                    visit(item, depth + 1, values, bytes)?;
+                }
+            }
+            Value::Object(entries) => {
+                for (key, item) in entries {
+                    charge_bytes(bytes, key.len())?;
+                    visit(item, depth + 1, values, bytes)?;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    let mut values = MAX_VALUES;
+    let mut bytes = MAX_STRING_BYTES;
+    for arg in args {
+        // The binding's argument array is the root of the document.
+        visit(arg, 1, &mut values, &mut bytes)?;
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -1579,6 +1635,62 @@ mod tests {
     use std::collections::HashMap;
     use std::path::PathBuf;
     use std::sync::Arc;
+
+    #[tokio::test]
+    async fn external_call_enforces_aggregate_argument_limits() {
+        let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
+        let cwd = Path::new("/");
+        let external_fns = TypeScriptExternalFns {
+            names: vec!["inspect".into()],
+            handler: Arc::new(|_, args| Box::pin(async move { Ok(Value::Int(args.len() as i64)) })),
+            prelude: None,
+            rewrites: Vec::new(),
+        };
+
+        let meter = crate::vm_meter::VmMeter::new(None);
+        let read = super::super::vfs_read::VfsRead::new(meter.memory_remaining(), None);
+        let call = async |args: Vec<Value>| {
+            handle_external_call(
+                "inspect",
+                args,
+                &fs,
+                cwd,
+                Some(&external_fns),
+                &read,
+                &meter,
+            )
+            .await
+        };
+        let short = vec![Value::String(Arc::from("ok")), Value::Null];
+        assert!(matches!(call(short).await, Ok(Value::Int(2))));
+
+        let wide = vec![Value::Array(vec![Value::Null; 100_000])];
+        assert_eq!(
+            call(wide).await.err().as_deref(),
+            Some("TypeScript external call arguments exceed 100000 values")
+        );
+
+        let text = "x".repeat(5_000_001);
+        let large = vec![
+            Value::String(Arc::from(text.as_str())),
+            Value::Object(
+                [(Arc::from(text.as_str()), Value::Null)]
+                    .into_iter()
+                    .collect(),
+            ),
+        ];
+        assert_eq!(
+            call(large).await.err().as_deref(),
+            Some("TypeScript external call arguments exceed 10000000 string bytes")
+        );
+
+        let nested = (0..crate::runtime_value::MAX_DEPTH)
+            .fold(Value::Null, |item, _| Value::Array(vec![item]));
+        assert_eq!(
+            call(vec![nested]).await.err().as_deref(),
+            Some("TypeScript external call arguments exceed nesting depth of 64")
+        );
+    }
 
     #[test]
     fn registry_rewrite_encodes_call_argument() {
