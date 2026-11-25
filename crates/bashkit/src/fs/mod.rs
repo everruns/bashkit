@@ -712,10 +712,35 @@ pub(crate) async fn canonicalize(fs: &dyn FileSystem, path: &Path) -> crate::Res
 
 /// A callback invoked before allocating response storage for a VFS read.
 /// An error aborts the read. `None` selects the ordinary read behavior.
+#[cfg(any(
+    not(target_family = "wasm"),
+    feature = "python",
+    feature = "typescript"
+))]
 pub type ReadCharge<'a> = Option<&'a (dyn Fn(usize) -> crate::error::Result<()> + Sync)>;
 
+/// Read admission is inactive in WebAssembly builds without embedded runtimes.
+#[cfg(all(
+    target_family = "wasm",
+    not(any(feature = "python", feature = "typescript"))
+))]
+pub type ReadCharge<'a> = Option<std::convert::Infallible>;
+
+#[cfg(any(
+    not(target_family = "wasm"),
+    feature = "python",
+    feature = "typescript"
+))]
 pub(crate) fn charge_read(charge: ReadCharge<'_>, bytes: usize) -> crate::error::Result<()> {
     charge.map_or(Ok(()), |charge| charge(bytes))
+}
+
+#[cfg(all(
+    target_family = "wasm",
+    not(any(feature = "python", feature = "typescript"))
+))]
+pub(crate) fn charge_read(_charge: ReadCharge<'_>, _bytes: usize) -> crate::error::Result<()> {
+    Ok(())
 }
 
 // Allow for vector capacity growth, metadata and wrapper merge storage.

@@ -295,6 +295,8 @@ CI and publication run the same bounded GNU Bash regression sample and raw /
 gzip / Brotli size budgets under `crates/bashkit-wasm/bench/`, in addition to
 all package integration tests. The gzip ceiling is 3,120,000 bytes. It
 includes the compound-output memory accounting in both interpreter builds.
+VFS read admission callbacks compile into builds with embedded Python or
+TypeScript. The browser bundle without those runtimes omits the callbacks.
 Browser wall-clock results are recorded, not
 gated, because host load, browser caches, and network emulation make them noisy.
 See the [benchmark methodology](../../crates/bashkit-wasm/bench/README.md) and
