@@ -114,6 +114,15 @@ fn parse_num<L: LexAlloc>(lexer: &mut L) -> Result<Num, hifijson::Error> {
 /// the error returned by this function might be misleading.
 /// In that case, always check whether the lexer contains an error.
 fn parse<L: LexAlloc>(next: u8, lexer: &mut L) -> Result<Val, hifijson::Error> {
+    parse_at(next, lexer, 0)
+}
+
+// BASHKIT PATCH (#3013): fromjson parses through this reader, bypassing
+// convert's input boundary. Reject before descending, not on the way back up.
+fn parse_at<L: LexAlloc>(next: u8, lexer: &mut L, depth: usize) -> Result<Val, hifijson::Error> {
+    if matches!(next, b'[' | b'{') && super::meter::check_depth(depth + 1).is_err() {
+        return Err(Expect::Value.into());
+    }
     Ok(match next {
         b'n' if lexer.strip_prefix(b"null") => Val::Null,
         b't' if lexer.strip_prefix(b"true") => Val::Bool(true),
@@ -126,7 +135,7 @@ fn parse<L: LexAlloc>(next: u8, lexer: &mut L) -> Result<Val, hifijson::Error> {
         b'[' => Val::Arr({
             let mut arr = Vec::new();
             lexer.discarded().seq(b']', ws_tk, |next, lexer| {
-                arr.push(parse(next, lexer)?);
+                arr.push(parse_at(next, lexer, depth + 1)?);
                 Ok::<_, hifijson::Error>(())
             })?;
             super::metered(arr)
@@ -134,9 +143,9 @@ fn parse<L: LexAlloc>(next: u8, lexer: &mut L) -> Result<Val, hifijson::Error> {
         b'{' => Val::obj({
             let mut obj = Map::default();
             lexer.discarded().seq(b'}', ws_tk, |next, lexer| {
-                let key = parse(next, lexer)?;
+                let key = parse_at(next, lexer, depth + 1)?;
                 lexer.expect(ws_tk, b':').ok_or(Expect::Colon)?;
-                let value = parse(ws_tk(lexer).ok_or(Expect::Value)?, lexer)?;
+                let value = parse_at(ws_tk(lexer).ok_or(Expect::Value)?, lexer, depth + 1)?;
                 obj.insert(key, value);
                 Ok::<_, hifijson::Error>(())
             })?;

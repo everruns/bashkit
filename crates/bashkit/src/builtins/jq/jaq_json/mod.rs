@@ -37,8 +37,47 @@ pub use num::Num;
 use meter::{Metered, Str};
 
 /// BASHKIT PATCH: wrap a new array/object body so it is metered.
-pub(crate) fn metered<T: meter::Footprint>(t: T) -> Rc<Metered<T>> {
-    Rc::new(Metered::new(t))
+pub(crate) fn metered<T: meter::Footprint + ValueDepth + Default>(t: T) -> Rc<Metered<T>> {
+    admit_container(Metered::new(t))
+}
+
+/// BASHKIT PATCH: retain an existing memory charge while admitting depth.
+pub(crate) fn admit_container<T: meter::Footprint + ValueDepth + Default>(mut body: Metered<T>) -> Rc<Metered<T>> {
+    if meter::check_depth(body.depth(ValueDepth::value_depth)).is_err() {
+        // panic-abort fallback: never retain a rejected tree.
+        body = Metered::default();
+    }
+    Rc::new(body)
+}
+
+// BASHKIT PATCH (#3013): count containers, scalars have depth zero. Check
+// constructors and child attachments, before any recursive consumer sees
+// the value. Rc copy-on-write plus DerefMut invalidation keeps caches exact
+// after updates/removals without scanning a wide container on every edit.
+pub(crate) trait ValueDepth {
+    fn value_depth(&self) -> usize;
+}
+
+impl ValueDepth for Vec<Val> {
+    fn value_depth(&self) -> usize {
+        1 + self.iter().map(Val::value_depth).max().unwrap_or(0)
+    }
+}
+
+impl ValueDepth for Map {
+    fn value_depth(&self) -> usize {
+        1 + self.iter().map(|(k, v)| k.value_depth().max(v.value_depth())).max().unwrap_or(0)
+    }
+}
+
+impl ValueDepth for Val {
+    fn value_depth(&self) -> usize {
+        match self {
+            Self::Arr(a) => a.depth(ValueDepth::value_depth),
+            Self::Obj(o) => o.depth(ValueDepth::value_depth),
+            _ => 0,
+        }
+    }
 }
 
 pub use std::rc::Rc;
@@ -402,7 +441,10 @@ impl Val {
                     Occupied(mut e) => {
                         let v = core::mem::take(e.get_mut());
                         match f(v).next().transpose()? {
-                            Some(y) => e.insert(y),
+                            Some(y) => {
+                                meter::check_depth(1 + y.value_depth())?; // BASHKIT PATCH
+                                e.insert(y)
+                            },
                             // this runs in constant time, at the price of
                             // changing the order of the elements
                             None => e.swap_remove(),
@@ -410,6 +452,7 @@ impl Val {
                     }
                     Vacant(e) => {
                         if let Some(y) = f(Val::Null).next().transpose()? {
+                            meter::check_depth(1 + y.value_depth())?; // BASHKIT PATCH
                             e.insert(y);
                         }
                     }
@@ -448,6 +491,7 @@ impl Val {
                     let Some(y) = f(Val::Null).next().transpose()? else {
                         return Ok(self);
                     };
+                    meter::check_depth(1 + y.value_depth())?; // BASHKIT PATCH
                     let grow = (i + 1 - len).saturating_mul(core::mem::size_of::<Val>());
                     meter::check(grow)?;
                     let a = Rc::make_mut(a);
@@ -461,6 +505,7 @@ impl Val {
                 let a = Rc::make_mut(a);
                 let x = core::mem::take(&mut a[i]);
                 if let Some(y) = f(x).next().transpose()? {
+                    meter::check_depth(1 + y.value_depth())?; // BASHKIT PATCH
                     a[i] = y;
                 } else {
                     a.remove(i);
@@ -680,7 +725,7 @@ impl From<val::Range<Val>> for Val {
 impl FromIterator<Self> for Val {
     fn from_iter<T: IntoIterator<Item = Self>>(iter: T) -> Self {
         // BASHKIT PATCH: stop at the meter's limit (TM-DOS-110).
-        Self::Arr(Rc::new(meter::collect_vec(iter)))
+        Self::Arr(admit_container(meter::collect_vec(iter)))
     }
 }
 

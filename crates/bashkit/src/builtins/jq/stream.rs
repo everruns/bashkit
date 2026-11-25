@@ -5,7 +5,7 @@
 //! cancellation limits, including when the filter emits nothing.
 
 use super::convert::{JqJson, MAX_JQ_JSON_DEPTH, jq_into_val};
-use super::jaq_json::{Rc, Val, meter};
+use super::jaq_json::{Val, meter, metered};
 use super::{Context, input};
 use crate::error::{Error, Result};
 
@@ -29,7 +29,7 @@ fn array(values: impl ExactSizeIterator<Item = Val>) -> Result<Val> {
     check(values.len().saturating_mul(std::mem::size_of::<Val>()))?;
     let mut body = Vec::with_capacity(values.len());
     body.extend(values);
-    Ok(Val::Arr(Rc::new(meter::Metered::new(body))))
+    Ok(Val::Arr(metered(body)))
 }
 
 #[derive(Clone, Copy)]

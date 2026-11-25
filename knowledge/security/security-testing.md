@@ -55,6 +55,21 @@ nightly fuzzing covers both interpreter and execution-plan configurations.
 See [Architecture](../foundations/architecture.md#conditional-regex-searches)
 and TM-DOS-023 in the [Threat Model](threat-model.md).
 
+## jq generated structure depth
+
+`memory_growth_security_tests::jq` checks depth 100/101 independently of heap,
+output and evaluator recursion limits. It covers new containers, index updates,
+slice updates, shared subtrees, removal/COW cache invalidation, `fromjson`,
+sticky failure and session recovery. Python's `test_jq_depth.py` runs #3013's
+100,000-step filter and variants in timed child processes, so a native stack
+overflow fails the test without killing pytest. Keep pre-fix probes bounded;
+deep crash regressions belong in supervised children. `jq_fuzz` synthesizes
+short reductions around the depth boundary, since random source mutation
+rarely generates valid filters that amplify runtime structure. Review each
+recursive lifecycle phase, including destruction while unwinding; panic
+catching alone is not a stack-overflow boundary. See
+[Vendored jaq-json](../runtimes/jaq-json-vendor.md#structural-depth-3013).
+
 ## Available Fail Points
 
 ### Resource Limits (`limits.rs`)

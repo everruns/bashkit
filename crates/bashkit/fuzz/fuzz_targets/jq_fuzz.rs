@@ -67,6 +67,18 @@ fuzz_target!(|data: &[u8]| {
                 )
                 .build();
 
+            // #3013: shallow syntax can generate deep runtime values. Raw
+            // filter mutation rarely discovers the reduce grammar by itself.
+            let depth =
+                [0, 1, 99, 100, 101, 200, 100000][data.first().copied().unwrap_or(0) as usize % 7];
+            let body = ["[.]", "{a: .}", ".[0] = .", ".a = ."]
+                [data.get(1).copied().unwrap_or(0) as usize % 4];
+            let consumer = ["length", "empty", "tostring", ". == .", ". + 1"]
+                [data.get(2).copied().unwrap_or(0) as usize % 5];
+            let generated =
+                format!("jq -n 'reduce range({depth}) as $i (null; {body}) | {consumer}'");
+            bashkit::testing::fuzz_exec(&mut bash, &generated, "jq_generated_depth", &[]).await;
+
             // Test 1: pipe JSON through jq filter
             let script = format!(
                 "echo '{}' | jq '{}'",

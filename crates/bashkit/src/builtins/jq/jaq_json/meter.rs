@@ -22,6 +22,10 @@
 //! deadline) is polled, so a non-emitting loop cannot outlive the timeout.
 //! The jq context wrapper also ticks this meter on every clone and aborts at
 //! 64 simultaneous contexts, covering recursion with no value operations.
+//! Generated structure has a separate depth ceiling: bytes and contexts do
+//! not bound the native stack consumed by recursive traversal or destruction.
+//! Container admission checks depth, cached on each body and invalidated by
+//! mutable access so shared trees and wide scalar updates remain efficient.
 //! Builds with `panic = "abort"` cannot unwind: there the meter only trips
 //! and values are cut short, and a non-emitting loop is not interrupted.
 
@@ -40,6 +44,7 @@ pub struct Meter {
     live: AtomicUsize,
     limit: usize,
     tripped: AtomicBool,
+    depth_exceeded: AtomicBool,
 }
 
 /// A stop check polled while a filter runs (the execution deadline).
@@ -53,6 +58,8 @@ pub const TICKS_PER_POLL: usize = 4096;
 pub enum Abort {
     /// A value outgrew the meter's limit where no error could be returned.
     Memory,
+    /// A generated value exceeded the structural nesting limit.
+    Depth,
     /// The stop check fired (execution deadline).
     Interrupted,
     /// The evaluator retained too many live contexts (recursive filters).
@@ -91,6 +98,7 @@ pub fn install(limit: usize, stop: Option<StopCheck>) -> (MeterGuard, Arc<Meter>
         live: AtomicUsize::new(0),
         limit,
         tripped: AtomicBool::new(false),
+        depth_exceeded: AtomicBool::new(false),
     });
     let prev = CURRENT.with(|c| c.borrow_mut().replace(meter.clone()));
     let poll = stop.map(|stop| Poll { stop, ticks: 0 });
@@ -101,7 +109,7 @@ pub fn install(limit: usize, stop: Option<StopCheck>) -> (MeterGuard, Arc<Meter>
 /// Stop the run now. Only returns in `panic = "abort"` builds, where the
 /// caller carries on with a tripped meter.
 fn abort(kind: Abort) {
-    if kind == Abort::Memory {
+    if matches!(kind, Abort::Memory | Abort::Depth) {
         trip();
     }
     #[cfg(panic = "unwind")]
@@ -145,6 +153,9 @@ impl Meter {
 
     /// Diagnostic for a tripped meter.
     pub fn message(&self) -> String {
+        if self.depth_exceeded.load(Ordering::Relaxed) {
+            return depth_message();
+        }
         format!("value size limit ({} bytes) exceeded", self.limit)
     }
 
@@ -189,6 +200,27 @@ pub fn trip() {
     if let Some(m) = current() {
         m.tripped.store(true, Ordering::Relaxed);
     }
+}
+
+/// THREAT[TM-DOS-027]: generated values need their own structural bound;
+/// input depth, live bytes and evaluator context counts cannot bound Drop.
+pub const MAX_VALUE_DEPTH: usize = 100;
+
+fn depth_message() -> String {
+    format!("value nesting depth limit ({MAX_VALUE_DEPTH}) exceeded")
+}
+
+/// Admit a container before attaching it to a parent. Sticky across jq try.
+/// In panic-abort builds callers must discard the rejected attachment.
+pub fn check_depth(depth: usize) -> Result<(), Error> {
+    if depth <= MAX_VALUE_DEPTH {
+        return Ok(());
+    }
+    if let Some(m) = current() {
+        m.depth_exceeded.store(true, Ordering::Relaxed);
+    }
+    abort(Abort::Depth);
+    Err(Error::str(depth_message()))
 }
 
 /// The charge for one string buffer, released when the last value sharing
@@ -316,6 +348,9 @@ pub struct Metered<T: Footprint> {
     inner: T,
     charged: usize,
     meter: Option<Arc<Meter>>,
+    // BASHKIT PATCH: lazily cached structural depth, invalidated on mutation.
+    // Shared subtrees must not be recursively re-walked at every wrapper.
+    depth: core::cell::Cell<Option<usize>>,
 }
 
 impl<T: Footprint> Metered<T> {
@@ -335,7 +370,18 @@ impl<T: Footprint> Metered<T> {
             inner,
             charged,
             meter,
+            depth: core::cell::Cell::new(None),
         }
+    }
+
+    /// Read structural depth, computing it only after a mutation.
+    pub fn depth(&self, compute: impl FnOnce(&T) -> usize) -> usize {
+        if let Some(depth) = self.depth.get() {
+            return depth;
+        }
+        let depth = compute(&self.inner);
+        self.depth.set(Some(depth));
+        depth
     }
 
     /// Re-charge after the container grew or shrank in place.
@@ -393,6 +439,7 @@ impl<T: Footprint> Deref for Metered<T> {
 
 impl<T: Footprint> DerefMut for Metered<T> {
     fn deref_mut(&mut self) -> &mut T {
+        self.depth.set(None);
         &mut self.inner
     }
 }

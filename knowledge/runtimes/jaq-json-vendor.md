@@ -137,11 +137,48 @@ Builds with `panic = "abort"` cannot unwind. There the fallible checks still
 apply, over-limit infallible constructions are cut short with the meter
 tripped, and a non-emitting loop is not interrupted.
 
-### Known gaps
+### Structural depth (#3013)
 
-- Filter recursion without value operations (`def f: f; f`) and dropping
-  very deeply nested values overflow the stack. This predates the vendoring
-  and is a stack-depth issue, not memory growth.
+Values have an independent ceiling of 100 nested containers (scalars have
+depth zero). `metered` admits every new array/object, and index updates check
+the incoming child's depth before attachment. Concatenation, slicing and
+recursive object merge preserve the maximum depth of their admitted operands.
+The separate `fromjson` reader checks depth **before descending**; checking
+only completed containers would leave parsing itself able to overflow.
+Exceeding the ceiling trips the run's sticky meter and reports
+`jq: error: value nesting depth limit (100) exceeded`, exit 5.
+
+`Metered` caches exact depth lazily. Mutable access invalidates the cache;
+Rc copy-on-write protects ancestors sharing an old container. This avoids
+walking every descendant at each wrapper, exponential visits to shared trees,
+and rescanning a wide object on every scalar update. Removing a deep child
+reduces the computed depth; a historical high-water mark would wrongly reject
+later valid wrapping. Panic-abort fallbacks discard rejected attachments.
+
+#### Why the earlier limits missed it
+
+The value representation inherits recursive destruction from `Rc` and its
+containers. A flat `reduce range(100000) as $i (1; [.]) | length` retains
+only linear heap storage and evaluator state, emits one small scalar, then
+recursively destroys the discarded accumulator. Input depth, output bytes,
+live bytes and evaluator context counts therefore all miss the native-stack
+growth. `catch_unwind` does not contain a stack overflow.
+
+The memory-growth fix (#2454, commit `51f5d001`) explicitly retained this
+known gap. The subsequent evaluator recursion fix (#2467, `a4fc5b33`) bounded
+contexts, not value structure; this document's old gap description also failed
+to reflect that distinction. The report demonstrates an unresolved containment
+gap, rather than evidence of a new Python binding regression.
+
+Regression coverage now separates input depth, evaluator recursion, generated
+value depth and heap/output growth. `memory_growth_security_tests::jq` covers
+exact boundaries, array/object updates, removal/COW cache invalidation, shared
+trees, `fromjson`, sticky failure and session recovery. Python's
+`test_jq_depth.py` runs the original 100,000-iteration case and related cleanup
+paths in timed child processes. `jq_fuzz` generates structured reductions near
+the boundary in addition to mutating filter text. Treat unbounded stack growth
+in any lifecycle phase (parse/build/traverse/format/compare/drop/unwind) as an
+open containment defect, even when another resource dimension is bounded.
 
 ## jq compatibility patches
 
@@ -173,7 +210,10 @@ Part of the [maintenance](../operations/maintenance.md) pass:
    release the same way and applies the upstream diff onto the vendored
    copy. `BASHKIT PATCH` hunks survive; conflicts are left as `.rej` files.
 3. Re-check every `BASHKIT PATCH`: new growth paths (new natives, new
-   container mutations) need a meter check or `resync()`.
+   container mutations) need a meter check or `resync()`. New containers must
+   pass `metered`; mutations attaching arbitrary values must check child depth
+   and invalidate cached depth. Review recursive parsers before descent and
+   cover cleanup during errors as well as successful output.
 4. Match jaq-json's `Cargo.toml` dependency ranges in
    `crates/bashkit/Cargo.toml`, and keep `jaq-core`/`jaq-std` at the versions
    that release requires. One deliberate exception: `foldhash` is declared
