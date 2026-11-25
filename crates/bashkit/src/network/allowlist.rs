@@ -22,16 +22,14 @@ use url::Url;
 
 /// Check if an IP address is in a private/reserved range.
 ///
-/// Blocks every range that is not globally reachable unicast:
+/// Blocks private and special-purpose ranges, including:
 /// - v4: 0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16,
 ///   172.16.0.0/12, 192.0.0.0/24, 192.168.0.0/16, 198.18.0.0/15,
+///   192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24 (documentation),
 ///   224.0.0.0/4 (multicast), 240.0.0.0/4 (reserved + broadcast)
 /// - v6: ::, ::1, 100::/64, 2001::/32 (Teredo), fc00::/7, fe80::/10,
-///   fec0::/10, ff00::/8, 64:ff9b:1::/48 (local-use NAT64)
-///
-/// Documentation ranges (192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24,
-/// 2001:db8::/32) are not blocked: they are unroutable, and tests use them
-/// as stand-in public addresses.
+///   fec0::/10, ff00::/8, 64:ff9b:1::/48 (local-use NAT64),
+///   2001:db8::/32 (documentation)
 ///
 /// v6 forms that carry a v4 address are classified by that v4 address:
 /// IPv4-mapped (`::ffff:0:0/96`), IPv4-compatible (`::a.b.c.d`), NAT64
@@ -79,6 +77,7 @@ pub fn is_private_ip(ip: &IpAddr) -> bool {
                 || v6.is_unspecified()          // ::
                 || seg[..4] == [0x100, 0, 0, 0] // 100::/64 (discard-only)
                 || seg[..2] == [0x2001, 0]      // 2001::/32 (Teredo, embeds obfuscated v4)
+                || seg[..2] == [0x2001, 0xdb8]  // 2001:db8::/32 (documentation)
                 || seg[..3] == [0x64, 0xff9b, 1] // 64:ff9b:1::/48 (local-use NAT64)
                 || (seg[0] & 0xfe00) == 0xfc00  // fc00::/7 (unique local)
                 || (seg[0] & 0xffc0) == 0xfe80  // fe80::/10 (link-local)
@@ -93,6 +92,7 @@ fn is_private_ipv4(v4: &std::net::Ipv4Addr) -> bool {
     o[0] == 0                           // 0.0.0.0/8 ("this network")
         || v4.is_loopback()             // 127.0.0.0/8
         || v4.is_private()              // 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
+        || v4.is_documentation()        // TEST-NET-1, TEST-NET-2, TEST-NET-3
         || v4.is_link_local()           // 169.254.0.0/16
         || o[0] == 100 && (o[1] & 0xC0) == 64 // 100.64.0.0/10 (CGNAT)
         || o[0] == 192 && o[1] == 0 && o[2] == 0 // 192.0.0.0/24 (IETF protocol assignments)
@@ -100,17 +100,19 @@ fn is_private_ipv4(v4: &std::net::Ipv4Addr) -> bool {
         || o[0] >= 224 // 224.0.0.0/4 multicast, 240.0.0.0/4 reserved, broadcast
 }
 
-/// Redact credentials from a URL for safe inclusion in error messages.
-/// Replaces `user:pass@` in the authority with `***@`.
-/// Whether `path` holds a percent-encoded `/` (`%2F`) or `\\` (`%5C`).
-fn has_encoded_separator(path: &str) -> bool {
-    path.as_bytes().windows(3).any(|w| {
-        w[0] == b'%'
-            && (w[1] == b'2' && w[2].eq_ignore_ascii_case(&b'f')
-                || w[1] == b'5' && w[2].eq_ignore_ascii_case(&b'c'))
-    })
+/// Whether `path` contains an invalid escape or an encoded slash, backslash, or percent sign.
+fn has_ambiguous_path_encoding(path: &str) -> bool {
+    path.as_bytes()
+        .split(|&byte| byte == b'%')
+        .skip(1)
+        .any(|suffix| match suffix.get(..2) {
+            Some(b"2F" | b"2f" | b"5C" | b"5c" | b"25") | None => true,
+            Some(hex) => !hex.iter().all(u8::is_ascii_hexdigit),
+        })
 }
 
+/// Redact credentials from a URL for safe inclusion in error messages.
+/// Replaces `user:pass@` in the authority with `***@`.
 fn redact_url(url: &str) -> String {
     match Url::parse(url) {
         Ok(mut parsed) => {
@@ -238,6 +240,8 @@ impl NetworkAllowlist {
     ///
     /// A pattern matches if the requested URL's scheme, host, and port match,
     /// and the requested path starts with the pattern's path (if specified).
+    /// Path-scoped patterns reject malformed escapes and encoded slashes,
+    /// backslashes, and percent signs in the requested path.
     pub fn allow(mut self, pattern: impl Into<String>) -> Self {
         self.patterns.insert(pattern.into());
         self
@@ -346,12 +350,10 @@ impl NetworkAllowlist {
             return false;
         }
 
-        // THREAT[TM-NET-032]: an encoded `/` or `\` lets the URL climb out of
-        // the allowed prefix on servers that decode before routing
-        // (`/assets/..%2Fadmin` -> `/admin`). `url` already resolves literal
-        // and `%2e` dot segments, so only these encodings remain. Refused
-        // only for path-scoped patterns; a host-wide pattern allows any path.
-        if has_encoded_separator(url_path) {
+        // THREAT[TM-NET-032]: downstream decoders can change path boundaries
+        // by decoding separators. Reject encoded percent signs and malformed
+        // escapes too, since they can form new escapes after decoding.
+        if has_ambiguous_path_encoding(url_path) {
             return false;
         }
 
@@ -588,6 +590,18 @@ mod tests {
     }
 
     #[test]
+    fn test_path_prefix_refuses_encoded_percent() {
+        let allowlist = NetworkAllowlist::new().allow("https://cdn.example.com/assets/");
+        assert!(!allowlist.is_allowed("https://cdn.example.com/assets/100%25.png"));
+        assert!(!allowlist.is_allowed("https://cdn.example.com/assets/100%.png"));
+        assert!(!allowlist.is_allowed("https://cdn.example.com/assets/100%"));
+        assert!(allowlist.is_allowed("https://cdn.example.com/assets/logo.png?scale=100%25"));
+
+        let host_wide = NetworkAllowlist::new().allow("https://cdn.example.com");
+        assert!(host_wide.is_allowed("https://cdn.example.com/assets/100%25.png"));
+    }
+
+    #[test]
     fn test_path_boundary_check_byte_safe() {
         // Ensure path boundary check uses byte-safe indexing
         let allowlist = NetworkAllowlist::new().allow("https://example.com/api");
@@ -632,7 +646,6 @@ mod tests {
     fn test_is_private_ip_public() {
         assert!(!is_private_ip(&"8.8.8.8".parse().unwrap()));
         assert!(!is_private_ip(&"1.1.1.1".parse().unwrap()));
-        assert!(!is_private_ip(&"203.0.113.1".parse().unwrap()));
     }
 
     #[test]
@@ -640,9 +653,23 @@ mod tests {
         assert!(is_private_ip(&"::1".parse().unwrap()));
         assert!(is_private_ip(&"fd00::1".parse().unwrap()));
         assert!(is_private_ip(&"fe80::1".parse().unwrap()));
-        assert!(!is_private_ip(
-            &"2001:db8::1".parse::<std::net::IpAddr>().unwrap()
-        ));
+        assert!(!is_private_ip(&"2606:4700::1111".parse().unwrap()));
+    }
+
+    #[test]
+    fn test_is_private_ip_documentation_prefixes() {
+        for address in [
+            "192.0.2.0",
+            "192.0.2.255",
+            "198.51.100.0",
+            "198.51.100.255",
+            "203.0.113.0",
+            "203.0.113.255",
+            "2001:db8::",
+            "2001:db8:ffff:ffff:ffff:ffff:ffff:ffff",
+        ] {
+            assert!(is_private_ip(&address.parse().unwrap()), "{address}");
+        }
     }
 
     #[test]

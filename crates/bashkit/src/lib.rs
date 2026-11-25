@@ -2632,8 +2632,10 @@ impl BashBuilder {
     /// Set a custom SSH handler for transport interception.
     ///
     /// Embedders can implement [`SshHandler`] to mock, proxy, log, or
-    /// rate-limit SSH operations. The allowlist check happens before
-    /// the handler is called.
+    /// rate-limit SSH operations. Bashkit checks the allowlist before
+    /// dispatch. In strict mode, operations require the handler to accept
+    /// the configured host-key policy via
+    /// [`SshHandler::configure_strict_host_key_checking`].
     #[cfg(feature = "ssh")]
     pub fn ssh_handler(mut self, handler: Box<dyn builtins::ssh::SshHandler>) -> Self {
         self.ssh_handler = Some(handler);

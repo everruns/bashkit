@@ -42,7 +42,12 @@ ssh/scp/sftp builtins (parse args, validate host, delegate)
 
 `SshHandler` trait (`exec`/`upload`/`download`): see
 `crates/bashkit/src/builtins/ssh/handler.rs` / rustdoc. Custom handlers via
-`Bash::builder().ssh_handler(...)`.
+`Bash::builder().ssh_handler(...)`. With strict checking enabled, the client
+passes the configured trusted keys to the handler at setup. A handler that
+does not accept the policy receives no SSH, SCP, or SFTP operations. A network
+handler that accepts the policy must verify the server's key on each SSH
+connection before authentication. In-process mocks can opt out with
+`strict_host_key_checking(false)`.
 
 ### Security Model
 

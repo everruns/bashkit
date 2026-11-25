@@ -61,7 +61,9 @@ A request matches an allowlist entry when:
 - **Scheme** matches exactly, `https` is not `http`.
 - **Host** matches exactly, no wildcards, no implicit subdomains.
 - **Port** matches, defaults applied (443 for https, 80 for http).
-- **Path** is a prefix, the entry's path must be a prefix of the request path.
+- **Path** is a prefix, the entry's path must be a prefix of the request path. Path-scoped entries reject malformed percent escapes and encoded slashes,
+  backslashes, and percent signs in the request path. This prevents repeated
+  decoding from introducing new escapes.
 
 This is literal-string matching by design: there is no DNS resolution at check
 time, which closes the DNS-spoofing and rebinding classes of attack

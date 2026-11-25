@@ -283,9 +283,14 @@ mod scoping {
             .exec("curl -s https://api.example.com/v2/users")
             .await
             .unwrap();
+        // A path with an encoded percent sign must not get scoped credentials.
+        let _result = bash
+            .exec("curl -s https://api.example.com/v1/100%25.png")
+            .await
+            .unwrap();
 
         let requests = captured.lock().unwrap();
-        assert_eq!(requests.len(), 2);
+        assert_eq!(requests.len(), 3);
 
         // First request (/v1/) should have auth
         let auth_v1 = requests[0]
@@ -300,6 +305,13 @@ mod scoping {
             .iter()
             .find(|(name, _)| name.eq_ignore_ascii_case("authorization"));
         assert!(auth_v2.is_none(), "/v2/ should NOT have Authorization");
+
+        assert!(
+            requests[2]
+                .1
+                .iter()
+                .all(|(name, _)| !name.eq_ignore_ascii_case("authorization"))
+        );
     }
 
     /// THREAT[TM-NET-031]/[TM-NET-032]: a script cannot steer injected

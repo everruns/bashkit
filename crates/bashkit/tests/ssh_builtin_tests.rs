@@ -62,10 +62,40 @@ mod ssh_builtin_tests {
                 SshConfig::new()
                     .allow("host.example.com")
                     .allow("*.allowed.co")
-                    .default_user("testuser"),
+                    .default_user("testuser")
+                    .strict_host_key_checking(false),
             )
             .ssh_handler(Box::new(RecordingHandler))
             .build()
+    }
+
+    #[tokio::test]
+    async fn strict_policy_requires_handler_support_for_every_operation() {
+        let mut b = Bash::builder()
+            .ssh(SshConfig::new().allow("host.example.com"))
+            .ssh_handler(Box::new(RecordingHandler))
+            .build();
+        b.exec("echo local > /tmp/local.txt").await.unwrap();
+
+        for command in [
+            "ssh host.example.com true",
+            "ssh host.example.com",
+            "scp /tmp/local.txt host.example.com:/remote.txt",
+            "scp host.example.com:/remote.txt /tmp/downloaded.txt",
+            "sftp host.example.com <<'EOF'\nput /tmp/local.txt /remote.txt\nEOF",
+            "sftp host.example.com <<'EOF'\nget /remote.txt /tmp/downloaded.txt\nEOF",
+            "sftp host.example.com <<'EOF'\nls /\nEOF",
+        ] {
+            let result = b.exec(command).await.unwrap();
+            assert_ne!(result.exit_code, 0, "{command}");
+            assert!(
+                result
+                    .stderr
+                    .contains("custom handler does not support strict host-key verification"),
+                "{command}: {}",
+                result.stderr
+            );
+        }
     }
 
     // ── SSH ──
@@ -140,7 +170,8 @@ mod ssh_builtin_tests {
                     .allow("host.example.com")
                     .allow_port(22)
                     .allow_port(2222)
-                    .default_user("u"),
+                    .default_user("u")
+                    .strict_host_key_checking(false),
             )
             .ssh_handler(Box::new(RecordingHandler))
             .build();
