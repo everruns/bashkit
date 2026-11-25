@@ -335,6 +335,35 @@ fn carries_through_expansion(text: &str, needle: &str) -> bool {
 /// not covered here; [`input_echo_would_trip`] remains the precise gate for
 /// that case (run 295's `wZTok:`), which is why the targets that call it
 /// keep doing so.
+///
+/// # Residual false negative
+///
+/// Attribution is whole-script and whole-stderr: once the script spells a
+/// shape, *every* occurrence of it in that stderr is excused, so a genuine
+/// leak of the same shape in the same execution is missed. Unlike the canary
+/// — a random per-run token — these are short dictionary strings, so the
+/// collision rate is not negligible.
+///
+/// Scoping the excuse to occurrences that sit next to quoted script text was
+/// considered and rejected on evidence: a diagnostic supplies its own
+/// punctuation around the slot, so the neighbouring bytes are template text,
+/// not script text. `printf '%d' 'Undefined::'` — the minimized form of one
+/// of the five run-304 failures — renders
+/// `bash: line 1: printf: Undefined::: invalid number`, where the shape is
+/// framed by `printf: ` and `: invalid number` while the script frames it
+/// with `'`. An adjacency rule finds no common run beyond the shape itself
+/// and reports a leak, so it would re-break `printf_fuzz` (and `yq`, whose
+/// `yq: /home/user/<slot>: No such file or directory` prefixes the slot with
+/// a host path). The run-304 units pass an adjacency test only because their
+/// surrounding bytes happened to come from the input.
+///
+/// What remains uncovered is narrow because the miss is per-input, not
+/// per-bug: carrying the shape is a feature of the input, not a precondition
+/// of the leak, so the fuzzer reaches the same formatter through inputs that
+/// do not carry it, and the static scan
+/// (`builtins::tests::no_debug_fmt_in_builtin_source`) plus the per-tool
+/// [`assert_no_leak`] cases are absolute either way. The one case genuinely
+/// hidden is a formatter whose leak is *triggered* by parsing the shape.
 fn script_explains(script: &str, pat: &str) -> bool {
     let (lead, trail) = DIAGNOSTIC_ECHO_PAD;
     carries_through_expansion(script, pat)
@@ -444,7 +473,7 @@ fn is_clap_error_chrome_line(line: &str) -> bool {
 
 /// Full fuzz-invariant check. Like [`assert_no_leak`] but tolerates
 /// real-shell-style error lines (which echo user input verbatim), skips a
-/// banned shape the `script` itself spells (see [`script_explains`]), and
+/// banned shape the `script` itself spells (see `script_explains`), and
 /// adds the host-canary check (TM-INF-013): the canary must not appear
 /// in stdout or stderr unless `script` accounts for it.
 ///

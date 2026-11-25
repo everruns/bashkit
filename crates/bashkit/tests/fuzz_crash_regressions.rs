@@ -164,3 +164,25 @@ async fn archive_crash_undefined_is_an_echo_not_a_leak() {
     let script3 = format!("echo '{}' | gzip | gunzip", sq(text));
     fuzz_exec(&mut bash, &script3, "archive_fuzz", &[]).await;
 }
+
+/// The minimized form of the `printf_fuzz` failure: libFuzzer reduces its
+/// units, so the steady state for this class is an operand that is *only* the
+/// banned shape. The diagnostic then frames it with template text on both
+/// sides (`printf: ` / `: invalid number`), leaving no script text adjacent to
+/// the occurrence. Attribution still excuses it; a rule keyed on neighbouring
+/// script content would not, which is why `script_explains` is whole-script.
+#[tokio::test]
+async fn a_bare_banned_shape_framed_only_by_template_text_is_an_echo() {
+    fuzz_init();
+    let mut bash = bash(4096);
+    for shape in ["Undefined::", "Tok::", "internal error:"] {
+        let script = format!("printf '%d' '{shape}'");
+        let probe = bash.exec(&script).await.expect("printf runs");
+        assert!(
+            probe.stderr.contains(shape),
+            "precondition: the diagnostic must echo the operand; stderr: {:?}",
+            probe.stderr.to_string()
+        );
+        fuzz_exec(&mut bash, &script, "printf_fuzz", &[]).await;
+    }
+}

@@ -609,6 +609,23 @@ excuses an echoed shape and never a flood. The per-target pre-filters stay for
 the case attribution cannot see: a shape spelled where the quoted slot meets
 script text *inside* the script, as in run 295.
 
+The excuse is whole-script and whole-stderr, which does hide a genuine leak of
+a shape the same execution also echoes. Narrowing it to occurrences sitting
+next to quoted script text was rejected on evidence: a diagnostic frames its
+slot with its own punctuation, so the neighbouring bytes are template text.
+`printf '%d' 'Undefined::'`, the minimized form of one of the five run-304
+failures, renders `bash: line 1: printf: Undefined::: invalid number` -- the
+shape is framed by `printf: ` and `: invalid number`, while the script frames
+it with `'`, so an adjacency rule finds no common run beyond the shape and
+calls it a leak. The run-304 units pass such a test only because their
+neighbouring bytes happened to come from the input, and libFuzzer minimizes
+toward the bare shape. The residual miss is per-input, not per-bug: carrying
+the shape is a feature of the input rather than a precondition of the leak, so
+the same formatter is reached through inputs that do not carry it, and the
+static source scan and the per-tool `assert_no_leak` cases stay absolute. Only
+a formatter whose leak is *triggered* by parsing the shape is genuinely
+hidden.
+
 Display of a **Bashkit** error is not a safe formatter either: `Error`'s own
 variants stringify as Rust enum shapes (`io error: `, `internal error: `) that
 no shell prints, and `internal error:` is in `UNIVERSAL_BANNED`. Builtins
