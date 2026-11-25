@@ -1675,6 +1675,10 @@ impl FileSystem for InMemoryFs {
     }
 
     async fn read_dir(&self, path: &Path) -> Result<Vec<DirEntry>> {
+        self.read_dir_limited(path, usize::MAX).await
+    }
+
+    async fn read_dir_limited(&self, path: &Path, max_entries: usize) -> Result<Vec<DirEntry>> {
         self.limits
             .validate_path(path)
             .map_err(|e| IoError::new(ErrorKind::InvalidInput, e.to_string()))?;
@@ -1687,6 +1691,9 @@ impl FileSystem for InMemoryFs {
 
                 for (entry_path, entry) in entries.iter() {
                     if entry_path.parent() == Some(&path) && entry_path != &path {
+                        if result.len() == max_entries {
+                            return Err(super::traits::fs_errors::directory_entry_limit());
+                        }
                         let name = entry_path
                             .file_name()
                             .map(|n| n.to_string_lossy().to_string())

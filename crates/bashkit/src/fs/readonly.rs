@@ -59,6 +59,10 @@ impl FileSystem for ReadOnlyFs {
         self.inner.read_dir(path).await
     }
 
+    async fn read_dir_limited(&self, path: &Path, max_entries: usize) -> Result<Vec<DirEntry>> {
+        self.inner.read_dir_limited(path, max_entries).await
+    }
+
     async fn walk(&self, root: &Path, opts: super::WalkOptions) -> Result<Vec<super::DirListing>> {
         self.inner.walk(root, opts).await
     }

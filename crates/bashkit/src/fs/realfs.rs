@@ -655,10 +655,17 @@ impl FsBackend for RealFs {
     }
 
     async fn read_dir(&self, path: &Path) -> Result<Vec<DirEntry>> {
+        self.read_dir_limited(path, usize::MAX).await
+    }
+
+    async fn read_dir_limited(&self, path: &Path, max_entries: usize) -> Result<Vec<DirEntry>> {
         let real = self.resolve(path).await?;
         let mut entries = Vec::new();
         let mut dir = tokio::fs::read_dir(&real).await?;
         while let Some(entry) = dir.next_entry().await? {
+            if entries.len() == max_entries {
+                return Err(super::traits::fs_errors::directory_entry_limit());
+            }
             let name = entry.file_name().to_string_lossy().to_string();
             let meta = entry.metadata().await?;
             entries.push(DirEntry {
@@ -884,6 +891,23 @@ mod tests {
         std::fs::create_dir(dir.path().join("subdir")).unwrap();
         std::fs::write(dir.path().join("subdir/nested.txt"), b"nested content").unwrap();
         dir
+    }
+
+    #[tokio::test]
+    async fn bounded_directory_listing_requires_room_for_every_entry() {
+        use crate::FileSystem;
+
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("a"), b"a").unwrap();
+        std::fs::write(root.path().join("b"), b"b").unwrap();
+        let backend = RealFs::new(root.path(), RealFsMode::ReadOnly).unwrap();
+        let fs = super::super::PosixFs::new(backend);
+
+        assert!(fs.read_dir_limited(Path::new("/"), 1).await.is_err());
+        let entries = fs.read_dir_limited(Path::new("/"), 2).await.unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].name, "a");
+        assert_eq!(entries[1].name, "b");
     }
 
     #[tokio::test]

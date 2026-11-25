@@ -145,7 +145,7 @@ at subsystem or descendant boundaries; exhaustion poisons that request. Separate
 | TM-DOS-035 | OverlayFs limit check upper-only | `check_write_limits()` ignores lower layer usage, allowing combined usage to exceed limits | `OverlayFs::check_write_limits` now uses `compute_usage()` (combined upper + lower minus overrides); upper layer is type-fixed to `InMemoryFs` so its own limits are bypassable but irrelevant | **MITIGATED** |
 | TM-DOS-036 | OverlayFs usage double-count | `compute_usage()` double-counts overwritten/whited-out files | `compute_usage()` subtracts shadowed lower files when the upper layer carries an override or whiteout | **MITIGATED** |
 | TM-DOS-037 | OverlayFs chmod CoW bypass | `chmod` copy-on-write writes to unlimited upper layer, bypassing overlay limits | `chmod`'s file/directory CoW path checks `check_write_limits()` and `check_dir_count()` before promoting to upper | **MITIGATED** |
-| TM-DOS-038 | OverlayFs incomplete recursive whiteout | `rm -r /dir` only whiteouts directory, not children; lower layer files remain visible | `OverlayFs::remove(recursive=true)` walks the lower layer and writes a whiteout per surviving descendant; `is_whiteout()` also checks ancestor whiteouts | **MITIGATED** |
+| TM-DOS-038 | OverlayFs incomplete recursive whiteout | `rm -r /dir` only whiteouts directory, not children; lower layer files remain visible | `OverlayFs::remove(recursive=true)` stages a bounded set of lower-layer descendant whiteouts before mutating either layer; `is_whiteout()` also checks ancestor whiteouts | **MITIGATED** |
 | TM-DOS-039 | Missing validate_path in VFS methods | `remove`, `stat`, `read_dir`, `copy`, `rename`, `symlink`, `chmod` skip `validate_path()` | All `FileSystem` methods on `InMemoryFs` and `OverlayFs` call `validate_path()`; `MountableFs` validates via the root limits before delegating (TM-DOS-046) | **MITIGATED** |
 | TM-DOS-040 | Integer truncation on 32-bit | `u64 as usize` casts in network/Python extension silently truncate on 32-bit, bypassing size checks | All `u64`-to-`usize` size-check casts in `network/client.rs` (Content-Length checks) and `bashkit-python/src/lib.rs` (limits propagation) use `usize::try_from(...).unwrap_or(usize::MAX)` so over-`usize` values fail safe instead of wrapping | **MITIGATED** |
 
@@ -181,8 +181,8 @@ tests: `overlay_limit_accounting::tm_dos_037_chmod_file_cow_checks_limits`,
 `…tm_dos_037_mkdir_checks_dir_limits`,
 `…tm_dos_037_recursive_mkdir_counts_all_new_dirs`.
 
-**TM-DOS-038** (mitigated): `OverlayFs::remove(recursive=true)` walks the lower-layer subtree
-and emits a whiteout for every surviving descendant; `is_whiteout()` additionally treats any
+**TM-DOS-038** (mitigated): `OverlayFs::remove(recursive=true)` preflights a bounded
+lower-layer walk and emits a whiteout for each staged descendant; `is_whiteout()` additionally treats any
 descendant of a whited-out ancestor as hidden. Regression tests:
 `overlay_limit_accounting::tm_dos_038_recursive_delete_hides_all_children` and
 `…tm_dos_038_recursive_delete_deducts_all_bytes`.

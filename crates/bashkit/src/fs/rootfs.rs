@@ -388,6 +388,54 @@ impl RootFs {
         }
         Ok(())
     }
+    async fn read_dir_with_limit(
+        &self,
+        path: &Path,
+        limit: Option<usize>,
+    ) -> Result<Vec<DirEntry>> {
+        let sys_path = Self::sys_path(path);
+        let inner_path = sys_path.as_deref().unwrap_or(path);
+        let inner = match limit {
+            Some(limit) => self.inner.read_dir_limited(inner_path, limit).await,
+            None => self.inner.read_dir(inner_path).await,
+        };
+        let Some(p) = sys_path else {
+            return inner;
+        };
+        if limit.is_some()
+            && let Err(error) = &inner
+            && !matches!(error, crate::Error::Io(io) if io.kind() == ErrorKind::NotFound)
+        {
+            return inner;
+        }
+        let sys = self.sys.read_dir(&p).await.map(|mut entries| {
+            if BIN_DIRS.iter().any(|d| p == Path::new(d)) {
+                let commands = self.commands.read().unwrap_or_else(|e| e.into_inner());
+                entries.extend(commands.iter().map(|name| DirEntry {
+                    name: name.clone(),
+                    metadata: self.stub_metadata(name),
+                }));
+            }
+            entries
+        });
+        match (inner, sys) {
+            (inner, Ok(sys)) => {
+                let mut entries = inner.unwrap_or_default();
+                let seen: HashSet<String> = entries.iter().map(|e| e.name.clone()).collect();
+                entries.extend(sys.into_iter().filter(|e| {
+                    !seen.contains(&e.name) && {
+                        let child = vfs_join(&p, &e.name);
+                        in_tree(&child) || is_ancestor(&child)
+                    }
+                }));
+                if limit.is_some_and(|limit| entries.len() > limit) {
+                    return Err(super::traits::fs_errors::directory_entry_limit());
+                }
+                Ok(entries)
+            }
+            (inner, Err(_)) => inner,
+        }
+    }
 }
 
 #[async_trait]
@@ -441,34 +489,11 @@ impl FileSystem for RootFs {
     }
 
     async fn read_dir(&self, path: &Path) -> Result<Vec<DirEntry>> {
-        let Some(p) = Self::sys_path(path) else {
-            return self.inner.read_dir(path).await;
-        };
-        let inner = self.inner.read_dir(&p).await;
-        let sys = self.sys.read_dir(&p).await.map(|mut entries| {
-            if BIN_DIRS.iter().any(|d| p == Path::new(d)) {
-                let commands = self.commands.read().unwrap_or_else(|e| e.into_inner());
-                entries.extend(commands.iter().map(|name| DirEntry {
-                    name: name.clone(),
-                    metadata: self.stub_metadata(name),
-                }));
-            }
-            entries
-        });
-        match (inner, sys) {
-            (inner, Ok(sys)) => {
-                let mut entries = inner.unwrap_or_default();
-                let seen: HashSet<String> = entries.iter().map(|e| e.name.clone()).collect();
-                entries.extend(sys.into_iter().filter(|e| {
-                    !seen.contains(&e.name) && {
-                        let child = vfs_join(&p, &e.name);
-                        in_tree(&child) || is_ancestor(&child)
-                    }
-                }));
-                Ok(entries)
-            }
-            (inner, Err(_)) => inner,
-        }
+        self.read_dir_with_limit(path, None).await
+    }
+
+    async fn read_dir_limited(&self, path: &Path, max_entries: usize) -> Result<Vec<DirEntry>> {
+        self.read_dir_with_limit(path, Some(max_entries)).await
     }
 
     async fn walk(&self, root: &Path, opts: super::WalkOptions) -> Result<Vec<super::DirListing>> {
