@@ -135,7 +135,7 @@ at subsystem or descendant boundaries; exhaustion poisons that request. Separate
 | TM-DOS-005 | Large file creation | `dd if=/dev/zero bs=1G count=100`; `truncate -s 4G /tmp/p` | `max_file_size` limit; builtins that resize VFS file buffers validate target lengths before allocation | **MITIGATED** |
 | TM-DOS-006 | Many small files | `for i in $(seq 1 1000000); do touch $i; done` | `max_file_count` limit | **MITIGATED** |
 | TM-DOS-007 | Zip bomb | `gunzip bomb.gz` (small file → huge output) | Decompression limit | **MITIGATED** |
-| TM-DOS-008 | Tar bomb | `tar -xf bomb.tar` (many files / large files) | FS limits | **MITIGATED** |
+| TM-DOS-008 | Tar bomb | Archive extraction exceeds filesystem quotas | Tar preflight checks file count and total bytes against current VFS usage as it scans entries and checks the directory quota before storing each distinct directory path. Successful preflight precedes VFS mutations. | **MITIGATED** |
 | TM-DOS-009 | Recursive copy | `cp -r /tmp /tmp/copy` | FS limits | **MITIGATED** |
 | TM-DOS-010 | Append flood | `while true; do echo x >> file; done` | FS limits + loop limit | **MITIGATED** |
 | TM-DOS-105 | RealFs append memory exhaustion | A tiny append to a large writable host file buffers the full existing file | Stream existing bytes into atomic sibling staging with bounded memory | **MITIGATED** |

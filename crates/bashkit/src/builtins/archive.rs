@@ -34,7 +34,7 @@ use std::path::{Path, PathBuf};
 use super::limits::ARCHIVE_MAX_DECOMPRESSION_RATIO as MAX_DECOMPRESSION_RATIO;
 use super::{Builtin, Context, resolve_path};
 use crate::error::Result;
-use crate::fs::vfs_join;
+use crate::fs::{FsLimits, FsUsage, vfs_join};
 use crate::interpreter::ExecResult;
 use crate::limits::{BudgetedBytes, BudgetedString, BudgetedVec, LimitExceeded};
 
@@ -870,17 +870,40 @@ fn write_octal(buf: &mut [u8], value: u64, width: usize) {
 fn validate_tar_for_extraction(
     tar_data: &[u8],
     extract_base: &Path,
-    to_stdout: bool,
-    limits: &crate::FsLimits,
-) -> std::result::Result<(u64, u64, u64), String> {
+    usage: Option<FsUsage>,
+    limits: &FsLimits,
+) -> std::result::Result<(), String> {
+    let to_stdout = usage.is_none();
+    let FsUsage {
+        total_bytes: mut output_bytes,
+        mut file_count,
+        dir_count,
+    } = usage.unwrap_or_default();
+    let quota_error = |error| format!("tar: {error}\n");
+    if !to_stdout {
+        limits
+            .check_total_bytes(output_bytes, 0)
+            .map_err(quota_error)?;
+        limits
+            .check_final_file_count(file_count)
+            .map_err(quota_error)?;
+    }
     let mut offset = 0;
-    let mut output_bytes = 0u64;
-    let mut file_count = 0u64;
     let mut directories = HashSet::<PathBuf>::new();
+    // THREAT[TM-DOS-008]: Admit each distinct path before allocating its key.
+    let mut track_directory = |path: &Path| {
+        if !directories.contains(path) {
+            limits
+                .check_dir_count(dir_count.saturating_add(directories.len() as u64))
+                .map_err(quota_error)?;
+            directories.insert(path.to_path_buf());
+        }
+        Ok::<(), String>(())
+    };
     while offset + TAR_BLOCK_SIZE <= tar_data.len() {
         let header = &tar_data[offset..offset + TAR_BLOCK_SIZE];
         if header.iter().all(|&byte| byte == 0) {
-            return Ok((output_bytes, file_count, directories.len() as u64));
+            return Ok(());
         }
 
         let name_end = header[..100]
@@ -889,7 +912,7 @@ fn validate_tar_for_extraction(
             .unwrap_or(100);
         let name = String::from_utf8_lossy(&header[..name_end]);
         if name.is_empty() {
-            return Ok((output_bytes, file_count, directories.len() as u64));
+            return Ok(());
         }
         let size = parse_tar_size(&header[124..136])
             .ok_or_else(|| format!("tar: {name}: invalid size field\n"))?;
@@ -916,18 +939,24 @@ fn validate_tar_for_extraction(
                 limits
                     .check_file_size(size as u64)
                     .map_err(|error| format!("tar: {name}: {error}\n"))?;
+                limits
+                    .check_total_bytes(output_bytes, size as u64)
+                    .map_err(quota_error)?;
                 output_bytes = output_bytes.saturating_add(size as u64);
                 file_count = file_count.saturating_add(1);
+                limits
+                    .check_final_file_count(file_count)
+                    .map_err(quota_error)?;
                 let mut parent = entry.parent();
                 while let Some(path) = parent {
                     if path.as_os_str().is_empty() {
                         break;
                     }
-                    directories.insert(path.to_path_buf());
+                    track_directory(path)?;
                     parent = path.parent();
                 }
             } else if matches!(header[156], b'5' | b'\0') && name.ends_with('/') {
-                directories.insert(entry.to_path_buf());
+                track_directory(entry)?;
             }
         } else if matches!(header[156], b'0' | b'\0') && !name.ends_with('/') {
             limits
@@ -1073,31 +1102,9 @@ async fn extract_tar(
     let mut stdout_output = budgeted_string(ctx)?;
     let mut offset = 0;
 
-    let (planned_bytes, planned_files, planned_dirs) =
-        match validate_tar_for_extraction(&tar_data, &extract_base, to_stdout, &limits) {
-            Ok(planned) => planned,
-            Err(stderr) => return Ok(ExecResult::err(stderr, 2)),
-        };
-    if !to_stdout {
-        let usage = ctx.fs.usage();
-        if let Err(error) = limits.check_total_bytes(usage.total_bytes, planned_bytes) {
-            return Ok(ExecResult::err(format!("tar: {error}\n"), 2));
-        }
-        if let Err(error) =
-            limits.check_final_file_count(usage.file_count.saturating_add(planned_files))
-        {
-            return Ok(ExecResult::err(format!("tar: {error}\n"), 2));
-        }
-        if planned_dirs > 0
-            && let Err(error) = limits.check_dir_count(
-                usage
-                    .dir_count
-                    .saturating_add(planned_dirs)
-                    .saturating_sub(1),
-            )
-        {
-            return Ok(ExecResult::err(format!("tar: {error}\n"), 2));
-        }
+    let usage = (!to_stdout).then(|| ctx.fs.usage());
+    if let Err(stderr) = validate_tar_for_extraction(&tar_data, &extract_base, usage, &limits) {
+        return Ok(ExecResult::err(stderr, 2));
     }
 
     // Ensure extract_base directory exists when -C is used
@@ -1953,7 +1960,7 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::Arc;
 
-    use crate::fs::{FileSystem, InMemoryFs};
+    use crate::fs::{FileSystem, FileSystemExt, InMemoryFs};
 
     async fn create_test_ctx() -> (Arc<InMemoryFs>, PathBuf, HashMap<String, String>) {
         let fs = Arc::new(InMemoryFs::new());
@@ -2845,6 +2852,81 @@ mod tests {
         }
         output.extend_from_slice(&[0u8; 1024]);
         output
+    }
+
+    #[tokio::test]
+    async fn test_tar_preflight_rejects_first_exhausted_quota() {
+        let fs = InMemoryFs::new();
+        let limits = crate::FsLimits::new()
+            .max_file_count(fs.usage().file_count + 1)
+            .max_dir_count(fs.usage().dir_count);
+        let fs = Arc::new(InMemoryFs::with_limits(limits));
+        let mut cwd = PathBuf::from("/tmp");
+        let env = HashMap::new();
+        let mut variables = HashMap::new();
+        let tar =
+            build_tar_with_entries(&[("docs/intro.txt", b"intro"), ("readme.txt", b"readme")]);
+        let stdin = String::from_utf8(tar).unwrap();
+        let args = vec!["-xf".to_string(), "-".to_string()];
+        let ctx = Context::new_for_test(
+            &args,
+            &env,
+            &mut variables,
+            &mut cwd,
+            fs.clone(),
+            Some(&stdin),
+        );
+
+        let result = Tar.execute(ctx).await.unwrap();
+
+        assert_eq!(result.exit_code, 2);
+        assert!(
+            result.stderr.contains("too many directories"),
+            "{}",
+            result.stderr
+        );
+        assert!(!fs.exists(Path::new("/tmp/docs")).await.unwrap());
+        assert!(!fs.exists(Path::new("/tmp/readme.txt")).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_tar_preflight_counts_shared_directory_once() {
+        let fs = InMemoryFs::new();
+        let limits = crate::FsLimits::new()
+            .max_file_count(fs.usage().file_count + 2)
+            .max_dir_count(fs.usage().dir_count + 1);
+        let fs = Arc::new(InMemoryFs::with_limits(limits));
+        let mut cwd = PathBuf::from("/tmp");
+        let env = HashMap::new();
+        let mut variables = HashMap::new();
+        let tar =
+            build_tar_with_entries(&[("docs/intro.txt", b"intro"), ("docs/readme.txt", b"readme")]);
+        let stdin = String::from_utf8(tar).unwrap();
+        let args = vec!["-xf".to_string(), "-".to_string()];
+        let ctx = Context::new_for_test(
+            &args,
+            &env,
+            &mut variables,
+            &mut cwd,
+            fs.clone(),
+            Some(&stdin),
+        );
+
+        let result = Tar.execute(ctx).await.unwrap();
+
+        assert_eq!(result.exit_code, 0, "{}", result.stderr);
+        assert_eq!(
+            fs.read_file(Path::new("/tmp/docs/intro.txt"))
+                .await
+                .unwrap(),
+            b"intro"
+        );
+        assert_eq!(
+            fs.read_file(Path::new("/tmp/docs/readme.txt"))
+                .await
+                .unwrap(),
+            b"readme"
+        );
     }
 
     #[tokio::test]
