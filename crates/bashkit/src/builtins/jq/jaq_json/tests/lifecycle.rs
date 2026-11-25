@@ -32,3 +32,22 @@ fn byte_conversion_polls_even_when_every_leaf_is_empty() {
         let _ = std::hint::black_box(value.to_bytes());
     });
 }
+
+#[test]
+fn comparison_hashing_and_formatting_poll_shared_trees() {
+    use std::hash::{Hash, Hasher};
+    let left = tree(Val::Null);
+    let right = tree(Val::Null);
+    for operation in ["equality", "ordering", "hash", "format"] {
+        assert_interrupted(|| match operation {
+            "equality" => { std::hint::black_box(left == right); }
+            "ordering" => { std::hint::black_box(left.cmp(&right)); }
+            "hash" => {
+                let mut hash = std::collections::hash_map::DefaultHasher::new();
+                left.hash(&mut hash);
+                std::hint::black_box(hash.finish());
+            }
+            _ => { std::hint::black_box(left.to_string()); }
+        });
+    }
+}

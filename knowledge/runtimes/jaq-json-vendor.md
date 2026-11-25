@@ -70,12 +70,13 @@ consumption, exhaustion without dropping the iterator, early errors and unwind
 must retain/refund that charge with the underlying buffer, rather than refunding
 as soon as the body is converted into an iterator.
 
-The experiment also polls the shared stop check during value equality,
+Both backends poll the shared stop check during value equality,
 ordering, hashing, containment, byte conversion and formatting. Depth-bounded
 shared trees can still require exponential traversal; a nesting bound alone
 does not make those operations interruptible. Deterministic stop-check tests
 use small independently constructed shared trees, so a polling regression
-fails without hanging the test process. Object ordering/hashing scratch
+fails without hanging the test process. A supervised child also verifies real
+timeouts and recovery for 60-level shared DAGs on both backends. Owned object ordering/hashing scratch
 storage is admitted and charged for its lifetime.
 
 Evaluator safety remains a separate boundary: `InputDataRef::clone` caps live

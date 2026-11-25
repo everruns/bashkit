@@ -195,7 +195,6 @@ macro_rules! style {
 macro_rules! format_val {
     ($w:ident, $pp:ident, $level:expr, $v:ident, $f:expr) => {{
         // BASHKIT PATCH: formatting is a separately interruptible lifecycle.
-        #[cfg(feature = "experimental_jq")]
         $crate::builtins::jq::jaq_json::meter::tick();
         macro_rules! color {
             ($style:ident, $g:expr) => {{

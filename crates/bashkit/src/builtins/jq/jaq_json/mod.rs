@@ -1009,7 +1009,6 @@ impl PartialOrd for Val {
 impl Ord for Val {
     fn cmp(&self, other: &Self) -> Ordering {
         // BASHKIT PATCH: shared trees can amplify traversal without growth.
-        #[cfg(feature = "experimental_jq")]
         meter::tick();
         use Ordering::{Equal, Greater, Less};
         match (self, other) {
@@ -1073,7 +1072,6 @@ impl Ord for Val {
 impl PartialEq for Val {
     fn eq(&self, other: &Self) -> bool {
         // BASHKIT PATCH: keep equality interruptible independently of output.
-        #[cfg(feature = "experimental_jq")]
         meter::tick();
         match (self, other) {
             (Self::Null, Self::Null) => true,
@@ -1092,7 +1090,6 @@ impl Eq for Val {}
 impl Hash for Val {
     fn hash<H: Hasher>(&self, state: &mut H) {
         // BASHKIT PATCH: hashing can traverse an exponentially shared tree.
-        #[cfg(feature = "experimental_jq")]
         meter::tick();
         fn hash_with(u: u8, x: impl Hash, state: &mut impl Hasher) {
             state.write_u8(u);

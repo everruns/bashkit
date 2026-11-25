@@ -61,7 +61,6 @@ impl Val {
     /// * `a` equals `b`.
     fn contains(&self, other: &Self) -> bool {
         // BASHKIT PATCH: shared generated trees need traversal interruption.
-        #[cfg(feature = "experimental_jq")]
         super::meter::tick();
         match (self, other) {
             (Self::BStr(l), Self::BStr(r)) | (Self::TStr(l), Self::TStr(r)) => l.contains_str(&**r),
@@ -75,7 +74,6 @@ impl Val {
 
     fn to_bytes(&self) -> Result<Bytes, Self> {
         // BASHKIT PATCH: poll even while recursively traversing empty leaves.
-        #[cfg(feature = "experimental_jq")]
         super::meter::tick();
         match self {
             Val::Num(n) => n
@@ -202,6 +200,6 @@ fn base<D: for<'a> DataT<V<'a> = Val>>() -> Box<[Filter<RunPtr<D>>]> {
 }
 
 // BASHKIT PATCH: bounded regressions for traversal with no output or growth.
-#[cfg(all(test, feature = "experimental_jq"))]
+#[cfg(test)]
 #[path = "tests/lifecycle.rs"]
 mod lifecycle_tests;

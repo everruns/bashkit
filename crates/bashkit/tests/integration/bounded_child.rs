@@ -18,7 +18,8 @@
 //! path of a child test; the child test returns immediately unless that env
 //! var is set, then runs its body on [`EMBEDDING_STACK`] via [`on_small_stack`].
 
-// The launcher is unix-only; the child helpers are shared by every platform.
+// Unix adds CPU, stack and RSS bounds; other hosts keep the wall/output
+// watchdog for bounded-allocation depth regressions such as jq's #3013.
 #![cfg_attr(not(unix), allow(dead_code, unused_imports))]
 
 use std::io::Read;
@@ -155,6 +156,48 @@ pub fn run(label: &str, env: &str, exact_test: &str) {
 /// Whether this process is the supervised child selected by `env`.
 pub fn is_child(env: &str) -> bool {
     std::env::var_os(env).is_some()
+}
+
+/// Supervise bounded-allocation stack regressions on native non-Unix hosts.
+/// Child bodies still use EMBEDDING_STACK; only Unix provides OS CPU/RSS caps.
+#[cfg(not(unix))]
+pub fn run(label: &str, env: &str, exact_test: &str) {
+    let mut child = Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", exact_test, "--nocapture", "--test-threads=1"])
+        .env(env, "1")
+        .env("LLVM_PROFILE_FILE", bashkit::testing::child_profile_path())
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn bounded child");
+    let exceeded = Arc::new(AtomicBool::new(false));
+    let stdout = drain(child.stdout.take().unwrap(), exceeded.clone());
+    let stderr = drain(child.stderr.take().unwrap(), exceeded.clone());
+    let start = Instant::now();
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break status;
+        }
+        if exceeded.load(Ordering::Relaxed) || start.elapsed() > Duration::from_secs(20) {
+            child.kill().unwrap();
+            let _ = child.wait();
+            panic!("{label}: child exceeded wall/output bounds");
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    let stdout = stdout.join().unwrap();
+    let stderr = stderr.join().unwrap();
+    assert!(
+        status.success() && !exceeded.load(Ordering::Relaxed),
+        "{label}: child status {status}: {}{}",
+        String::from_utf8_lossy(&stdout),
+        String::from_utf8_lossy(&stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&stdout).contains("1 passed"),
+        "{label}: child test did not run"
+    );
 }
 
 /// Run an async body on a fresh current-thread runtime, on a thread with the

@@ -22,9 +22,44 @@ use super::bounded_child;
 
 const CHILD: &str = "BASHKIT_JQ_VALUE_DEPTH_CHILD";
 const DEPTH_ERROR: &str = "jq: error: value nesting depth limit (100) exceeded\n";
+const TRAVERSAL_CHILD: &str = "BASHKIT_JQ_TRAVERSAL_CHILD";
 
 #[test]
-#[cfg(unix)]
+fn lifecycle_traversals_bounded() {
+    bounded_child::run(
+        "jq-traversal",
+        TRAVERSAL_CHILD,
+        "jq_value_depth_tests::lifecycle_traversals_child",
+    );
+}
+
+#[test]
+fn lifecycle_traversals_child() {
+    if !bounded_child::is_child(TRAVERSAL_CHILD) {
+        return;
+    }
+    bounded_child::on_small_stack(|| async {
+        let mut bash = bashkit::Bash::builder()
+            .limits(bashkit::ExecutionLimits::new().timeout(std::time::Duration::from_millis(250)))
+            .build();
+        let prefix = "def tree: reduce range(60) as $i (null; [.,.]); tree as $a | tree as $b | ";
+        for filter in [
+            format!("{prefix}$a == $b"),
+            format!("{prefix}[$a,$b] | sort | length"),
+            format!("{prefix}$a | contains($b)"),
+            "reduce range(60) as $i ([]; [.,.]) | tobytes | length".into(),
+        ] {
+            let result = bash.exec(&format!("jq -n '{filter}'")).await.unwrap();
+            assert_eq!(result.exit_code, 5, "{filter}: {}", result.stderr);
+            assert_eq!(result.stderr, "jq: execution timed out\n", "{filter}");
+            let recovered = bash.exec("jq -n '1 + 1'").await.unwrap();
+            assert_eq!(recovered.stdout, "2\n");
+            assert!(recovered.stderr.is_empty());
+        }
+    });
+}
+
+#[test]
 fn generated_depth_bounded() {
     bounded_child::run(
         "jq-depth",
