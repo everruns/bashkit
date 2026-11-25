@@ -552,11 +552,12 @@ fn normalize_host_path(path: &Path) -> PathBuf {
     }
 }
 
-
-
 impl RealFs {
     async fn read_dir_admitted(
-        &self, path: &Path, max_entries: usize, charge: super::ReadCharge<'_>,
+        &self,
+        path: &Path,
+        max_entries: usize,
+        charge: super::ReadCharge<'_>,
     ) -> Result<Vec<DirEntry>> {
         let real = self.resolve(path).await?;
         let mut entries = Vec::new();
@@ -718,7 +719,9 @@ impl FsBackend for RealFs {
     }
 
     async fn read_dir_bounded(
-        &self, path: &Path, charge: super::ReadCharge<'_>,
+        &self,
+        path: &Path,
+        charge: super::ReadCharge<'_>,
     ) -> Result<Vec<DirEntry>> {
         self.read_dir_admitted(path, usize::MAX, charge).await
     }

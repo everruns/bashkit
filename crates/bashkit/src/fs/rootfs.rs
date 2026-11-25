@@ -418,16 +418,23 @@ impl RootFs {
         {
             return inner;
         }
-        let sys = self.sys.read_dir_bounded(&p, charge).await.and_then(|mut entries| {
-            if BIN_DIRS.iter().any(|d| p == Path::new(d)) {
-                let commands = self.commands.read().unwrap_or_else(|e| e.into_inner());
-                for name in commands.iter() {
-                    super::charge_dir_entry(charge, name.len())?;
-                    entries.push(DirEntry { name: name.clone(), metadata: self.stub_metadata(name) });
+        let sys = self
+            .sys
+            .read_dir_bounded(&p, charge)
+            .await
+            .and_then(|mut entries| {
+                if BIN_DIRS.iter().any(|d| p == Path::new(d)) {
+                    let commands = self.commands.read().unwrap_or_else(|e| e.into_inner());
+                    for name in commands.iter() {
+                        super::charge_dir_entry(charge, name.len())?;
+                        entries.push(DirEntry {
+                            name: name.clone(),
+                            metadata: self.stub_metadata(name),
+                        });
+                    }
                 }
-            }
-            Ok(entries)
-        });
+                Ok(entries)
+            });
         match (inner, sys) {
             (inner, Ok(sys)) => {
                 let mut entries = inner.unwrap_or_default();
@@ -443,8 +450,12 @@ impl RootFs {
                 }
                 Ok(entries)
             }
-            (inner, Err(error)) if charge.is_none()
-                || matches!(&error, crate::Error::Io(io) if io.kind() == ErrorKind::NotFound) => inner,
+            (inner, Err(error))
+                if charge.is_none()
+                    || matches!(&error, crate::Error::Io(io) if io.kind() == ErrorKind::NotFound) =>
+            {
+                inner
+            }
             (_, Err(error)) => Err(error),
         }
     }
@@ -513,11 +524,14 @@ impl FileSystem for RootFs {
     }
 
     async fn read_dir_limited(&self, path: &Path, max_entries: usize) -> Result<Vec<DirEntry>> {
-        self.read_dir_with_limit(path, Some(max_entries), None).await
+        self.read_dir_with_limit(path, Some(max_entries), None)
+            .await
     }
 
     async fn read_dir_bounded(
-        &self, path: &Path, charge: super::ReadCharge<'_>,
+        &self,
+        path: &Path,
+        charge: super::ReadCharge<'_>,
     ) -> Result<Vec<DirEntry>> {
         self.read_dir_with_limit(path, None, charge).await
     }

@@ -1162,11 +1162,12 @@ impl InMemoryFs {
     }
 }
 
-
-
 impl InMemoryFs {
     async fn read_dir_admitted(
-        &self, path: &Path, max_entries: usize, charge: super::ReadCharge<'_>,
+        &self,
+        path: &Path,
+        max_entries: usize,
+        charge: super::ReadCharge<'_>,
     ) -> Result<Vec<DirEntry>> {
         self.limits
             .validate_path(path)
@@ -1753,7 +1754,9 @@ impl FileSystem for InMemoryFs {
     }
 
     async fn read_dir_bounded(
-        &self, path: &Path, charge: super::ReadCharge<'_>,
+        &self,
+        path: &Path,
+        charge: super::ReadCharge<'_>,
     ) -> Result<Vec<DirEntry>> {
         self.read_dir_admitted(path, usize::MAX, charge).await
     }

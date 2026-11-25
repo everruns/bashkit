@@ -857,11 +857,14 @@ impl FileSystem for OverlayFs {
     }
 
     async fn read_dir_limited(&self, path: &Path, max_entries: usize) -> Result<Vec<DirEntry>> {
-        self.read_dir_with_limit(path, Some(max_entries), None).await
+        self.read_dir_with_limit(path, Some(max_entries), None)
+            .await
     }
 
     async fn read_dir_bounded(
-        &self, path: &Path, charge: super::ReadCharge<'_>,
+        &self,
+        path: &Path,
+        charge: super::ReadCharge<'_>,
     ) -> Result<Vec<DirEntry>> {
         self.read_dir_with_limit(path, None, charge).await
     }

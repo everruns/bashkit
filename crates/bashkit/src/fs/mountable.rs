@@ -516,9 +516,10 @@ impl MountableFs {
                 .filter(|(mount_path, _)| mount_path.parent() == Some(&path))
                 .filter_map(|(mount_path, mfs)| {
                     let name = mount_path.file_name()?;
-                    Some(super::charge_dir_entry(charge, name.len()).map(|()| {
-                        (name.to_string_lossy().into_owned(), Arc::clone(mfs))
-                    }))
+                    Some(
+                        super::charge_dir_entry(charge, name.len())
+                            .map(|()| (name.to_string_lossy().into_owned(), Arc::clone(mfs))),
+                    )
                 })
                 .take(limit.map_or(usize::MAX, |limit| limit.saturating_add(1)))
                 .collect::<Result<_>>()?
@@ -690,11 +691,14 @@ impl FileSystem for MountableFs {
     }
 
     async fn read_dir_limited(&self, path: &Path, max_entries: usize) -> Result<Vec<DirEntry>> {
-        self.read_dir_with_limit(path, Some(max_entries), None).await
+        self.read_dir_with_limit(path, Some(max_entries), None)
+            .await
     }
 
     async fn read_dir_bounded(
-        &self, path: &Path, charge: super::ReadCharge<'_>,
+        &self,
+        path: &Path,
+        charge: super::ReadCharge<'_>,
     ) -> Result<Vec<DirEntry>> {
         self.read_dir_with_limit(path, None, charge).await
     }
