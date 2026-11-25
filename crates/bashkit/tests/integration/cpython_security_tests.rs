@@ -449,6 +449,36 @@ except OSError:
 }
 
 #[tokio::test]
+async fn rejected_file_growth_preserves_contents_and_position() {
+    let mut bash = Bash::builder()
+        .fs(Arc::new(InMemoryFs::with_limits(
+            FsLimits::new().max_file_size(8),
+        )))
+        .cpython()
+        .build();
+    let r = bash
+        .exec(
+            "python3 -c '
+import errno, os
+fd = os.open(\"/f\", os.O_CREAT | os.O_RDWR)
+assert os.write(fd, b\"abc\") == 3
+try:
+    os.write(fd, b\"defghi\")
+except OSError as e:
+    assert e.errno == errno.EFBIG
+else:
+    raise AssertionError(\"write exceeded the file size limit\")
+assert os.write(fd, b\"12345\") == 5
+os.lseek(fd, 0, os.SEEK_SET)
+assert os.read(fd, 8) == b\"abc12345\"
+os.close(fd)'",
+        )
+        .await
+        .unwrap();
+    assert_eq!(r.exit_code, 0, "{}", r.stderr);
+}
+
+#[tokio::test]
 async fn descriptor_table_is_bounded() {
     let r = run("python3 -c '
 fs = []

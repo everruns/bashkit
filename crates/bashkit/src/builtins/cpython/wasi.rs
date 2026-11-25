@@ -8,7 +8,8 @@
 //! - One preopen, `/`, at fd 3 (the snapshot cached that exact table).
 //! - Files are opened as whole in-memory buffers and written back to the VFS on
 //!   close/sync/exit. Buffers are capped by the VFS `max_file_size` and the
-//!   per-call output budget, so a guest cannot grow host memory without bound.
+//!   per-call open-file budget. Writes validate all iovecs before copying
+//!   directly into the bounded output or file buffer.
 //! - The stdlib zip is a read-only overlay at a fixed path; the guest cannot
 //!   modify or shadow it.
 //! - Paths are normalized lexically and clamped at `/`; `..` cannot escape the
@@ -436,15 +437,23 @@ fn range(ptr: i32, len: u32, mem_len: usize) -> Result<std::ops::Range<usize>, E
     Ok(start..end)
 }
 
-pub(super) fn read_bytes(
-    caller: &mut Caller<'_, GuestState>,
+pub(super) fn guest_bytes<'a>(
+    caller: &'a mut Caller<'_, GuestState>,
     ptr: i32,
     len: i32,
-) -> Result<Vec<u8>, Errno> {
+) -> Result<&'a [u8], Errno> {
     let mem = memory(caller)?;
     let data = mem.data(&*caller);
     let r = range(ptr, len as u32, data.len())?;
-    Ok(data[r].to_vec())
+    Ok(&data[r])
+}
+
+fn read_path(caller: &mut Caller<'_, GuestState>, ptr: i32, len: i32) -> Result<Vec<u8>, Errno> {
+    let bytes = guest_bytes(caller, ptr, len)?;
+    if bytes.len() > MAX_PATH_LEN {
+        return Err(ENAMETOOLONG);
+    }
+    Ok(bytes.to_vec())
 }
 
 pub(super) fn write_bytes(
@@ -485,7 +494,7 @@ fn read_iovs(
     if count > 1024 {
         return Err(EINVAL);
     }
-    let raw = read_bytes(caller, iovs, i32::try_from(count * 8).map_err(|_| EINVAL)?)?;
+    let raw = guest_bytes(caller, iovs, i32::try_from(count * 8).map_err(|_| EINVAL)?)?;
     Ok(raw
         .as_chunks::<8>()
         .0
@@ -496,17 +505,6 @@ fn read_iovs(
             (ptr, len)
         })
         .collect())
-}
-
-fn gather(caller: &mut Caller<'_, GuestState>, iovs: &[(i32, u32)]) -> Result<Vec<u8>, Errno> {
-    let mem = memory(caller)?;
-    let data = mem.data(&*caller);
-    let mut out = Vec::new();
-    for &(ptr, len) in iovs {
-        let r = range(ptr, len, data.len())?;
-        out.extend_from_slice(&data[r]);
-    }
-    Ok(out)
 }
 
 fn scatter(
@@ -1012,7 +1010,7 @@ pub(crate) fn add_to_linker(linker: &mut Linker<GuestState>) -> wasmtime::Result
         )| {
             Box::new(async move {
                 let r = async {
-                    let raw = read_bytes(&mut c, path, path_len)?;
+                    let raw = read_path(&mut c, path, path_len)?;
                     let fd = path_open(
                         &mut c,
                         dirfd as u32,
@@ -1036,7 +1034,7 @@ pub(crate) fn add_to_linker(linker: &mut Linker<GuestState>) -> wasmtime::Result
          (dirfd, flags, path, path_len, buf): (i32, i32, i32, i32, i32)| {
             Box::new(async move {
                 let r = async {
-                    let raw = read_bytes(&mut c, path, path_len)?;
+                    let raw = read_path(&mut c, path, path_len)?;
                     let p = c.data().resolve(dirfd as u32, &raw)?;
                     let follow = flags & LOOKUPFLAGS_SYMLINK_FOLLOW != 0;
                     let stat = stat_path(c.data(), &p, follow).await?;
@@ -1054,7 +1052,7 @@ pub(crate) fn add_to_linker(linker: &mut Linker<GuestState>) -> wasmtime::Result
          (dirfd, _flags, path, path_len, _atim, mtim, fst): (i32, i32, i32, i32, i64, i64, i32)| {
             Box::new(async move {
                 let r = async {
-                    let raw = read_bytes(&mut c, path, path_len)?;
+                    let raw = read_path(&mut c, path, path_len)?;
                     let p = c.data().resolve(dirfd as u32, &raw)?;
                     let fst = fst as u16;
                     if c.data().is_stdlib(&p) {
@@ -1085,7 +1083,7 @@ pub(crate) fn add_to_linker(linker: &mut Linker<GuestState>) -> wasmtime::Result
         |mut c: Caller<'_, GuestState>, (dirfd, path, path_len): (i32, i32, i32)| {
             Box::new(async move {
                 let r = async {
-                    let raw = read_bytes(&mut c, path, path_len)?;
+                    let raw = read_path(&mut c, path, path_len)?;
                     let p = c.data().resolve(dirfd as u32, &raw)?;
                     if c.data().is_stdlib(&p) || c.data().is_stdlib_ancestor(&p) {
                         let fs = c.data().fs.clone();
@@ -1110,7 +1108,7 @@ pub(crate) fn add_to_linker(linker: &mut Linker<GuestState>) -> wasmtime::Result
         |mut c: Caller<'_, GuestState>, (dirfd, path, path_len): (i32, i32, i32)| {
             Box::new(async move {
                 let r = async {
-                    let raw = read_bytes(&mut c, path, path_len)?;
+                    let raw = read_path(&mut c, path, path_len)?;
                     let p = c.data().resolve(dirfd as u32, &raw)?;
                     if p == Path::new("/") || c.data().is_stdlib_ancestor(&p) {
                         return Err(EACCES);
@@ -1137,7 +1135,7 @@ pub(crate) fn add_to_linker(linker: &mut Linker<GuestState>) -> wasmtime::Result
         |mut c: Caller<'_, GuestState>, (dirfd, path, path_len): (i32, i32, i32)| {
             Box::new(async move {
                 let r = async {
-                    let raw = read_bytes(&mut c, path, path_len)?;
+                    let raw = read_path(&mut c, path, path_len)?;
                     let p = c.data().resolve(dirfd as u32, &raw)?;
                     if c.data().is_stdlib(&p) {
                         return Err(EROFS);
@@ -1161,8 +1159,8 @@ pub(crate) fn add_to_linker(linker: &mut Linker<GuestState>) -> wasmtime::Result
          (fd1, old, old_len, fd2, new, new_len): (i32, i32, i32, i32, i32, i32)| {
             Box::new(async move {
                 let r = async {
-                    let old_raw = read_bytes(&mut c, old, old_len)?;
-                    let new_raw = read_bytes(&mut c, new, new_len)?;
+                    let old_raw = read_path(&mut c, old, old_len)?;
+                    let new_raw = read_path(&mut c, new, new_len)?;
                     let from = c.data().resolve(fd1 as u32, &old_raw)?;
                     let to = c.data().resolve(fd2 as u32, &new_raw)?;
                     if c.data().is_stdlib(&from) || c.data().is_stdlib(&to) {
@@ -1183,9 +1181,9 @@ pub(crate) fn add_to_linker(linker: &mut Linker<GuestState>) -> wasmtime::Result
          (old, old_len, dirfd, new, new_len): (i32, i32, i32, i32, i32)| {
             Box::new(async move {
                 let r = async {
-                    let target = read_bytes(&mut c, old, old_len)?;
+                    let target = read_path(&mut c, old, old_len)?;
                     let target = String::from_utf8(target).map_err(|_| EILSEQ)?;
-                    let new_raw = read_bytes(&mut c, new, new_len)?;
+                    let new_raw = read_path(&mut c, new, new_len)?;
                     let link = c.data().resolve(dirfd as u32, &new_raw)?;
                     if c.data().is_stdlib(&link) {
                         return Err(EROFS);
@@ -1207,7 +1205,7 @@ pub(crate) fn add_to_linker(linker: &mut Linker<GuestState>) -> wasmtime::Result
          (dirfd, path, path_len, buf, buf_len, used): (i32, i32, i32, i32, i32, i32)| {
             Box::new(async move {
                 let r = async {
-                    let raw = read_bytes(&mut c, path, path_len)?;
+                    let raw = read_path(&mut c, path, path_len)?;
                     let p = c.data().resolve(dirfd as u32, &raw)?;
                     let fs = c.data().fs.clone();
                     let target = fs.read_link(&p).await.map_err(|e| map_fs_error(&e))?;
@@ -1310,16 +1308,25 @@ fn fd_write(
     offset: Option<u64>,
 ) -> Result<usize, Errno> {
     let iovs = read_iovs(c, iovs, n)?;
-    let data = gather(c, &iovs)?;
-    let state = c.data_mut();
+    let mem = memory(c)?;
+    let (guest, state) = mem.data_and_store_mut(&mut *c);
+    // Validate every range before changing output, file contents, or budgets.
+    let len = iovs.iter().try_fold(0u32, |total, &(ptr, len)| {
+        range(ptr, len, guest.len())?;
+        total.checked_add(len).ok_or(EFBIG)
+    })? as usize;
     let max = state.max_file_size;
-    match state.fd(fd)? {
+    let (start, current_len) = match state.fd(fd)? {
         Fd::Stdout | Fd::Stderr => {
             if offset.is_some() {
                 return Err(ESPIPE);
             }
-            state.output.write(fd, &data);
-            return Ok(data.len());
+            for (ptr, len) in iovs {
+                state
+                    .output
+                    .write(fd, &guest[range(ptr, len, guest.len())?]);
+            }
+            return Ok(len);
         }
         Fd::File(f) if f.write => {
             let pos = if f.append {
@@ -1327,38 +1334,36 @@ fn fd_write(
             } else {
                 offset.unwrap_or(f.pos)
             };
-            let start = usize::try_from(pos).map_err(|_| EFBIG)?;
-            let end = start.checked_add(data.len()).ok_or(EFBIG)?;
-            if end > max {
-                return Err(EFBIG);
-            }
-            let grow = end.saturating_sub(f.data.len());
-            state.reserve(grow)?;
+            (usize::try_from(pos).map_err(|_| EFBIG)?, f.data.len())
         }
-        Fd::File(_) => return Err(EBADF),
-        Fd::Stdin => return Err(EBADF),
+        Fd::File(_) | Fd::Stdin => return Err(EBADF),
         Fd::Root | Fd::Dir(_) => return Err(EISDIR),
-    }
+    };
+    let end = start
+        .checked_add(len)
+        .filter(|&end| end <= max)
+        .ok_or(EFBIG)?;
+    state.reserve(end.saturating_sub(current_len))?;
     let Fd::File(f) = state.fd_mut(fd)? else {
         return Err(EBADF);
     };
-    let pos = if f.append {
-        f.data.len()
-    } else {
-        usize::try_from(offset.unwrap_or(f.pos)).map_err(|_| EFBIG)?
-    };
-    let end = pos + data.len();
     let buf = f.data.to_mut();
     if buf.len() < end {
         buf.resize(end, 0);
     }
-    buf[pos..end].copy_from_slice(&data);
+    let mut dest = start;
+    for (ptr, len) in iovs {
+        let src = &guest[range(ptr, len, guest.len())?];
+        let next = dest + src.len();
+        buf[dest..next].copy_from_slice(src);
+        dest = next;
+    }
     f.dirty = true;
     f.modified = SystemTime::now();
     if offset.is_none() {
         f.pos = end as u64;
     }
-    Ok(data.len())
+    Ok(len)
 }
 
 async fn fd_close(c: &mut Caller<'_, GuestState>, fd: u32) -> Result<(), Errno> {
@@ -1602,7 +1607,9 @@ async fn poll_oneoff(
     if n == 0 || n > 64 {
         return Err(EINVAL);
     }
-    let raw = read_bytes(c, subs, i32::try_from(n * 48).map_err(|_| EINVAL)?)?;
+    let mem = memory(c)?;
+    let data = mem.data(&*c);
+    let raw = &data[range(subs, n * 48, data.len())?];
     let mut ready = Vec::new();
     let mut sleep: Option<(Duration, u64)> = None;
     for sub in raw.as_chunks::<48>().0.iter() {

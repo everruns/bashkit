@@ -19,7 +19,9 @@
 //! - The response comes back in two steps (`http_request` reports its size,
 //!   `http_take` copies it), so the guest allocates exactly once and the
 //!   copy counts against its own memory limit.
-//! - A per-call request cap bounds request floods.
+//! - The per-call request cap is checked before decoding. The decoder borrows
+//!   the guest record and copies the body only after validating its length
+//!   and the complete record.
 
 #[cfg(feature = "http_client")]
 use std::sync::Arc;
@@ -27,7 +29,7 @@ use std::time::Duration;
 
 use wasmtime::{Caller, Linker};
 
-use super::wasi::{GuestState, read_bytes, write_bytes, write_u32};
+use super::wasi::{GuestState, guest_bytes, write_bytes, write_u32};
 
 const MODULE: &str = "bashkit";
 
@@ -160,7 +162,7 @@ pub(crate) fn decode_request(buf: &[u8]) -> Result<Request, String> {
         }
         headers.push((name.to_string(), value.trim().to_string()));
     }
-    let body = r.bytes(MAX_REQUEST_BODY, "request body")?.to_vec();
+    let body = r.bytes(MAX_REQUEST_BODY, "request body")?;
     if !r.buf.is_empty() {
         return Err("trailing bytes in request".to_string());
     }
@@ -168,7 +170,7 @@ pub(crate) fn decode_request(buf: &[u8]) -> Result<Request, String> {
         method,
         url,
         headers,
-        body,
+        body: body.to_vec(),
     })
 }
 
@@ -272,24 +274,27 @@ async fn http_request(
     timeout_ms: i64,
     out_len: i32,
 ) -> i32 {
-    let raw = match read_bytes(c, ptr, len) {
+    let state = &c.data().http;
+    let max_requests = state.max_requests;
+    let exhausted = state.requests >= max_requests;
+    let raw = match guest_bytes(c, ptr, len) {
         Ok(raw) => raw,
         Err(_) => return FAULT,
     };
-    let (code, payload) = match decode_request(&raw) {
-        Err(msg) => (INVALID_REQUEST, error_text(&msg)),
-        Ok(request) => {
-            let state = c.data_mut();
-            state.http.pending = None;
-            if state.http.requests >= state.http.max_requests {
-                (
-                    NETWORK_ERROR,
-                    error_text(&format!(
-                        "too many HTTP requests (limit {} per call)",
-                        state.http.max_requests
-                    )),
-                )
-            } else {
+    let (code, payload) = if exhausted {
+        c.data_mut().http.pending = None;
+        (
+            NETWORK_ERROR,
+            error_text(&format!(
+                "too many HTTP requests (limit {max_requests} per call)"
+            )),
+        )
+    } else {
+        match decode_request(raw) {
+            Err(msg) => (INVALID_REQUEST, error_text(&msg)),
+            Ok(request) => {
+                let state = c.data_mut();
+                state.http.pending = None;
                 state.http.requests += 1;
                 // The call deadline always wins over the request's own timeout.
                 let remaining = state.remaining();
