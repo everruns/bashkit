@@ -103,6 +103,12 @@ catch its way around it. Output is capped by `max_stdout_bytes`, and a filter
 that loops without emitting (`until(false; .)`) stops at the execution timeout
 with `jq: execution timed out`.
 
+Values are limited to 100 nested arrays/objects, including values generated
+inside a filter or parsed by `fromjson`. Exceeding this limit reports
+`jq: error: value nesting depth limit (100) exceeded` with exit 5, even inside
+`try ... catch`. This bounds native-stack use during traversal and cleanup;
+raising the live-memory limit does not raise the nesting limit.
+
 `--stream` produces path events directly from tokens without building a JSON
 tree, sharing ancestor keys. Path, event and container storage obey the same
 memory limit, and scanning checks work, cancellation and timeout limits even

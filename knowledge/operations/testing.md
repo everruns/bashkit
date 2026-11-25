@@ -490,7 +490,13 @@ peak with room for instrumentation: `awk_field_depth_bounded` peaks near
 while multi-gigabyte growth still trips it.
 
 `BOUNDED_CLI_LIMITS` in `threat_model_tests.rs` and the probe harness in
-`bashkit-cli/tests/cli_oneshot.rs` are the reference launchers.
+`bashkit-cli/tests/cli_oneshot.rs` are the reference launchers. For a test
+that re-runs one of its own integration tests in a child (a crash regression
+that would otherwise abort the shared binary, such as a native stack
+overflow), use `tests/integration/bounded_child.rs`: `run` launches and
+supervises the child, `is_child` gates the child body, and `on_small_stack`
+runs it on a 2 MiB embedding stack. `awk_field_depth_tests` and
+`jq_value_depth_tests` use it.
 
 The same file holds one test whose guard is **throughput**, not a cap
 (`ordinary_workloads_still_fit`), and it has the opposite constraint: its

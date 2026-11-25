@@ -486,7 +486,7 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
                         .unwrap_or(Val::Null),
                     0,
                 );
-                Some(Ok(Val::Arr(jaq_json::Rc::new(values))))
+                Some(Ok(Val::Arr(jaq_json::admit_container(values))))
             }));
         }
         let shared_inputs = RcIter::new(value_iter);
@@ -642,7 +642,9 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
             }
         }
         Err(payload) => match payload.downcast_ref::<jaq_json::meter::Abort>() {
-            Some(jaq_json::meter::Abort::Memory) => return size_error(&meter),
+            Some(jaq_json::meter::Abort::Memory | jaq_json::meter::Abort::Depth) => {
+                return size_error(&meter);
+            }
             Some(jaq_json::meter::Abort::Interrupted) => {
                 return Ok(ExecResult::err("jq: execution timed out\n".to_string(), 5));
             }

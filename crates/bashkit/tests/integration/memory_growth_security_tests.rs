@@ -230,6 +230,78 @@ mod awk_state {
 mod jq {
     use super::*;
 
+    // #3013: input depth and evaluator recursion caps do not cover values
+    // constructed by a flat reduce. Keep the pre-fix probe shallow enough
+    // that it fails an assertion rather than overflowing the test process.
+    #[tokio::test]
+    async fn generated_value_depth_is_bounded_and_session_recovers() {
+        let mut bash = Bash::new();
+        for body in [
+            "[.]",
+            "{a: .}",
+            ".[0] = .",
+            ".a = .",
+            "[.] | .[0] = [.[0]]",
+            "{a: .} | .a |= {b: .}",
+            ".[0:0] = [.]",
+        ] {
+            let initial = if body.starts_with(".[") {
+                "[]"
+            } else if body == ".a = ." {
+                "{}"
+            } else {
+                "1"
+            };
+            let script = format!("jq -n 'reduce range(101) as $i ({initial}; {body}) | length'");
+            let result = bash.exec(&script).await.unwrap();
+            assert_eq!(result.exit_code, 5, "{body}: {}", result.stderr);
+            assert_eq!(
+                result.stderr,
+                "jq: error: value nesting depth limit (100) exceeded\n"
+            );
+            assert!(result.stdout.is_empty());
+            let recovered = bash.exec("jq -n '1 + 1'").await.unwrap();
+            assert_eq!(recovered.exit_code, 0);
+            assert_eq!(recovered.stdout, "2\n");
+            assert!(recovered.stderr.is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn value_depth_boundary_shared_trees_and_mutations() {
+        for filter in [
+            "reduce range(100) as $i (1; [.]) | length",
+            "reduce range(100) as $i (1; {a: .}) | length",
+            // 2^99 leaves, represented by only 100 shared containers.
+            "reduce range(99) as $i (1; [., .]) | [.] | length",
+            // Removals must invalidate depth metadata, including COW clones.
+            "(reduce range(100) as $i (1; [.])) as $a | ($a | .[0] = 0) | [.] | length",
+            "(reduce range(100) as $i (1; {a: .})) as $a | ($a | del(.a)) | {b: .} | length",
+            "reduce range(1000) as $i (0; [.] | .[0] = 0) | length",
+        ] {
+            let result = run(&format!("jq -n '{filter}'")).await;
+            assert_eq!(result.exit_code, 0, "{filter}: {}", result.stderr);
+            assert_eq!(result.stdout, "1\n", "{filter}");
+            assert!(result.stderr.is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn value_depth_limit_cannot_be_caught_and_fromjson_is_bounded() {
+        for filter in [
+            "try (reduce range(101) as $i (1; [.])) catch 0",
+            "try ((\"[\" * 101 + \"0\" + \"]\" * 101) | fromjson) catch 0",
+            "try ((\"{\\\"a\\\":\" * 101 + \"0\" + \"}\" * 101) | fromjson) catch 0",
+        ] {
+            let result = run(&format!("jq -n '{filter}'; echo rc=$?; echo after")).await;
+            assert_eq!(
+                result.stderr, "jq: error: value nesting depth limit (100) exceeded\n",
+                "{filter}"
+            );
+            assert_eq!(result.stdout, "rc=5\nafter\n", "{filter}");
+        }
+    }
+
     fn size_error(limit: u64) -> String {
         format!("jq: error: value size limit ({limit} bytes) exceeded\n")
     }

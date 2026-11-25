@@ -17,6 +17,10 @@ use super::jaq_json::Val;
 /// like `[[[[...]]]]` or `{"a":{"a":{"a":...}}}`.
 pub(super) const MAX_JQ_JSON_DEPTH: usize = 100;
 
+// #3013: every accepted input must also pass value-depth admission, or valid
+// input would fail later with a misleading generated-depth error.
+const _: () = assert!(MAX_JQ_JSON_DEPTH <= super::jaq_json::meter::MAX_VALUE_DEPTH);
+
 /// Private token serde_json uses when `arbitrary_precision` is on.
 /// Non-integer numbers arrive as a single-entry map `{TOKEN: "1.5"}`
 /// instead of `visit_f64`. Cargo feature unification can enable this even
