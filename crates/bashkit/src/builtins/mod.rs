@@ -133,6 +133,8 @@ mod truncate;
 mod tsort;
 mod vars;
 mod verify;
+#[cfg(any(feature = "python", feature = "typescript"))]
+mod vfs_read;
 #[cfg(feature = "terminal")]
 mod vi;
 mod wait;

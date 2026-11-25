@@ -32,7 +32,15 @@ impl ReadOnlyFs {
 #[async_trait]
 impl FileSystem for ReadOnlyFs {
     async fn read_file(&self, path: &Path) -> Result<Vec<u8>> {
-        self.inner.read_file(path).await
+        self.read_file_bounded(path, None).await
+    }
+
+    async fn read_file_bounded(
+        &self,
+        path: &Path,
+        charge: super::ReadCharge<'_>,
+    ) -> Result<Vec<u8>> {
+        self.inner.read_file_bounded(path, charge).await
     }
 
     async fn write_file(&self, _path: &Path, _content: &[u8]) -> Result<()> {
@@ -56,7 +64,15 @@ impl FileSystem for ReadOnlyFs {
     }
 
     async fn read_dir(&self, path: &Path) -> Result<Vec<DirEntry>> {
-        self.inner.read_dir(path).await
+        self.read_dir_bounded(path, None).await
+    }
+
+    async fn read_dir_bounded(
+        &self,
+        path: &Path,
+        charge: super::ReadCharge<'_>,
+    ) -> Result<Vec<DirEntry>> {
+        self.inner.read_dir_bounded(path, charge).await
     }
 
     async fn read_dir_limited(&self, path: &Path, max_entries: usize) -> Result<Vec<DirEntry>> {

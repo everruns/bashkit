@@ -1045,21 +1045,11 @@ pub struct ExecutionBudgetLease {
 
 impl ExecutionBudgetLease {
     /// Increase this live-storage reservation before growing its buffer.
-    #[cfg(feature = "jq")]
+    #[cfg(any(feature = "jq", feature = "python", feature = "typescript"))]
     pub(crate) fn grow(&mut self, additional: usize) -> Result<(), LimitExceeded> {
         self.budget.check()?;
         let additional = u64::try_from(additional).unwrap_or(u64::MAX);
-        let previous = self
-            .budget
-            .inner
-            .live_bytes
-            .fetch_add(additional, Ordering::Relaxed);
-        let used = previous.saturating_add(additional);
-        if used > self.budget.inner.max_live_bytes || previous.checked_add(additional).is_none() {
-            self.budget
-                .inner
-                .live_bytes
-                .fetch_sub(additional, Ordering::Relaxed);
+        if let Err(used) = self.budget.reserve_live_bytes(additional) {
             return Err(self.budget.poison(ExecutionBudgetExceeded::LiveBytes {
                 used,
                 limit: self.budget.inner.max_live_bytes,

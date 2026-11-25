@@ -314,13 +314,19 @@ impl RootFs {
     }
 
     async fn sys_read(&self, p: &Path) -> Result<Vec<u8>> {
+        self.sys_read_bounded(p, None).await
+    }
+
+    async fn sys_read_bounded(&self, p: &Path, charge: super::ReadCharge<'_>) -> Result<Vec<u8>> {
         if p == Path::new(PROC_UUID) {
             // Like Linux: every read is a new random (v4) UUID from the OS
             // CSPRNG, the same source as `uuidgen`.
+            super::charge_read(charge, 37)?;
             let uuid = crate::builtins::random::uuid_v4().map_err(std::io::Error::other)?;
             return Ok(format!("{uuid}\n").into_bytes());
         }
         if p == Path::new(PROC_UPTIME) {
+            super::charge_read(charge, 64)?;
             let up = SystemTime::now()
                 .duration_since(self.built)
                 .unwrap_or_default()
@@ -329,8 +335,11 @@ impl RootFs {
             return Ok(format!("{up:.2} {idle:.2}\n").into_bytes());
         }
         match self.stub_name(p) {
-            Some(name) => Ok(stub(&name).into_bytes()),
-            None => self.sys.read_file(p).await,
+            Some(name) => {
+                super::charge_read(charge, name.len().saturating_mul(2).saturating_add(256))?;
+                Ok(stub(&name).into_bytes())
+            }
+            None => self.sys.read_file_bounded(p, charge).await,
         }
     }
 
@@ -392,32 +401,40 @@ impl RootFs {
         &self,
         path: &Path,
         limit: Option<usize>,
+        charge: super::ReadCharge<'_>,
     ) -> Result<Vec<DirEntry>> {
         let sys_path = Self::sys_path(path);
         let inner_path = sys_path.as_deref().unwrap_or(path);
         let inner = match limit {
             Some(limit) => self.inner.read_dir_limited(inner_path, limit).await,
-            None => self.inner.read_dir(inner_path).await,
+            None => self.inner.read_dir_bounded(inner_path, charge).await,
         };
         let Some(p) = sys_path else {
             return inner;
         };
-        if limit.is_some()
+        if (limit.is_some() || charge.is_some())
             && let Err(error) = &inner
             && !matches!(error, crate::Error::Io(io) if io.kind() == ErrorKind::NotFound)
         {
             return inner;
         }
-        let sys = self.sys.read_dir(&p).await.map(|mut entries| {
-            if BIN_DIRS.iter().any(|d| p == Path::new(d)) {
-                let commands = self.commands.read().unwrap_or_else(|e| e.into_inner());
-                entries.extend(commands.iter().map(|name| DirEntry {
-                    name: name.clone(),
-                    metadata: self.stub_metadata(name),
-                }));
-            }
-            entries
-        });
+        let sys = self
+            .sys
+            .read_dir_bounded(&p, charge)
+            .await
+            .and_then(|mut entries| {
+                if BIN_DIRS.iter().any(|d| p == Path::new(d)) {
+                    let commands = self.commands.read().unwrap_or_else(|e| e.into_inner());
+                    for name in commands.iter() {
+                        super::charge_dir_entry(charge, name.len())?;
+                        entries.push(DirEntry {
+                            name: name.clone(),
+                            metadata: self.stub_metadata(name),
+                        });
+                    }
+                }
+                Ok(entries)
+            });
         match (inner, sys) {
             (inner, Ok(sys)) => {
                 let mut entries = inner.unwrap_or_default();
@@ -433,7 +450,13 @@ impl RootFs {
                 }
                 Ok(entries)
             }
-            (inner, Err(_)) => inner,
+            (inner, Err(error))
+                if charge.is_none()
+                    || matches!(&error, crate::Error::Io(io) if io.kind() == ErrorKind::NotFound) =>
+            {
+                inner
+            }
+            (_, Err(error)) => Err(error),
         }
     }
 }
@@ -441,9 +464,17 @@ impl RootFs {
 #[async_trait]
 impl FileSystem for RootFs {
     async fn read_file(&self, path: &Path) -> Result<Vec<u8>> {
+        self.read_file_bounded(path, None).await
+    }
+
+    async fn read_file_bounded(
+        &self,
+        path: &Path,
+        charge: super::ReadCharge<'_>,
+    ) -> Result<Vec<u8>> {
         match self.served_by_sys(path).await {
-            Some(p) => self.sys_read(&p).await,
-            None => self.inner.read_file(path).await,
+            Some(p) => self.sys_read_bounded(&p, charge).await,
+            None => self.inner.read_file_bounded(path, charge).await,
         }
     }
 
@@ -489,11 +520,20 @@ impl FileSystem for RootFs {
     }
 
     async fn read_dir(&self, path: &Path) -> Result<Vec<DirEntry>> {
-        self.read_dir_with_limit(path, None).await
+        self.read_dir_with_limit(path, None, None).await
     }
 
     async fn read_dir_limited(&self, path: &Path, max_entries: usize) -> Result<Vec<DirEntry>> {
-        self.read_dir_with_limit(path, Some(max_entries)).await
+        self.read_dir_with_limit(path, Some(max_entries), None)
+            .await
+    }
+
+    async fn read_dir_bounded(
+        &self,
+        path: &Path,
+        charge: super::ReadCharge<'_>,
+    ) -> Result<Vec<DirEntry>> {
+        self.read_dir_with_limit(path, None, charge).await
     }
 
     async fn walk(&self, root: &Path, opts: super::WalkOptions) -> Result<Vec<super::DirListing>> {

@@ -410,6 +410,37 @@ async fn repeated_typescript_entries_share_runtime_admission_budget() {
     );
 }
 
+#[cfg(all(feature = "python", feature = "typescript"))]
+#[tokio::test]
+async fn runtime_vfs_reads_through_scoped_filesystem() {
+    let mut bash = Bash::builder()
+        .limits(ExecutionLimits::new().max_aggregate_input_bytes(4096))
+        .env("BASHKIT_ALLOW_INPROCESS_PYTHON", "1")
+        .python()
+        .typescript()
+        .build();
+    bash.fs()
+        .mkdir(Path::new("/tmp/bridge"), true)
+        .await
+        .unwrap();
+    bash.fs()
+        .write_file(Path::new("/tmp/bridge/sample"), b"hello")
+        .await
+        .unwrap();
+
+    let python = bash.exec(
+        r#"python -c 'from pathlib import Path; print(Path("/tmp/bridge/sample").read_text()); print(len(list(Path("/tmp/bridge").iterdir())))'"#,
+    ).await.unwrap();
+    assert_eq!(python.exit_code, 0, "{}", python.stderr);
+    assert_eq!(python.stdout, "hello\n1\n");
+
+    let ts = bash.exec(
+        r#"ts -c 'const entries = await readDir("/tmp/bridge"); await readFile("/tmp/bridge/" + entries[0])'"#,
+    ).await.unwrap();
+    assert_eq!(ts.exit_code, 0, "{}", ts.stderr);
+    assert_eq!(ts.stdout, "hello\n");
+}
+
 #[cfg(feature = "sqlite")]
 #[tokio::test]
 /// TM-DOS-096: SQLite VM steps consume the request's remaining work.

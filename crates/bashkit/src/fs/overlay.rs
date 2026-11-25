@@ -366,6 +366,7 @@ impl OverlayFs {
         &self,
         path: &Path,
         limit: Option<usize>,
+        charge: super::ReadCharge<'_>,
     ) -> Result<Vec<DirEntry>> {
         // THREAT[TM-DOS-039]: Validate path before use
         self.limits
@@ -411,6 +412,7 @@ impl OverlayFs {
         if is_dir_lower {
             let lower_entries = match limit {
                 Some(limit) => self.lower.read_dir_limited(&path, limit).await?,
+                None if charge.is_some() => self.lower.read_dir_bounded(&path, charge).await?,
                 None => self.lower.read_dir(&path).await.unwrap_or_default(),
             };
             for entry in lower_entries {
@@ -426,6 +428,7 @@ impl OverlayFs {
         if is_dir_upper {
             let upper_entries = match limit {
                 Some(limit) => self.upper.read_dir_limited(&path, limit).await?,
+                None if charge.is_some() => self.upper.read_dir_bounded(&path, charge).await?,
                 None => self.upper.read_dir(&path).await.unwrap_or_default(),
             };
             for entry in upper_entries {
@@ -626,6 +629,14 @@ impl OverlayFs {
 #[async_trait]
 impl FileSystem for OverlayFs {
     async fn read_file(&self, path: &Path) -> Result<Vec<u8>> {
+        self.read_file_bounded(path, None).await
+    }
+
+    async fn read_file_bounded(
+        &self,
+        path: &Path,
+        charge: super::ReadCharge<'_>,
+    ) -> Result<Vec<u8>> {
         // THREAT[TM-DOS-039]: Validate path before use
         self.limits
             .validate_path(path)
@@ -639,11 +650,11 @@ impl FileSystem for OverlayFs {
 
         // Try upper first
         if self.upper.exists(&path).await.unwrap_or(false) {
-            return self.upper.read_file(&path).await;
+            return self.upper.read_file_bounded(&path, charge).await;
         }
 
         // Fall back to lower
-        self.lower.read_file(&path).await
+        self.lower.read_file_bounded(&path, charge).await
     }
 
     async fn write_file(&self, path: &Path, content: &[u8]) -> Result<()> {
@@ -842,11 +853,20 @@ impl FileSystem for OverlayFs {
     }
 
     async fn read_dir(&self, path: &Path) -> Result<Vec<DirEntry>> {
-        self.read_dir_with_limit(path, None).await
+        self.read_dir_with_limit(path, None, None).await
     }
 
     async fn read_dir_limited(&self, path: &Path, max_entries: usize) -> Result<Vec<DirEntry>> {
-        self.read_dir_with_limit(path, Some(max_entries)).await
+        self.read_dir_with_limit(path, Some(max_entries), None)
+            .await
+    }
+
+    async fn read_dir_bounded(
+        &self,
+        path: &Path,
+        charge: super::ReadCharge<'_>,
+    ) -> Result<Vec<DirEntry>> {
+        self.read_dir_with_limit(path, None, charge).await
     }
 
     async fn exists(&self, path: &Path) -> Result<bool> {
