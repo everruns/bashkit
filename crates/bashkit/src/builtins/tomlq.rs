@@ -182,11 +182,19 @@ fn parse_toml(content: &str) -> TomlValue {
 }
 
 /// Strip inline comment from a value string (respecting quotes).
+///
+/// THREAT[TM-UNI-001]: `char_indices` because the offset is used to slice
+/// `s` by bytes. Enumerating `s.chars()` gave a *char* index, so a value
+/// holding any multi-byte character before the `#` sliced inside that
+/// character and panicked -- `k='\u{f8ff}\u{f8ff}\u{f8ff}' #c` reached
+/// `end byte index 6 is not a char boundary` and surfaced as
+/// `tomlq: builtin failed unexpectedly` (nightly `Fuzz Testing`,
+/// `tomlq_fuzz`). Same class as the awk option-parser split fixed on
+/// 2026-11-24. It also drops the `Vec<char>` allocation.
 fn strip_inline_comment(s: &str) -> String {
     let mut in_quotes = false;
     let mut quote_char = ' ';
-    let chars: Vec<char> = s.chars().collect();
-    for (i, &c) in chars.iter().enumerate() {
+    for (i, c) in s.char_indices() {
         if in_quotes {
             if c == quote_char {
                 in_quotes = false;
@@ -337,6 +345,31 @@ impl Builtin for Tomlq {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The offset `strip_inline_comment` slices with is a byte offset, so a
+    /// multi-byte character before the `#` must not land inside it.
+    #[test]
+    fn strip_inline_comment_handles_multibyte_before_the_hash() {
+        // Private-use U+F8FF is three bytes: a char index would point inside it.
+        assert_eq!(
+            strip_inline_comment("'\u{f8ff}\u{f8ff}\u{f8ff}' #c"),
+            "'\u{f8ff}\u{f8ff}\u{f8ff}'"
+        );
+        assert_eq!(strip_inline_comment("\u{f8ff}#c"), "\u{f8ff}");
+        assert_eq!(
+            strip_inline_comment("\u{1f600}\u{1f600} # tail"),
+            "\u{1f600}\u{1f600}"
+        );
+        // A `#` inside quotes is still part of the value.
+        assert_eq!(
+            strip_inline_comment("'\u{f8ff}#not a comment'"),
+            "'\u{f8ff}#not a comment'"
+        );
+        // ASCII behavior is unchanged.
+        assert_eq!(strip_inline_comment("1 #c"), "1");
+        assert_eq!(strip_inline_comment("1"), "1");
+        assert_eq!(strip_inline_comment("#c"), "");
+    }
     use std::collections::HashMap;
     use std::path::PathBuf;
     use std::sync::Arc;
