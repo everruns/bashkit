@@ -12,11 +12,11 @@ function withPackage(run) {
   try { run(pkg); } finally { rmSync(pkg, { recursive: true, force: true }); }
 }
 
-test("size: only an explicit compiler feature selects the separate gzip cap", () => {
+test("size: only an explicit compiler feature selects the compiler budget profile", () => {
   withPackage(pkg => {
     const ordinary = artifactBudget(pkg);
     assert.equal(ordinary.profile, "default");
-    assert.equal(ordinary.limits.gzip, 3100000);
+    assert.equal(ordinary.limits.gzip, 3120000);
     for (const features of [[], ["terminal"], ["bashkit/experimental_execution_plan_extra"]]) {
       writeFileSync(join(pkg, "build-info.json"), JSON.stringify({ features }));
       assert.deepEqual(artifactBudget(pkg), ordinary);
@@ -25,9 +25,14 @@ test("size: only an explicit compiler feature selects the separate gzip cap", ()
       writeFileSync(join(pkg, "build-info.json"), JSON.stringify({ features: ["terminal", feature] }));
       const compiled = artifactBudget(pkg);
       assert.equal(compiled.profile, "execution-plan");
-      assert.deepEqual(compiled.limits, { ...ordinary.limits, gzip: 3120000 });
-      const report = { total: { raw: 7900000, gzip: 3110000, brotli: 2200000 } };
+      assert.deepEqual(compiled.limits, { ...ordinary.limits, gzip: 3140000, brotli: 2230000 });
+      const report = { total: { raw: 7900000, gzip: 3130000, brotli: 2225000 } };
       assert.throws(() => checkArtifactBudget(report, ordinary), /gzip/);
+      // Main added output metering after this experiment. The default
+      // package retains its limits; only the optional compiler gets extra room.
+      for (const [kind, limit] of Object.entries(ordinary.limits)) {
+        assert.throws(() => checkArtifactBudget({ total: { ...report.total, gzip: 3110000, brotli: 2200000, [kind]: limit + 1 } }, ordinary), new RegExp(kind));
+      }
       checkArtifactBudget(report, compiled);
       for (const [kind, limit] of Object.entries(compiled.limits)) {
         assert.throws(() => checkArtifactBudget({ total: { ...report.total, [kind]: limit + 1 } }, compiled), new RegExp(kind));
