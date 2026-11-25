@@ -193,6 +193,7 @@ pub mod threat_model_doc_tests;
 pub mod threat_model_tests;
 pub mod time_command_tests;
 pub mod time_compat_scan_tests;
+pub mod tomlq_fuzz_scaffold_tests;
 pub mod ts_tenant_stress_tests;
 pub mod tty_tests;
 pub mod typescript_integration_tests;

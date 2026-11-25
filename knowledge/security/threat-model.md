@@ -2454,6 +2454,19 @@ panics on multi-byte Unicode because it conflates character positions with byte 
 | TM-UNI-017 | Byte-level char set in cut/tr | `echo "café" \| tr 'é' 'x'`, `as_bytes()` iteration drops multi-byte chars | `catch_unwind` catches; `.find()` byte offsets mixed with string slicing | **PARTIAL** |
 | TM-UNI-018 | Byte/char confusion in arithmetic | `((α=1))`, `find('=')` byte offset used as char index in `.chars().nth()` | Wrong character inspection; no panic but incorrect operator detection | **PARTIAL** |
 | TM-UNI-019 | Byte/char confusion in URL matching | Allowlist path with multi-byte chars, `pattern_path.len()` bytes used as char index | Wrong path boundary check; no panic but incorrect allow/deny decision | **PARTIAL** |
+| TM-UNI-020 | Byte-boundary panic in tomlq | `printf '%s\n' "k='\u{f8ff}' #c" \| tomlq k`: `strip_inline_comment` enumerated `s.chars()` and used that *char* index to slice `s` by bytes, so any multi-byte character before the `#` sliced inside it | `char_indices()` supplies the byte offset the slice needs, which also drops a `Vec<char>` allocation. Seeded in `tomlq_fuzz_scaffold_tests` and unit-tested on `strip_inline_comment`; found by `tomlq_fuzz` in both plan modes | **FIXED** |
+
+**TM-UNI-020** (fixed): the third site of this class in as many days, after awk's program
+parser and its option split. The shape is always the same -- an index produced by walking
+`chars()` is spent on a byte slice -- and it is invisible in ASCII testing, so only a
+multi-byte input reaches it. `tomlq`'s `strip_inline_comment` collected a `Vec<char>`,
+enumerated it, and returned `s[..i]` on the first `#`; `catch_unwind` turned the panic into
+`tomlq: builtin failed unexpectedly`, which is itself a `UNIVERSAL_BANNED` shape, so
+`tomlq_fuzz` reported it as a leak in both plan modes. The fix is `char_indices()`, which hands
+back the byte offset the slice actually wants. A sweep of the remaining `chars()`-derived
+indices in `crates/bashkit/src` found no further sites: the other candidates slice on
+`content.len()` and `str::find`, both already byte offsets. The general rule for new code:
+never spend a `chars().enumerate()` index on a slice; take the offset from `char_indices()`.
 
 **Current Risk**: MEDIUM, `catch_unwind` (TM-INT-001) prevents process crash for all
 builtins, but they silently fail instead of processing the input correctly. Scripts get

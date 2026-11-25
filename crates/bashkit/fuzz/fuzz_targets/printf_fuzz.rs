@@ -31,6 +31,17 @@ fuzz_target!(|data: &[u8]| {
             return;
         }
 
+        // printf quotes its operand verbatim: `printf: <arg>: invalid number`.
+        // The shape need not be in the input -- the message separator's colon
+        // completes it, so an argument of `Undefined:` renders
+        // `printf: Undefined:: invalid number` and spells `Undefined::` across
+        // the join. `assert_fuzz_invariants`' script attribution cannot see a
+        // join at the slot boundary, so gate at the input layer as
+        // `arithmetic_fuzz` and `glob_fuzz` do. Nightly run after 304.
+        if bashkit::testing::input_echo_would_trip(input) {
+            return;
+        }
+
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
