@@ -84,6 +84,15 @@ impl VmMeter {
         self.limit > 0 && (self.exceeded.load(Ordering::Relaxed) || self.live() > self.limit)
     }
 
+    #[cfg(feature = "typescript")]
+    pub(crate) fn memory_remaining(&self) -> usize {
+        if self.limit == 0 {
+            usize::MAX
+        } else {
+            self.limit.saturating_sub(self.live())
+        }
+    }
+
     pub(crate) fn live(&self) -> usize {
         self.live.load(Ordering::Relaxed)
     }

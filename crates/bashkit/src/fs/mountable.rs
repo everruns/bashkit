@@ -495,6 +495,7 @@ impl MountableFs {
         &self,
         path: &Path,
         limit: Option<usize>,
+        charge: super::ReadCharge<'_>,
     ) -> Result<Vec<DirEntry>> {
         self.validate_path(path)?;
         let path = Self::normalize_path(path);
@@ -502,7 +503,7 @@ impl MountableFs {
 
         let mut entries = match limit {
             Some(limit) => fs.read_dir_limited(&resolved, limit).await?,
-            None => fs.read_dir(&resolved).await?,
+            None => fs.read_dir_bounded(&resolved, charge).await?,
         };
 
         // Add mount points that are direct children of this directory. Their
@@ -514,11 +515,13 @@ impl MountableFs {
                 .iter()
                 .filter(|(mount_path, _)| mount_path.parent() == Some(&path))
                 .filter_map(|(mount_path, mfs)| {
-                    let name = mount_path.file_name()?.to_string_lossy().into_owned();
-                    Some((name, Arc::clone(mfs)))
+                    let name = mount_path.file_name()?;
+                    Some(super::charge_dir_entry(charge, name.len()).map(|()| {
+                        (name.to_string_lossy().into_owned(), Arc::clone(mfs))
+                    }))
                 })
                 .take(limit.map_or(usize::MAX, |limit| limit.saturating_add(1)))
-                .collect()
+                .collect::<Result<_>>()?
         };
         if limit.is_some_and(|limit| children.len() > limit) {
             return Err(super::traits::fs_errors::directory_entry_limit());
@@ -635,12 +638,20 @@ impl super::SearchCapable for MountableFs {
 #[async_trait]
 impl FileSystem for MountableFs {
     async fn read_file(&self, path: &Path) -> Result<Vec<u8>> {
+        self.read_file_bounded(path, None).await
+    }
+
+    async fn read_file_bounded(
+        &self,
+        path: &Path,
+        charge: super::ReadCharge<'_>,
+    ) -> Result<Vec<u8>> {
         // THREAT[TM-DOS-046]: validate before delegation so mounted backends
         // never receive control-character / depth-limit / length-limit
         // violating paths through any read API.
         self.validate_path(path)?;
         let (fs, resolved) = self.resolve(path);
-        fs.read_file(&resolved).await
+        fs.read_file_bounded(&resolved, charge).await
     }
 
     async fn write_file(&self, path: &Path, content: &[u8]) -> Result<()> {
@@ -675,11 +686,17 @@ impl FileSystem for MountableFs {
     }
 
     async fn read_dir(&self, path: &Path) -> Result<Vec<DirEntry>> {
-        self.read_dir_with_limit(path, None).await
+        self.read_dir_with_limit(path, None, None).await
     }
 
     async fn read_dir_limited(&self, path: &Path, max_entries: usize) -> Result<Vec<DirEntry>> {
-        self.read_dir_with_limit(path, Some(max_entries)).await
+        self.read_dir_with_limit(path, Some(max_entries), None).await
+    }
+
+    async fn read_dir_bounded(
+        &self, path: &Path, charge: super::ReadCharge<'_>,
+    ) -> Result<Vec<DirEntry>> {
+        self.read_dir_with_limit(path, None, charge).await
     }
 
     async fn walk(&self, root: &Path, opts: super::WalkOptions) -> Result<Vec<super::DirListing>> {

@@ -769,3 +769,22 @@ mod vfs_join_tests {
         );
     }
 }
+
+/// A callback invoked before allocating response storage for a VFS read.
+/// An error aborts the read. `None` selects the ordinary read behavior.
+pub type ReadCharge<'a> = Option<&'a (dyn Fn(usize) -> crate::error::Result<()> + Sync)>;
+
+pub(crate) fn charge_read(charge: ReadCharge<'_>, bytes: usize) -> crate::error::Result<()> {
+    charge.map_or(Ok(()), |charge| charge(bytes))
+}
+
+// Allow for vector capacity growth, metadata and wrapper merge storage.
+pub(crate) fn charge_dir_entry(
+    charge: ReadCharge<'_>,
+    name_bytes: usize,
+) -> crate::error::Result<()> {
+    charge_read(
+        charge,
+        (4 * std::mem::size_of::<DirEntry>()).saturating_add(name_bytes.saturating_mul(4)),
+    )
+}

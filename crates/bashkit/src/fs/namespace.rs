@@ -282,7 +282,11 @@ impl NamespaceFs {
         Ok(())
     }
 
-    fn child_mount_paths(&self, path: &Path) -> Vec<PathBuf> {
+    fn child_mount_paths(
+        &self,
+        path: &Path,
+        charge: super::ReadCharge<'_>,
+    ) -> Result<Vec<PathBuf>> {
         let mut children = BTreeSet::new();
         for mount in &self.mounts {
             let Ok(relative) = mount.target.strip_prefix(path) else {
@@ -291,13 +295,14 @@ impl NamespaceFs {
             let Some(Component::Normal(name)) = relative.components().next() else {
                 continue;
             };
+            super::charge_dir_entry(charge, path.as_os_str().len().saturating_add(name.len()))?;
             children.insert(if path == Path::new("/") {
                 vfs_join(Path::new("/"), name)
             } else {
                 vfs_join(path, name)
             });
         }
-        children.into_iter().collect()
+        Ok(children.into_iter().collect())
     }
 
     fn resolve_writable(&self, path: &Path) -> Result<ResolvedPath<'_>> {
@@ -314,12 +319,24 @@ impl NamespaceFs {
 #[async_trait]
 impl FileSystem for NamespaceFs {
     async fn read_file(&self, path: &Path) -> Result<Vec<u8>> {
+        self.read_file_bounded(path, None).await
+    }
+
+    async fn read_file_bounded(
+        &self,
+        path: &Path,
+        charge: super::ReadCharge<'_>,
+    ) -> Result<Vec<u8>> {
         let path = self.normalized(path)?;
         if self.is_synthetic(&path) {
             return Err(super::fs_errors::is_a_directory());
         }
         let resolved = self.resolve(&path).ok_or_else(Self::outside_read_error)?;
-        resolved.mount.fs.read_file(&resolved.source_path).await
+        resolved
+            .mount
+            .fs
+            .read_file_bounded(&resolved.source_path, charge)
+            .await
     }
 
     async fn write_file(&self, path: &Path, content: &[u8]) -> Result<()> {
@@ -372,15 +389,27 @@ impl FileSystem for NamespaceFs {
     }
 
     async fn read_dir(&self, path: &Path) -> Result<Vec<DirEntry>> {
+        self.read_dir_bounded(path, None).await
+    }
+
+    async fn read_dir_bounded(
+        &self,
+        path: &Path,
+        charge: super::ReadCharge<'_>,
+    ) -> Result<Vec<DirEntry>> {
         let path = self.normalized(path)?;
         let mut entries = if self.is_synthetic(&path) {
             Vec::new()
         } else {
             let resolved = self.resolve(&path).ok_or_else(Self::outside_read_error)?;
-            resolved.mount.fs.read_dir(&resolved.source_path).await?
+            resolved
+                .mount
+                .fs
+                .read_dir_bounded(&resolved.source_path, charge)
+                .await?
         };
 
-        for child_path in self.child_mount_paths(&path) {
+        for child_path in self.child_mount_paths(&path, charge)? {
             let name = child_path
                 .file_name()
                 .expect("child mount path has a name")

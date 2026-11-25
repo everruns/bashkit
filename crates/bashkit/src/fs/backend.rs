@@ -134,6 +134,19 @@ pub trait FsBackend: Send + Sync {
     /// - `NotFound` if path doesn't exist
     async fn read(&self, path: &Path) -> Result<Vec<u8>>;
 
+    /// Read with a pre-allocation charge. Implementations must charge storage
+    /// before materializing it, including when delegating to another backend.
+    async fn read_bounded(&self, path: &Path, charge: super::ReadCharge<'_>) -> Result<Vec<u8>> {
+        if charge.is_some() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "backend does not support bounded reads",
+            )
+            .into());
+        }
+        self.read(path).await
+    }
+
     /// Write raw bytes to a path.
     ///
     /// Creates file if it doesn't exist, overwrites if it does.
@@ -185,6 +198,23 @@ pub trait FsBackend: Send + Sync {
     /// Implementations must stop enumeration if the limit is exceeded.
     async fn read_dir_limited(&self, _path: &Path, _max_entries: usize) -> Result<Vec<DirEntry>> {
         Err(super::traits::fs_errors::bounded_listing_unsupported())
+    }
+
+    /// Read with a pre-allocation charge. Implementations must charge storage
+    /// before materializing it, including when delegating to another backend.
+    async fn read_dir_bounded(
+        &self,
+        path: &Path,
+        charge: super::ReadCharge<'_>,
+    ) -> Result<Vec<DirEntry>> {
+        if charge.is_some() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "backend does not support bounded reads",
+            )
+            .into());
+        }
+        self.read_dir(path).await
     }
 
     /// Check if path exists.

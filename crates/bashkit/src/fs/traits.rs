@@ -276,6 +276,23 @@ pub trait FileSystem: FileSystemExt {
     /// - I/O error occurs
     async fn read_file(&self, path: &Path) -> Result<Vec<u8>>;
 
+    /// Read with a pre-allocation charge. Implementations must charge storage
+    /// before materializing it, including when delegating to another backend.
+    async fn read_file_bounded(
+        &self,
+        path: &Path,
+        charge: super::ReadCharge<'_>,
+    ) -> Result<Vec<u8>> {
+        if charge.is_some() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "backend does not support bounded reads",
+            )
+            .into());
+        }
+        self.read_file(path).await
+    }
+
     /// Write contents to a file, creating it if necessary.
     ///
     /// If the file exists, its contents are replaced. If it doesn't exist,
@@ -365,6 +382,23 @@ pub trait FileSystem: FileSystemExt {
     /// the operation on backends that only provide an unbounded listing.
     async fn read_dir_limited(&self, _path: &Path, _max_entries: usize) -> Result<Vec<DirEntry>> {
         Err(fs_errors::bounded_listing_unsupported())
+    }
+
+    /// Read with a pre-allocation charge. Implementations must charge storage
+    /// before materializing it, including when delegating to another backend.
+    async fn read_dir_bounded(
+        &self,
+        path: &Path,
+        charge: super::ReadCharge<'_>,
+    ) -> Result<Vec<DirEntry>> {
+        if charge.is_some() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "backend does not support bounded reads",
+            )
+            .into());
+        }
+        self.read_dir(path).await
     }
 
     /// Check if a path exists.

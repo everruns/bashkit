@@ -552,9 +552,41 @@ fn normalize_host_path(path: &Path) -> PathBuf {
     }
 }
 
+
+
+impl RealFs {
+    async fn read_dir_admitted(
+        &self, path: &Path, max_entries: usize, charge: super::ReadCharge<'_>,
+    ) -> Result<Vec<DirEntry>> {
+        let real = self.resolve(path).await?;
+        let mut entries = Vec::new();
+        let mut dir = tokio::fs::read_dir(&real).await?;
+        while let Some(entry) = dir.next_entry().await? {
+            if entries.len() == max_entries {
+                return Err(super::traits::fs_errors::directory_entry_limit());
+            }
+            let name = entry.file_name();
+            super::charge_dir_entry(charge, name.len())?;
+            let name = name.to_string_lossy().into_owned();
+            let meta = entry.metadata().await?;
+            entries.push(DirEntry {
+                name,
+                metadata: metadata_from_std(&meta),
+            });
+        }
+        // Sort for deterministic output
+        entries.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(entries)
+    }
+}
+
 #[async_trait]
 impl FsBackend for RealFs {
     async fn read(&self, path: &Path) -> Result<Vec<u8>> {
+        self.read_bounded(path, None).await
+    }
+
+    async fn read_bounded(&self, path: &Path, charge: super::ReadCharge<'_>) -> Result<Vec<u8>> {
         use super::limits::DEFAULT_MAX_FILE_SIZE;
         use tokio::io::AsyncReadExt;
 
@@ -573,7 +605,7 @@ impl FsBackend for RealFs {
                 format!("host file exceeds read limit of {DEFAULT_MAX_FILE_SIZE} bytes"),
             )
         };
-        let file = tokio::fs::File::open(&real).await?;
+        let mut file = tokio::fs::File::open(&real).await?;
         let size = file.metadata().await?.len();
         if size > DEFAULT_MAX_FILE_SIZE {
             return Err(too_large().into());
@@ -581,6 +613,29 @@ impl FsBackend for RealFs {
 
         // THREAT[TM-DOS-148]: Bound actual reads as the file can grow after
         // metadata is sampled or report a size smaller than its contents.
+        if charge.is_some() {
+            super::charge_read(charge, size as usize)?;
+            let mut data = Vec::with_capacity(size as usize);
+            let mut chunk = [0; 8192];
+            loop {
+                let count = file.read(&mut chunk).await?;
+                if count == 0 {
+                    return Ok(data);
+                }
+                let required = data.len() + count;
+                if required as u64 > DEFAULT_MAX_FILE_SIZE {
+                    return Err(too_large().into());
+                }
+                if required > data.capacity() {
+                    let capacity = required
+                        .max(data.capacity().saturating_mul(2))
+                        .min(DEFAULT_MAX_FILE_SIZE as usize);
+                    super::charge_read(charge, capacity - data.capacity())?;
+                    data.reserve_exact(capacity - data.len());
+                }
+                data.extend_from_slice(&chunk[..count]);
+            }
+        }
         let mut data = Vec::with_capacity(size as usize + 1);
         file.take(DEFAULT_MAX_FILE_SIZE + 1)
             .read_to_end(&mut data)
@@ -655,27 +710,17 @@ impl FsBackend for RealFs {
     }
 
     async fn read_dir(&self, path: &Path) -> Result<Vec<DirEntry>> {
-        self.read_dir_limited(path, usize::MAX).await
+        self.read_dir_admitted(path, usize::MAX, None).await
     }
 
     async fn read_dir_limited(&self, path: &Path, max_entries: usize) -> Result<Vec<DirEntry>> {
-        let real = self.resolve(path).await?;
-        let mut entries = Vec::new();
-        let mut dir = tokio::fs::read_dir(&real).await?;
-        while let Some(entry) = dir.next_entry().await? {
-            if entries.len() == max_entries {
-                return Err(super::traits::fs_errors::directory_entry_limit());
-            }
-            let name = entry.file_name().to_string_lossy().to_string();
-            let meta = entry.metadata().await?;
-            entries.push(DirEntry {
-                name,
-                metadata: metadata_from_std(&meta),
-            });
-        }
-        // Sort for deterministic output
-        entries.sort_by(|a, b| a.name.cmp(&b.name));
-        Ok(entries)
+        self.read_dir_admitted(path, max_entries, None).await
+    }
+
+    async fn read_dir_bounded(
+        &self, path: &Path, charge: super::ReadCharge<'_>,
+    ) -> Result<Vec<DirEntry>> {
+        self.read_dir_admitted(path, usize::MAX, charge).await
     }
 
     async fn exists(&self, path: &Path) -> Result<bool> {
@@ -940,6 +985,48 @@ mod tests {
                 matches!(error, crate::Error::Io(ref err) if err.kind() == ErrorKind::FileTooLarge)
             );
         }
+    }
+
+    #[tokio::test]
+    async fn bounded_reads_honor_admission_through_posix() {
+        use crate::FileSystem;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let dir = setup();
+        let fs = super::super::PosixFs::new(RealFs::new(dir.path(), RealFsMode::ReadOnly).unwrap());
+        let requested = AtomicUsize::new(0);
+        let reject = |bytes| {
+            requested.store(bytes, Ordering::Relaxed);
+            Err(IoError::other("storage rejected").into())
+        };
+        let error = fs
+            .read_file_bounded(Path::new("/hello.txt"), Some(&reject))
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("storage rejected"));
+        assert_eq!(requested.load(Ordering::Relaxed), b"hello world".len());
+
+        let error = fs
+            .read_dir_bounded(Path::new("/"), Some(&reject))
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("storage rejected"));
+        assert!(requested.load(Ordering::Relaxed) >= std::mem::size_of::<DirEntry>());
+
+        let allow = |_| Ok(());
+        assert_eq!(
+            fs.read_file_bounded(Path::new("/hello.txt"), Some(&allow))
+                .await
+                .unwrap(),
+            b"hello world"
+        );
+        assert_eq!(
+            fs.read_dir_bounded(Path::new("/"), Some(&allow))
+                .await
+                .unwrap()
+                .len(),
+            2
+        );
     }
 
     #[tokio::test]
