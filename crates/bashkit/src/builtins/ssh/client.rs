@@ -177,7 +177,7 @@ impl SshClient {
 
     fn acquire_session(&self) -> std::result::Result<SessionPermit<'_>, String> {
         self.active_sessions
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
                 (current < self.config.max_sessions).then(|| current + 1)
             })
             .map_err(|current| {
