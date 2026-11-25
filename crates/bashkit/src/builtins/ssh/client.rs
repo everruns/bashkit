@@ -280,12 +280,18 @@ mod tests {
     #[test]
     fn test_session_permit_lifetime() {
         let client = SshClient::new(SshConfig::new().max_sessions(1));
-        let permit = client.acquire_session().expect("first permit");
+        let mut operation = Box::pin(async {
+            let _permit = client.acquire_session().expect("first permit");
+            std::future::pending::<()>().await;
+        });
+
+        let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+        assert!(std::future::Future::poll(operation.as_mut(), &mut context).is_pending());
         assert!(client.acquire_session().is_err());
 
-        drop(permit);
-        assert!(client.acquire_session().is_ok());
+        drop(operation);
         assert_eq!(client.active_sessions.load(Ordering::SeqCst), 0);
+        let _permit = client.acquire_session().expect("reclaimed permit");
     }
 
     #[tokio::test]
