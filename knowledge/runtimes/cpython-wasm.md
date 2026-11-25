@@ -168,6 +168,8 @@ process bridge, quoting on every request).
 - Wire format: u32 little-endian length-prefixed fields. The response comes
   back in two steps (`http_request` reports the size, `http_take` copies),
   so the guest allocates once and the copy counts against its memory limit.
+- The per-call request cap is checked before decoding. The host parses the
+  record in guest memory and copies the body after validating the full record.
 - Host validation before dispatch: methods GET/POST/PUT/DELETE/HEAD/PATCH,
   URL <= 8 KiB with no controls or spaces, <= 128 headers and 64 KiB,
   token header names, no CR/LF/NUL in values, body <= 16 MiB. Host-owned
@@ -273,7 +275,10 @@ the dependency on stdlib http.client/email.
   124; traps become `python3: fatal error: ...` (Display only, TM-INF-022)
   with exit 1; open files are flushed even after a trap or timeout.
 - **Output cap** drops bytes past `max_output` and appends
-  `python3: output truncated at N bytes` to stderr.
+  `python3: output truncated at N bytes` to stderr. WASI validates all write
+  buffers, then copies only the bytes that fit into the remaining output cap.
+- **File writes** check file size and the open-file budget before copying
+  directly into file buffers. Guest paths are length-checked before copying.
 
 ### Guest driver (`_bashkit_boot.py`)
 
