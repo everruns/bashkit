@@ -1201,7 +1201,10 @@ is built from configurable `self.config` values, never read from host `~/.gitcon
 
 **TM-SSH-006**: The `RusshHandler` verifies server host keys against trusted keys configured via
 `SshConfig::trusted_host_key()`. When `strict_host_key_checking` is enabled (default), connections
-to hosts without a matching trusted key are rejected. When disabled, a warning is emitted to stderr.
+to hosts without a matching trusted key are rejected. When disabled, the default transport emits
+a warning to stderr. Custom handlers must accept the configured pins before receiving operations
+in strict mode. Bashkit trusts those handlers to enforce the pins on each SSH connection before
+authentication, including rejecting certificates.
 
 Since russh 0.63 the `check_server_key` callback receives a `PublicKeyOrCertificate`, so a server
 may present a CA-signed host *certificate* rather than a raw key. Bashkit has no CA trust store,

@@ -1,8 +1,8 @@
 //! SSH handler trait for pluggable transport implementations.
 //!
 //! Embedders can implement [`SshHandler`] to intercept, proxy, log,
-//! or mock SSH operations. The allowlist check happens _before_ the
-//! handler is called, so the security boundary stays in bashkit.
+//! or mock SSH operations. Bashkit checks the allowlist before dispatching
+//! operations. Network handlers are responsible for verifying server identity.
 //!
 //! # Default
 //!
@@ -10,10 +10,12 @@
 
 use async_trait::async_trait;
 
+use super::config::TrustedHostKey;
+
 /// Connection target for an SSH operation.
 ///
 /// Fully resolved by the builtin before passing to the handler.
-/// The handler does NOT need to validate the host — that's already done.
+/// Bashkit checks the destination allowlist before dispatching operations.
 #[derive(Clone)]
 pub struct SshTarget {
     /// Remote hostname or IP.
@@ -63,7 +65,11 @@ pub struct SshOutput {
 /// - Log/audit all SSH operations
 /// - Rate-limit connections
 ///
-/// The allowlist check happens _before_ the handler is called.
+/// Bashkit checks the allowlist before dispatch. In strict mode (the default),
+/// custom handlers must accept the host-key policy through
+/// [`configure_strict_host_key_checking`](Self::configure_strict_host_key_checking)
+/// before receiving operations. An in-process mock that never contacts an SSH
+/// server can use an explicitly non-strict configuration.
 ///
 /// # Example
 ///
@@ -103,6 +109,24 @@ pub struct SshOutput {
 /// ```
 #[async_trait]
 pub trait SshHandler: Send + Sync {
+    /// Configure strict host-key verification before any operation is dispatched.
+    ///
+    /// Return success only if every network operation will verify the server's
+    /// key on the same SSH connection, before authentication or sending
+    /// commands or file data. Use only the supplied pins for the target host
+    /// (an exact hostname or `*`). Reject missing and mismatched pins and
+    /// host certificates. An empty list authorizes no server keys.
+    ///
+    /// Bashkit trusts the implementation of this method and the handler's
+    /// enforcement. The default implementation rejects the configuration so
+    /// handlers written without host-key verification fail closed.
+    fn configure_strict_host_key_checking(
+        &mut self,
+        _trusted_host_keys: &[TrustedHostKey],
+    ) -> Result<(), String> {
+        Err("ssh: custom handler does not support strict host-key verification".into())
+    }
+
     /// Execute a command on a remote host and return its output.
     ///
     /// Called after the host has been validated against the allowlist.
