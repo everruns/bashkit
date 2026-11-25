@@ -903,9 +903,10 @@ access is bridged through Bashkit's VFS, never the host filesystem.
 | Memory growth past `max_memory` aborts the host (TM-TS-026) | Doubling a string or array, or joining/printing an array that shares one big string, until an allocation fails | A per-run meter stops the script once its heap passes `max_memory`; output-amplifying builtins size the result first; `ts` refuses to run without `MeteredAllocator` | MITIGATED |
 | Host-call loop outruns the time limit (TM-TS-027) | `while (true) { await writeFile(...) }` resumes ZapCode's clock at every call | Wall-clock deadline checked at every host call; callbacks capped at the remaining time; the loop yields to the executor | MITIGATED |
 | CPU-only VM step starves async workers (TM-TS-028) | Concurrent `while (true) {}` steps synchronously join dedicated 128 MiB-stack threads from Tokio workers | Run and join on the blocking pool; process-wide active-VM semaphore (default at most 4, configurable before first use); queue wait consumes the caller deadline and abandoned work retains its permit | MITIGATED |
+| Host callback arguments exhaust memory (TM-TS-029) | Bindings allocate host values when converting TypeScript arguments | Check aggregate value count, UTF-8 string and key bytes, and nesting before dispatch | MITIGATED |
 | Bash var expansion injection (TM-TS-020) | Unquoted `$VAR` expanded before TS runs | By design; use single quotes to prevent expansion | MITIGATED |
 
-Per-threat coverage (TM-TS-001 … TM-TS-028), including error-isolation and
+Per-threat coverage (TM-TS-001 … TM-TS-029), including error-isolation and
 exit-code propagation cases, is also exercised by the `threat_ts_*` tests.
 
 ### Request Signing & Snapshot Integrity (TM-CRY-*, TM-SNAP-*)

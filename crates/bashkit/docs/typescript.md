@@ -159,6 +159,10 @@ the last expression's value is printed automatically.
 
 ## Resource Limits
 
+Registered host callbacks accept up to 100,000 argument values, 10,000,000
+UTF-8 bytes of strings and object keys, and 64 nesting levels from the argument
+array per call. Bashkit rejects calls above these limits before invoking the callback.
+
 Default limits prevent runaway TypeScript code. Customize via `TypeScriptLimits`:
 
 ```rust,no_run
