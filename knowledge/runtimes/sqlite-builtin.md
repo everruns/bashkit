@@ -115,6 +115,14 @@ variant must break the build so its pacing semantics get reviewed rather than
 silently falling into a catch-all. `Sleep` was caught exactly this way when
 turso 0.8.0-pre.4 introduced it.
 
+For SQL results, the formatter checks the remaining `max_output_bytes`
+budget as it writes fields, escaped values, separators, and table padding.
+If a result exceeds the budget, the formatter discards that statement's
+output. The raw result and per-value byte limits are checked before Bashkit
+copies values from a Turso row. Turso evaluates expressions inside
+`Statement::step()` before returning that row, so those limits do not bound
+the engine's internal allocations.
+
 ### Phase 1, `Backend::Memory` (default)
 
 Read entire DB file from VFS into memory → fresh `MemoryIO`-backed turso
