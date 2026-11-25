@@ -15,7 +15,7 @@ use super::russh_handler::RusshHandler;
 /// Tracks active session count for resource limiting.
 pub struct SshClient {
     config: SshConfig,
-    handler: Option<Box<dyn SshHandler>>,
+    handler: Result<Option<Box<dyn SshHandler>>, String>,
     default_handler: RusshHandler,
     active_sessions: AtomicUsize,
 }
@@ -24,7 +24,7 @@ impl std::fmt::Debug for SshClient {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SshClient")
             .field("config", &self.config)
-            .field("has_custom_handler", &self.handler.is_some())
+            .field("has_custom_handler", &!matches!(self.handler, Ok(None)))
             .field(
                 "active_sessions",
                 &self.active_sessions.load(Ordering::Relaxed),
@@ -47,15 +47,25 @@ impl SshClient {
         );
         Self {
             config,
-            handler: None,
+            handler: Ok(None),
             default_handler,
             active_sessions: AtomicUsize::new(0),
         }
     }
 
     /// Set a custom SSH handler.
-    pub fn set_handler(&mut self, handler: Box<dyn SshHandler>) {
-        self.handler = Some(handler);
+    ///
+    /// In strict mode, operations return an error if the handler rejects the
+    /// configured host-key policy.
+    pub fn set_handler(&mut self, mut handler: Box<dyn SshHandler>) {
+        // THREAT[TM-SSH-006]: Do not dispatch to an unconfigured custom transport.
+        self.handler = if self.config.strict_host_key_checking {
+            handler
+                .configure_strict_host_key_checking(&self.config.trusted_host_keys)
+                .map(|()| Some(handler))
+        } else {
+            Ok(Some(handler))
+        };
     }
 
     /// Get the SSH configuration.
@@ -69,8 +79,9 @@ impl SshClient {
     /// or greeting on connect without requiring a command.
     pub async fn shell(&self, target: &SshTarget) -> std::result::Result<SshOutput, String> {
         self.check_allowed(&target.host, target.port)?;
+        let handler = self.handler()?;
         self.acquire_session()?;
-        let result = self.handler().shell(target).await;
+        let result = handler.shell(target).await;
         self.release_session();
 
         if let Ok(ref output) = result {
@@ -99,9 +110,11 @@ impl SshClient {
         // THREAT[TM-SSH-001]: Validate host against allowlist
         self.check_allowed(&target.host, target.port)?;
 
+        let handler = self.handler()?;
+
         // THREAT[TM-SSH-003]: Check session limit
         self.acquire_session()?;
-        let result = self.exec_inner(target, command).await;
+        let result = handler.exec(target, command).await;
         self.release_session();
 
         // THREAT[TM-SSH-004]: Enforce response size limit
@@ -127,8 +140,9 @@ impl SshClient {
         mode: u32,
     ) -> std::result::Result<(), String> {
         self.check_allowed(&target.host, target.port)?;
+        let handler = self.handler()?;
         self.acquire_session()?;
-        let result = self.upload_inner(target, remote_path, content, mode).await;
+        let result = handler.upload(target, remote_path, content, mode).await;
         self.release_session();
         result
     }
@@ -140,8 +154,9 @@ impl SshClient {
         remote_path: &str,
     ) -> std::result::Result<Vec<u8>, String> {
         self.check_allowed(&target.host, target.port)?;
+        let handler = self.handler()?;
         self.acquire_session()?;
-        let result = self.download_inner(target, remote_path).await;
+        let result = handler.download(target, remote_path).await;
         self.release_session();
 
         // THREAT[TM-SSH-004]: Enforce response size limit
@@ -181,46 +196,19 @@ impl SshClient {
         self.active_sessions.fetch_sub(1, Ordering::SeqCst);
     }
 
-    /// Get the handler: custom if set, otherwise default RusshHandler.
-    fn handler(&self) -> &dyn SshHandler {
-        match self.handler {
-            Some(ref h) => h.as_ref(),
-            None => &self.default_handler,
+    fn handler(&self) -> Result<&dyn SshHandler, String> {
+        match &self.handler {
+            Ok(Some(handler)) => Ok(handler.as_ref()),
+            Ok(None) => Ok(&self.default_handler),
+            Err(error) => Err(error.clone()),
         }
-    }
-
-    async fn exec_inner(
-        &self,
-        target: &SshTarget,
-        command: &str,
-    ) -> std::result::Result<SshOutput, String> {
-        self.handler().exec(target, command).await
-    }
-
-    async fn upload_inner(
-        &self,
-        target: &SshTarget,
-        remote_path: &str,
-        content: &[u8],
-        mode: u32,
-    ) -> std::result::Result<(), String> {
-        self.handler()
-            .upload(target, remote_path, content, mode)
-            .await
-    }
-
-    async fn download_inner(
-        &self,
-        target: &SshTarget,
-        remote_path: &str,
-    ) -> std::result::Result<Vec<u8>, String> {
-        self.handler().download(target, remote_path).await
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::TrustedHostKey;
 
     fn test_config() -> SshConfig {
         SshConfig::new().allow("*.supabase.co").allow("10.0.0.1")
@@ -289,6 +277,16 @@ mod tests {
 
         #[async_trait::async_trait]
         impl SshHandler for MockHandler {
+            fn configure_strict_host_key_checking(
+                &mut self,
+                trusted_host_keys: &[TrustedHostKey],
+            ) -> Result<(), String> {
+                assert_eq!(trusted_host_keys.len(), 1);
+                assert_eq!(trusted_host_keys[0].host, "db.supabase.co");
+                assert_eq!(trusted_host_keys[0].public_key, "ssh-ed25519 test-pin");
+                Ok(())
+            }
+
             async fn exec(
                 &self,
                 target: &SshTarget,
@@ -320,7 +318,11 @@ mod tests {
             }
         }
 
-        let mut client = SshClient::new(SshConfig::new().allow("*.supabase.co"));
+        let mut client = SshClient::new(
+            SshConfig::new()
+                .allow("*.supabase.co")
+                .trusted_host_key("db.supabase.co", "ssh-ed25519 test-pin"),
+        );
         client.set_handler(Box::new(MockHandler));
 
         let target = test_target("db.supabase.co");
@@ -368,7 +370,8 @@ mod tests {
             }
         }
 
-        let mut client = SshClient::new(SshConfig::new().allow_all());
+        let mut client =
+            SshClient::new(SshConfig::new().allow_all().strict_host_key_checking(false));
         client.set_handler(Box::new(LargeOutputHandler));
 
         let target = test_target("host.com");

@@ -226,7 +226,10 @@ impl SshConfig {
     /// When enabled (default), connections are rejected unless the server's
     /// public key matches a trusted key added via [`trusted_host_key`](Self::trusted_host_key).
     ///
-    /// When disabled, all host keys are accepted with a warning log.
+    /// Custom handlers must accept the configured policy before receiving
+    /// operations in strict mode.
+    ///
+    /// When disabled, the default transport accepts all host keys with a warning.
     ///
     /// # Security (TM-SSH-006)
     ///
