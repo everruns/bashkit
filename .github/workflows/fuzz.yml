@@ -32,7 +32,7 @@ jobs:
         run: echo "matrix=$(python3 scripts/fuzz-smoke.py --matrix)" >> "$GITHUB_OUTPUT"
 
   fuzz:
-    name: Fuzz (${{ matrix.target }}, plan=${{ matrix.execution_plan }})
+    name: Fuzz (${{ matrix.target }}, plan=${{ matrix.execution_plan }}, owned-jq=${{ matrix.experimental_jq }})
     needs: targets
     runs-on: ubuntu-latest
     strategy:
@@ -76,9 +76,9 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
         with:
           path: crates/bashkit/fuzz/corpus
-          key: fuzz-corpus-${{ matrix.target }}-${{ matrix.execution_plan }}-${{ github.sha }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ matrix.execution_plan }}-${{ matrix.experimental_jq }}-${{ github.sha }}
           restore-keys: |
-            fuzz-corpus-${{ matrix.target }}-${{ matrix.execution_plan }}-
+            fuzz-corpus-${{ matrix.target }}-${{ matrix.execution_plan }}-${{ matrix.experimental_jq }}-
 
       - name: Run fuzzer - ${{ matrix.target }}
         working-directory: crates/bashkit
@@ -107,7 +107,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: fuzz-crashes-${{ matrix.target }}-${{ matrix.execution_plan }}
+          name: fuzz-crashes-${{ matrix.target }}-${{ matrix.execution_plan }}-${{ matrix.experimental_jq }}
           path: |
             crates/bashkit/fuzz/artifacts/${{ matrix.target }}
           retention-days: 30

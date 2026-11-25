@@ -24,7 +24,7 @@ env:
 
 jobs:
   coverage:
-    name: Rust coverage (plan=${{ matrix.execution_plan }})
+    name: Rust coverage (plan=${{ matrix.execution_plan }}, owned-jq=${{ matrix.experimental_jq }})
     # Pinned for the GNU coreutils oracle, like ci.yml's `test` job; see the
     # note there.
     runs-on: ubuntu-24.04
@@ -33,6 +33,7 @@ jobs:
       fail-fast: false
       matrix:
         execution_plan: [false, true]
+        experimental_jq: [false, true]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -64,13 +65,13 @@ jobs:
       # (past --timeout). Its tests still run in the main CI test job.
       - name: Generate coverage report
         run: |
-          cargo tarpaulin --features="http_client${{ matrix.execution_plan && ',bashkit/experimental_execution_plan' || '' }}" \
+          cargo tarpaulin --features="http_client,jq${{ matrix.experimental_jq && ',bashkit/experimental_jq' || '' }}${{ matrix.execution_plan && ',bashkit/experimental_execution_plan' || '' }}" \
             --workspace \
             --exclude bashkit-python \
             --exclude bashkit-eval \
             --out xml \
             --out html \
-            --output-dir coverage/${{ matrix.execution_plan }} \
+            --output-dir coverage/${{ matrix.execution_plan }}-${{ matrix.experimental_jq }} \
             --exclude-files "crates/bashkit-bench/*" \
             --exclude-files "crates/bashkit-cli/*" \
             --exclude-files "crates/bashkit-python/*" \
@@ -81,7 +82,7 @@ jobs:
       - name: Upload coverage artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: rust-${{ matrix.execution_plan }}-coverage-report
+          name: rust-${{ matrix.execution_plan }}-${{ matrix.experimental_jq }}-coverage-report
           path: coverage/
           retention-days: 30
 

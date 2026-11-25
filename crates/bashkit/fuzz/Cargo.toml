@@ -107,6 +107,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "jq_lifecycle_fuzz"
+path = "fuzz_targets/jq_lifecycle_fuzz.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "awk_fuzz"
 path = "fuzz_targets/awk_fuzz.rs"
 test = false

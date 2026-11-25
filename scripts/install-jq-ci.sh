@@ -30,6 +30,9 @@ case "${os}:${arch}" in
   Darwin:aarch64 | Darwin:arm64)
     target="macos-arm64"
     ;;
+  MINGW*:x86_64 | MSYS*:x86_64)
+    target="windows-amd64.exe"
+    ;;
   *)
     echo "unsupported platform for pinned jq install: ${os} ${arch}" >&2
     exit 1
@@ -48,6 +51,9 @@ case "${version}:${target}" in
     ;;
   1.8.1:macos-arm64)
     expected_sha256="a9fe3ea2f86dfc72f6728417521ec9067b343277152b114f4e98d8cb0e263603"
+    ;;
+  1.8.1:windows-amd64.exe)
+    expected_sha256="23cb60a1354eed6bcc8d9b9735e8c7b388cd1fdcb75726b93bc299ef22dd9334"
     ;;
   *)
     echo "missing pinned SHA-256 for jq ${version} ${target}" >&2
@@ -92,13 +98,23 @@ verify_sha256 "${tmp}/jq" "${expected_sha256}"
 
 # Ahead of the image's own /usr/bin/jq on PATH: GitHub prepends each
 # GITHUB_PATH entry, so the pinned build wins over a preinstalled one.
-install_dir="${RUNNER_TOOL_CACHE:-${HOME}/.cache}/jq-${version}-${target}/bin"
+cache_root="${RUNNER_TOOL_CACHE:-${HOME}/.cache}"
+installed_binary=jq
+if [[ "$target" == windows-* ]]; then
+  cache_root="$(cygpath -u "$cache_root")"
+  installed_binary=jq.exe
+fi
+install_dir="${cache_root}/jq-${version}-${target}/bin"
 mkdir -p "${install_dir}"
-cp "${tmp}/jq" "${install_dir}/jq"
-chmod +x "${install_dir}/jq"
+cp "${tmp}/jq" "${install_dir}/${installed_binary}"
+chmod +x "${install_dir}/${installed_binary}"
 
 if [[ -n "${GITHUB_PATH:-}" ]]; then
-  echo "${install_dir}" >> "${GITHUB_PATH}"
+  if [[ "$target" == windows-* ]]; then
+    cygpath -w "$install_dir" >> "$GITHUB_PATH"
+  else
+    echo "${install_dir}" >> "${GITHUB_PATH}"
+  fi
 fi
 
-"${install_dir}/jq" --version
+"${install_dir}/${installed_binary}" --version

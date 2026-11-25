@@ -298,6 +298,32 @@ bench-parallel:
     ./scripts/bench-parallel.sh
     pnpm --dir site run data:performance
 
+# Compare jq backends in alternating rounds; save raw estimates and /benches data.
+bench-jq *args:
+    python3 scripts/bench-jq.py {{args}}
+
+# Native jq/yq conformance with independent storage and shell execution modes.
+test-jq:
+    cargo test --locked -p bashkit --no-default-features --features jq --lib --test integration -- jq yq
+    cargo test --locked -p bashkit --no-default-features --features experimental_jq --lib --test integration -- jq yq
+    cargo test --locked -p bashkit --no-default-features --features jq,experimental_execution_plan --lib --test integration -- jq yq
+    cargo test --locked -p bashkit --no-default-features --features experimental_jq,experimental_execution_plan --lib --test integration -- jq yq
+
+# The same discovered jq/yq lifecycle targets as native PR/nightly fuzzing.
+fuzz-jq:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for jq_plan in "" --execution-plan; do
+        for jq_owned in "" --experimental-jq; do
+            for jq_target in jq_fuzz yq_fuzz jq_lifecycle_fuzz; do
+                fuzz_args=(--target "$jq_target")
+                [[ -z "$jq_plan" ]] || fuzz_args+=("$jq_plan")
+                [[ -z "$jq_owned" ]] || fuzz_args+=("$jq_owned")
+                python3 scripts/fuzz-smoke.py "${fuzz_args[@]}"
+            done
+        done
+    done
+
 # Large-tree stress tests at millions of files (release; TM-DOS-140)
 stress files="2000000":
     BASHKIT_STRESS_FILES={{files}} cargo test --release -p bashkit --test large_tree_stress_tests -- --nocapture

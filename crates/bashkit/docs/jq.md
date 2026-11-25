@@ -11,7 +11,8 @@ bashkit) can avoid surprises.
 
 Build with `--features experimental_jq` to opt into Bashkit's owned jq
 container/resource boundary. This Cargo feature enables `jq`; it is disabled
-by default and also available on `bashkit-cli`. It applies to both `jq` and
+by default and forwarded by the CLI, C API, Python, JavaScript, browser,
+scripted-tool, benchmark and evaluation crates. It applies to both `jq` and
 `yq`, which share the value runtime.
 
 The experiment retains jaq's parser, evaluator, standard library and Bashkit's
@@ -24,8 +25,17 @@ earlier than the existing implementation. Performance improvement is not
 assumed. Untrusted filters still require unwinding builds or process isolation,
 as described below. Disable the feature to return to the existing implementation.
 
-Comparison, hashing, containment and formatting also poll the execution stop
-check while traversing values, including shared generated trees.
+Both backends poll the execution stop check during comparison, hashing,
+containment, byte conversion and formatting, including shared generated trees.
+That safety fix also applies when the experimental feature is disabled.
+
+Native Linux, macOS and Windows CI runs both backends with both shell execution
+modes against pinned jq 1.8.1. `just test-jq` runs the same local conformance
+matrix, `just fuzz-jq` runs bounded fuzz smoke coverage, and `just bench-jq`
+saves alternating benchmark comparisons and their raw estimates. The feature
+also has property tests, sanitizer and Miri coverage. Package/browser test
+artifacts exercise it in their instrumented configuration; release defaults
+remain unchanged.
 
 ## Reported version
 
