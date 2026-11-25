@@ -100,17 +100,19 @@ fn is_private_ipv4(v4: &std::net::Ipv4Addr) -> bool {
         || o[0] >= 224 // 224.0.0.0/4 multicast, 240.0.0.0/4 reserved, broadcast
 }
 
-/// Redact credentials from a URL for safe inclusion in error messages.
-/// Replaces `user:pass@` in the authority with `***@`.
-/// Whether `path` holds a percent-encoded `/` (`%2F`) or `\\` (`%5C`).
-fn has_encoded_separator(path: &str) -> bool {
-    path.as_bytes().windows(3).any(|w| {
-        w[0] == b'%'
-            && (w[1] == b'2' && w[2].eq_ignore_ascii_case(&b'f')
-                || w[1] == b'5' && w[2].eq_ignore_ascii_case(&b'c'))
-    })
+/// Whether `path` contains an invalid escape or an encoded slash, backslash, or percent sign.
+fn has_ambiguous_path_encoding(path: &str) -> bool {
+    path.as_bytes()
+        .split(|&byte| byte == b'%')
+        .skip(1)
+        .any(|suffix| match suffix.get(..2) {
+            Some(b"2F" | b"2f" | b"5C" | b"5c" | b"25") | None => true,
+            Some(hex) => !hex.iter().all(u8::is_ascii_hexdigit),
+        })
 }
 
+/// Redact credentials from a URL for safe inclusion in error messages.
+/// Replaces `user:pass@` in the authority with `***@`.
 fn redact_url(url: &str) -> String {
     match Url::parse(url) {
         Ok(mut parsed) => {
@@ -238,6 +240,8 @@ impl NetworkAllowlist {
     ///
     /// A pattern matches if the requested URL's scheme, host, and port match,
     /// and the requested path starts with the pattern's path (if specified).
+    /// Path-scoped patterns reject malformed escapes and encoded slashes,
+    /// backslashes, and percent signs in the requested path.
     pub fn allow(mut self, pattern: impl Into<String>) -> Self {
         self.patterns.insert(pattern.into());
         self
@@ -346,12 +350,10 @@ impl NetworkAllowlist {
             return false;
         }
 
-        // THREAT[TM-NET-032]: an encoded `/` or `\` lets the URL climb out of
-        // the allowed prefix on servers that decode before routing
-        // (`/assets/..%2Fadmin` -> `/admin`). `url` already resolves literal
-        // and `%2e` dot segments, so only these encodings remain. Refused
-        // only for path-scoped patterns; a host-wide pattern allows any path.
-        if has_encoded_separator(url_path) {
+        // THREAT[TM-NET-032]: downstream decoders can change path boundaries
+        // by decoding separators. Reject encoded percent signs and malformed
+        // escapes too, since they can form new escapes after decoding.
+        if has_ambiguous_path_encoding(url_path) {
             return false;
         }
 
@@ -585,6 +587,18 @@ mod tests {
         // Host-wide patterns keep allowing any path.
         let host_wide = NetworkAllowlist::new().allow("https://cdn.example.com");
         assert!(host_wide.is_allowed("https://cdn.example.com/a%2Fb"));
+    }
+
+    #[test]
+    fn test_path_prefix_refuses_encoded_percent() {
+        let allowlist = NetworkAllowlist::new().allow("https://cdn.example.com/assets/");
+        assert!(!allowlist.is_allowed("https://cdn.example.com/assets/100%25.png"));
+        assert!(!allowlist.is_allowed("https://cdn.example.com/assets/100%.png"));
+        assert!(!allowlist.is_allowed("https://cdn.example.com/assets/100%"));
+        assert!(allowlist.is_allowed("https://cdn.example.com/assets/logo.png?scale=100%25"));
+
+        let host_wide = NetworkAllowlist::new().allow("https://cdn.example.com");
+        assert!(host_wide.is_allowed("https://cdn.example.com/assets/100%25.png"));
     }
 
     #[test]
