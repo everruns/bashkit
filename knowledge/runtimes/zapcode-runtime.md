@@ -139,6 +139,12 @@ Architecture: ZapCode suspends execution at external function calls
 (`TS code → ZapCode VM → ExternalFn → Bashkit VFS → resume`), Bashkit bridges
 the call to the VFS, and resumes with the result.
 
+`readFile` and `readDir` reserve host storage against the remaining VM memory
+and the request's aggregate input and live-byte limits before materializing
+replies (TM-DOS-150). Custom backends must support bounded reads. An in-memory
+lazy file with an arbitrary loader is unavailable through this bridge until
+materialized by a regular VFS read.
+
 **Limitation: stdout after VFS calls.** `ZapcodeSnapshot::resume()` returns
 `VmState` but does not expose the VM's accumulated stdout, so `console.log()`
 output produced *after* a VFS call is lost. Use the return-value pattern

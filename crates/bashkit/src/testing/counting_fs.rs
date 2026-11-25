@@ -280,6 +280,15 @@ impl FileSystem for CountingFs {
         self.hit(&self.counters.read_file);
         self.inner.read_file(path).await
     }
+
+    async fn read_file_bounded(
+        &self,
+        path: &Path,
+        charge: crate::ReadCharge<'_>,
+    ) -> Result<Vec<u8>> {
+        self.hit(&self.counters.read_file);
+        self.inner.read_file_bounded(path, charge).await
+    }
     async fn write_file(&self, path: &Path, content: &[u8]) -> Result<()> {
         self.hit(&self.counters.write);
         self.inner.write_file(path, content).await?;
@@ -313,6 +322,15 @@ impl FileSystem for CountingFs {
     async fn read_dir(&self, path: &Path) -> Result<Vec<DirEntry>> {
         self.hit(&self.counters.read_dir);
         self.inner.read_dir(path).await
+    }
+
+    async fn read_dir_bounded(
+        &self,
+        path: &Path,
+        charge: crate::ReadCharge<'_>,
+    ) -> Result<Vec<DirEntry>> {
+        self.hit(&self.counters.read_dir);
+        self.inner.read_dir_bounded(path, charge).await
     }
     async fn exists(&self, path: &Path) -> Result<bool> {
         self.hit(&self.counters.exists);

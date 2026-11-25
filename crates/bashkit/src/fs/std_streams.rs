@@ -190,7 +190,21 @@ impl FileSystemExt for StdStreamsFs {
 #[async_trait]
 impl FileSystem for StdStreamsFs {
     async fn read_file(&self, path: &Path) -> Result<Vec<u8>> {
+        self.read_file_bounded(path, None).await
+    }
+
+    async fn read_file_bounded(
+        &self,
+        path: &Path,
+        charge: super::ReadCharge<'_>,
+    ) -> Result<Vec<u8>> {
         match std_stream_fd(path) {
+            Some(0) if charge.is_some() => {
+                super::charge_read(charge, self.stdin.len())?;
+                self.budget
+                    .consume_work(1 + self.stdin.len().div_ceil(1024) as u64)?;
+                Ok(self.stdin.to_vec())
+            }
             Some(0) => {
                 self.budget.consume_input(self.stdin.len())?;
                 self.budget
@@ -206,7 +220,7 @@ impl FileSystem for StdStreamsFs {
                 }
                 Ok(data)
             }
-            _ => self.inner.read_file(path).await,
+            _ => self.inner.read_file_bounded(path, charge).await,
         }
     }
     async fn write_file(&self, path: &Path, content: &[u8]) -> Result<()> {
@@ -240,7 +254,15 @@ impl FileSystem for StdStreamsFs {
         }
     }
     async fn read_dir(&self, path: &Path) -> Result<Vec<DirEntry>> {
-        self.inner.read_dir(path).await
+        self.read_dir_bounded(path, None).await
+    }
+
+    async fn read_dir_bounded(
+        &self,
+        path: &Path,
+        charge: super::ReadCharge<'_>,
+    ) -> Result<Vec<DirEntry>> {
+        self.inner.read_dir_bounded(path, charge).await
     }
 
     async fn walk(&self, root: &Path, opts: super::WalkOptions) -> Result<Vec<super::DirListing>> {

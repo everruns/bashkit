@@ -96,7 +96,7 @@ use cap_std::ambient_authority;
 use cap_std::fs::{Dir, OpenOptions};
 use cap_std::time::SystemTime as HostTime; // std-time-ok: realfs is native-only
 use rand::Rng;
-use std::io::{Error as IoError, ErrorKind, Read, Write};
+use std::io::{Error as IoError, ErrorKind, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -404,6 +404,53 @@ impl RealFs {
             .map_err(|error| IoError::other(format!("realfs worker failed: {error}")))?
     }
 
+    /// List a directory opened beneath the root handle. Entries are pulled
+    /// from the blocking pool in small batches so the caller's read charge
+    /// (not `Send`/`'static`) admits each one before it is retained.
+    async fn read_dir_admitted(
+        &self,
+        path: &Path,
+        max_entries: usize,
+        charge: super::ReadCharge<'_>,
+    ) -> Result<Vec<DirEntry>> {
+        const BATCH: usize = 256;
+        let rel = Self::relative(path)?;
+        let mut iter = Some(
+            self.with_dir(move |dir| dir.open_dir(at(&rel))?.entries())
+                .await?,
+        );
+        let mut entries = Vec::new();
+        while let Some(mut read_dir) = iter.take() {
+            let (batch, more) = tokio::task::spawn_blocking(move || {
+                let mut batch = Vec::new();
+                for entry in read_dir.by_ref() {
+                    let entry = entry.map_err(normalize_escape)?;
+                    batch.push((entry.file_name(), entry.metadata()?));
+                    if batch.len() == BATCH {
+                        return Ok::<_, IoError>((batch, Some(read_dir)));
+                    }
+                }
+                Ok((batch, None))
+            })
+            .await
+            .map_err(|error| IoError::other(format!("realfs worker failed: {error}")))??;
+            for (name, meta) in batch {
+                if entries.len() == max_entries {
+                    return Err(super::traits::fs_errors::directory_entry_limit());
+                }
+                super::charge_dir_entry(charge, name.len())?;
+                entries.push(DirEntry {
+                    name: name.to_string_lossy().into_owned(),
+                    metadata: metadata_from_cap(&meta),
+                });
+            }
+            iter = more;
+        }
+        // Sort for deterministic output
+        entries.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(entries)
+    }
+
     /// Check that the mode allows writes. Returns PermissionDenied if readonly.
     fn check_writable(&self) -> std::io::Result<()> {
         if self.mode == RealFsMode::ReadOnly {
@@ -487,10 +534,17 @@ fn symlink_metadata(dir: &Dir, rel: &Path) -> std::io::Result<cap_std::fs::Metad
 #[async_trait]
 impl FsBackend for RealFs {
     async fn read(&self, path: &Path) -> Result<Vec<u8>> {
+        self.read_bounded(path, None).await
+    }
+
+    async fn read_bounded(&self, path: &Path, charge: super::ReadCharge<'_>) -> Result<Vec<u8>> {
         use super::limits::DEFAULT_MAX_FILE_SIZE;
+        use tokio::io::AsyncReadExt;
 
         let rel = Self::relative(path)?;
-        let data = self
+        // Resolve and open beneath the root handle; only the opened file
+        // leaves the blocking worker, so the read cannot be redirected.
+        let std_file = self
             .with_dir(move |dir| {
                 let metadata = symlink_metadata(dir, &rel)?;
                 if metadata.is_symlink() {
@@ -499,35 +553,58 @@ impl FsBackend for RealFs {
                 if metadata.is_dir() {
                     return Err(IoError::new(ErrorKind::IsADirectory, "is a directory"));
                 }
-
-                let too_large = || {
-                    IoError::new(
-                        ErrorKind::FileTooLarge,
-                        format!("host file exceeds read limit of {DEFAULT_MAX_FILE_SIZE} bytes"),
-                    )
-                };
                 let file = dir.open(at(&rel))?.into_std();
-                let metadata = file.metadata()?;
-                if metadata.is_dir() {
+                if file.metadata()?.is_dir() {
                     return Err(IoError::new(ErrorKind::IsADirectory, "is a directory"));
                 }
-                let size = metadata.len();
-                if size > DEFAULT_MAX_FILE_SIZE {
-                    return Err(too_large());
-                }
-
-                // THREAT[TM-DOS-148]: Bound actual reads as the file can grow
-                // after metadata is sampled or report a size smaller than its
-                // contents.
-                let mut data = Vec::with_capacity(size as usize + 1);
-                file.take(DEFAULT_MAX_FILE_SIZE + 1)
-                    .read_to_end(&mut data)?;
-                if data.len() as u64 > DEFAULT_MAX_FILE_SIZE {
-                    return Err(too_large());
-                }
-                Ok(data)
+                Ok(file)
             })
             .await?;
+
+        let too_large = || {
+            IoError::new(
+                ErrorKind::FileTooLarge,
+                format!("host file exceeds read limit of {DEFAULT_MAX_FILE_SIZE} bytes"),
+            )
+        };
+        let mut file = tokio::fs::File::from_std(std_file);
+        let size = file.metadata().await?.len();
+        if size > DEFAULT_MAX_FILE_SIZE {
+            return Err(too_large().into());
+        }
+
+        // THREAT[TM-DOS-148]: Bound actual reads as the file can grow after
+        // metadata is sampled or report a size smaller than its contents.
+        if charge.is_some() {
+            super::charge_read(charge, size as usize)?;
+            let mut data = Vec::with_capacity(size as usize);
+            let mut chunk = [0; 8192];
+            loop {
+                let count = file.read(&mut chunk).await?;
+                if count == 0 {
+                    return Ok(data);
+                }
+                let required = data.len() + count;
+                if required as u64 > DEFAULT_MAX_FILE_SIZE {
+                    return Err(too_large().into());
+                }
+                if required > data.capacity() {
+                    let capacity = required
+                        .max(data.capacity().saturating_mul(2))
+                        .min(DEFAULT_MAX_FILE_SIZE as usize);
+                    super::charge_read(charge, capacity - data.capacity())?;
+                    data.reserve_exact(capacity - data.len());
+                }
+                data.extend_from_slice(&chunk[..count]);
+            }
+        }
+        let mut data = Vec::with_capacity(size as usize + 1);
+        file.take(DEFAULT_MAX_FILE_SIZE + 1)
+            .read_to_end(&mut data)
+            .await?;
+        if data.len() as u64 > DEFAULT_MAX_FILE_SIZE {
+            return Err(too_large().into());
+        }
         Ok(data)
     }
 
@@ -619,33 +696,19 @@ impl FsBackend for RealFs {
     }
 
     async fn read_dir(&self, path: &Path) -> Result<Vec<DirEntry>> {
-        self.read_dir_limited(path, usize::MAX).await
+        self.read_dir_admitted(path, usize::MAX, None).await
     }
 
     async fn read_dir_limited(&self, path: &Path, max_entries: usize) -> Result<Vec<DirEntry>> {
-        let rel = Self::relative(path)?;
-        let entries = self
-            .with_dir(move |dir| {
-                let mut entries = Vec::new();
-                for entry in dir.read_dir(at(&rel))? {
-                    let entry = entry?;
-                    if entries.len() == max_entries {
-                        return Ok(None);
-                    }
-                    entries.push(DirEntry {
-                        name: entry.file_name().to_string_lossy().to_string(),
-                        metadata: metadata_from_cap(&entry.metadata()?),
-                    });
-                }
-                Ok(Some(entries))
-            })
-            .await?;
-        let Some(mut entries) = entries else {
-            return Err(super::traits::fs_errors::directory_entry_limit());
-        };
-        // Sort for deterministic output
-        entries.sort_by(|a, b| a.name.cmp(&b.name));
-        Ok(entries)
+        self.read_dir_admitted(path, max_entries, None).await
+    }
+
+    async fn read_dir_bounded(
+        &self,
+        path: &Path,
+        charge: super::ReadCharge<'_>,
+    ) -> Result<Vec<DirEntry>> {
+        self.read_dir_admitted(path, usize::MAX, charge).await
     }
 
     async fn exists(&self, path: &Path) -> Result<bool> {
@@ -903,6 +966,48 @@ mod tests {
                 matches!(error, crate::Error::Io(ref err) if err.kind() == ErrorKind::FileTooLarge)
             );
         }
+    }
+
+    #[tokio::test]
+    async fn bounded_reads_honor_admission_through_posix() {
+        use crate::FileSystem;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let dir = setup();
+        let fs = super::super::PosixFs::new(RealFs::new(dir.path(), RealFsMode::ReadOnly).unwrap());
+        let requested = AtomicUsize::new(0);
+        let reject = |bytes| {
+            requested.store(bytes, Ordering::Relaxed);
+            Err(IoError::other("storage rejected").into())
+        };
+        let error = fs
+            .read_file_bounded(Path::new("/hello.txt"), Some(&reject))
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("storage rejected"));
+        assert_eq!(requested.load(Ordering::Relaxed), b"hello world".len());
+
+        let error = fs
+            .read_dir_bounded(Path::new("/"), Some(&reject))
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("storage rejected"));
+        assert!(requested.load(Ordering::Relaxed) >= std::mem::size_of::<DirEntry>());
+
+        let allow = |_| Ok(());
+        assert_eq!(
+            fs.read_file_bounded(Path::new("/hello.txt"), Some(&allow))
+                .await
+                .unwrap(),
+            b"hello world"
+        );
+        assert_eq!(
+            fs.read_dir_bounded(Path::new("/"), Some(&allow))
+                .await
+                .unwrap()
+                .len(),
+            2
+        );
     }
 
     #[tokio::test]

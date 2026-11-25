@@ -1280,14 +1280,30 @@ async fn process_vm_result(
                 tokio::task::yield_now().await;
                 // Host callbacks share the same deadline, so a slow external
                 // function cannot pin the run between VM steps.
-                let call = handle_external_call(&function_name, &args, fs, cwd, external_fns);
-                let outcome = match deadline.and_then(|d| d.checked_duration_since(Instant::now()))
-                {
-                    Some(remaining) => crate::time_compat::timeout(remaining, call).await.ok(),
-                    // No representable deadline (huge max_duration): run uncapped.
-                    None if deadline.is_none() => Some(call.await),
-                    None => None,
+                let read = super::vfs_read::VfsRead::new(
+                    meter.memory_remaining(),
+                    execution_budget.cloned(),
+                );
+                let outcome = {
+                    let call = handle_external_call(
+                        &function_name,
+                        &args,
+                        fs,
+                        cwd,
+                        external_fns,
+                        &read,
+                        meter,
+                    );
+                    match deadline.and_then(|d| d.checked_duration_since(Instant::now())) {
+                        Some(remaining) => crate::time_compat::timeout(remaining, call).await.ok(),
+                        // No representable deadline (huge max_duration): run uncapped.
+                        None if deadline.is_none() => Some(call.await),
+                        None => None,
+                    }
                 };
+                if let Some(budget) = execution_budget {
+                    budget.check()?;
+                }
                 let return_value = match outcome {
                     Some(Ok(value)) => value,
                     Some(Err(error)) => return Ok(ExecResult::err(format!("{error}\n"), 1)),
@@ -1302,6 +1318,7 @@ async fn process_vm_result(
 
                 let started = Instant::now();
                 let resumed = run_vm_step(Arc::clone(meter), deadline, move || {
+                    let _read = read;
                     snapshot.resume(return_value)
                 })
                 .await;
@@ -1336,13 +1353,15 @@ async fn handle_external_call(
     fs: &Arc<dyn FileSystem>,
     cwd: &Path,
     external_fns: Option<&TypeScriptExternalFns>,
+    read: &super::vfs_read::VfsRead,
+    meter: &crate::vm_meter::VmMeter,
 ) -> std::result::Result<Value, String> {
     // Try VFS functions first
     match function_name {
-        "readFile" => Ok(handle_read_file(args, fs, cwd).await),
+        "readFile" => Ok(handle_read_file(args, fs, cwd, read, meter).await),
         "writeFile" => Ok(handle_write_file(args, fs, cwd).await),
         "exists" => Ok(handle_exists(args, fs, cwd).await),
-        "readDir" => Ok(handle_read_dir(args, fs, cwd).await),
+        "readDir" => Ok(handle_read_dir(args, fs, cwd, read, meter).await),
         "mkdir" => Ok(handle_mkdir(args, fs, cwd).await),
         "remove" => Ok(handle_remove(args, fs, cwd).await),
         "stat" => Ok(handle_stat(args, fs, cwd).await),
@@ -1381,13 +1400,26 @@ fn extract_path(args: &[Value], cwd: &Path) -> Option<PathBuf> {
 }
 
 /// readFile(path: string): string
-async fn handle_read_file(args: &[Value], fs: &Arc<dyn FileSystem>, cwd: &Path) -> Value {
+async fn handle_read_file(
+    args: &[Value],
+    fs: &Arc<dyn FileSystem>,
+    cwd: &Path,
+    read: &super::vfs_read::VfsRead,
+    meter: &crate::vm_meter::VmMeter,
+) -> Value {
     let Some(path) = extract_path(args, cwd) else {
         return Value::String(Arc::from("Error: readFile requires a path argument"));
     };
-    match fs.read_file(&path).await {
-        Ok(bytes) => match String::from_utf8(bytes) {
-            Ok(s) => Value::String(Arc::from(s.as_str())),
+    let charge = |bytes| read.reserve(bytes);
+    match fs.read_file_bounded(&path, Some(&charge)).await {
+        Ok(bytes) => match std::str::from_utf8(&bytes) {
+            Ok(s) => {
+                if let Err(error) = read.reserve(s.len().saturating_add(64)) {
+                    return Value::String(Arc::from(format!("Error: {error}")));
+                }
+                let _window = crate::vm_meter::VmWindow::enter(meter);
+                Value::String(Arc::from(s))
+            }
             Err(_) => Value::String(Arc::from(format!(
                 "Error: can't decode '{}': not valid UTF-8",
                 path.display()
@@ -1429,14 +1461,32 @@ async fn handle_exists(args: &[Value], fs: &Arc<dyn FileSystem>, cwd: &Path) -> 
 }
 
 /// readDir(path: string): string[]
-async fn handle_read_dir(args: &[Value], fs: &Arc<dyn FileSystem>, cwd: &Path) -> Value {
+async fn handle_read_dir(
+    args: &[Value],
+    fs: &Arc<dyn FileSystem>,
+    cwd: &Path,
+    read: &super::vfs_read::VfsRead,
+    meter: &crate::vm_meter::VmMeter,
+) -> Value {
     let Some(path) = extract_path(args, cwd) else {
         return Value::String(Arc::from("Error: readDir requires a path argument"));
     };
-    match fs.read_dir(&path).await {
+    let charge = |bytes| read.reserve(bytes);
+    match fs.read_dir_bounded(&path, Some(&charge)).await {
         Ok(entries) => {
+            for entry in &entries {
+                if let Err(error) = read.reserve(
+                    entry
+                        .name
+                        .len()
+                        .saturating_add(std::mem::size_of::<Value>() + 64),
+                ) {
+                    return Value::String(Arc::from(format!("Error: {error}")));
+                }
+            }
+            let _window = crate::vm_meter::VmWindow::enter(meter);
             let items: Vec<Value> = entries
-                .into_iter()
+                .iter()
                 .map(|e| Value::String(Arc::from(e.name.as_str())))
                 .collect();
             Value::Array(items)

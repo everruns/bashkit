@@ -53,6 +53,7 @@ through configurable limits.
 | Append flood (TM-DOS-010) | `while true; do echo x >> f; done` | FS + loop limits | MITIGATED |
 | RealFs append memory exhaustion (TM-DOS-105) | Tiny append to a large writable host file | Stream existing bytes into atomic sibling staging with bounded memory | MITIGATED |
 | RealFs whole-file read memory exhaustion (TM-DOS-148) | Whole-file reads can allocate before command-level resource accounting | Check the opened file size before allocating and cap each whole-file read at 10 MB in both mount modes | MITIGATED |
+| Embedded runtime VFS reads (TM-DOS-150) | File reads and directory listings can allocate while the VM is suspended | Reserve storage against runtime memory and shared request limits before reading and meter the returned values | MITIGATED |
 | Deep Agents VFS search amplification (TM-DOS-113) | Dense matching files or a broad recursive `grep`/`glob` bypass shell execution limits and amplify into host objects | Grep caps results at 1,000 matches and 100 KB of matched text; line scans stream; every direct walk carries a per-operation deadline, 10,000-file and 10 MB traversal budget, and a cancellation flag the async workers set | **MITIGATED** |
 | Symlink loops (TM-DOS-011) | `ln -s /a /b; ln -s /b /a` | At most 40 links per lookup, then "Too many levels of symbolic links" | MITIGATED |
 | Deep dirs (TM-DOS-012) | `mkdir -p a/b/c/.../z` (1000 levels) | `max_path_depth` (100) | MITIGATED |

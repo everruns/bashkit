@@ -135,6 +135,14 @@ impl<B: FsBackend> PosixFs<B> {
 #[async_trait]
 impl<B: FsBackend + 'static> FileSystem for PosixFs<B> {
     async fn read_file(&self, path: &Path) -> Result<Vec<u8>> {
+        self.read_file_bounded(path, None).await
+    }
+
+    async fn read_file_bounded(
+        &self,
+        path: &Path,
+        charge: super::ReadCharge<'_>,
+    ) -> Result<Vec<u8>> {
         let path = Self::normalize(path)?;
         if let Ok(meta) = self.backend.stat(&path).await {
             if meta.file_type.is_dir() {
@@ -146,7 +154,7 @@ impl<B: FsBackend + 'static> FileSystem for PosixFs<B> {
                 return Err(IoError::new(std::io::ErrorKind::NotFound, "file not found").into());
             }
         }
-        self.backend.read(&path).await
+        self.backend.read_bounded(&path, charge).await
     }
 
     async fn write_file(&self, path: &Path, content: &[u8]) -> Result<()> {
@@ -230,9 +238,17 @@ impl<B: FsBackend + 'static> FileSystem for PosixFs<B> {
     }
 
     async fn read_dir(&self, path: &Path) -> Result<Vec<DirEntry>> {
+        self.read_dir_bounded(path, None).await
+    }
+
+    async fn read_dir_bounded(
+        &self,
+        path: &Path,
+        charge: super::ReadCharge<'_>,
+    ) -> Result<Vec<DirEntry>> {
         let path = Self::normalize(path)?;
         self.check_directory(&path).await?;
-        self.backend.read_dir(&path).await
+        self.backend.read_dir_bounded(&path, charge).await
     }
 
     async fn read_dir_limited(&self, path: &Path, max_entries: usize) -> Result<Vec<DirEntry>> {

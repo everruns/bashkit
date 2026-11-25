@@ -128,6 +128,10 @@ cat /tmp/result.txt
 # Output: computed by ts
 ```
 
+File reads and directory results count toward the runtime's memory limit and
+the request's shared input and live-byte limits. Custom filesystem backends
+must implement bounded reads to serve these operations.
+
 ### Supported VFS Operations
 
 | Operation | Function | Return |

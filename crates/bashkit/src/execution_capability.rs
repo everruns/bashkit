@@ -413,6 +413,14 @@ impl crate::FileSystem for ExecutionFileSystem {
         self.run(self.inner.read_file(path)).await?
     }
 
+    async fn read_file_bounded(
+        &self,
+        path: &std::path::Path,
+        charge: crate::ReadCharge<'_>,
+    ) -> crate::Result<Vec<u8>> {
+        self.run(self.inner.read_file_bounded(path, charge)).await?
+    }
+
     async fn write_file(&self, path: &std::path::Path, content: &[u8]) -> crate::Result<()> {
         self.run(self.inner.write_file(path, content)).await?
     }
@@ -439,6 +447,14 @@ impl crate::FileSystem for ExecutionFileSystem {
 
     async fn read_dir(&self, path: &std::path::Path) -> crate::Result<Vec<crate::DirEntry>> {
         self.run(self.inner.read_dir(path)).await?
+    }
+
+    async fn read_dir_bounded(
+        &self,
+        path: &std::path::Path,
+        charge: crate::ReadCharge<'_>,
+    ) -> crate::Result<Vec<crate::DirEntry>> {
+        self.run(self.inner.read_dir_bounded(path, charge)).await?
     }
 
     async fn exists(&self, path: &std::path::Path) -> crate::Result<bool> {

@@ -130,6 +130,10 @@ with open('/tmp/result.txt', 'w') as f:
 cat /tmp/result.txt
 ```
 
+File reads and directory results count toward the runtime's memory limit and
+the request's shared input and live-byte limits. Custom filesystem backends
+must implement bounded reads to serve these operations.
+
 ### Supported File Operations
 
 | Operation | Example |

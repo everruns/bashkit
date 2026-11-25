@@ -225,9 +225,20 @@ impl FileSystemExt for ProcSubFs {
 #[async_trait]
 impl FileSystem for ProcSubFs {
     async fn read_file(&self, path: &Path) -> Result<Vec<u8>> {
+        self.read_file_bounded(path, None).await
+    }
+
+    async fn read_file_bounded(
+        &self,
+        path: &Path,
+        charge: super::ReadCharge<'_>,
+    ) -> Result<Vec<u8>> {
         match self.slot(path) {
-            Slot::Vfs => self.inner.read_file(path).await,
-            Slot::Open(_, ProcSubData::Input(data)) => Ok(data.to_vec()),
+            Slot::Vfs => self.inner.read_file_bounded(path, charge).await,
+            Slot::Open(_, ProcSubData::Input(data)) => {
+                super::charge_read(charge, data.len())?;
+                Ok(data.to_vec())
+            }
             // Reading the write end of `>(cmd)` sees no data.
             Slot::Open(_, ProcSubData::Output(_)) => Ok(Vec::new()),
             Slot::Closed => Err(closed_error()),
@@ -277,7 +288,15 @@ impl FileSystem for ProcSubFs {
         }
     }
     async fn read_dir(&self, path: &Path) -> Result<Vec<DirEntry>> {
-        self.inner.read_dir(path).await
+        self.read_dir_bounded(path, None).await
+    }
+
+    async fn read_dir_bounded(
+        &self,
+        path: &Path,
+        charge: super::ReadCharge<'_>,
+    ) -> Result<Vec<DirEntry>> {
+        self.inner.read_dir_bounded(path, charge).await
     }
 
     async fn walk(&self, root: &Path, opts: super::WalkOptions) -> Result<Vec<super::DirListing>> {

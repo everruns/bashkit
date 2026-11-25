@@ -226,6 +226,12 @@ Monty pauses at filesystem operations, yields an `OsCall` event with the
 operation + arguments, Bashkit bridges it to the VFS, and resumes with the
 result (or a Python exception).
 
+File reads, directory listings, and recursive scans reserve host storage
+against the remaining VM memory and the request's aggregate input and live-byte
+limits before materializing replies (TM-DOS-150). Custom backends must support
+bounded reads. An in-memory lazy file with an arbitrary loader is unavailable
+through this bridge until materialized by a regular VFS read.
+
 Supported operations (one line): `open()`/`Path.open()` (read/write/append),
 `Path.read_text/read_bytes/write_text/write_bytes/exists/is_file/is_dir/
 is_symlink/mkdir/unlink/rmdir/iterdir/stat/rename/resolve/absolute/glob/rglob/walk`,
