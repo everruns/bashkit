@@ -710,6 +710,25 @@ pub(crate) async fn canonicalize(fs: &dyn FileSystem, path: &Path) -> crate::Res
     Ok(out)
 }
 
+/// A callback invoked before allocating response storage for a VFS read.
+/// An error aborts the read. `None` selects the ordinary read behavior.
+pub type ReadCharge<'a> = Option<&'a (dyn Fn(usize) -> crate::error::Result<()> + Sync)>;
+
+pub(crate) fn charge_read(charge: ReadCharge<'_>, bytes: usize) -> crate::error::Result<()> {
+    charge.map_or(Ok(()), |charge| charge(bytes))
+}
+
+// Allow for vector capacity growth, metadata and wrapper merge storage.
+pub(crate) fn charge_dir_entry(
+    charge: ReadCharge<'_>,
+    name_bytes: usize,
+) -> crate::error::Result<()> {
+    charge_read(
+        charge,
+        (4 * std::mem::size_of::<DirEntry>()).saturating_add(name_bytes.saturating_mul(4)),
+    )
+}
+
 #[cfg(test)]
 mod vfs_join_tests {
     use super::*;
@@ -768,23 +787,4 @@ mod vfs_join_tests {
             Path::new("/d/other/x")
         );
     }
-}
-
-/// A callback invoked before allocating response storage for a VFS read.
-/// An error aborts the read. `None` selects the ordinary read behavior.
-pub type ReadCharge<'a> = Option<&'a (dyn Fn(usize) -> crate::error::Result<()> + Sync)>;
-
-pub(crate) fn charge_read(charge: ReadCharge<'_>, bytes: usize) -> crate::error::Result<()> {
-    charge.map_or(Ok(()), |charge| charge(bytes))
-}
-
-// Allow for vector capacity growth, metadata and wrapper merge storage.
-pub(crate) fn charge_dir_entry(
-    charge: ReadCharge<'_>,
-    name_bytes: usize,
-) -> crate::error::Result<()> {
-    charge_read(
-        charge,
-        (4 * std::mem::size_of::<DirEntry>()).saturating_add(name_bytes.saturating_mul(4)),
-    )
 }
