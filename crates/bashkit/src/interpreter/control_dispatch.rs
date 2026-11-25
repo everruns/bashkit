@@ -1,4 +1,6 @@
 //! One definition of shell orchestration for ordinary and prepared execution.
+//! Keep output accumulation on the budgeted helpers in both dispatch modes;
+//! moving control flow must not bypass capture caps or live-storage leases.
 #[cfg(feature = "experimental_execution_plan")]
 use super::*;
 

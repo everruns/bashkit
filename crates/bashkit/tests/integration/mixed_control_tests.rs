@@ -41,3 +41,44 @@ run 1 4; run 10 2"#,
         assert_eq!(actual.stderr.as_bytes(), expected.stderr, "{source}");
     }
 }
+
+#[tokio::test]
+async fn mixed_function_capture_limits_preserve_substitution_and_redirect_consumers() {
+    let mut bash = Bash::builder()
+        .limits(
+            bashkit::ExecutionLimits::new()
+                .max_stdout_bytes(7)
+                .max_stderr_bytes(5),
+        )
+        .build();
+    let result = bash
+        .exec(
+            r#"
+f() { local i; for ((i=0;i<20;i++)); do printf é; printf err >&2; done; }
+f
+"#,
+        )
+        .await
+        .unwrap();
+    assert_eq!(result.exit_code, 0);
+    assert_eq!(
+        result.stdout.as_bytes(),
+        &[0xc3, 0xa9, 0xc3, 0xa9, 0xc3, 0xa9, 0xc3]
+    );
+    assert_eq!(result.stderr, "errer");
+    assert!(result.stdout_truncated && result.stderr_truncated);
+    let result = bash
+        .exec(
+            r#"
+x=$(f 2>/dev/null)
+f >/out 2>/err
+printf '%s:%s:%s' "${#x}" "$(wc -c </out)" "$(wc -c </err)"
+"#,
+        )
+        .await
+        .unwrap();
+    assert_eq!(result.exit_code, 0);
+    assert_eq!(result.stdout, "20:40:6");
+    assert!(result.stdout_truncated);
+    assert!(result.stderr.is_empty());
+}

@@ -979,6 +979,59 @@ mod tests {
         }
     }
 
+    // Both dispatchers must retain the
+    // compound-output reservations introduced after mixed plans were written.
+    #[tokio::test]
+    async fn mixed_control_output_exhausts_live_budget_and_releases_storage() {
+        for source in [
+            "for ((i=0;i<800;i++)); do printf '%1024s' x; done",
+            "for i in {1..800}; do ((n+=1)); printf '%1024s' x; done",
+            "i=0; while ((i<800)); do ((i++)); printf '%1024s' x; done",
+            "i=0; until ((i==800)); do ((i++)); printf '%1024s' x; done",
+            "i=0; while printf '%1024s' x; ((i<800)); do ((i++)); done",
+            "if ((1)); then for ((i=0;i<800;i++)); do printf '%1024s' x; done; fi",
+        ] {
+            let ast = Parser::new(source).parse().unwrap();
+            for prepared in [false, true] {
+                let mut shell = Interpreter::new(Arc::new(crate::InMemoryFs::new()));
+                shell.limits.max_live_intermediate_bytes = 262_144;
+                shell.begin_execution_budget();
+                let plan = ScriptPlan::compile(&ast, &shell.execution_budget)
+                    .unwrap()
+                    .expect(source);
+                assert!(plan.commands.iter().flatten().any(has_control), "{source}");
+                let mut failure = None;
+                for (index, command) in ast.commands.iter().enumerate() {
+                    let result = if prepared {
+                        shell
+                            .execute_command_with_program(command, plan.command(index))
+                            .await
+                    } else {
+                        shell.execute_command(command).await
+                    };
+                    if let Err(error) = result {
+                        failure = Some(error);
+                        break;
+                    }
+                }
+                assert!(
+                    matches!(
+                        failure,
+                        Some(crate::Error::ResourceLimit(
+                            crate::LimitExceeded::ExecutionBudget(
+                                crate::limits::ExecutionBudgetExceeded::LiveBytes { .. }
+                            )
+                        ))
+                    ),
+                    "prepared={prepared}: {source}: {failure:?}"
+                );
+                assert_eq!(shell.loop_depth, 0, "{source}");
+                drop(plan);
+                assert_eq!(shell.execution_budget.live_bytes_for_test(), 0, "{source}");
+            }
+        }
+    }
+
     #[cfg(feature = "experimental_plan_benchmark_control")]
     #[tokio::test]
     async fn planned_function_invocations_keep_fallback_semantics_and_redefinitions() {

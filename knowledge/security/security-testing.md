@@ -34,7 +34,11 @@ the loop. Separate tests cover dropped futures, reuse, optional-memory decline,
 work-budget failure and reservation refunds. `script_plan_fuzz` compares bounded
 native arithmetic/branch loops and mixed functions containing substitutions,
 regex captures and local variables with the AST executor. Structured proptest
-cases and mixed-function fixtures also compare with real Bash. See
+cases and mixed-function fixtures also compare with real Bash. Mixed-control
+regressions require prepared backend selection, exhaust the live-byte budget
+with loop/condition output, and verify storage refunds and loop-frame cleanup
+in both dispatch modes. Function capture-limit tests preserve complete streams
+for substitutions and redirects while truncating captured UTF-8 bytes. See
 [Execution Plans](../foundations/script-execution-plan.md).
 
 ## Conditional regex search reuse
