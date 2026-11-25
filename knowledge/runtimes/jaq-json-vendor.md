@@ -39,13 +39,14 @@ copy can go back to being a dependency.
 
 ### Experimental owned boundary
 
-`experimental_jq` is an opt-in Cargo feature on `bashkit` and `bashkit-cli`.
+`experimental_jq` is an opt-in Cargo feature on `bashkit`, the CLI, and every
+embedding crate (C, Python, JavaScript, browser/WASI, scripted tools and runners).
 It implies `jq`; no default or existing feature enables it. Both jq and yq
 use the selected value runtime. The first owned layer is array/object storage
 in `builtins/jq/owned.rs`, compiled and linted as Bashkit code outside the
 vendored module. This deliberately reuses jaq's parser, evaluator, standard
 library, value arithmetic and Bashkit's compatibility definitions. It is not
-a replacement jq language implementation or a performance claim.
+a replacement jq language implementation.
 
 The [first paired benchmark](../../crates/bashkit/benches/results/criterion-jq-owned-cloud-linux-x86_64-1795639828.md)
 records about 9% overhead for array updates and 13% for object updates in an
@@ -58,6 +59,13 @@ mutable child references and unchecked growth. Type-specific set, insert,
 splice, append, remove and merge operations check child depth before attachment,
 invalidate depth on mutation, admit capacity growth before reserve, and resync
 charges before returning. COW cloning admits the copied body before allocation.
+Array growth uses geometric capacity with an exact-size fallback when spare
+capacity would exceed the remaining budget. COW copies do not rescan unchanged,
+already admitted children. Object updates take and replace a child through one
+checked entry lookup; callbacks cannot retain mutable entry handles, and absent
+updates returning no value or an error do not allocate a table. The shared
+polling hot path advances a thread-local `Cell`, borrowing its callback only
+every 4096 operations; nested meter guards restore the previous poll progress.
 Array/object collection, `fromjson`, input/global conversion and whole-object
 updates build incrementally charged containers. Subtraction uses a charged
 sorted reference index. The low-level meter and
@@ -97,15 +105,22 @@ The host resets its cancellation token before that next request, as required
 by the public token contract.
 `diff_owned_container_lifecycle` compares
 construction, mutation/COW, merge, traversal, comparison, formatting and error
-cleanup with real jq. CI exercises the experimental configuration separately.
+cleanup with pinned real jq. Native model proptests compare mutation and COW
+with Rust `Vec`/`BTreeMap` and require complete storage refunds. The required
+native CI matrix independently sweeps both storage and shell execution flags
+on Linux, macOS and Windows, including a native CLI smoke test and serialized
+security fault injection. Binding/browser package tests also execute owned jq;
+coverage, ASan, Miri and manifest-discovered fuzzing include it explicitly.
+`jq_lifecycle_fuzz` generates valid mutation, shared-tree traversal, formatting,
+depth and cleanup cases, then verifies same-interpreter recovery. This is
+first-class native validation, not a claim of 100% code or language coverage.
 Keep vendor sync patches at the selection/call sites; `owned.rs` is maintained
 by Bashkit rather than overwritten from upstream.
 
 ```bash
-cargo test -p bashkit --no-default-features --features experimental_jq --lib --test integration -- jq yq
-cargo bench -p bashkit --no-default-features --features experimental_jq --bench jq
-# From crates/bashkit/fuzz, with cargo-fuzz and a supported nightly:
-cargo +nightly fuzz run jq_fuzz --features experimental_jq
+just test-jq
+just bench-jq
+just fuzz-jq
 ```
 
 | Path | Content |
