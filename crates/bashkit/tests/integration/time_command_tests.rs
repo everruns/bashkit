@@ -54,6 +54,9 @@ async fn gnu_format_reports_truthful_fields_and_bashkit_counters() {
         .unwrap();
 
     assert_eq!(result.stdout, "");
+    // This loop is wholly opaque, so the opt-in compiler's cheap probe skips
+    // lowering without charging compilation work. Both modes report exactly
+    // the same execution work, command count and iteration count.
     assert_eq!(
         result.stderr,
         "elapsed=0.00 status=4 cpu=unavailable rss=unavailable commands=7 loops=3 work=18\n"

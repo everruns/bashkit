@@ -218,6 +218,24 @@ updates:
       # job. Keep its Wasmtime release series in step with the root workspace.
       - dependency-name: "wasmtime"
 
+  # The compiler experiment resolves its own locked benchmark dependencies.
+  # Published measurements retain the lockfile from their recorded commit.
+  - package-ecosystem: "cargo"
+    directory: "/experiments/mixed-execution-plan"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "chore(deps)"
+    allow:
+      - dependency-name: "tokio"
+      - dependency-name: "serde_json"
+    groups:
+      compiler-benchmark-dependencies:
+        patterns:
+          - "*"
+    ignore:
+      - dependency-name: "wasmtime"
+
   # npm / pnpm.
   #
   # Important decision: the five pnpm lockfiles in this repo had no

@@ -291,10 +291,22 @@ solve transfer size; size-oriented LLVM code generation is the larger lever.
 The more aggressive `opt-level = "z"` was rejected because representative
 arithmetic slowed about 50%, despite a larger download saving.
 
+The opt-in execution-plan build keeps the same optimization passes and has a
+compiler budget profile selected from its build metadata: 3.14 MB gzip and
+2.23 MB Brotli after combining mixed plans with compound-output metering. The
+measured compiler bundle is 3,130,093 bytes gzip and 2,221,467 bytes Brotli.
+Normal packages retain the 3.12 MB gzip / 2.22 MB Brotli caps; both profiles
+keep the 8 MB raw cap and all runtime resource limits.
+A second Binaryen flatten/rereloop/convergence pass was rejected: it saved about
+10 KB but jq timings regressed in fixed-CPU probes. Execution speed takes
+precedence over that small transfer saving. Tests enforce explicit feature
+selection and every limit in both profiles.
+
 CI and publication run the same bounded GNU Bash regression sample and raw /
 gzip / Brotli size budgets under `crates/bashkit-wasm/bench/`, in addition to
-all package integration tests. The gzip ceiling is 3,120,000 bytes. It
-includes the compound-output memory accounting in both interpreter builds.
+all package integration tests. The default package gzip ceiling is 3,120,000
+bytes, including compound-output memory accounting; the optional compiler
+profile uses the separately enforced allowances above.
 VFS read admission callbacks compile into builds with embedded Python or
 TypeScript. The browser bundle without those runtimes omits the callbacks.
 Browser wall-clock results are recorded, not

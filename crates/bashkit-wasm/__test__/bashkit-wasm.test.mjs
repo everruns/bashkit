@@ -240,6 +240,16 @@ test("options: maxLoopIterations bounds runaway loops", () => {
   );
 });
 
+test("sync: word iteration stays synchronous with arithmetic in its body", () => {
+  const bash = new Bash();
+  const result = bash.executeSync(
+    "total=0; for i in {1..100}; do ((total+=i)); done; printf '%s\\n' \"$total\"",
+  );
+  assert.equal(result.stdout, "5050\n");
+  assert.equal(result.stderr, "");
+  assert.equal(result.exitCode, 0);
+});
+
 test("output is capped and reports truncation", () => {
   const bash = new Bash();
   const r = bash.executeSync(`printf '${"x".repeat(1_100_000)}'`);

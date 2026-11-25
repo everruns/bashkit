@@ -23,7 +23,9 @@ Compile a parsed script into an execution-owned plan before running its first
 command. The ordinary script runner still handles alias/extglob reparsing,
 source lines, output routing, hooks, trailing syntax errors, and shell recovery.
 An inexpensive eligibility probe skips lowering for small one-shot regions;
-supported loops and larger straight-line regions still compile. This is a
+loops with candidate native children or arithmetic clauses and larger
+straight-line regions still compile. Loops containing only opaque commands
+skip lowering without allocating or consuming compilation work. This is a
 conservative local cost policy, not profiling or persistent hotness state.
 Reparsed script views use ordinary execution. Nested `eval`/`source` scripts
 build their own local plans through the same entry point.
@@ -44,10 +46,31 @@ carry a prepared-program selector through its nested execution.
 
 Mixed command lists retain the existing list orchestration with prepared child
 commands. This preserves conditional execution, builtin/tool calls, redirects,
-and background-job handling around compiled regions. A compound containing an
-unsupported body falls back as a whole. Functions, pipelines, word expansions
-(including `$((...))`), and general tool-containing loop bodies are not lowered
-in this first version.
+and background-job handling around compiled regions. Shell control nodes carry
+prepared child sequences, including `if`, word and arithmetic `for`, `while`,
+`until`, and braces. Their output routing, condition
+suppression, traps, loop control and error cleanup use the same orchestration
+as ordinary execution. Buffered arithmetic loops append final step/condition
+DEBUG output after completed bodies, matching streamed output order. Both dispatchers reserve compound output against the
+shared live-byte budget, including condition output and stderr merges. Capture
+limits still preserve full streams for substitutions and redirects. Individual unsupported leaves (tools, pipelines,
+substitutions, regexes and arrays) retain their existing executor. Safe arithmetic
+`for` clauses are compiled independently and recheck variable attributes, values
+and dynamic shell state before each evaluation.
+Controls with no compiled child or clause retain ordinary execution, preserving
+synchronous limit reporting and avoiding an empty prepared dispatcher.
+
+Profitable function bodies receive a fresh invocation-owned plan after entering
+the normal call frame. Small functions retain the ordinary boxed command future.
+Plans borrow the definition through the invocation; redefinition and recursion
+cannot reuse stale code. Compilation errors flow through normal frame cleanup,
+and abandoning the future releases its plan storage. No plan is stored in the
+function table or interpreter. Redirected compound boundaries still fall back.
+
+The `jq` builtin already compiles filters using jaq and reuses its bounded,
+execution-local LRU. Planned functions and loops call that same backend. Input,
+`--arg` bindings, environment and filter files are resolved at each actual call;
+filter compilation stays lazy, preserving branch behavior and diagnostic order.
 
 ## Eligibility and fallback
 
@@ -61,15 +84,16 @@ Runtime admission declines native regions with tracing, traps, `errexit`,
 attributes beyond export, arrays, namerefs, or expression-valued variables.
 These are conservative backend limits, not changes to accepted Bash syntax.
 Admission runs when the region executes, so a preceding fallback command can
-change shell options or variable attributes safely. Resource failpoints remain active in native execution. When the
+change shell options or variable attributes safely. Resource failpoints remain
+active in native execution. When the
 `interp::execute_command` injector is configured, admission declines so its
 whole-command error and early-status actions retain their AST boundary.
 
 ## Resources and lifetime
 
-Plans borrow their parsed script and are dropped on every exit path, including
-future cancellation. They introduce no interpreter fields, process-global
-cache, or pointer-keyed state. Optional storage reservations may decline and
+Plans borrow their parsed script or active function definition and are dropped
+on every exit path, including future cancellation. They introduce no interpreter
+fields, process-global cache, or pointer-keyed state. Optional storage reservations may decline and
 fall back without exhausting the request. Compilation charges work before
 tokenization/lowering; storage is conservatively admitted before allocations.
 Compiler traversal, expression length, token count, and instruction-stack depth
@@ -77,7 +101,8 @@ are bounded.
 
 One growable optional-storage lease covers the instruction arena. Token and
 expression-op admission includes geometric vector growth and source text, using
-their actual Rust type layouts. Command/child vectors allocate their admitted
+their actual Rust type layouts. Control-node boxes and exact child/block vectors
+are admitted before allocation. Command/child vectors allocate their admitted
 capacity explicitly; a 1 KiB tokenizer-boundary regression checks transient
 storage even when compilation ultimately declines. Capacity grows
 geometrically, and rejected lowering rolls back instructions while retaining
@@ -91,6 +116,8 @@ and restores active loop counters when execution returns an error. Arithmetic
 uses the normal recursion/fuel budget and variable-write checks. Compilation
 has real work/live-memory costs, so tight budgets can stop execution earlier
 than the ordinary interpreter.
+Cooperative yields can suspend longer compiled scripts; browser callers should
+use the async `execute()` API for them. `executeSync()` still rejects suspension.
 
 ## Validation and performance gates
 
@@ -100,9 +127,10 @@ realfs, strict host-tool oracles, failpoints and security properties. Nightly
 ASan, Miri admission/lifetime checks, tenant soaks and Windows suites also cover
 both modes. Manifest-discovered fuzz targets run bounded PR smoke cases in both
 modes and longer scheduled campaigns. The dedicated `script_plan_fuzz` target
-uses finite supported loops/branches and an execution-local interpreter selector
-to compare output, status, writes and subsequent session use. Structured
-proptest scripts also compare with real Bash. Native-specific unit tests prove
+uses finite supported loops/branches plus mixed functions with substitutions,
+regex captures and locals. An execution-local interpreter selector compares
+output, status, writes and subsequent session use. Structured proptest scripts
+and mixed-function fixtures also compare with real Bash. Native-specific unit tests prove
 backend eligibility, resource fault injection, compilation admission refunds,
 and abandoned-future cleanup instead of accepting silent AST fallback.
 
@@ -131,4 +159,5 @@ compilation overhead, and audit native command-boundary equivalence.
 - [Parser](parser.md)
 - [Security Testing](../security/security-testing.md)
 - [Performance Results](../operations/performance-results.md)
+- [Mixed functions and control-flow harness](../../experiments/mixed-execution-plan/README.md)
 - [Experiment results and remaining gates](../../experiments/script-execution-plan/README.md)

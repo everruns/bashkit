@@ -1,0 +1,120 @@
+{
+  "base_revision": "c7098c393a6957dbb8c9888b9fb9de9f6ffd42ff",
+  "build": {
+    "version": "0.21.1",
+    "sourceRevision": "cc622ef229eecd469e1068bbb87ae065e1bb8b81",
+    "sourceDirty": false,
+    "profile": "wasm-release",
+    "features": [
+      "bashkit/experimental_execution_plan",
+      "terminal"
+    ],
+    "rustc": "rustc 1.100.0 (0ef1bc386 2026-11-09)",
+    "wasmBindgen": "wasm-bindgen 0.2.128",
+    "wasmOpt": "wasm-opt version 125 (version_125)",
+    "wasmSha256": "9025319f62e60db34c5aeda1452faa32b97f58ffa99883a745f9a2080c90d9ff"
+  },
+  "artifact": {
+    "files": [
+      {
+        "name": "index.js",
+        "sha256": "5d0a70600bc6de21948a879c26c73089ff1f8317e5c38da1bc36d3534f82c385",
+        "raw": 4362,
+        "gzip": 1678,
+        "brotli": 1389
+      },
+      {
+        "name": "runtime-functions.js",
+        "sha256": "8c26e96e972435285fc905e5dc09cad48462392e3903e4ca0596f6985c323ce0",
+        "raw": 4785,
+        "gzip": 1738,
+        "brotli": 1455
+      },
+      {
+        "name": "bashkit_wasm.js",
+        "sha256": "fcc8f82bb310e816054f27df4bfae129c03bb8e78c048ec18eaa0b1e0e2080ab",
+        "raw": 71478,
+        "gzip": 9809,
+        "brotli": 8421
+      },
+      {
+        "name": "bashkit_wasm_bg.wasm",
+        "sha256": "9025319f62e60db34c5aeda1452faa32b97f58ffa99883a745f9a2080c90d9ff",
+        "raw": 7867593,
+        "gzip": 3119253,
+        "brotli": 2213028
+      }
+    ],
+    "total": {
+      "raw": 7948218,
+      "gzip": 3132478,
+      "brotli": 2224293
+    },
+    "sections": [
+      {
+        "name": "section-1",
+        "raw": 929
+      },
+      {
+        "name": "section-2",
+        "raw": 4312
+      },
+      {
+        "name": "section-3",
+        "raw": 11139
+      },
+      {
+        "name": "section-4",
+        "raw": 7
+      },
+      {
+        "name": "section-5",
+        "raw": 3
+      },
+      {
+        "name": "section-6",
+        "raw": 25
+      },
+      {
+        "name": "section-7",
+        "raw": 2003
+      },
+      {
+        "name": "section-9",
+        "raw": 8449
+      },
+      {
+        "name": "section-12",
+        "raw": 2
+      },
+      {
+        "name": "code",
+        "raw": 6711319
+      },
+      {
+        "name": "data",
+        "raw": 1129291
+      },
+      {
+        "name": "custom:producers",
+        "raw": 72
+      }
+    ],
+    "budgetProfile": "execution-plan"
+  },
+  "default_budget": {
+    "raw": 8000000,
+    "gzip": 3120000,
+    "brotli": 2220000
+  },
+  "compiler_budget": {
+    "gzip": 3140000,
+    "brotli": 2230000
+  },
+  "tests": {
+    "node_passed": 86,
+    "bash_comparisons_passed": 24,
+    "bash_comparisons_total": 24,
+    "budget_tests_passed": 3
+  }
+}

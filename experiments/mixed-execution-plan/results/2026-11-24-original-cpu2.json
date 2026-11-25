@@ -1,0 +1,278 @@
+{
+  "profile": {
+    "opt_level": 3,
+    "lto": "fat",
+    "codegen_units": 1
+  },
+  "lock_sha256": "7218713be22ba9de683bcf697ff40705a6e567c7d2a79795486a87a26af77722",
+  "summary_us": {
+    "baseline": 20.31585,
+    "candidate": 20.43385
+  },
+  "runs": [
+    {
+      "round": 0,
+      "label": "baseline",
+      "output": {
+        "key": "event-json",
+        "language": "Shell",
+        "crate": "bashkit",
+        "version": "0.21.1",
+        "startUs": 59.38,
+        "startRuns": 2000,
+        "memoryBytesPerSession": 36717,
+        "memorySessions": 1000,
+        "memoryStoppedBy": "target",
+        "memoryExtraStackBytes": 0,
+        "toolCallWallUs": 20.7931,
+        "toolCallWallMeanUs": 21.2074,
+        "toolCallSlowestBatchUs": 62.2356,
+        "toolCallCpuUs": 20.9704,
+        "toolCallMeasuredCalls": 182000,
+        "toolCallWarmupCalls": 20000,
+        "toolCallBatches": 182,
+        "toolCallBatchSize": 1000,
+        "callKind": "async",
+        "limitsEnabled": "max_work_units=10000000000, max_commands/max_loop_iterations/max_total_loop_iterations=2000000, timeout=600s, session max_total_commands=2000000, session max_exec_calls=20; all other ExecutionLimits, MemoryLimits, filesystem quotas and default-deny network policy remain at defaults",
+        "notes": [
+          "Session = Bash::builder() with the normal virtual root filesystem, default features, raised benchmark fuel limits, and one host builtin; then exec(\"echo $((1 + 1))\").",
+          "The Tokio current-thread runtime is host infrastructure shared by every session and is created before the measured phases.",
+          "The builtin suspends execution through ExecutionHandle and the host resumes it.",
+          "The guest captures the JSON reply with $(...) and validates its ID with a regex and BASH_REMATCH.",
+          "The loaded shell function runs once for calibration and once for all warm-up and measured calls. Timing starts at the first measured host call and records batches of 1,000 calls."
+        ]
+      }
+    },
+    {
+      "round": 0,
+      "label": "candidate",
+      "output": {
+        "key": "event-json",
+        "language": "Shell",
+        "crate": "bashkit",
+        "version": "0.21.1",
+        "startUs": 61.221,
+        "startRuns": 2000,
+        "memoryBytesPerSession": 36733,
+        "memorySessions": 1000,
+        "memoryStoppedBy": "target",
+        "memoryExtraStackBytes": 0,
+        "toolCallWallUs": 20.5811,
+        "toolCallWallMeanUs": 21.357,
+        "toolCallSlowestBatchUs": 77.1402,
+        "toolCallCpuUs": 21.0033,
+        "toolCallMeasuredCalls": 166000,
+        "toolCallWarmupCalls": 20000,
+        "toolCallBatches": 166,
+        "toolCallBatchSize": 1000,
+        "callKind": "async",
+        "limitsEnabled": "max_work_units=10000000000, max_commands/max_loop_iterations/max_total_loop_iterations=2000000, timeout=600s, session max_total_commands=2000000, session max_exec_calls=20; all other ExecutionLimits, MemoryLimits, filesystem quotas and default-deny network policy remain at defaults",
+        "notes": [
+          "Session = Bash::builder() with the normal virtual root filesystem, default features, raised benchmark fuel limits, and one host builtin; then exec(\"echo $((1 + 1))\").",
+          "The Tokio current-thread runtime is host infrastructure shared by every session and is created before the measured phases.",
+          "The builtin suspends execution through ExecutionHandle and the host resumes it.",
+          "The guest captures the JSON reply with $(...) and validates its ID with a regex and BASH_REMATCH.",
+          "The loaded shell function runs once for calibration and once for all warm-up and measured calls. Timing starts at the first measured host call and records batches of 1,000 calls."
+        ]
+      }
+    },
+    {
+      "round": 1,
+      "label": "candidate",
+      "output": {
+        "key": "event-json",
+        "language": "Shell",
+        "crate": "bashkit",
+        "version": "0.21.1",
+        "startUs": 61.182,
+        "startRuns": 2000,
+        "memoryBytesPerSession": 36733,
+        "memorySessions": 1000,
+        "memoryStoppedBy": "target",
+        "memoryExtraStackBytes": 0,
+        "toolCallWallUs": 20.4654,
+        "toolCallWallMeanUs": 21.1712,
+        "toolCallSlowestBatchUs": 56.4194,
+        "toolCallCpuUs": 20.7743,
+        "toolCallMeasuredCalls": 187000,
+        "toolCallWarmupCalls": 20000,
+        "toolCallBatches": 187,
+        "toolCallBatchSize": 1000,
+        "callKind": "async",
+        "limitsEnabled": "max_work_units=10000000000, max_commands/max_loop_iterations/max_total_loop_iterations=2000000, timeout=600s, session max_total_commands=2000000, session max_exec_calls=20; all other ExecutionLimits, MemoryLimits, filesystem quotas and default-deny network policy remain at defaults",
+        "notes": [
+          "Session = Bash::builder() with the normal virtual root filesystem, default features, raised benchmark fuel limits, and one host builtin; then exec(\"echo $((1 + 1))\").",
+          "The Tokio current-thread runtime is host infrastructure shared by every session and is created before the measured phases.",
+          "The builtin suspends execution through ExecutionHandle and the host resumes it.",
+          "The guest captures the JSON reply with $(...) and validates its ID with a regex and BASH_REMATCH.",
+          "The loaded shell function runs once for calibration and once for all warm-up and measured calls. Timing starts at the first measured host call and records batches of 1,000 calls."
+        ]
+      }
+    },
+    {
+      "round": 1,
+      "label": "baseline",
+      "output": {
+        "key": "event-json",
+        "language": "Shell",
+        "crate": "bashkit",
+        "version": "0.21.1",
+        "startUs": 59.064,
+        "startRuns": 2000,
+        "memoryBytesPerSession": 36717,
+        "memorySessions": 1000,
+        "memoryStoppedBy": "target",
+        "memoryExtraStackBytes": 0,
+        "toolCallWallUs": 20.2752,
+        "toolCallWallMeanUs": 20.8988,
+        "toolCallSlowestBatchUs": 61.1287,
+        "toolCallCpuUs": 20.5797,
+        "toolCallMeasuredCalls": 187000,
+        "toolCallWarmupCalls": 20000,
+        "toolCallBatches": 187,
+        "toolCallBatchSize": 1000,
+        "callKind": "async",
+        "limitsEnabled": "max_work_units=10000000000, max_commands/max_loop_iterations/max_total_loop_iterations=2000000, timeout=600s, session max_total_commands=2000000, session max_exec_calls=20; all other ExecutionLimits, MemoryLimits, filesystem quotas and default-deny network policy remain at defaults",
+        "notes": [
+          "Session = Bash::builder() with the normal virtual root filesystem, default features, raised benchmark fuel limits, and one host builtin; then exec(\"echo $((1 + 1))\").",
+          "The Tokio current-thread runtime is host infrastructure shared by every session and is created before the measured phases.",
+          "The builtin suspends execution through ExecutionHandle and the host resumes it.",
+          "The guest captures the JSON reply with $(...) and validates its ID with a regex and BASH_REMATCH.",
+          "The loaded shell function runs once for calibration and once for all warm-up and measured calls. Timing starts at the first measured host call and records batches of 1,000 calls."
+        ]
+      }
+    },
+    {
+      "round": 2,
+      "label": "baseline",
+      "output": {
+        "key": "event-json",
+        "language": "Shell",
+        "crate": "bashkit",
+        "version": "0.21.1",
+        "startUs": 59.231,
+        "startRuns": 2000,
+        "memoryBytesPerSession": 36717,
+        "memorySessions": 1000,
+        "memoryStoppedBy": "target",
+        "memoryExtraStackBytes": 0,
+        "toolCallWallUs": 20.2638,
+        "toolCallWallMeanUs": 21.1592,
+        "toolCallSlowestBatchUs": 66.3521,
+        "toolCallCpuUs": 20.5288,
+        "toolCallMeasuredCalls": 198000,
+        "toolCallWarmupCalls": 20000,
+        "toolCallBatches": 198,
+        "toolCallBatchSize": 1000,
+        "callKind": "async",
+        "limitsEnabled": "max_work_units=10000000000, max_commands/max_loop_iterations/max_total_loop_iterations=2000000, timeout=600s, session max_total_commands=2000000, session max_exec_calls=20; all other ExecutionLimits, MemoryLimits, filesystem quotas and default-deny network policy remain at defaults",
+        "notes": [
+          "Session = Bash::builder() with the normal virtual root filesystem, default features, raised benchmark fuel limits, and one host builtin; then exec(\"echo $((1 + 1))\").",
+          "The Tokio current-thread runtime is host infrastructure shared by every session and is created before the measured phases.",
+          "The builtin suspends execution through ExecutionHandle and the host resumes it.",
+          "The guest captures the JSON reply with $(...) and validates its ID with a regex and BASH_REMATCH.",
+          "The loaded shell function runs once for calibration and once for all warm-up and measured calls. Timing starts at the first measured host call and records batches of 1,000 calls."
+        ]
+      }
+    },
+    {
+      "round": 2,
+      "label": "candidate",
+      "output": {
+        "key": "event-json",
+        "language": "Shell",
+        "crate": "bashkit",
+        "version": "0.21.1",
+        "startUs": 61.212,
+        "startRuns": 2000,
+        "memoryBytesPerSession": 36733,
+        "memorySessions": 1000,
+        "memoryStoppedBy": "target",
+        "memoryExtraStackBytes": 0,
+        "toolCallWallUs": 20.3476,
+        "toolCallWallMeanUs": 21.9766,
+        "toolCallSlowestBatchUs": 174.3573,
+        "toolCallCpuUs": 20.567,
+        "toolCallMeasuredCalls": 178000,
+        "toolCallWarmupCalls": 20000,
+        "toolCallBatches": 178,
+        "toolCallBatchSize": 1000,
+        "callKind": "async",
+        "limitsEnabled": "max_work_units=10000000000, max_commands/max_loop_iterations/max_total_loop_iterations=2000000, timeout=600s, session max_total_commands=2000000, session max_exec_calls=20; all other ExecutionLimits, MemoryLimits, filesystem quotas and default-deny network policy remain at defaults",
+        "notes": [
+          "Session = Bash::builder() with the normal virtual root filesystem, default features, raised benchmark fuel limits, and one host builtin; then exec(\"echo $((1 + 1))\").",
+          "The Tokio current-thread runtime is host infrastructure shared by every session and is created before the measured phases.",
+          "The builtin suspends execution through ExecutionHandle and the host resumes it.",
+          "The guest captures the JSON reply with $(...) and validates its ID with a regex and BASH_REMATCH.",
+          "The loaded shell function runs once for calibration and once for all warm-up and measured calls. Timing starts at the first measured host call and records batches of 1,000 calls."
+        ]
+      }
+    },
+    {
+      "round": 3,
+      "label": "candidate",
+      "output": {
+        "key": "event-json",
+        "language": "Shell",
+        "crate": "bashkit",
+        "version": "0.21.1",
+        "startUs": 61.04,
+        "startRuns": 2000,
+        "memoryBytesPerSession": 36733,
+        "memorySessions": 1000,
+        "memoryStoppedBy": "target",
+        "memoryExtraStackBytes": 0,
+        "toolCallWallUs": 20.4023,
+        "toolCallWallMeanUs": 21.2471,
+        "toolCallSlowestBatchUs": 56.5786,
+        "toolCallCpuUs": 20.6606,
+        "toolCallMeasuredCalls": 188000,
+        "toolCallWarmupCalls": 20000,
+        "toolCallBatches": 188,
+        "toolCallBatchSize": 1000,
+        "callKind": "async",
+        "limitsEnabled": "max_work_units=10000000000, max_commands/max_loop_iterations/max_total_loop_iterations=2000000, timeout=600s, session max_total_commands=2000000, session max_exec_calls=20; all other ExecutionLimits, MemoryLimits, filesystem quotas and default-deny network policy remain at defaults",
+        "notes": [
+          "Session = Bash::builder() with the normal virtual root filesystem, default features, raised benchmark fuel limits, and one host builtin; then exec(\"echo $((1 + 1))\").",
+          "The Tokio current-thread runtime is host infrastructure shared by every session and is created before the measured phases.",
+          "The builtin suspends execution through ExecutionHandle and the host resumes it.",
+          "The guest captures the JSON reply with $(...) and validates its ID with a regex and BASH_REMATCH.",
+          "The loaded shell function runs once for calibration and once for all warm-up and measured calls. Timing starts at the first measured host call and records batches of 1,000 calls."
+        ]
+      }
+    },
+    {
+      "round": 3,
+      "label": "baseline",
+      "output": {
+        "key": "event-json",
+        "language": "Shell",
+        "crate": "bashkit",
+        "version": "0.21.1",
+        "startUs": 59.147,
+        "startRuns": 2000,
+        "memoryBytesPerSession": 36717,
+        "memorySessions": 1000,
+        "memoryStoppedBy": "target",
+        "memoryExtraStackBytes": 0,
+        "toolCallWallUs": 20.3565,
+        "toolCallWallMeanUs": 21.2755,
+        "toolCallSlowestBatchUs": 57.9519,
+        "toolCallCpuUs": 20.6799,
+        "toolCallMeasuredCalls": 191000,
+        "toolCallWarmupCalls": 20000,
+        "toolCallBatches": 191,
+        "toolCallBatchSize": 1000,
+        "callKind": "async",
+        "limitsEnabled": "max_work_units=10000000000, max_commands/max_loop_iterations/max_total_loop_iterations=2000000, timeout=600s, session max_total_commands=2000000, session max_exec_calls=20; all other ExecutionLimits, MemoryLimits, filesystem quotas and default-deny network policy remain at defaults",
+        "notes": [
+          "Session = Bash::builder() with the normal virtual root filesystem, default features, raised benchmark fuel limits, and one host builtin; then exec(\"echo $((1 + 1))\").",
+          "The Tokio current-thread runtime is host infrastructure shared by every session and is created before the measured phases.",
+          "The builtin suspends execution through ExecutionHandle and the host resumes it.",
+          "The guest captures the JSON reply with $(...) and validates its ID with a regex and BASH_REMATCH.",
+          "The loaded shell function runs once for calibration and once for all warm-up and measured calls. Timing starts at the first measured host call and records batches of 1,000 calls."
+        ]
+      }
+    }
+  ]
+}

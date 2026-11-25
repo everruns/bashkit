@@ -132,8 +132,10 @@ impl<'s> Expression<'s> {
     pub const STORAGE_FACTOR: usize =
         2 * std::mem::size_of::<(Tok, usize)>() + 4 * std::mem::size_of::<Op>() + 4;
 
-    pub fn compile(source: impl Into<std::borrow::Cow<'s, str>>) -> Option<Self> {
-        let source = source.into();
+    // Mixed clauses and flat regions share one compiler body. Normalize the
+    // source before this boundary instead of instantiating it for &str and Cow.
+    #[inline(never)]
+    pub fn compile(source: std::borrow::Cow<'s, str>) -> Option<Self> {
         if source.len() > 1024 || source.contains(['$', '"', '`']) {
             return None;
         }
@@ -273,7 +275,7 @@ mod tests {
             let tokens = tokenize(&source).unwrap();
             let token_storage = tokens.capacity() * std::mem::size_of::<(Tok, usize)>();
             drop(tokens);
-            let expression = Expression::compile(source.as_str());
+            let expression = Expression::compile(source.as_str().into());
             let op_storage = expression
                 .as_ref()
                 .map_or(0, |e| e.ops.capacity() * std::mem::size_of::<Op>());
@@ -306,7 +308,7 @@ mod tests {
                 a.set_variable("x".into(), value.into());
                 b.set_variable("x".into(), value.into());
                 let expected = a.try_evaluate_arithmetic_with_assign(source);
-                let expr = Expression::compile(source).unwrap();
+                let expr = Expression::compile(source.into()).unwrap();
                 let actual = b.evaluate_program_expression(&expr, true);
                 assert_eq!(actual, expected, "{source}, x={value}");
                 assert_eq!(
@@ -329,7 +331,7 @@ mod tests {
             "08",
             "x<$(echo 4)",
         ] {
-            assert!(Expression::compile(source).is_none(), "{source}");
+            assert!(Expression::compile(source.into()).is_none(), "{source}");
         }
     }
 }
