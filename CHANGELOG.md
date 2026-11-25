@@ -1,5 +1,76 @@
 # Changelog
 
+## [0.22.0] - 2026-11-25
+
+### Highlights
+
+- **Security: sandbox hardening.** `RealFs` now resolves every host operation beneath a held root handle (`openat2` with `RESOLVE_BENEATH` on Linux), which closes a symlink-swap race that let a script on a writable mount reach host files outside the root (TM-ESC-035, [#3008](https://github.com/everruns/bashkit/pull/3008)). `jq` rejects values nested deeper than 100 levels (exit 5) instead of overflowing the stack ([#3017](https://github.com/everruns/bashkit/pull/3017), fixes [#3013](https://github.com/everruns/bashkit/issues/3013)). A batch of resource bounds lands with them: whole-file host reads, VFS read materialization, compound command output, recursive overlay deletion, tar extraction quotas, SQLite output and session retention, CPython guest buffers and TypeScript host callback arguments. Network rules block documentation IP prefixes and reject ambiguous encoding in path-scoped rules, outbound HTTP headers are validated, and custom SSH handlers require a strict host-key policy ([#2993](https://github.com/everruns/bashkit/pull/2993) to [#3007](https://github.com/everruns/bashkit/pull/3007)).
+- **Session limits in the bindings, and safer `rm`.** Python and Node take `max_exec_calls` / `max_session_commands` (`maxExecCalls` / `maxSessionCommands`) to raise or lower the per-instance caps without switching profiles. `rm -r /` refuses like GNU `--preserve-root`. `analyze()` reports local files that `curl`, `wget` and `scp` would upload ([#2958](https://github.com/everruns/bashkit/pull/2958)).
+- **Opt-in execution plans.** The new off-by-default `experimental_execution_plan` feature compiles functions and mixed loop/branch control flow into invocation-owned plans, falling back to the interpreter for anything else. Every test, fuzz, binding and oracle suite runs in both modes ([#2982](https://github.com/everruns/bashkit/pull/2982), [#2983](https://github.com/everruns/bashkit/pull/2983)).
+- **Host-backed WASM shells.** The browser package keeps host UID/GID for ownership tests, parses bracket-named functions and propagates structured builtin output and status ([#2968](https://github.com/everruns/bashkit/pull/2968)). wasm64 targets are supported via `target_family = "wasm"` ([#2959](https://github.com/everruns/bashkit/pull/2959), by @madsmtm).
+- **Less memory and fewer allocations.** `wc`, `jq`, `curl` and `wget` no longer amplify memory on large files, `jq` reuses compiled filters within an execution, and stream and builtin dispatch allocate less ([#2967](https://github.com/everruns/bashkit/pull/2967), [#2966](https://github.com/everruns/bashkit/pull/2966), [#2969](https://github.com/everruns/bashkit/pull/2969)).
+
+### Breaking Changes
+
+- **`Metadata` has `uid` and `gid` fields.** Rust filesystem backends that build `Metadata` with a struct literal must set them or use `..Metadata::default()`. JavaScript string callbacks are unaffected ([#2968](https://github.com/everruns/bashkit/pull/2968)).
+
+### What's Changed
+
+* fix(jq): bound generated value depth before traversal and cleanup ([#3017](https://github.com/everruns/bashkit/pull/3017)) by @chaliy
+* fix(tomlq): slice inline comments on char boundaries ([#3016](https://github.com/everruns/bashkit/pull/3016)) by @chaliy
+* fix(interpreter): report failglob refusals out of band ([#3015](https://github.com/everruns/bashkit/pull/3015)) by @chaliy
+* fix(testing): attribute echoed banned shapes to the script ([#3014](https://github.com/everruns/bashkit/pull/3014)) by @chaliy
+* chore(deps): bump the examples-npm group across 1 directory with 4 updates ([#3011](https://github.com/everruns/bashkit/pull/3011)) by @app/dependabot
+* chore(deps): bump wrangler from 4.165.0 to 4.166.0 in /site in the site-npm group ([#3010](https://github.com/everruns/bashkit/pull/3010)) by @app/dependabot
+* chore(deps): bump @langchain/core from 1.4.2 to 1.5.0 in /crates/bashkit-js in the js-npm group ([#3009](https://github.com/everruns/bashkit/pull/3009)) by @app/dependabot
+* chore(ci): bump taiki-e/install-action from 2.90.6 to 2.90.8 in the github-actions group ([#3012](https://github.com/everruns/bashkit/pull/3012)) by @app/dependabot
+* feat(interpreter): compile mixed control flow inside functions ([#2983](https://github.com/everruns/bashkit/pull/2983)) by @chaliy
+* fix(realfs): resolve every host operation beneath the root handle ([#3008](https://github.com/everruns/bashkit/pull/3008)) by @chaliy
+* fix(typescript): bound host callback arguments ([#3005](https://github.com/everruns/bashkit/pull/3005)) by @chaliy
+* fix(sqlite): enforce stdout limits during rendering ([#3007](https://github.com/everruns/bashkit/pull/3007)) by @chaliy
+* fix(cpython): enforce host limits before copying guest buffers ([#3006](https://github.com/everruns/bashkit/pull/3006)) by @chaliy
+* fix(tar): enforce extraction quotas during preflight ([#3004](https://github.com/everruns/bashkit/pull/3004)) by @chaliy
+* fix(runtime): bound VFS read materialization ([#3002](https://github.com/everruns/bashkit/pull/3002)) by @chaliy
+* fix(ssh): reclaim session permits on cancellation ([#2999](https://github.com/everruns/bashkit/pull/2999)) by @chaliy
+* fix(fs): bound recursive overlay deletion ([#3003](https://github.com/everruns/bashkit/pull/3003)) by @chaliy
+* fix(ssh): require strict host-key policy for custom handlers ([#3000](https://github.com/everruns/bashkit/pull/3000)) by @chaliy
+* fix(network): reject ambiguous encoding in path-scoped rules ([#3001](https://github.com/everruns/bashkit/pull/3001)) by @chaliy
+* fix(network): block documentation IP prefixes ([#2998](https://github.com/everruns/bashkit/pull/2998)) by @chaliy
+* fix(fs): reject empty operands and preserve host mount roots ([#2997](https://github.com/everruns/bashkit/pull/2997)) by @chaliy
+* fix(sqlite): bound session engine retention ([#2995](https://github.com/everruns/bashkit/pull/2995)) by @chaliy
+* fix: bound compound command output accumulation ([#2996](https://github.com/everruns/bashkit/pull/2996)) by @chaliy
+* fix(realfs): bound whole-file host reads ([#2994](https://github.com/everruns/bashkit/pull/2994)) by @chaliy
+* fix: validate outbound HTTP header syntax ([#2993](https://github.com/everruns/bashkit/pull/2993)) by @chaliy
+* chore(deps): bump toml to 1.2.2 and refresh its publisher facts ([#2992](https://github.com/everruns/bashkit/pull/2992)) by @chaliy
+* chore(deps): bump the rust-dependencies group and record its vet entries ([#2990](https://github.com/everruns/bashkit/pull/2990)) by @chaliy
+* chore(deps): bump turso_core to 0.8.4 and record its vet audits ([#2988](https://github.com/everruns/bashkit/pull/2988)) by @chaliy
+* fix(awk): split short options on char boundaries ([#2987](https://github.com/everruns/bashkit/pull/2987)) by @chaliy
+* perf: reuse bounded conditional regex search state ([#2984](https://github.com/everruns/bashkit/pull/2984)) by @chaliy
+* feat: add opt-in execution plans with full backend test coverage ([#2982](https://github.com/everruns/bashkit/pull/2982)) by @chaliy
+* chore: sync uutils/coreutils argument surfaces and vendored modules ([#2981](https://github.com/everruns/bashkit/pull/2981)) by @chaliy
+* chore(ci): bump the github-actions group with 3 updates ([#2978](https://github.com/everruns/bashkit/pull/2978)) by @app/dependabot
+* chore(deps): bump the examples-npm group across 1 directory with 5 updates ([#2976](https://github.com/everruns/bashkit/pull/2976)) by @app/dependabot
+* chore(deps): bump the docs-grep-agent-uv group in /examples/docs-grep-agent with 4 updates ([#2975](https://github.com/everruns/bashkit/pull/2975)) by @app/dependabot
+* chore(deps): bump the site-npm group in /site with 4 updates ([#2974](https://github.com/everruns/bashkit/pull/2974)) by @app/dependabot
+* chore(deps): bump the fuzz-dependencies group in /crates/bashkit/fuzz with 4 updates ([#2973](https://github.com/everruns/bashkit/pull/2973)) by @app/dependabot
+* chore(deps): bump the js-npm group in /crates/bashkit-js with 2 updates ([#2972](https://github.com/everruns/bashkit/pull/2972)) by @app/dependabot
+* docs: regenerate TypeScript API reference ([#2977](https://github.com/everruns/bashkit/pull/2977)) by @chaliy
+* fix(coreutils-port): emit constants the clap definition references ([#2971](https://github.com/everruns/bashkit/pull/2971)) by @chaliy
+* perf: reduce stream and builtin dispatch allocations ([#2969](https://github.com/everruns/bashkit/pull/2969)) by @chaliy
+* fix(jq): handle serde_json arbitrary_precision numbers ([#2965](https://github.com/everruns/bashkit/pull/2965)) by @chaliy
+* perf: reduce large-file memory amplification ([#2967](https://github.com/everruns/bashkit/pull/2967)) by @chaliy
+* fix(wasm)!: unblock host-backed shell compatibility ([#2968](https://github.com/everruns/bashkit/pull/2968)) by @chaliy
+* perf(jq): reuse compiled filters within an execution ([#2966](https://github.com/everruns/bashkit/pull/2966)) by @chaliy
+* perf(scripted-tool): share the registered tool catalog ([#2963](https://github.com/everruns/bashkit/pull/2963)) by @chaliy
+* docs: name wasm64 in time_compat docs ([#2962](https://github.com/everruns/bashkit/pull/2962)) by @chaliy
+* chore: add agent rules for merging and review comments ([#2961](https://github.com/everruns/bashkit/pull/2961)) by @chaliy
+* chore(eval): re-run GPT-6 Luna and target GPT-6.2 Sol ([#2960](https://github.com/everruns/bashkit/pull/2960)) by @chaliy
+* feat: support wasm64 targets via target_family = "wasm" ([#2959](https://github.com/everruns/bashkit/pull/2959)) by @madsmtm
+* fix: session limits in bindings, rm preserve-root, analyze uploads ([#2958](https://github.com/everruns/bashkit/pull/2958)) by @chaliy
+* fix(realpath): resolve symlinks anywhere in the path ([#2957](https://github.com/everruns/bashkit/pull/2957)) by @chaliy
+
+**Full Changelog**: https://github.com/everruns/bashkit/compare/v0.21.1...v0.22.0
+
 ## [0.21.1] - 2026-11-19
 
 ### Highlights

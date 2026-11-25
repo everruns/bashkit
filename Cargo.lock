@@ -430,7 +430,7 @@ checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 
 [[package]]
 name = "bashkit"
-version = "0.21.1"
+version = "0.22.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -514,7 +514,7 @@ dependencies = [
 
 [[package]]
 name = "bashkit-bench"
-version = "0.21.1"
+version = "0.22.0"
 dependencies = [
  "anyhow",
  "bashkit",
@@ -529,7 +529,7 @@ dependencies = [
 
 [[package]]
 name = "bashkit-capi"
-version = "0.21.1"
+version = "0.22.0"
 dependencies = [
  "bashkit",
  "serde",
@@ -539,7 +539,7 @@ dependencies = [
 
 [[package]]
 name = "bashkit-cli"
-version = "0.21.1"
+version = "0.22.0"
 dependencies = [
  "anyhow",
  "bashkit",
@@ -553,7 +553,7 @@ dependencies = [
 
 [[package]]
 name = "bashkit-coreutils-port"
-version = "0.21.1"
+version = "0.22.0"
 dependencies = [
  "anyhow",
  "prettyplease",
@@ -567,7 +567,7 @@ dependencies = [
 
 [[package]]
 name = "bashkit-cpython-wasm"
-version = "0.21.1"
+version = "0.22.0"
 dependencies = [
  "lzma-rs",
  "wasmtime",
@@ -575,7 +575,7 @@ dependencies = [
 
 [[package]]
 name = "bashkit-eval"
-version = "0.21.1"
+version = "0.22.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -593,7 +593,7 @@ dependencies = [
 
 [[package]]
 name = "bashkit-js"
-version = "0.21.1"
+version = "0.22.0"
 dependencies = [
  "bashkit",
  "bashkit-scripted-tool",
@@ -607,7 +607,7 @@ dependencies = [
 
 [[package]]
 name = "bashkit-monty"
-version = "0.21.1"
+version = "0.22.0"
 dependencies = [
  "ahash",
  "bashkit-monty-types",
@@ -648,7 +648,7 @@ dependencies = [
 
 [[package]]
 name = "bashkit-monty-types"
-version = "0.21.1"
+version = "0.22.0"
 dependencies = [
  "chrono",
  "jiff",
@@ -666,7 +666,7 @@ dependencies = [
 
 [[package]]
 name = "bashkit-python"
-version = "0.21.1"
+version = "0.22.0"
 dependencies = [
  "bashkit",
  "bashkit-scripted-tool",
@@ -679,7 +679,7 @@ dependencies = [
 
 [[package]]
 name = "bashkit-scripted-tool"
-version = "0.21.1"
+version = "0.22.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -695,7 +695,7 @@ dependencies = [
 
 [[package]]
 name = "bashkit-wasm"
-version = "0.21.1"
+version = "0.22.0"
 dependencies = [
  "bashkit",
  "console_error_panic_hook",

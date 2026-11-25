@@ -23,8 +23,8 @@ features = ["scripted_tool", "python", "typescript", "jq"]
 After:
 
 ```toml
-bashkit = { version = "0.21.1", features = ["python", "typescript", "jq"] }
-bashkit-scripted-tool = { version = "0.21.1", features = ["python", "typescript", "jq"] }
+bashkit = { version = "0.22.0", features = ["python", "typescript", "jq"] }
+bashkit-scripted-tool = { version = "0.22.0", features = ["python", "typescript", "jq"] }
 ```
 
 Keep `bashkit` only if you use it directly (`Bash`, `BashTool`, the `Tool`
