@@ -23,7 +23,9 @@ Compile a parsed script into an execution-owned plan before running its first
 command. The ordinary script runner still handles alias/extglob reparsing,
 source lines, output routing, hooks, trailing syntax errors, and shell recovery.
 An inexpensive eligibility probe skips lowering for small one-shot regions;
-supported loops and larger straight-line regions still compile. This is a
+loops with candidate native children or arithmetic clauses and larger
+straight-line regions still compile. Loops containing only opaque commands
+skip lowering without allocating or consuming compilation work. This is a
 conservative local cost policy, not profiling or persistent hotness state.
 Reparsed script views use ordinary execution. Nested `eval`/`source` scripts
 build their own local plans through the same entry point.

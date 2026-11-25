@@ -24,6 +24,11 @@ run 1 4; run 10 2"#,
         "f() { local i; for ((i=0;i<3;i++)); do if ((i==1)); then declare -i i; fi; printf '%s' \"$i\"; done; }; f",
         "f() { local i=0; while ((i<4)); do ((i++)); if ((i==2)); then continue; fi; printf '%s' \"$i\"; done; until ((i==6)); do ((i++)); printf '%s' \"$i\"; done; }; f",
         "f() { for ((i=0;i<3;i++)); do for j in 1 2 3; do printf '%s%s' \"$i\" \"$j\"; break 2; done; done; }; f",
+        "set -e; f() { for ((i=0;i<3;i++)); do printf x; false; printf never; done; }; f; printf never",
+        "set -T; trap 'printf D' DEBUG; f() { local i; for ((i=0;i<2;i++)); do printf x; done; }; f",
+        "set -T; trap 'printf R' RETURN; f() { local i; for ((i=0;i<2;i++)); do printf x; done; }; f",
+        "set -E; trap 'printf E' ERR; f() { for ((i=0;i<2;i++)); do printf x; false; done; }; f",
+        "false; if printf '%s' \"$?\"; then for ((i=0;i<2;i++)); do :; done; fi",
     ] {
         let expected = std::process::Command::new("bash")
             .env_clear()

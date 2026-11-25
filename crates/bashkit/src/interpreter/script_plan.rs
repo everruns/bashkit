@@ -196,16 +196,22 @@ pub(super) fn worthwhile(command: &Command, weight: &mut usize, depth: usize) ->
         Command::Compound(CompoundCommand::Arithmetic(_), r) if r.is_empty() => {
             *weight = weight.saturating_add(1);
         }
-        Command::Compound(
-            CompoundCommand::ArithmeticFor(_)
-            | CompoundCommand::While(_)
-            | CompoundCommand::Until(_),
-            r,
-        ) if r.is_empty() => {
-            return true;
+        Command::Compound(CompoundCommand::ArithmeticFor(f), r) if r.is_empty() => {
+            return !f.init.trim().is_empty()
+                || !f.condition.trim().is_empty()
+                || !f.step.trim().is_empty()
+                || contains_plan_work(&f.body, depth + 1);
         }
-        Command::Compound(CompoundCommand::For(_), r) if r.is_empty() => {
-            return true;
+        Command::Compound(CompoundCommand::While(w), r) if r.is_empty() => {
+            return contains_plan_work(&w.condition, depth + 1)
+                || contains_plan_work(&w.body, depth + 1);
+        }
+        Command::Compound(CompoundCommand::Until(u), r) if r.is_empty() => {
+            return contains_plan_work(&u.condition, depth + 1)
+                || contains_plan_work(&u.body, depth + 1);
+        }
+        Command::Compound(CompoundCommand::For(f), r) if r.is_empty() => {
+            return contains_plan_work(&f.body, depth + 1);
         }
         Command::Compound(CompoundCommand::BraceGroup(body), r) if r.is_empty() => {
             return body.iter().any(|c| worthwhile(c, weight, depth + 1));
@@ -234,6 +240,14 @@ pub(super) fn worthwhile(command: &Command, weight: &mut usize, depth: usize) ->
     }
     *weight >= 8
 }
+// Repetition can amortize even one native child, but a loop containing only
+// opaque commands has nothing to lower. Keep this probe allocation-free; the
+// full compiler still decides whether candidate syntax is actually supported.
+fn contains_plan_work(commands: &[Command], depth: usize) -> bool {
+    let mut weight = 0;
+    commands.iter().any(|c| worthwhile(c, &mut weight, depth)) || weight != 0
+}
+
 fn worthwhile_list(list: &CommandList, weight: &mut usize, depth: usize) -> bool {
     std::iter::once(list.first.as_ref())
         .chain(list.rest.iter().map(|(_, c)| c))
@@ -510,6 +524,9 @@ impl<'s> Program<'s> {
 impl ProgramRef<'_, '_> {
     pub fn eligible(&self, shell: &Interpreter) -> bool {
         let Program::Native(program) = self.program else {
+            // Control/List keep command_future! at every command boundary,
+            // including fault injection and traps. Only flat native regions
+            // bypass those wrappers and need native_context admission.
             return true;
         };
         native_context(shell)
@@ -571,6 +588,9 @@ fn expression<'s>(
     Some(())
 }
 fn sequence<'s>(commands: &'s [Command], ops: &mut Vec<Instruction<'s>>) -> Option<()> {
+    // Initialize the VM result for an empty sequence, not the shell's `$?`.
+    // Only Leave writes last_exit_code; mixed/fallback sequences use the shared
+    // shell orchestration and never execute this instruction sequence.
     ops.push(Instruction::Status(0));
     for command in commands {
         lower(command, ops, false)?;
@@ -886,6 +906,29 @@ mod tests {
             plan.is_some(),
             "tool calls must not discard the surrounding compiled loop"
         );
+    }
+
+    #[test]
+    fn opaque_loops_skip_compilation_probe() {
+        for source in [
+            "while true; do printf x; done",
+            "until false; do printf x; done",
+            "for i in 1 2; do printf x; done",
+            "for ((;;)); do :; done",
+            "for i in 1 2; do while true; do printf x; done; done",
+        ] {
+            let ast = Parser::new(source).parse().unwrap();
+            let mut weight = 0;
+            assert!(!worthwhile(&ast.commands[0], &mut weight, 0), "{source}");
+            let limits = ExecutionLimits::new().max_work_units(0);
+            let budget =
+                crate::limits::ExecutionBudget::new(&limits, Arc::new(AtomicBool::new(false)));
+            assert!(
+                ScriptPlan::compile(&ast, &budget).unwrap().is_none(),
+                "{source}"
+            );
+            assert_eq!(budget.live_bytes_for_test(), 0);
+        }
     }
 
     #[tokio::test]
@@ -1297,6 +1340,63 @@ mod tests {
                     assert!(result.unwrap().is_none(), "{source}");
                 }
                 assert_eq!(budget.live_bytes_for_test(), 0, "{source}");
+            }
+        }
+    }
+
+    #[cfg(feature = "failpoints")]
+    #[tokio::test]
+    async fn prepared_control_and_lists_keep_command_fault_boundaries() {
+        use std::sync::atomic::AtomicUsize;
+        let _scenario = fail::FailScenario::setup();
+        for source in [
+            "for ((i=0;i<3;i++)); do ((n+=i)); done",
+            "for ((i=0;i<3;i++)); do ((n+=i)); printf x; done",
+            "for ((i=0;i<3;i++)); do ((n+=i)); printf x; done && printf y",
+        ] {
+            let ast = Parser::new(source).parse().unwrap();
+            for action in ["count", "2*off->return(exit_nonzero)"] {
+                let mut observations = Vec::new();
+                for prepared in [false, true] {
+                    let mut shell = Interpreter::new(Arc::new(crate::InMemoryFs::new()));
+                    let plan = ScriptPlan::compile(&ast, &shell.execution_budget)
+                        .unwrap()
+                        .unwrap();
+                    let calls = Arc::new(AtomicUsize::new(0));
+                    if action == "count" {
+                        let calls = calls.clone();
+                        fail::cfg_callback("interp::execute_command", move || {
+                            calls.fetch_add(1, Ordering::Relaxed);
+                        })
+                        .unwrap();
+                    } else {
+                        fail::cfg("interp::execute_command", action).unwrap();
+                    }
+                    let mut results = Vec::new();
+                    for (index, command) in ast.commands.iter().enumerate() {
+                        let result = if prepared {
+                            shell
+                                .execute_command_with_program(command, plan.command(index))
+                                .await
+                        } else {
+                            shell.execute_command(command).await
+                        }
+                        .unwrap();
+                        results.push((
+                            result.stdout,
+                            result.stderr,
+                            result.exit_code,
+                            result.control_flow,
+                        ));
+                    }
+                    fail::remove("interp::execute_command");
+                    let count = calls.load(Ordering::Relaxed);
+                    if action == "count" {
+                        assert!(count > 1, "{source}");
+                    }
+                    observations.push((results, count));
+                }
+                assert_eq!(observations[0], observations[1], "{source}: {action}");
             }
         }
     }
