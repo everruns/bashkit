@@ -23,7 +23,7 @@ importers:
     devDependencies:
       '@langchain/core':
         specifier: ^1.4.1
-        version: 1.4.2
+        version: 1.5.0
       '@napi-rs/cli':
         specifier: ^3.9.0
         version: 3.10.12(@emnapi/core@2.0.0-beta.3)(@emnapi/runtime@2.0.0-beta.3)(@types/node@26.6.6)(emnapi@1.10.0)
@@ -368,8 +368,8 @@ packages:
   '@isaacs/nonrecursive-glob-match@1.1.0':
     resolution: {integrity: sha512-GPm/Dbvk5RLmhRnxXIa7nTpK0xtl4E0wj0MslsuNiJ1FIROU+2+9lgUC/dgF7Ey4QCWhfEsgxilMRMCdHPfDfw==}
 
-  '@langchain/core@1.4.2':
-    resolution: {integrity: sha512-XjYUhRmgtKvopQtSQEYR9WQZMOUtN7yXsYapu7Zvo9leRN18CPPoa4Nj2+lYL0rC+zIG0HOFkY/2Cn813CBdNA==}
+  '@langchain/core@1.5.0':
+    resolution: {integrity: sha512-MhkmHmiBr5iNNJNt2OV6JE91953fIVwI4/krM8De4sKjBZTs/aXxAk3iRJ9i7fuUzd4qFHTcUf6e7Fmtp4B9ug==}
     engines: {node: '>=20'}
 
   '@mapbox/node-pre-gyp@2.0.3':
@@ -1960,7 +1960,7 @@ snapshots:
 
   '@isaacs/nonrecursive-glob-match@1.1.0': {}
 
-  '@langchain/core@1.4.2':
+  '@langchain/core@1.5.0':
     dependencies:
       '@cfworker/json-schema': 4.1.6
       '@standard-schema/spec': 1.1.0
