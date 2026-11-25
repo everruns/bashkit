@@ -357,11 +357,12 @@ panicked. Resolved with `wrapping_*` ops, masked shift amounts, clamped exponent
 |----|--------|--------------|------------|--------|
 | TM-ESC-001 | Path traversal | `cat ../../../etc/passwd` | Path normalization | **MITIGATED** |
 | TM-ESC-002 | Symlink escape | `ln -s /etc/passwd /tmp/x` | Links are followed in the VFS namespace only: targets are VFS paths (absolute from the VFS root, `..` clamped there) and every resolved path goes back through mounts and `RealFs` containment; permission errors are never retried through resolution, so host-planted links inside a real mount stay blocked. Regressions: `fs::follow::tests::absolute_targets_stay_in_vfs`, `realfs_host_planted_symlink_is_not_followed_out`, `a_forged_symlink_cannot_reach_outside_the_vfs` | **MITIGATED** |
-| TM-ESC-003 | Real FS access | Direct syscalls | No real FS by default; `RealFs` canonicalizes existing paths and nearest existing ancestors before attaching missing suffixes | **MITIGATED** |
+| TM-ESC-003 | Real FS access | Direct syscalls | No real FS by default; `RealFs` resolves every path beneath an open handle on the mount root (`cap-std`), rejecting `..`, absolute symlinks, and symlinks that climb above the root | **MITIGATED** |
 | TM-ESC-004 | Mount escape | Mount real paths | MountableFs controlled | **MITIGATED** |
 | TM-ESC-016 | Symlink escape via overlay rename | `ln -s /etc/passwd x; mv x y` | Overlay rename/copy preserve symlinks as symlinks | **FIXED** |
 | TM-ESC-031 | Namespace source-root or policy escape | `..` selects a shorter mount, escapes a rebased source root, or bypasses a nested read-only mount | Normalize before longest-prefix selection; join only the stripped suffix; independently enforce both mutation endpoints | **MITIGATED** |
-| TM-ESC-033 | Windows host-path namespace escape | A direct VFS/RealFs path preserves a drive-relative, drive-absolute, UNC, or device prefix; `root.join(path)` discards the configured root, or a symlink/junction redirects an existing prefix | Shared POSIX VFS normalization discards host prefixes before backend joins; RealFs canonicalizes existing paths or the nearest existing ancestor and performs component-aware root checks; drive-relative symlink targets are rejected; Windows CI exercises alternate separators, case behavior, root-prefix siblings, reparse points, and missing descendants | **MITIGATED** |
+| TM-ESC-033 | Windows host-path namespace escape | A direct VFS/RealFs path preserves a drive-relative, drive-absolute, UNC, or device prefix; `root.join(path)` discards the configured root, or a symlink/junction redirects an existing prefix | Shared POSIX VFS normalization discards host prefixes before backend joins; RealFs resolves the normalized relative path beneath its root directory handle (TM-ESC-035); drive-relative symlink targets are rejected; Windows CI exercises alternate separators, case behavior, root-prefix siblings, reparse points, and missing descendants | **MITIGATED** |
+| TM-ESC-035 | RealFs check/use race | On a writable mount a script swaps a checked directory for a pre-existing outward symlink between the containment check and the kernel operation on the re-joined host pathname | Every RealFs operation is a single call relative to the root directory handle (`cap-std`: openat2 `RESOLVE_BENEATH` on Linux, per-component no-follow walks elsewhere); no host pathname is checked and later reused. Regression: `security_parent_swap_race_cannot_escape_root` | **MITIGATED** |
 | TM-ESC-034 | Host mount resolver traversal | An embedder passes `/workspace/../secret` to `host_path_for`, and an unnormalized suffix escapes the selected host mount when joined | Normalize mount points and lookup paths with the shared POSIX VFS normalizer before longest-prefix selection and host joining | **MITIGATED** |
 | TM-FS-013 | Permissive RealFs mount default | `mount_real_readonly_at("/", …)` exposes whole host without `allowed_mount_paths` | Allowlist-first: `/`, `/etc`, `/root`, `/Users`, `/home`, `/dev`, `/proc`, `/sys`, `/run`, `/var/run`, `/boot`, `/private`, Windows drive/share-qualified `Users` trees, and any path component matching `.ssh`, `.aws`, `.kube`, `.docker`, `.gnupg`, `.gcloud` are refused unless explicitly allowlisted. Secret components match case-insensitively on Windows. The C ABI enforces the same denylist (`bashkit::is_sensitive_mount_path`) for config-time and runtime mounts, where a sensitive root additionally requires an exact allowlist entry — a broad parent entry (e.g. the home directory) is not consent to expose `.ssh` etc. | **MITIGATED** |
 | TM-FS-014 | Partial filesystem mutation | Failed write/copy or copy-delete move corrupts/replaces a destination, duplicates a source, or consumes retained quota | `FileSystem` failure-atomicity contract; locked in-memory rename; MountableFs restores cross-mount destinations while NamespaceFs rejects cross-mount rename; RealFs stages and flushes sibling files before rename; failpoint and conformance regressions | **MITIGATED** |
@@ -403,14 +404,26 @@ each mutating endpoint is checked independently. Regression tests:
 `tm_esc_031_namespace_rejects_invalid_paths_and_protects_namespace_nodes`.
 
 **TM-ESC-033**: The VFS is POSIX-rooted even on Windows. The shared normalizer
-removes Windows host namespace prefixes before `RealFs` joins a virtual path to
-its canonical root. Existing entries and nearest existing ancestors are then
-canonicalized, so symlink/junction targets, root-prefix siblings, and missing
-suffixes cannot escape. `windows_containment_*` tests run continuously on a
+removes Windows host namespace prefixes before `RealFs` resolves the remaining
+relative path beneath its root directory handle, so symlink/junction targets,
+root-prefix siblings, and missing suffixes cannot escape (TM-ESC-035). `windows_containment_*` tests run continuously on a
 Windows runner; drive roots are also sensitive mounts under TM-FS-013.
 VFS paths must never be built with the host separator: `crates/bashkit/clippy.toml`
 bans `Path::join`/`PathBuf::push` outside scoped host-path code, because a
 `\`-joined `/dev\stderr` slipped past the interpreter's device match (#2933).
+
+**TM-ESC-035**: `RealFs` previously canonicalized a path (or its parent),
+checked the root prefix, and then issued a separate syscall on the returned
+pathname. A script on a read-write mount with a pre-existing outward symlink
+could race that window by renaming the symlink over a checked directory, then
+read, replace, rename, remove, chmod, or retimestamp host objects outside the
+root (Defense Factory finding, 2026-11). `RealFs` now holds a `cap_std::fs::Dir`
+for the root and passes only normalized relative paths to it, so resolution and
+the operation are one kernel call that cannot leave the root. A side effect:
+absolute host symlinks inside a mount no longer resolve, even when they point
+back into the root; `read_link`/`stat` still report them. The regression test
+races the swap from a second thread for two seconds and asserts no read, write,
+or chmod lands outside the root.
 
 **TM-ESC-034**: `HostMounts` normalizes both recorded VFS mount points and each
 absolute lookup path before matching. Parent components therefore affect mount
@@ -1575,7 +1588,7 @@ storage; a custom backend's reported read size remains a trusted contract.
 | Completion spec cap (1024 x 64 KiB), bind change cap (1024 x 4 KiB) | TM-DOS-132 | `interpreter/completion.rs`, `interpreter/readline_bind.rs` | Yes |
 | Single expansion of redirect targets | TM-INJ-026 | `interpreter/redirection.rs` | Yes |
 | Command history caps | TM-DOS-094 | `limits.rs`, `interpreter/mod.rs`, `builtins/environ.rs` | Yes |
-| Virtual filesystem | TM-ESC-001, TM-ESC-003, TM-ESC-033 | `fs/memory.rs`, `fs/overlay.rs`, `fs/realfs.rs` | Yes |
+| Virtual filesystem | TM-ESC-001, TM-ESC-003, TM-ESC-033, TM-ESC-035 | `fs/memory.rs`, `fs/overlay.rs`, `fs/realfs.rs` | Yes |
 | Filesystem limits | TM-DOS-005 to TM-DOS-010, TM-DOS-014 | `fs/limits.rs` | Yes |
 | Path depth limit (100) | TM-DOS-012 | `fs/limits.rs` | Yes |
 | Filename length limit (255) | TM-DOS-013 | `fs/limits.rs` | Yes |

@@ -96,6 +96,11 @@ base64 = { workspace = true }
 # Ed25519 signing for bot-auth request signing (optional)
 ed25519-dalek = { workspace = true, optional = true }
 rand = { workspace = true, optional = true }
+# RealFs host access (realfs feature): every host operation is resolved
+# relative to the mount-root directory handle (openat2 RESOLVE_BENEATH on
+# Linux, per-component no-follow walks elsewhere), so a concurrent swap of a
+# checked directory for an outward symlink cannot escape the root.
+cap-std = { version = "4.0.3", optional = true }
 zeroize = { workspace = true, optional = true }
 
 # CSPRNG for credential placeholder generation
@@ -302,7 +307,7 @@ fetchkit = ["http_client", "dep:fetchkit", "dep:fetchkit-cli", "dep:bytes"]
 # Enable RealFs backend for accessing host filesystem directories
 # WARNING: This intentionally breaks the sandbox boundary.
 # Usage: cargo build --features realfs
-realfs = ["dep:rand"]
+realfs = ["dep:rand", "dep:cap-std"]
 # Enable native-extension interop contracts such as bashkit::interop::fs.
 interop = ["tokio/rt-multi-thread"]
 

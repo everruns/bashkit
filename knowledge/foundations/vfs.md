@@ -121,8 +121,8 @@ Do you need a custom filesystem?
 #### RealFs (Optional, `realfs` feature)
 - Direct access to a host directory as an `FsBackend`
 - Two modes: `ReadOnly` (safe) and `ReadWrite` (dangerous)
-- Async backend operations use Tokio filesystem APIs and never perform
-  synchronous host filesystem I/O on the runtime worker
+- Async backend operations run host I/O on Tokio's blocking pool and never
+  perform synchronous host filesystem I/O on the runtime worker
 - `RealFs::open` is the async-safe constructor and preserves root validation
   and canonicalization semantics without blocking a current-thread runtime
 - The synchronous `RealFs::new` constructor is deprecated and retained only as
@@ -131,14 +131,18 @@ Do you need a custom filesystem?
   both modes. RealFs checks the opened file size before allocating the read
   buffer and caps the read itself in case the size changes or is underreported.
   This ceiling is independent of the retained-content quotas in `FsLimits`.
-- Path traversal prevented via canonicalization + root prefix check
-- New-path writes canonicalize the nearest existing ancestor before attaching a
-  missing suffix, blocking symlink escapes through non-existent subpaths
+- Containment (TM-ESC-035): RealFs holds a `cap_std::fs::Dir` for the root and
+  every operation passes a normalized relative path to it. Resolution happens
+  inside the same kernel call as the operation (openat2 `RESOLVE_BENEATH` on
+  Linux, per-component no-follow walks on other platforms), so there is no
+  check-then-use window for a concurrent symlink swap. `..`, absolute symlinks,
+  and relative symlinks that climb above the root fail with `PermissionDenied`.
+  Absolute host symlinks inside a mount do not resolve even when they point
+  back into the root.
 - Windows drive-relative, drive-absolute, UNC, and device-style virtual paths
-  are normalized into the POSIX VFS root before host joining. Existing-path and
-  missing-descendant checks follow symlinks, junctions, and other reparse points
-  before applying component-aware root containment; host lookup itself retains
-  Windows case-insensitive behavior.
+  are normalized into the POSIX VFS root before resolution. Symlinks,
+  junctions, and other reparse points are resolved beneath the root handle;
+  host lookup itself retains Windows case-insensitive behavior.
 - Windows `RealFs::symlink()` does not create a host reparse point; it creates an
   empty file after applying target-containment validation. Pre-existing host
   symlinks and junctions are supported and containment-checked.
