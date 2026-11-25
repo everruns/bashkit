@@ -842,6 +842,7 @@ Covered by `threat_env_vars_explicit_only`.
 | TM-INJ-022 | XML boundary break via tool output (`sanitizeOutput`) | When `sanitizeOutput` is enabled the JS adapters (anthropic, openai) wrap tool output in `<tool_output>…</tool_output>` markers. A script that emits `</tool_output>` in its stdout can close the marker early and inject arbitrary text into the LLM context, bypassing the boundary | Escape `&`, `<`, `>` in content before inserting between tags (`anthropic.ts`, `openai.ts` `formatOutput`). Both adapters re-cap expanded content without splitting XML entities; wrapper and truncation marker are additional framing. Tests: `ai-adapters.spec.ts`, "sanitizeOutput escapes </tool_output> in stdout" and "sanitizeOutput escapes & < > in stdout" for both adapters | **FIXED** |
 | TM-INJ-023 | Template injection via `#each` data values | `template` builtin: data values containing template markers (`{{`, `#each`) could be re-expanded as directives when interpolated | Template markers escaped in data values before interpolation (`builtins/template.rs`) | **MITIGATED** |
 | TM-INJ-024 | Tool schema `$ref` bypass | A ToolDef uses local references for input constraints; direct-keyword-only validation accepts attacker-controlled parameters and invokes the host callback | `ToolRegistry` resolves local JSON Pointer references against the root schema before policy/callback execution and fails closed on invalid, external, unresolved, or cyclic references; `registry_resolves_local_schema_references_before_callback` proves rejected input never reaches the callback | **MITIGATED** |
+| TM-INJ-027 | `failglob` error sentinel forged from script data | The `no match` refusal rode the expanded argument vector as a `\0ERR\0`-prefixed first word, so a word expanding to those bytes (`echo '<NUL>ERR<NUL>X'`) was read as a failed glob: exit 1, the word's own tail on stderr, and the rest of the command line abandoned (`ControlFlow::Abort`). The `$empty cmd` path never checked the prefix and ran the sentinel as a command name | The refusal travels out of band in `Interpreter::pending_failglob`, set by `expand_command_args` and taken at the dispatch site, so argument bytes can no longer spell it and both expansion paths are covered. Regression: `tests/integration/failglob_sentinel_tests.rs` | **FIXED** |
 
 **TM-INJ-011** (mitigated): `interpreter/mod.rs::resolve_nameref` tracks visited names in a
 `HashSet`; on cycle detection it returns the original name, so `${a}` looks up the (unset)
@@ -849,6 +850,19 @@ top-level variable rather than infinite-recursing. We do not emit Bash's exact
 `circular name reference` warning, but the safety property, no hang, no stack overflow, no
 silent traversal to a stale variable, is upheld. Regression tests:
 `tests/threat_model_tests.rs::tm_inj_011_*`.
+
+**TM-INJ-027** (fixed): the same in-band-marker mistake as TM-INJ-009, one channel over. The
+`failglob` refusal was smuggled through the expanded argument vector -- `expand_command_args`
+returned a single word prefixed `\0ERR\0` and the dispatch site matched that prefix on
+`args.first()`. Script data reaches that channel verbatim, so `echo '<NUL>ERR<NUL>X'` forged the
+refusal and chose the command's exit code, put its own tail on stderr and abandoned the rest of
+the line; `$empty '<NUL>ERR<NUL>X'`, which promotes the first argument field to the command name,
+bypassed the check entirely. `archive_fuzz` surfaced it as a phantom stderr leak: the crash unit
+began with those bytes, so `echo '<unit>' | gzip | gunzip` returned the payload on stderr with an
+empty stdout. The remedy matches TM-INJ-009's -- the diagnostic now lives in a dedicated
+`pending_failglob` field rather than in data the script controls, cleared before each command's
+own argument expansion so an abort cannot strand it for the next one. A new diagnostic that has
+to cross an expansion boundary takes the same route; never a prefix on a word.
 
 **TM-INJ-009 / TM-INJ-018** (mitigated): historically the interpreter recorded attributes via
 magic prefixes (`_NAMEREF_*`, `_READONLY_*`, `_INTEGER_*`, `_UPPER_*`, `_LOWER_*`,
@@ -1623,6 +1637,7 @@ storage; a custom backend's reported read size remains a trusted contract.
 | `$HISTFILE` read cap (`max_input_bytes`), history list caps | TM-DOS-131 | `interpreter/history.rs` | Yes |
 | Completion spec cap (1024 x 64 KiB), bind change cap (1024 x 4 KiB) | TM-DOS-132 | `interpreter/completion.rs`, `interpreter/readline_bind.rs` | Yes |
 | Single expansion of redirect targets | TM-INJ-026 | `interpreter/redirection.rs` | Yes |
+| Out-of-band `failglob` refusal | TM-INJ-027 | `interpreter/mod.rs` | Yes |
 | Command history caps | TM-DOS-094 | `limits.rs`, `interpreter/mod.rs`, `builtins/environ.rs` | Yes |
 | Virtual filesystem | TM-ESC-001, TM-ESC-003, TM-ESC-033, TM-ESC-035 | `fs/memory.rs`, `fs/overlay.rs`, `fs/realfs.rs` | Yes |
 | Filesystem limits | TM-DOS-005 to TM-DOS-010, TM-DOS-014 | `fs/limits.rs` | Yes |

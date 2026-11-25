@@ -90,6 +90,7 @@ pub mod exec_options_tests;
 pub mod execution_budget_tests;
 pub mod execution_capability_tests;
 pub mod execution_profile_tests;
+pub mod failglob_sentinel_tests;
 pub mod fdvar_array_tests;
 pub mod filesystem_security_conformance_tests;
 pub mod final_env_tests;
