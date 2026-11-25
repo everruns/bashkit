@@ -159,7 +159,9 @@ fn escape_error() -> IoError {
 /// Report a `cap-std` sandbox escape with the stable RealFs wording.
 fn normalize_escape(error: IoError) -> IoError {
     if error.kind() == ErrorKind::PermissionDenied
-        && error.to_string() == "a path led outside of the filesystem"
+        // cap-std's escape error; match the stable fragment, not the whole
+        // sentence, so a rewording upstream still maps to our message.
+        && error.to_string().contains("led outside of the filesystem")
     {
         escape_error()
     } else {
@@ -668,9 +670,8 @@ impl FsBackend for RealFs {
 
     async fn copy(&self, from: &Path, to: &Path) -> Result<()> {
         self.check_writable()?;
-        let from = Self::relative(from)?;
-        let to = Self::relative(to)?;
-        let (from_rel, to_rel) = (from.clone(), to.clone());
+        let from_rel = Self::relative(from)?;
+        let to_rel = Self::relative(to)?;
         let link_target = self
             .with_dir(move |dir| {
                 // Issue #1575: refuse to copy onto a leaf symlink.
@@ -682,9 +683,9 @@ impl FsBackend for RealFs {
             })
             .await?;
         if let Some(target) = link_target {
-            let mut link = PathBuf::from("/");
-            link.push(&to);
-            self.symlink(&target, &link).await?;
+            // `to` is the caller's virtual path; reuse it rather than
+            // rebuilding one from host components.
+            self.symlink(&target, to).await?;
         }
         Ok(())
     }
@@ -1251,6 +1252,26 @@ mod tests {
         assert!(escaped.is_none(), "{}", escaped.unwrap());
         assert!(inside_reads > 0, "race never exercised the in-root path");
         assert_ne!(outside_mode & 0o777, 0o600, "chmod escaped root");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn escape_through_host_symlink_uses_stable_wording() {
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(outside.path().join("secret"), b"OUTSIDE").unwrap();
+        std::os::unix::fs::symlink(outside.path(), root.path().join("evil")).unwrap();
+
+        let fs = RealFs::open(root.path(), RealFsMode::ReadOnly)
+            .await
+            .unwrap();
+        let error = fs.read(Path::new("/evil/secret")).await.unwrap_err();
+        assert!(
+            matches!(error, crate::Error::Io(ref err)
+                if err.kind() == ErrorKind::PermissionDenied
+                    && err.to_string() == "path escapes realfs root"),
+            "unexpected error: {error}"
+        );
     }
 
     #[cfg(unix)]
