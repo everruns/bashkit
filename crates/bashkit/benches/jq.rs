@@ -83,6 +83,22 @@ fn bench_jq(c: &mut Criterion) {
             (large_input_script(), format!("{}\n", 4 * ROWS)),
             1,
         ),
+        (
+            "array_updates_4096",
+            (
+                "jq -n 'reduce range(4096) as $i ([]; .[$i] = $i) | length'".into(),
+                "4096\n".into(),
+            ),
+            1,
+        ),
+        (
+            "object_updates_4096",
+            (
+                "jq -n 'reduce range(4096) as $i ({}; .[$i|tostring] = $i) | length'".into(),
+                "4096\n".into(),
+            ),
+            1,
+        ),
     ];
     for (name, (script, expected), calls) in &cases {
         group.throughput(Throughput::Elements(*calls as u64));

@@ -186,6 +186,17 @@ pub fn check(extra: usize) -> Result<(), Error> {
     }
 }
 
+/// BASHKIT PATCH: pre-allocation admission for infallible owned constructors
+/// and Rc copy-on-write clones. Panic-abort builds leave the meter tripped.
+#[cfg(feature = "experimental_jq")]
+pub(crate) fn require(extra: usize) -> bool {
+    if current().is_some_and(|meter| !meter.fits(extra)) {
+        abort(Abort::Memory);
+        return false;
+    }
+    true
+}
+
 /// Room left for new allocations, `usize::MAX` without a meter.
 pub fn headroom() -> usize {
     match current() {
@@ -408,7 +419,41 @@ impl<T: Footprint> Metered<T> {
         core::mem::take(&mut self.inner)
         // `self` drops here and releases `charged`.
     }
+
+    /// BASHKIT PATCH: an owning iterator retains the allocated body. Transfer
+    /// its charge instead of refunding while the buffer is still alive.
+    #[cfg(feature = "experimental_jq")]
+    pub(crate) fn into_charged_iter(mut self) -> OwnedIter<T::IntoIter>
+    where
+        T: Default + IntoIterator,
+    {
+        let inner = core::mem::take(&mut self.inner);
+        let charge = self.meter.take().map(|meter| Charge { meter, bytes: self.charged });
+        self.charged = 0;
+        OwnedIter { iter: inner.into_iter(), _charge: charge }
+    }
 }
+
+/// BASHKIT PATCH: release the allocation before refunding its meter charge.
+#[cfg(feature = "experimental_jq")]
+pub(crate) struct OwnedIter<I> {
+    iter: I,
+    _charge: Option<Charge>,
+}
+
+#[cfg(feature = "experimental_jq")]
+impl<I: Iterator> Iterator for OwnedIter<I> {
+    type Item = I::Item;
+    fn next(&mut self) -> Option<Self::Item> {
+        self.iter.next()
+    }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.iter.size_hint()
+    }
+}
+
+#[cfg(feature = "experimental_jq")]
+impl<I: ExactSizeIterator> ExactSizeIterator for OwnedIter<I> {}
 
 impl<T: Footprint> Drop for Metered<T> {
     fn drop(&mut self) {

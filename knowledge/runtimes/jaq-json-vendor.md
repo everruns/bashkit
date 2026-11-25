@@ -37,6 +37,76 @@ copy can go back to being a dependency.
 
 ## Layout
 
+### Experimental owned boundary
+
+`experimental_jq` is an opt-in Cargo feature on `bashkit` and `bashkit-cli`.
+It implies `jq`; no default or existing feature enables it. Both jq and yq
+use the selected value runtime. The first owned layer is array/object storage
+in `builtins/jq/owned.rs`, compiled and linted as Bashkit code outside the
+vendored module. This deliberately reuses jaq's parser, evaluator, standard
+library, value arithmetic and Bashkit's compatibility definitions. It is not
+a replacement jq language implementation or a performance claim.
+
+The [first paired benchmark](../../crates/bashkit/benches/results/criterion-jq-owned-cloud-linux-x86_64-1795639828.md)
+records about 9% overhead for array updates and 13% for object updates in an
+exploratory single pair. Keep the feature disabled by default; these results
+do not establish a speedup.
+
+`Val` selects `Container<T>` instead of raw `Metered<T>` bodies under the
+feature. Its private body and immutable `Deref` prohibit mutable entry handles,
+mutable child references and unchecked growth. Type-specific set, insert,
+splice, append, remove and merge operations check child depth before attachment,
+invalidate depth on mutation, admit capacity growth before reserve, and resync
+charges before returning. COW cloning admits the copied body before allocation.
+Array/object collection, `fromjson`, input/global conversion and whole-object
+updates build incrementally charged containers. Subtraction uses a charged
+sorted reference index. The low-level meter and
+string representation remain shared with the established path. Conservative
+map-growth admission can fail earlier near the byte limit; resource-limit
+differences are explicit exceptions to real-jq compatibility.
+
+Consuming a body transfers its storage charge to its owning iterator. Partial
+consumption, exhaustion without dropping the iterator, early errors and unwind
+must retain/refund that charge with the underlying buffer, rather than refunding
+as soon as the body is converted into an iterator.
+
+The experiment also polls the shared stop check during value equality,
+ordering, hashing, containment, byte conversion and formatting. Depth-bounded
+shared trees can still require exponential traversal; a nesting bound alone
+does not make those operations interruptible. Deterministic stop-check tests
+use small independently constructed shared trees, so a polling regression
+fails without hanging the test process. Object ordering/hashing scratch
+storage is admitted and charged for its lifetime.
+
+Evaluator safety remains a separate boundary: `InputDataRef::clone` caps live
+contexts and polls the execution deadline, while value operations poll the
+same stop check. In experimental builds the stop check also checks the shared
+request budget for cancellation, closed requests and prior budget failures;
+the typed request error survives the unwind instead of becoming a timeout.
+This experiment does not replace the evaluator controls or remove
+the `panic = "unwind"` requirement for in-process interruption. A future
+evaluator replacement needs its own audit and lifecycle tests.
+
+Run the same jq differential, depth, memory, cancellation, streaming and yq
+suites with `jq` and with `experimental_jq`. Owned API unit tests additionally
+pin rejection before COW, pre-attachment depth checks, incremental capacity
+charging, owning-iterator retention, release on drop and cancellation during a
+synchronous non-emitting loop followed by session recovery.
+The host resets its cancellation token before that next request, as required
+by the public token contract.
+`diff_owned_container_lifecycle` compares
+construction, mutation/COW, merge, traversal, comparison, formatting and error
+cleanup with real jq. CI exercises the experimental configuration separately.
+Keep vendor sync patches at the selection/call sites; `owned.rs` is maintained
+by Bashkit rather than overwritten from upstream.
+
+```bash
+cargo test -p bashkit --no-default-features --features experimental_jq --lib --test integration -- jq yq
+cargo bench -p bashkit --no-default-features --features experimental_jq --bench jq
+# From crates/bashkit/fuzz, with cargo-fuzz and a supported nightly:
+cargo +nightly fuzz run jq_fuzz --features experimental_jq
+```
+
 | Path | Content |
 |---|---|
 | `jaq_json/*.rs`, `defs.jq` | Upstream sources, mechanically adapted (below) plus `BASHKIT PATCH` hunks |

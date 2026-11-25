@@ -363,6 +363,12 @@ jobs:
       - name: Install pinned jq for differential tests
         run: scripts/install-jq-ci.sh "$JQ_VERSION"
 
+      # jq/yq share the experimental owned value boundary. Keep the default
+      # workspace run below on the established backend; exercise both here.
+      - name: Test experimental jq containers
+        if: ${{ !matrix.execution_plan }}
+        run: cargo test -p bashkit --no-default-features --features experimental_jq --lib --test integration -- jq yq
+
       # Examples have a dedicated job below; skipping them here avoids
       # duplicated example links that can exhaust runner disk on main.
       - name: Run tests

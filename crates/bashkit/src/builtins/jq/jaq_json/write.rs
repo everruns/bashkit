@@ -194,6 +194,9 @@ macro_rules! style {
 /// yielding invalid UTF-8 characters as-is.
 macro_rules! format_val {
     ($w:ident, $pp:ident, $level:expr, $v:ident, $f:expr) => {{
+        // BASHKIT PATCH: formatting is a separately interruptible lifecycle.
+        #[cfg(feature = "experimental_jq")]
+        $crate::builtins::jq::jaq_json::meter::tick();
         macro_rules! color {
             ($style:ident, $g:expr) => {{
                 style!($w, $pp, $style, $g)
@@ -239,8 +242,17 @@ macro_rules! format_val {
                 }
                 if !o.is_empty() {
                     if $pp.sort_keys {
+                        // BASHKIT PATCH: sorted rendering owns charged scratch.
+                        #[cfg(feature = "experimental_jq")]
+                        let mut o = $crate::builtins::jq::owned::entries(o);
+                        #[cfg(not(feature = "experimental_jq"))]
                         let mut o: std::vec::Vec<_> = o.iter().collect();
+                        #[cfg(feature = "experimental_jq")]
+                        o.sort_unstable_by_key(|(k, _v)| *k);
+                        #[cfg(not(feature = "experimental_jq"))]
                         o.sort_by_key(|(k, _v)| *k);
+                        #[cfg(feature = "experimental_jq")]
+                        let o = o.into_charged_iter();
                         write_seq!($w, $pp, $level, o, |x| kv!(x))
                     } else {
                         write_seq!($w, $pp, $level, &**o, |x| kv!(x))

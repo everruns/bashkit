@@ -265,10 +265,9 @@ pub(super) fn jq_to_val(v: &JqJson) -> Val {
         }
         JqJson::String(s) => Val::from(s.clone()),
         JqJson::Array(arr) => arr.iter().map(jq_to_val).collect(),
-        JqJson::Object(map) => Val::obj(
+        JqJson::Object(map) => object_value(
             map.iter()
-                .map(|(k, v)| (Val::from(k.clone()), jq_to_val(v)))
-                .collect(),
+                .map(|(k, v)| (Val::from(k.clone()), jq_to_val(v))),
         ),
     }
 }
@@ -293,13 +292,29 @@ pub(super) fn jq_into_val(value: JqJson) -> Val {
         }
         JqJson::String(s) => Val::from(s),
         JqJson::Array(values) => values.into_iter().map(jq_into_val).collect(),
-        JqJson::Object(entries) => Val::obj(
+        JqJson::Object(entries) => object_value(
             entries
                 .into_iter()
-                .map(|(key, value)| (Val::from(key), jq_into_val(value)))
-                .collect(),
+                .map(|(key, value)| (Val::from(key), jq_into_val(value))),
         ),
     }
+}
+
+// Input/global objects must enter the same incremental owned builder as
+// evaluator-created objects; collecting a raw Map first bypasses admission.
+fn object_value(entries: impl IntoIterator<Item = (Val, Val)>) -> Val {
+    #[cfg(feature = "experimental_jq")]
+    {
+        match super::owned::object(entries) {
+            Ok(value) => value,
+            Err(_) => {
+                super::jaq_json::meter::require(usize::MAX);
+                Val::Null // panic-abort fallback; the meter remains tripped
+            }
+        }
+    }
+    #[cfg(not(feature = "experimental_jq"))]
+    Val::obj(entries.into_iter().collect())
 }
 
 /// Convert jaq Val back to JqJson for output formatting. Captures number

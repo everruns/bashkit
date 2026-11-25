@@ -95,6 +95,46 @@ fn jq_sources(dir: &Path, out: &mut Vec<PathBuf>) {
 ///
 /// See knowledge/runtimes/jaq-json-vendor.md, "Structural depth (#3013)".
 const REVIEWED: &[(&str, &str)] = &[
+    // Object-wide updates collect into an already checked owned body.
+    ("jaq_json/mod.rs", "return Ok(Self::Obj(Rc::new(body)));"),
+    // Per-run interruption reason, not value container storage.
+    (
+        "mod.rs",
+        "let interruption = std::rc::Rc::new(std::cell::RefCell::new(None));",
+    ),
+    // Experimental body admission. The owned type has no mutable dereference;
+    // these callers can only invoke its checked attachment operations.
+    ("jaq_json/mod.rs", "return Rc::new(Container::admit(body));"),
+    ("jaq_json/mod.rs", "let o = Rc::make_mut(o);"),
+    ("jaq_json/mod.rs", "Rc::make_mut(a).set(i, y)?;"),
+    ("jaq_json/mod.rs", "let a = Rc::make_mut(a);"),
+    (
+        "jaq_json/mod.rs",
+        "Rc::make_mut(a).splice(skip, take, &y)?;",
+    ),
+    (
+        "jaq_json/mod.rs",
+        "return Self::Arr(Rc::new(super::owned::array(iter)));",
+    ),
+    ("jaq_json/mod.rs", "Rc::make_mut(&mut l).append(&r)?;"),
+    ("jaq_json/mod.rs", "Rc::make_mut(&mut l).append(&r)?;"),
+    ("jaq_json/mod.rs", "Rc::make_mut(&mut l).subtract(&r)?;"),
+    ("jaq_json/read.rs", "{ super::Rc::new(arr) }"),
+    (
+        "jaq_json/read.rs",
+        "return Ok(Val::Obj(super::Rc::new(obj)));",
+    ),
+    // Private mutable access stays inside owned.rs, where take replaces a
+    // child with null; insertion checks depth before restoring a child.
+    ("owned.rs", "Ok(Val::Obj(Rc::new(object)))"),
+    ("owned.rs", "let left = Rc::make_mut(left);"),
+    // Subtraction's read-only search index, pre-admitted and charged.
+    (
+        "owned.rs",
+        "let mut sorted = Metered::new(values.iter().collect::<Vec<_>>());",
+    ),
+    // Ordering/hash scratch holds immutable references, pre-admitted by entries.
+    ("owned.rs", "Metered::new(object.iter().collect())"),
     // Admission itself.
     ("jaq_json/mod.rs", "admit_container(Metered::new(t))"),
     ("jaq_json/mod.rs", "Rc::new(body)"),

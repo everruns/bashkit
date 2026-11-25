@@ -57,6 +57,13 @@ and TM-DOS-023 in the [Threat Model](threat-model.md).
 
 ## jq generated structure depth
 
+The opt-in `experimental_jq` owned-container runtime runs the same jq/yq
+compatibility and resource regression suites. Its additional API tests cover
+pre-copy COW admission, refused child attachment, exact depth invalidation,
+incremental charging and drop refunds. Its mutation differential corpus uses
+real jq as the oracle, with memory/depth limits as deliberate exceptions.
+See [Vendored jaq-json](../runtimes/jaq-json-vendor.md#experimental-owned-boundary).
+
 `memory_growth_security_tests::jq` checks depth 100/101 independently of heap,
 output and evaluator recursion limits. It covers new containers, index updates,
 slice updates, shared subtrees, removal/COW cache invalidation, `fromjson`,

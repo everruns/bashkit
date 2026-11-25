@@ -7,6 +7,26 @@ bashkit) can avoid surprises.
 
 [jaq]: https://github.com/01mf02/jaq
 
+## Experimental owned containers
+
+Build with `--features experimental_jq` to opt into Bashkit's owned jq
+container/resource boundary. This Cargo feature enables `jq`; it is disabled
+by default and also available on `bashkit-cli`. It applies to both `jq` and
+`yq`, which share the value runtime.
+
+The experiment retains jaq's parser, evaluator, standard library and Bashkit's
+jq compatibility shim. Array/object construction and mutation use an API that
+checks nesting before attachment, admits storage before growth or copy-on-write,
+and updates memory accounting and cached depth together. Collection builders
+charge storage incrementally. The same memory, depth, output, timeout and
+cancellation limits apply; conservative storage admission can reject a value
+earlier than the existing implementation. Performance improvement is not
+assumed. Untrusted filters still require unwinding builds or process isolation,
+as described below. Disable the feature to return to the existing implementation.
+
+Comparison, hashing, containment and formatting also poll the execution stop
+check while traversing values, including shared generated trees.
+
 ## Reported version
 
 `jq --version` prints `jq-1.8`. Filters generated for stedfan/jq 1.7 and 1.8

@@ -133,24 +133,44 @@ fn parse_at<L: LexAlloc>(next: u8, lexer: &mut L, depth: usize) -> Result<Val, h
         b'0'..=b'9' | b'+' | b'-' => Val::Num(parse_num(lexer)?),
         b'"' => Val::utf8_str(parse_string(lexer.discarded(), false)?),
         b'[' => Val::Arr({
+            // BASHKIT PATCH: incremental, charged construction in owned mode.
+            #[cfg(feature = "experimental_jq")]
+            let mut arr = super::super::owned::Container::<Vec<Val>>::default();
+            #[cfg(not(feature = "experimental_jq"))]
             let mut arr = Vec::new();
             lexer.discarded().seq(b']', ws_tk, |next, lexer| {
+                #[cfg(feature = "experimental_jq")]
+                arr.push(parse_at(next, lexer, depth + 1)?).map_err(|_| hifijson::Error::from(Expect::Value))?;
+                #[cfg(not(feature = "experimental_jq"))]
                 arr.push(parse_at(next, lexer, depth + 1)?);
                 Ok::<_, hifijson::Error>(())
             })?;
+            #[cfg(feature = "experimental_jq")]
+            { super::Rc::new(arr) }
+            #[cfg(not(feature = "experimental_jq"))]
             super::metered(arr)
         }),
-        b'{' => Val::obj({
+        b'{' => {
+            // BASHKIT PATCH: do not build an uncharged temporary object.
+            #[cfg(feature = "experimental_jq")]
+            let mut obj = super::super::owned::Container::<Map>::default();
+            #[cfg(not(feature = "experimental_jq"))]
             let mut obj = Map::default();
             lexer.discarded().seq(b'}', ws_tk, |next, lexer| {
                 let key = parse_at(next, lexer, depth + 1)?;
                 lexer.expect(ws_tk, b':').ok_or(Expect::Colon)?;
                 let value = parse_at(ws_tk(lexer).ok_or(Expect::Value)?, lexer, depth + 1)?;
+                #[cfg(feature = "experimental_jq")]
+                obj.insert(key, value).map_err(|_| hifijson::Error::from(Expect::Value))?;
+                #[cfg(not(feature = "experimental_jq"))]
                 obj.insert(key, value);
                 Ok::<_, hifijson::Error>(())
             })?;
-            obj
-        }),
+            #[cfg(feature = "experimental_jq")]
+            return Ok(Val::Obj(super::Rc::new(obj)));
+            #[cfg(not(feature = "experimental_jq"))]
+            Val::obj(obj)
+        },
         _ => Err(Expect::Value)?,
     })
 }

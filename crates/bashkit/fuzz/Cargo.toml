@@ -20,6 +20,8 @@ path = ".."
 features = ["jq"]
 
 [features]
+# Run the jq lifecycle/resource corpus against owned containers.
+experimental_jq = ["bashkit/experimental_jq"]
 # Exercise the shipping feature independently of the diagnostic selector.
 experimental_execution_plan = ["bashkit/experimental_execution_plan"]
 plan_differential = ["experimental_execution_plan", "bashkit/experimental_plan_benchmark_control"]

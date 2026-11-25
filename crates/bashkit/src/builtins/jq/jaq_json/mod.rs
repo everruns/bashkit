@@ -35,19 +35,30 @@ use num_traits::{cast::ToPrimitive, Signed};
 pub use funs::{bytes_valrs, funs};
 pub use num::Num;
 use meter::{Metered, Str};
+// BASHKIT PATCH: experimental bodies expose checked mutation only.
+#[cfg(feature = "experimental_jq")]
+use super::owned::Container;
+#[cfg(not(feature = "experimental_jq"))]
+type Container<T> = Metered<T>;
 
 /// BASHKIT PATCH: wrap a new array/object body so it is metered.
-pub(crate) fn metered<T: meter::Footprint + ValueDepth + Default>(t: T) -> Rc<Metered<T>> {
+pub(crate) fn metered<T: meter::Footprint + ValueDepth + Default>(t: T) -> Rc<Container<T>> {
     admit_container(Metered::new(t))
 }
 
 /// BASHKIT PATCH: retain an existing memory charge while admitting depth.
-pub(crate) fn admit_container<T: meter::Footprint + ValueDepth + Default>(mut body: Metered<T>) -> Rc<Metered<T>> {
+pub(crate) fn admit_container<T: meter::Footprint + ValueDepth + Default>(body: Metered<T>) -> Rc<Container<T>> {
+    #[cfg(feature = "experimental_jq")]
+    return Rc::new(Container::admit(body));
+    #[cfg(not(feature = "experimental_jq"))]
+    {
+    let mut body = body;
     if meter::check_depth(body.depth(ValueDepth::value_depth)).is_err() {
         // panic-abort fallback: never retain a rejected tree.
         body = Metered::default();
     }
     Rc::new(body)
+    }
 }
 
 // BASHKIT PATCH (#3013): count containers, scalars have depth zero. Check
@@ -111,9 +122,9 @@ pub enum Val {
     TStr(Box<Str>),
     /// Array
     // BASHKIT PATCH: bodies are `Metered` (TM-DOS-110).
-    Arr(Rc<Metered<Vec<Val>>>),
+    Arr(Rc<Container<Vec<Val>>>),
     /// Object
-    Obj(Rc<Metered<Map<Val, Val>>>),
+    Obj(Rc<Container<Map<Val, Val>>>),
 }
 
 #[cfg(any())]
@@ -163,6 +174,12 @@ impl Type {
     }
 }
 
+// BASHKIT PATCH: share the diagnostic without exposing jqmsg internals.
+#[cfg(feature = "experimental_jq")]
+pub(super) fn invalid_object_key(key: &Val) -> ValR {
+    Err(jqmsg::object_key(key))
+}
+
 /// Order-preserving map
 pub type Map<K = Val, V = K> = indexmap::IndexMap<K, V, foldhash::fast::RandomState>;
 
@@ -176,7 +193,7 @@ pub type ValX<'a> = jaq_core::ValX<'a, Val>;
 // This is part of the Rust standard library since 1.76:
 // <https://doc.rust-lang.org/std/rc/struct.Rc.html#method.unwrap_or_clone>.
 // However, to keep MSRV low, we reimplement it here.
-fn rc_unwrap_or_clone<T: Clone>(a: Rc<T>) -> T {
+pub(super) fn rc_unwrap_or_clone<T: Clone>(a: Rc<T>) -> T {
     Rc::try_unwrap(a).unwrap_or_else(|a| (*a).clone())
 }
 
@@ -187,6 +204,11 @@ impl jaq_core::ValT for Val {
     }
 
     fn from_map<I: IntoIterator<Item = (Self, Self)>>(iter: I) -> ValR {
+        // BASHKIT PATCH: own incremental construction under the experiment.
+        #[cfg(feature = "experimental_jq")]
+        return super::owned::object(iter);
+        #[cfg(not(feature = "experimental_jq"))]
+        {
         // BASHKIT PATCH: jq object keys are strings only.
         let mut m = Map::default();
         for (k, v) in iter {
@@ -196,6 +218,7 @@ impl jaq_core::ValT for Val {
             m.insert(k, v);
         }
         Ok(Self::obj(m))
+        }
     }
 
     fn key_values(self) -> Box<dyn Iterator<Item = Result<(Val, Val), Error>>> {
@@ -251,7 +274,18 @@ impl jaq_core::ValT for Val {
             }
             Self::Obj(o) => {
                 let iter = rc_unwrap_or_clone(o).into_iter();
-                let iter = iter.filter_map(|(k, v)| f(v).next().map(|v| Ok((k, v?))));
+                let iter = iter.filter_map(|(k, v)| f(v).next().map(|v| Ok::<_, Exn<_>>((k, v?))));
+                // BASHKIT PATCH: admit each updated entry before collection.
+                #[cfg(feature = "experimental_jq")]
+                {
+                    let mut body = Container::<Map>::default();
+                    for entry in iter {
+                        let (key, value) = entry?;
+                        body.insert(key, value)?;
+                    }
+                    return Ok(Self::Obj(Rc::new(body)));
+                }
+                #[cfg(not(feature = "experimental_jq"))]
                 Ok(Self::obj(iter.collect::<Result<_, Exn<_>>>()?))
             }
             v => opt.fail(v, |v| Exn::from(jqmsg::iter(v))), // BASHKIT PATCH
@@ -436,6 +470,19 @@ impl Val {
                 opt.fail(self, |_| Exn::from(e))
             }
             Val::Obj(ref mut o) => {
+                // BASHKIT PATCH: checked attachments and COW in owned mode.
+                #[cfg(feature = "experimental_jq")]
+                {
+                    let o = Rc::make_mut(o);
+                    let old = o.take(index).unwrap_or_default();
+                    if let Some(value) = f(old).next().transpose()? {
+                        o.insert(index.clone(), value)?;
+                    } else {
+                        o.remove(index);
+                    }
+                }
+                #[cfg(not(feature = "experimental_jq"))]
+                {
                 use indexmap::map::Entry::{Occupied, Vacant};
                 match Rc::make_mut(o).entry(index.clone()) {
                     Occupied(mut e) => {
@@ -460,6 +507,7 @@ impl Val {
                 // BASHKIT PATCH: charge in-place growth (TM-DOS-110).
                 Rc::make_mut(o).resync();
                 meter::check(0)?;
+                }
                 Ok(self)
             }
             Val::Arr(ref mut a) => {
@@ -494,14 +542,31 @@ impl Val {
                     meter::check_depth(1 + y.value_depth())?; // BASHKIT PATCH
                     let grow = (i + 1 - len).saturating_mul(core::mem::size_of::<Val>());
                     meter::check(grow)?;
+                    #[cfg(feature = "experimental_jq")]
+                    Rc::make_mut(a).set(i, y)?;
+                    #[cfg(not(feature = "experimental_jq"))]
+                    {
                     let a = Rc::make_mut(a);
                     a.resize(i, Val::Null);
                     a.push(y);
                     a.resync(); // BASHKIT PATCH (TM-DOS-110)
                     meter::check(0)?;
+                    }
                     return Ok(self);
                 }
 
+                #[cfg(feature = "experimental_jq")]
+                {
+                    let a = Rc::make_mut(a);
+                    let old = a.take(i);
+                    if let Some(value) = f(old).next().transpose()? {
+                        a.set(i, value)?;
+                    } else {
+                        a.remove(i);
+                    }
+                }
+                #[cfg(not(feature = "experimental_jq"))]
+                {
                 let a = Rc::make_mut(a);
                 let x = core::mem::take(&mut a[i]);
                 if let Some(y) = f(x).next().transpose()? {
@@ -511,6 +576,7 @@ impl Val {
                     a.remove(i);
                 }
                 a.resync(); // BASHKIT PATCH (TM-DOS-110)
+                }
                 Ok(self)
             }
             _ => opt.fail(self, |v| Exn::from(jqmsg::iter(v))), // BASHKIT PATCH
@@ -550,9 +616,15 @@ impl Val {
                 let y = f(arr).map(|y| y?.into_arr().map_err(Exn::from)).next();
                 let y = y.transpose()?.unwrap_or_default();
                 meter::check((a.len() - take + y.len()) * core::mem::size_of::<Val>())?; // BASHKIT PATCH
+                // BASHKIT PATCH: owned splice has no unmetered temporary Vec.
+                #[cfg(feature = "experimental_jq")]
+                Rc::make_mut(a).splice(skip, take, &y)?;
+                #[cfg(not(feature = "experimental_jq"))]
+                {
                 let a = Rc::make_mut(a);
                 a.splice(skip..skip + take, (**y).clone());
                 a.resync(); // BASHKIT PATCH (TM-DOS-110)
+                }
                 Ok(self)
             }
             Val::BStr(b) => fs(b.into_bytes(), range, stb, Val::into_byte_str, Val::byte_str),
@@ -604,14 +676,14 @@ impl Val {
     }
 
     /// If the value is an array, return it, else fail.
-    fn into_arr(self) -> Result<Rc<Metered<Vec<Self>>>, Error> {
+    fn into_arr(self) -> Result<Rc<Container<Vec<Self>>>, Error> {
         match self {
             Self::Arr(a) => Ok(a),
             _ => Err(Error::typ(self, Type::Arr.as_str())),
         }
     }
 
-    fn as_arr(&self) -> Result<&Rc<Metered<Vec<Self>>>, Error> {
+    fn as_arr(&self) -> Result<&Rc<Container<Vec<Self>>>, Error> {
         match self {
             Self::Arr(a) => Ok(a),
             _ => Err(Error::typ(self.clone(), Type::Arr.as_str())),
@@ -725,6 +797,9 @@ impl From<val::Range<Val>> for Val {
 impl FromIterator<Self> for Val {
     fn from_iter<T: IntoIterator<Item = Self>>(iter: T) -> Self {
         // BASHKIT PATCH: stop at the meter's limit (TM-DOS-110).
+        #[cfg(feature = "experimental_jq")]
+        return Self::Arr(Rc::new(super::owned::array(iter)));
+        #[cfg(not(feature = "experimental_jq"))]
         Self::Arr(admit_container(meter::collect_vec(iter)))
     }
 }
@@ -761,16 +836,26 @@ impl core::ops::Add for Val {
             (Arr(mut l), Arr(r)) => {
                 //std::dbg!(Rc::strong_count(&l));
                 meter::check((l.len() + r.len()) * val_size)?;
+                #[cfg(feature = "experimental_jq")]
+                Rc::make_mut(&mut l).append(&r)?;
+                #[cfg(not(feature = "experimental_jq"))]
+                {
                 let a = Rc::make_mut(&mut l);
                 a.extend(r.iter().cloned());
                 a.resync();
+                }
                 Ok(Arr(l))
             }
             (Obj(mut l), Obj(r)) => {
                 meter::check((l.len() + r.len()) * 3 * val_size)?;
+                #[cfg(feature = "experimental_jq")]
+                Rc::make_mut(&mut l).append(&r)?;
+                #[cfg(not(feature = "experimental_jq"))]
+                {
                 let o = Rc::make_mut(&mut l);
                 o.extend(r.iter().map(|(k, v)| (k.clone(), v.clone())));
                 o.resync();
+                }
                 Ok(Obj(l))
             }
             (l, r) => Err(jqmsg::math(l, ops::Math::Add, r, false)), // BASHKIT PATCH
@@ -785,10 +870,15 @@ impl core::ops::Sub for Val {
         match (self, rhs) {
             (Self::Num(x), Self::Num(y)) => Ok(Self::Num(x - y)),
             (Self::Arr(mut l), Self::Arr(r)) => {
+                #[cfg(feature = "experimental_jq")]
+                Rc::make_mut(&mut l).subtract(&r)?;
+                #[cfg(not(feature = "experimental_jq"))]
+                {
                 let r = r.iter().collect::<std::collections::BTreeSet<_>>();
                 let a = Rc::make_mut(&mut l);
                 a.retain(|x| !r.contains(x));
                 a.resync(); // BASHKIT PATCH (TM-DOS-110)
+                }
                 Ok(Self::Arr(l))
             }
             (l, r) => Err(jqmsg::math(l, ops::Math::Sub, r, false)), // BASHKIT PATCH
@@ -796,7 +886,8 @@ impl core::ops::Sub for Val {
     }
 }
 
-fn obj_merge(l: &mut Rc<Metered<Map>>, r: Rc<Metered<Map>>) {
+#[cfg(not(feature = "experimental_jq"))]
+fn obj_merge(l: &mut Rc<Container<Map>>, r: Rc<Container<Map>>) {
     let l = Rc::make_mut(l);
     let r = rc_unwrap_or_clone(r).into_iter();
     r.for_each(|(k, v)| match (l.get_mut(&k), v) {
@@ -834,6 +925,9 @@ impl core::ops::Mul for Val {
             // <https://jqlang.github.io/jq/manual/#Builtinoperatorsandfunctions>
             (BStr(_) | TStr(_), Num(Int(_))) | (Num(Int(_)), BStr(_) | TStr(_)) => Ok(Null),
             (Obj(mut l), Obj(r)) => {
+                #[cfg(feature = "experimental_jq")]
+                super::owned::merge(&mut l, r)?;
+                #[cfg(not(feature = "experimental_jq"))]
                 obj_merge(&mut l, r);
                 Ok(Obj(l))
             }
@@ -914,6 +1008,9 @@ impl PartialOrd for Val {
 
 impl Ord for Val {
     fn cmp(&self, other: &Self) -> Ordering {
+        // BASHKIT PATCH: shared trees can amplify traversal without growth.
+        #[cfg(feature = "experimental_jq")]
+        meter::tick();
         use Ordering::{Equal, Greater, Less};
         match (self, other) {
             (Self::Null, Self::Null) => Equal,
@@ -926,10 +1023,26 @@ impl Ord for Val {
                 (0, _) => Less,
                 (_, 0) => Greater,
                 _ => {
+                    // BASHKIT PATCH: charged scratch for owned comparisons.
+                    #[cfg(feature = "experimental_jq")]
+                    let mut l = super::owned::entries(x);
+                    #[cfg(feature = "experimental_jq")]
+                    let mut r = super::owned::entries(y);
+                    #[cfg(not(feature = "experimental_jq"))]
                     let mut l: Vec<_> = x.iter().collect();
+                    #[cfg(not(feature = "experimental_jq"))]
                     let mut r: Vec<_> = y.iter().collect();
-                    l.sort_by_key(|(k, _v)| *k);
-                    r.sort_by_key(|(k, _v)| *k);
+                    // BASHKIT PATCH: unique keys permit allocation-free sort.
+                    #[cfg(feature = "experimental_jq")]
+                    {
+                        l.sort_unstable_by_key(|(k, _v)| *k);
+                        r.sort_unstable_by_key(|(k, _v)| *k);
+                    }
+                    #[cfg(not(feature = "experimental_jq"))]
+                    {
+                        l.sort_by_key(|(k, _v)| *k);
+                        r.sort_by_key(|(k, _v)| *k);
+                    }
                     // TODO: make this nicer
                     let kl = l.iter().map(|(k, _v)| k);
                     let kr = r.iter().map(|(k, _v)| k);
@@ -959,6 +1072,9 @@ impl Ord for Val {
 
 impl PartialEq for Val {
     fn eq(&self, other: &Self) -> bool {
+        // BASHKIT PATCH: keep equality interruptible independently of output.
+        #[cfg(feature = "experimental_jq")]
+        meter::tick();
         match (self, other) {
             (Self::Null, Self::Null) => true,
             (Self::Bool(x), Self::Bool(y)) => x == y,
@@ -975,6 +1091,9 @@ impl Eq for Val {}
 
 impl Hash for Val {
     fn hash<H: Hasher>(&self, state: &mut H) {
+        // BASHKIT PATCH: hashing can traverse an exponentially shared tree.
+        #[cfg(feature = "experimental_jq")]
+        meter::tick();
         fn hash_with(u: u8, x: impl Hash, state: &mut impl Hasher) {
             state.write_u8(u);
             x.hash(state)
@@ -989,7 +1108,14 @@ impl Hash for Val {
             Self::Obj(o) => {
                 state.write_u8(7);
                 // this is similar to what happens in `Val::cmp`
+                // BASHKIT PATCH: charge object-hash scratch in owned mode.
+                #[cfg(feature = "experimental_jq")]
+                let mut kvs = super::owned::entries(o);
+                #[cfg(not(feature = "experimental_jq"))]
                 let mut kvs: Vec<_> = o.iter().collect();
+                #[cfg(feature = "experimental_jq")]
+                kvs.sort_unstable_by_key(|(k, _v)| *k);
+                #[cfg(not(feature = "experimental_jq"))]
                 kvs.sort_by_key(|(k, _v)| *k);
                 kvs.iter().for_each(|(k, v)| (k, v).hash(state));
             }
