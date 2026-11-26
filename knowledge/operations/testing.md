@@ -86,6 +86,37 @@ intermediate-artifact layout; scripts must not depend on internal build/deps
 paths. The consumer's own lockfile is used after fresh resolution, so this
 check catches dependency-floor drift hidden by the workspace's locked graph.
 
+## Native jq backend coverage
+
+`experimental_jq` remains off by default and is forwarded by every embedding
+crate. Required CI runs jq/yq compatibility, lifecycle and shared-budget tests
+plus serialized security failpoints on Linux, macOS and Windows with independent
+storage-backend and execution-plan axes. The Windows oracle uses pinned native
+jq with binary output, preserving Bashkit's platform-independent LF streams.
+Generated-depth and exponential-traversal regressions run in supervised 2 MiB
+children on all three hosts; Unix adds CPU/RSS caps to the wall/output watchdog.
+
+Binding/browser instrumented rows enable both experiments together to test the
+actual language artifacts without doubling every version/architecture matrix;
+the independent native matrix isolates each flag. Native release defaults do
+not enable either experiment. Rust coverage retains independent axes, nightly
+ASan executes jq/yq under the owned feature, and Miri exercises storage/refund
+and iterator-lifetime invariants. `scripts/tests/test_experimental_jq_ci.py`
+guards those gates and feature forwarding against silent omissions.
+
+`just test-jq` runs the four native mode combinations. `just fuzz-jq` runs all
+three jq/yq targets across both independent axes. Discovery adds owned rows
+only to jq/yq targets, preserving other runtime fuzz coverage without duplicating
+unrelated interpreters. Scheduled fuzzing consumes that same matrix.
+`jq_lifecycle_fuzz` supplies structured construction, updates, COW, merge,
+comparison, byte conversion, formatting, resource failures and session recovery;
+the two native-model property tests check container semantics and full storage
+refunds against independent `Vec`/`BTreeMap` models.
+
+See [Vendored jaq-json](../runtimes/jaq-json-vendor.md) and
+[Performance Results](performance-results.md) for the owned boundary and paired
+benchmark commands.
+
 ## Experimental execution-plan coverage
 
 The normal CI test job has interpreter and execution-plan matrix rows. The latter

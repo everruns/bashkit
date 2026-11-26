@@ -83,6 +83,78 @@ fn bench_jq(c: &mut Criterion) {
             (large_input_script(), format!("{}\n", 4 * ROWS)),
             1,
         ),
+        (
+            "array_updates_4096",
+            (
+                "jq -n 'reduce range(4096) as $i ([]; .[$i] = $i) | length'".into(),
+                "4096\n".into(),
+            ),
+            1,
+        ),
+        (
+            "object_updates_4096",
+            (
+                "jq -n 'reduce range(4096) as $i ({}; .[$i|tostring] = $i) | length'".into(),
+                "4096\n".into(),
+            ),
+            1,
+        ),
+        (
+            "array_copy_on_write",
+            (
+                "jq -nc '[range(4096)] as $base | [range(64) as $i | $base | .[0] = $i | length] | add'".into(),
+                "262144\n".into(),
+            ),
+            1,
+        ),
+        (
+            "object_copy_on_write",
+            (
+                "jq -nc '(reduce range(1024) as $i ({}; .[$i|tostring] = $i)) as $base | [range(64) as $i | $base | .a = $i | length] | add'".into(),
+                "65600\n".into(),
+            ),
+            1,
+        ),
+        (
+            "array_concat",
+            (
+                "jq -n 'reduce range(1024) as $i ([]; . + [1,2,3]) | length'".into(),
+                "3072\n".into(),
+            ),
+            1,
+        ),
+        (
+            "object_merge",
+            (
+                "jq -n 'reduce range(1024) as $i ({}; .[$i|tostring] = {a:$i}) | . * {\"0\":{b:3}} | length'".into(),
+                "1024\n".into(),
+            ),
+            1,
+        ),
+        (
+            "sort_unique",
+            (
+                "jq -n '[range(4096) | . % 257] | sort | unique | length'".into(),
+                "257\n".into(),
+            ),
+            1,
+        ),
+        (
+            "json_round_trip",
+            (
+                "jq -n '[range(4096)] | tojson | fromjson | add'".into(),
+                "8386560\n".into(),
+            ),
+            1,
+        ),
+        (
+            "join_8192",
+            (
+                "jq -n '[range(8192) | tostring] | join(\",\") | length'".into(),
+                "39849\n".into(),
+            ),
+            1,
+        ),
     ];
     for (name, (script, expected), calls) in &cases {
         group.throughput(Throughput::Elements(*calls as u64));

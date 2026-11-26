@@ -29,7 +29,7 @@
 //! Builds with `panic = "abort"` cannot unwind: there the meter only trips
 //! and values are cut short, and a non-emitting loop is not interrupted.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -68,18 +68,21 @@ pub enum Abort {
 
 struct Poll {
     stop: StopCheck,
-    ticks: usize,
 }
 
 thread_local! {
     static CURRENT: RefCell<Option<Arc<Meter>>> = const { RefCell::new(None) };
     static POLL: RefCell<Option<Poll>> = const { RefCell::new(None) };
+    // BASHKIT PATCH: the hot path touches one Cell, borrowing the callback only
+    // at a poll boundary. Guard restoration preserves nested-run progress.
+    static TICKS: Cell<usize> = const { Cell::new(0) };
 }
 
 /// Restores the previously installed meter when dropped.
 pub struct MeterGuard {
     prev: Option<Arc<Meter>>,
     prev_poll: Option<Poll>,
+    prev_ticks: usize,
 }
 
 impl Drop for MeterGuard {
@@ -87,6 +90,7 @@ impl Drop for MeterGuard {
         let prev = self.prev.take();
         CURRENT.with(|c| *c.borrow_mut() = prev);
         let prev_poll = self.prev_poll.take();
+        TICKS.with(|ticks| ticks.set(self.prev_ticks));
         POLL.with(|p| *p.borrow_mut() = prev_poll);
     }
 }
@@ -101,9 +105,10 @@ pub fn install(limit: usize, stop: Option<StopCheck>) -> (MeterGuard, Arc<Meter>
         depth_exceeded: AtomicBool::new(false),
     });
     let prev = CURRENT.with(|c| c.borrow_mut().replace(meter.clone()));
-    let poll = stop.map(|stop| Poll { stop, ticks: 0 });
+    let poll = stop.map(|stop| Poll { stop });
     let prev_poll = POLL.with(|p| core::mem::replace(&mut *p.borrow_mut(), poll));
-    (MeterGuard { prev, prev_poll }, meter)
+    let prev_ticks = TICKS.with(|ticks| ticks.replace(0));
+    (MeterGuard { prev, prev_poll, prev_ticks }, meter)
 }
 
 /// Stop the run now. Only returns in `panic = "abort"` builds, where the
@@ -125,12 +130,13 @@ pub fn abort_recursion() {
 
 /// Count one value operation; poll the stop check now and then.
 pub fn tick() {
-    let stop = POLL.with(|p| {
-        let mut p = p.borrow_mut();
-        let Some(poll) = p.as_mut() else { return false };
-        poll.ticks += 1;
-        poll.ticks.is_multiple_of(TICKS_PER_POLL) && (poll.stop)()
+    let due = TICKS.with(|ticks| {
+        let next = ticks.get().wrapping_add(1);
+        ticks.set(next);
+        next.is_multiple_of(TICKS_PER_POLL)
     });
+    if !due { return; }
+    let stop = POLL.with(|p| p.borrow().as_ref().is_some_and(|poll| (poll.stop)()));
     if stop {
         abort(Abort::Interrupted);
     }
@@ -184,6 +190,17 @@ pub fn check(extra: usize) -> Result<(), Error> {
         Some(m) if !m.fits(extra) => Err(Error::str(m.message())),
         _ => Ok(()),
     }
+}
+
+/// BASHKIT PATCH: pre-allocation admission for infallible owned constructors
+/// and Rc copy-on-write clones. Panic-abort builds leave the meter tripped.
+#[cfg(feature = "experimental_jq")]
+pub(crate) fn require(extra: usize) -> bool {
+    if current().is_some_and(|meter| !meter.fits(extra)) {
+        abort(Abort::Memory);
+        return false;
+    }
+    true
 }
 
 /// Room left for new allocations, `usize::MAX` without a meter.
@@ -408,7 +425,41 @@ impl<T: Footprint> Metered<T> {
         core::mem::take(&mut self.inner)
         // `self` drops here and releases `charged`.
     }
+
+    /// BASHKIT PATCH: an owning iterator retains the allocated body. Transfer
+    /// its charge instead of refunding while the buffer is still alive.
+    #[cfg(feature = "experimental_jq")]
+    pub(crate) fn into_charged_iter(mut self) -> OwnedIter<T::IntoIter>
+    where
+        T: Default + IntoIterator,
+    {
+        let inner = core::mem::take(&mut self.inner);
+        let charge = self.meter.take().map(|meter| Charge { meter, bytes: self.charged });
+        self.charged = 0;
+        OwnedIter { iter: inner.into_iter(), _charge: charge }
+    }
 }
+
+/// BASHKIT PATCH: release the allocation before refunding its meter charge.
+#[cfg(feature = "experimental_jq")]
+pub(crate) struct OwnedIter<I> {
+    iter: I,
+    _charge: Option<Charge>,
+}
+
+#[cfg(feature = "experimental_jq")]
+impl<I: Iterator> Iterator for OwnedIter<I> {
+    type Item = I::Item;
+    fn next(&mut self) -> Option<Self::Item> {
+        self.iter.next()
+    }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.iter.size_hint()
+    }
+}
+
+#[cfg(feature = "experimental_jq")]
+impl<I: ExactSizeIterator> ExactSizeIterator for OwnedIter<I> {}
 
 impl<T: Footprint> Drop for Metered<T> {
     fn drop(&mut self) {

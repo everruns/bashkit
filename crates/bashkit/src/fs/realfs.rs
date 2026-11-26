@@ -1305,6 +1305,13 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let outside = tempfile::tempdir().unwrap();
         std::fs::write(outside.path().join("secret"), b"OUTSIDE").unwrap();
+        // Give chmod a distinguishable initial mode even under a 077 umask.
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(
+            outside.path().join("secret"),
+            std::fs::Permissions::from_mode(0o644),
+        )
+        .unwrap();
         std::fs::create_dir(root.path().join("a")).unwrap();
         std::fs::write(root.path().join("a/secret"), b"inside").unwrap();
         symlink(outside.path(), root.path().join("evil")).unwrap();
@@ -1349,7 +1356,6 @@ mod tests {
         stop.store(true, Ordering::Relaxed);
         racer.join().unwrap();
 
-        use std::os::unix::fs::PermissionsExt;
         let outside_mode = std::fs::metadata(outside.path().join("secret"))
             .unwrap()
             .permissions()

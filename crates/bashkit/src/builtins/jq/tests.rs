@@ -1604,6 +1604,27 @@ mod differential {
 
     use super::*;
 
+    #[cfg(feature = "experimental_jq")]
+    #[tokio::test]
+    async fn diff_owned_container_lifecycle() {
+        for filter in [
+            "[range(30)] | .[40] = 7 | .[0] |= empty | .[1:4] = [8,9]",
+            "[range(30)] as $old | [$old, ($old | .[3] = 100), $old]",
+            r#"{a:{b:1},c:2} as $old | [$old, ($old * {a:{d:3},e:4}), $old]"#,
+            r#"{a:1,b:2,c:3} | .b |= empty | .d = [true] | .a += 3"#,
+            r#"{a:[1],b:[2]} | .[] |= (. + [3])"#,
+            "([1,2,3] + [3,4,5]) - [3,5]",
+            "reduce range(100) as $i ({}; .[($i|tostring)] = [$i]) | to_entries | length",
+            "[range(20)] | tostring | fromjson | reverse | sort | unique",
+            "reduce range(40) as $i (0; [.]) | [.,.] | .[0] == .[1]",
+            "reduce range(40) as $i (0; {a:.}) | paths(scalars) | length",
+            r#"try ({a:1} | .a |= error("failed")) catch ."#,
+            r#"null as $key | try {($key):1} catch ."#,
+        ] {
+            assert_matches(&["-nc", filter], "").await;
+        }
+    }
+
     #[tokio::test]
     async fn diff_stream_token_events_and_partial_errors() {
         for text in [
@@ -1695,7 +1716,12 @@ mod differential {
     fn run_real_jq(args: &[&str], input: &str) -> Option<(String, i32)> {
         use std::io::Write;
         use std::process::{Command, Stdio};
-        let mut child = Command::new("jq")
+        let mut command = Command::new("jq");
+        // Bashkit streams have Unix newlines on every host. Native Windows jq
+        // otherwise translates stdout to CRLF before the oracle can compare it.
+        #[cfg(windows)]
+        command.arg("--binary");
+        let mut child = command
             .args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

@@ -49,6 +49,13 @@ Save a new Criterion benchmark's first run as a baseline using
 
 Run a single Criterion benchmark with `cargo bench -p bashkit --bench <name>`.
 
+`just bench-jq` builds both jq backends before measuring, pins a measurement
+CPU where supported, alternates run order across three paired rounds, and saves
+all Criterion estimates plus a Markdown comparison. It locates executables via
+Cargo's JSON artifact API rather than private target layouts. `--quick` uses
+thin LTO/eight codegen units for hill climbing; compare builds within the same
+profile and record final results with the repository's ordinary bench profile.
+
 Default benchmark recipes that represent a real run MUST save artifacts in the
 directories above: `just bench`, `just bench-parallel`, `just bench-sqlite`, `just bench-python`,
 `just gaps`, `just oils-spec`.

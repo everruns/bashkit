@@ -6,6 +6,8 @@ commonly use with mikefarah/yq. It parses YAML or JSON, evaluates the existing
 not maintain a second YAML-specific query language.
 
 Enable the Cargo `jq` feature to register both `jq` and `yq`.
+The opt-in `experimental_jq` feature selects checked container storage for
+both commands; see the [jq guide](crate::jq_guide) for its limits and validation.
 
 ## Examples
 

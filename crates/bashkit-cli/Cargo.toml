@@ -23,6 +23,7 @@ path = "src/main.rs"
 doc = false  # Disable to avoid collision with bashkit library docs
 
 [features]
+experimental_jq = ["bashkit/experimental_jq"]
 # Opt-in script compiler; preserves ordinary Bash syntax and AST fallback.
 experimental_execution_plan = ["bashkit/experimental_execution_plan"]
 default = ["python", "sqlite", "interactive"]

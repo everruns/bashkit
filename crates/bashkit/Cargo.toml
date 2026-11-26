@@ -216,6 +216,9 @@ wasm_js = [
 # See knowledge/integrations/in-process-terminal.md.
 # Usage: cargo build --features terminal
 terminal = ["dep:vt100"]
+# Experimental Bashkit-owned value/resource boundary; never implied by `jq`.
+# Reuses jaq's parser/evaluator. See knowledge/runtimes/jaq-json-vendor.md.
+experimental_jq = ["jq"]
 # Enable jq builtin via embedded jaq interpreter
 # Usage: cargo build --features jq
 jq = [

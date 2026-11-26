@@ -347,6 +347,14 @@ panicked. Resolved with `wrapping_*` ops, masked shift amounts, clamped exponent
 
 **Implementation**: `timeout` 30s + `parser_timeout` 5s + `max_parser_operations` 100K in `limits.rs` (TM-DOS-023/024); `AWK_MAX_PARSER_DEPTH` 100 (`builtins/awk/parser.rs`) and `MAX_JQ_JSON_DEPTH` 100 (`builtins/jq/`) for TM-DOS-027; `MAX_LCS_CELLS` 10M (`builtins/diff.rs`) for TM-DOS-028.
 
+The opt-in `experimental_jq` value boundary centralizes array/object depth,
+capacity and COW checks in an API with no mutable body access. Both storage
+backends poll interruption during lifecycle traversals, since small shared trees can require very
+large comparison/hash/format work. jaq parser/evaluator controls remain
+separate and unchanged. See
+[experimental owned boundary](../runtimes/jaq-json-vendor.md#experimental-owned-boundary)
+for ownership scope, limit exceptions, tests and the unwind requirement.
+
 ---
 
 ### 2. Sandbox Escape

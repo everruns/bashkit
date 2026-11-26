@@ -41,6 +41,9 @@ mod format;
 mod input;
 mod loc;
 mod messages;
+// Owned container boundary, deliberately opt-in while compatibility is tested.
+#[cfg(feature = "experimental_jq")]
+mod owned;
 // Vendored jaq-json (MIT, Michael Färber, https://github.com/01mf02/jaq),
 // see jaq_json/UPSTREAM_VERSION and knowledge/runtimes/jaq-json-vendor.md.
 // Kept byte-close to upstream so `scripts/sync-jaq-json.sh` can merge new
@@ -334,6 +337,41 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
                 .ok()
         })
         .unwrap_or_else(|| ExecutionLimits::default().max_live_intermediate_bytes);
+    // The experimental safety boundary observes request cancellation even
+    // during synchronous evaluation that never returns to the async executor.
+    #[cfg(feature = "experimental_jq")]
+    let interruption = std::rc::Rc::new(std::cell::RefCell::new(None));
+    #[cfg(feature = "experimental_jq")]
+    let timed_out = std::rc::Rc::new(std::cell::Cell::new(false));
+    #[cfg(feature = "experimental_jq")]
+    let stop = {
+        let deadline = deadline.clone();
+        let budget = ctx.execution_budget();
+        let interruption = interruption.clone();
+        let timed_out = timed_out.clone();
+        Some(Box::new(move || {
+            if deadline.as_ref().is_some_and(|deadline| {
+                deadline
+                    .try_with(ExecutionDeadline::is_expired)
+                    .unwrap_or(true)
+            }) {
+                timed_out.set(true);
+                return true;
+            }
+            if let Some(budget) = &budget {
+                let checked: Result<()> = budget
+                    .try_with(|budget| budget.check())
+                    .map_err(|_| crate::Error::Cancelled)
+                    .and_then(|result| result.map_err(Into::into));
+                if let Err(error) = checked {
+                    *interruption.borrow_mut() = Some(error);
+                    return true;
+                }
+            }
+            false
+        }) as jaq_json::meter::StopCheck)
+    };
+    #[cfg(not(feature = "experimental_jq"))]
     let stop = deadline.clone().map(|deadline| {
         Box::new(move || {
             deadline
@@ -634,6 +672,16 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
             if meter.tripped() {
                 return size_error(&meter);
             }
+            // On panic=abort targets, the poll hook records a stop but cannot
+            // unwind. If evaluation later returns, report that stop here.
+            #[cfg(feature = "experimental_jq")]
+            if timed_out.get() {
+                return Ok(ExecResult::err("jq: execution timed out\n".to_string(), 5));
+            }
+            #[cfg(feature = "experimental_jq")]
+            if let Some(error) = interruption.borrow_mut().take() {
+                return Err(error);
+            }
             if let Some(error) = input_error.into_inner() {
                 return Err(error);
             }
@@ -646,6 +694,10 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
                 return size_error(&meter);
             }
             Some(jaq_json::meter::Abort::Interrupted) => {
+                #[cfg(feature = "experimental_jq")]
+                if let Some(error) = interruption.borrow_mut().take() {
+                    return Err(error);
+                }
                 return Ok(ExecResult::err("jq: execution timed out\n".to_string(), 5));
             }
             Some(jaq_json::meter::Abort::Recursion) => {

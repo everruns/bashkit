@@ -26,3 +26,7 @@ tempfile.workspace = true
 # Terminal output
 colored = "3"
 tabled = "0.22"
+
+[features]
+# Opt-in checked jq containers; keep production defaults unchanged.
+experimental_jq = ["bashkit/experimental_jq"]

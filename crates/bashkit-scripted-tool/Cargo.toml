@@ -19,6 +19,9 @@ categories.workspace = true
 readme = "README.md"
 
 [features]
+# Opt-in checked jq containers; keep production defaults unchanged.
+experimental_jq = ["bashkit/experimental_jq"]
+
 # Opt-in script compiler; preserves ordinary Bash syntax and AST fallback.
 experimental_execution_plan = ["bashkit/experimental_execution_plan"]
 default = []

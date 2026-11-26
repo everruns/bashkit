@@ -19,8 +19,14 @@ def matrix() -> list[dict]:
         for enabled in (False, True):
             if 'plan_differential' in required and not enabled:
                 continue
-            features = required + (['experimental_execution_plan'] if enabled else [])
-            rows.append({'target': target['name'], 'execution_plan': enabled, 'features': ','.join(features)})
+            # jq/yq value lifecycles need independent coverage of both storage
+            # backends. Keep unrelated runtime fuzzers out of that extra axis.
+            jq_modes = (False, True) if target['name'].startswith(('jq_', 'yq_')) else (False,)
+            for owned in jq_modes:
+                features = (required + (['experimental_execution_plan'] if enabled else [])
+                            + (['experimental_jq'] if owned else []))
+                rows.append({'target': target['name'], 'execution_plan': enabled,
+                             'experimental_jq': owned, 'features': ','.join(features)})
     return rows
 
 
@@ -28,6 +34,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--matrix', action='store_true')
     parser.add_argument('--execution-plan', action='store_true')
+    parser.add_argument('--experimental-jq', action='store_true')
     parser.add_argument('--target', help='Run one discovered target (default: all)')
     args = parser.parse_args()
     rows = matrix()
@@ -35,6 +42,7 @@ def main() -> None:
         print(json.dumps({'include': rows}))
         return
     selected = [r for r in rows if r['execution_plan'] == args.execution_plan
+                and r['experimental_jq'] == args.experimental_jq
                 and (args.target is None or args.target == r['target'])]
     if not selected:
         parser.error('no targets selected')

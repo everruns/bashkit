@@ -418,6 +418,10 @@ worth keeping so the question does not get re-litigated from scratch.
   `foldhash`, held at `0.2` against upstream's `^0.1` so the build links one
   copy instead of two (`hashbrown` requires 0.2). See
   [Vendored jaq-json](../runtimes/jaq-json-vendor.md) for the sync procedure.
+  `experimental_jq` opts into Bashkit-owned checked array/object containers
+  around the shared memory meter. jaq-core and jaq-std remain dependencies;
+  ownership of this value/resource boundary is independent of language parsing
+  and evaluation. The established `jq` feature keeps its current storage path.
 
 ## Gate rather than reimplement
 

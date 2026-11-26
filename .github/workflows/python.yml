@@ -1,3 +1,6 @@
+# The independent native jq matrix sweeps both flags. Instrumented package
+# rows also enable owned jq so binding/browser artifacts execute that backend
+# without doubling every language-version/architecture packaging matrix.
 # CI for bashkit Python package
 # Builds the native extension via maturin and runs pytest on each PR.
 # Complements publish-python.yml (release-only) with per-PR validation.
@@ -122,7 +125,7 @@ jobs:
       # abi3-py39), so it must be built against each interpreter.
       - name: Build random filesystem fixture
         run: |
-          python -m maturin build --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" --release --out /tmp/bashkit-random-fs \
+          python -m maturin build --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan,bashkit/experimental_jq' || '' }}" --release --out /tmp/bashkit-random-fs \
             -m crates/bashkit-python/test-fixtures/random-fs/Cargo.toml \
             -i python${{ matrix.python-version }}
           pip install bashkit-random-fs --no-index --find-links /tmp/bashkit-random-fs --force-reinstall
@@ -154,7 +157,7 @@ jobs:
       - name: Build and install native wheel
         run: |
           python -m pip install "maturin${{ env.MATURIN_VERSION }}"
-          python -m maturin build --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" -m crates/bashkit-python/Cargo.toml --out dist
+          python -m maturin build --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan,bashkit/experimental_jq' || '' }}" -m crates/bashkit-python/Cargo.toml --out dist
           python -m pip install bashkit --no-index --find-links dist
           python -m pip install pytest pytest-asyncio pytest-timeout langchain-core deepagents fastapi httpx
       - name: Install uvloop on Unix
@@ -198,7 +201,7 @@ jobs:
 
       - name: Build wheel
         working-directory: crates/bashkit-python
-        run: python -m maturin build --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" --release --out dist -i python3.12
+        run: python -m maturin build --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan,bashkit/experimental_jq' || '' }}" --release --out dist -i python3.12
 
       - name: Install local wheel
         run: |
@@ -207,7 +210,7 @@ jobs:
 
       - name: Build random filesystem fixture
         run: |
-          python -m maturin build --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" --release --out /tmp/bashkit-random-fs \
+          python -m maturin build --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan,bashkit/experimental_jq' || '' }}" --release --out /tmp/bashkit-random-fs \
             -m crates/bashkit-python/test-fixtures/random-fs/Cargo.toml \
             -i python3.12
           pip install bashkit-random-fs --no-index --find-links /tmp/bashkit-random-fs --force-reinstall
@@ -251,7 +254,7 @@ jobs:
 
       - name: Build wheel
         working-directory: crates/bashkit-python
-        run: python -m maturin build --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan' || '' }}" --release --out dist
+        run: python -m maturin build --features="${{ matrix.execution_plan && 'bashkit/experimental_execution_plan,bashkit/experimental_jq' || '' }}" --release --out dist
 
       - name: Verify wheel metadata
         run: |

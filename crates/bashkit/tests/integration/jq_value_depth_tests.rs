@@ -22,9 +22,57 @@ use super::bounded_child;
 
 const CHILD: &str = "BASHKIT_JQ_VALUE_DEPTH_CHILD";
 const DEPTH_ERROR: &str = "jq: error: value nesting depth limit (100) exceeded\n";
+const TRAVERSAL_CHILD: &str = "BASHKIT_JQ_TRAVERSAL_CHILD";
+
+#[tokio::test]
+async fn reader_accepts_exact_depth_limit() {
+    let mut bash = bashkit::Bash::new();
+    for filter in [
+        "(\"[\" * 100 + \"0\" + \"]\" * 100) | fromjson | length",
+        "(\"{\\\"a\\\":\" * 100 + \"0\" + \"}\" * 100) | fromjson | length",
+    ] {
+        let result = bash.exec(&format!("jq -n '{filter}'")).await.unwrap();
+        assert_eq!(result.exit_code, 0, "{filter}: {}", result.stderr);
+        assert_eq!(result.stdout, "1\n", "{filter}");
+    }
+}
 
 #[test]
-#[cfg(unix)]
+fn lifecycle_traversals_bounded() {
+    bounded_child::run(
+        "jq-traversal",
+        TRAVERSAL_CHILD,
+        "jq_value_depth_tests::lifecycle_traversals_child",
+    );
+}
+
+#[test]
+fn lifecycle_traversals_child() {
+    if !bounded_child::is_child(TRAVERSAL_CHILD) {
+        return;
+    }
+    bounded_child::on_small_stack(|| async {
+        let mut bash = bashkit::Bash::builder()
+            .limits(bashkit::ExecutionLimits::new().timeout(std::time::Duration::from_millis(250)))
+            .build();
+        let prefix = "def tree: reduce range(60) as $i (null; [.,.]); tree as $a | tree as $b | ";
+        for filter in [
+            format!("{prefix}$a == $b"),
+            format!("{prefix}[$a,$b] | sort | length"),
+            format!("{prefix}$a | contains($b)"),
+            "reduce range(60) as $i ([]; [.,.]) | tobytes | length".into(),
+        ] {
+            let result = bash.exec(&format!("jq -n '{filter}'")).await.unwrap();
+            assert_eq!(result.exit_code, 5, "{filter}: {}", result.stderr);
+            assert_eq!(result.stderr, "jq: execution timed out\n", "{filter}");
+            let recovered = bash.exec("jq -n '1 + 1'").await.unwrap();
+            assert_eq!(recovered.stdout, "2\n");
+            assert!(recovered.stderr.is_empty());
+        }
+    });
+}
+
+#[test]
 fn generated_depth_bounded() {
     bounded_child::run(
         "jq-depth",
@@ -95,6 +143,52 @@ fn jq_sources(dir: &Path, out: &mut Vec<PathBuf>) {
 ///
 /// See knowledge/runtimes/jaq-json-vendor.md, "Structural depth (#3013)".
 const REVIEWED: &[(&str, &str)] = &[
+    // Object-wide updates collect into an already checked owned body.
+    ("jaq_json/mod.rs", "return Ok(Self::Obj(Rc::new(body)));"),
+    // Per-run interruption state, not value container storage.
+    (
+        "mod.rs",
+        "let interruption = std::rc::Rc::new(std::cell::RefCell::new(None));",
+    ),
+    (
+        "mod.rs",
+        "let timed_out = std::rc::Rc::new(std::cell::Cell::new(false));",
+    ),
+    // Experimental body admission. The owned type has no mutable dereference;
+    // these callers can only invoke its checked attachment operations.
+    ("jaq_json/mod.rs", "return Rc::new(Container::admit(body));"),
+    ("jaq_json/mod.rs", "let o = Rc::make_mut(o);"),
+    ("jaq_json/mod.rs", "Rc::make_mut(a).set(i, y)?;"),
+    ("jaq_json/mod.rs", "let a = Rc::make_mut(a);"),
+    (
+        "jaq_json/mod.rs",
+        "Rc::make_mut(a).splice(skip, take, &y)?;",
+    ),
+    (
+        "jaq_json/mod.rs",
+        "return Self::Arr(Rc::new(super::owned::array(iter)));",
+    ),
+    ("jaq_json/mod.rs", "Rc::make_mut(&mut l).append(&r)?;"),
+    ("jaq_json/mod.rs", "Rc::make_mut(&mut l).append(&r)?;"),
+    ("jaq_json/mod.rs", "Rc::make_mut(&mut l).subtract(&r)?;"),
+    // Reader attachments use checked push/insert; debug builds verify the
+    // completed container's contextual depth before these Rc constructions.
+    ("jaq_json/read.rs", "super::Rc::new(arr)"),
+    (
+        "jaq_json/read.rs",
+        "return Ok(Val::Obj(super::Rc::new(obj)));",
+    ),
+    // Private mutable access stays inside owned.rs, where take replaces a
+    // child with null; insertion checks depth before restoring a child.
+    ("owned.rs", "Ok(Val::Obj(Rc::new(object)))"),
+    ("owned.rs", "let left = Rc::make_mut(left);"),
+    // Subtraction's read-only search index, pre-admitted and charged.
+    (
+        "owned.rs",
+        "let mut sorted = Metered::new(values.iter().collect::<Vec<_>>());",
+    ),
+    // Ordering/hash scratch holds immutable references, pre-admitted by entries.
+    ("owned.rs", "Metered::new(object.iter().collect())"),
     // Admission itself.
     ("jaq_json/mod.rs", "admit_container(Metered::new(t))"),
     ("jaq_json/mod.rs", "Rc::new(body)"),
