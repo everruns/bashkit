@@ -209,6 +209,13 @@ async fn extglob_group_bodies_keep_marker_bytes() {
             format!("printf '[%s]' @(A{m}B)"),
             format!("printf '[%s]' x@(A{m}B)y"),
             format!("printf '[%s]' @(A{m}B|zz)"),
+            // Quoted spans inside the group go through `push_extglob_literal`.
+            format!("printf '[%s]' @('A{m}B')"),
+            format!("printf '[%s]' @(\"A{m}B\")"),
+            // A group after a quoted start is read by the continuation
+            // reader's own extglob loop, not `read_word_from`'s.
+            format!("printf '[%s]' \"x\"*@(A{m}B)"),
+            format!("printf '[%s]' 'p'*@(A{m}B)"),
         ] {
             let host = std::process::Command::new("bash")
                 .args(["--noprofile", "--norc", "-O", "extglob", "-c", &script])
@@ -251,6 +258,11 @@ async fn backslash_escaped_markers_take_the_ordinary_character_path() {
             "double-quoted span inside the operand",
             r#"unset x; printf '[%s]' "${x:-"A\MB"}""#,
             r#"unset x; printf '[%s]' "${x:-"A\ZB"}""#,
+        ),
+        (
+            "backslash inside a continuation extglob group",
+            r#"printf '[%s]' "x"*@(A\MB)"#,
+            r#"printf '[%s]' "x"*@(A\ZB)"#,
         ),
     ] {
         for m in ['\u{1e}', '\u{1f}'] {

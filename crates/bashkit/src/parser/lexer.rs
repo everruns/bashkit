@@ -1773,9 +1773,12 @@ impl<'a> Lexer<'a> {
                         || (self.extglob_bang && content.ends_with('!')) =>
                 {
                     // `"$*"*@(.py|cc)`: an extglob group after a quoted start.
+                    // Same marker handling as the `read_word_from` twin: a
+                    // marker is never `(`, `)` or a backslash, so the sentinel
+                    // leaves the depth counting alone.
                     let mut depth = 0usize;
                     while let Some(c) = self.peek_char() {
-                        content.push(c);
+                        push_literal_char(content, c);
                         self.advance();
                         match c {
                             '(' => depth += 1,
@@ -1787,7 +1790,7 @@ impl<'a> Lexer<'a> {
                             }
                             '\\' => {
                                 if let Some(e) = self.peek_char() {
-                                    content.push(e);
+                                    push_literal_char(content, e);
                                     self.advance();
                                 }
                             }
@@ -2280,6 +2283,11 @@ impl<'a> Lexer<'a> {
 
     /// Push one quoted character of an extglob group so it stays literal:
     /// pattern metacharacters get a backslash, `$`/`` ` `` the NUL sentinel.
+    ///
+    /// The final push goes through [`push_literal_char`] so a quote-boundary
+    /// marker byte gets the sentinel too, without a backslash it does not need
+    /// (it is no glob metacharacter). Without that, `@('A<1f>B')` lost the byte
+    /// while the unquoted `@(A<1f>B)` kept it.
     fn push_extglob_literal(word: &mut String, ch: char) {
         if Self::is_glob_escape_char(ch) || matches!(ch, '"' | '\'') {
             word.push('\\');
@@ -2287,7 +2295,7 @@ impl<'a> Lexer<'a> {
             word.push('\\');
             word.push('\x00');
         }
-        word.push(ch);
+        push_literal_char(word, ch);
     }
 
     fn is_glob_escape_char(ch: char) -> bool {
