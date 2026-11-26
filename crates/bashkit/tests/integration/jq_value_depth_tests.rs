@@ -145,10 +145,14 @@ fn jq_sources(dir: &Path, out: &mut Vec<PathBuf>) {
 const REVIEWED: &[(&str, &str)] = &[
     // Object-wide updates collect into an already checked owned body.
     ("jaq_json/mod.rs", "return Ok(Self::Obj(Rc::new(body)));"),
-    // Per-run interruption reason, not value container storage.
+    // Per-run interruption state, not value container storage.
     (
         "mod.rs",
         "let interruption = std::rc::Rc::new(std::cell::RefCell::new(None));",
+    ),
+    (
+        "mod.rs",
+        "let timed_out = std::rc::Rc::new(std::cell::Cell::new(false));",
     ),
     // Experimental body admission. The owned type has no mutable dereference;
     // these callers can only invoke its checked attachment operations.
