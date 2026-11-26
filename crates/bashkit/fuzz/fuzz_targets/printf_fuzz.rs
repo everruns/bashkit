@@ -35,9 +35,11 @@ fuzz_target!(|data: &[u8]| {
         // The shape need not be in the input -- the message separator's colon
         // completes it, so an argument of `Undefined:` renders
         // `printf: Undefined:: invalid number` and spells `Undefined::` across
-        // the join. `assert_fuzz_invariants`' script attribution cannot see a
-        // join at the slot boundary, so gate at the input layer as
-        // `arithmetic_fuzz` and `glob_fuzz` do. Nightly run after 304.
+        // the join. `assert_fuzz_invariants` now attributes that join itself
+        // (`script_explains` decomposes the pattern, not the whole script), so
+        // this gate is no longer load-bearing for banned shapes; it is kept
+        // because it also skips inputs that forge the host canary, which the
+        // detector hands libFuzzer the bytes to reconstruct.
         if bashkit::testing::input_echo_would_trip(input) {
             return;
         }

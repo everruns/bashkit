@@ -116,6 +116,36 @@ in `\x1e`/`\x1f`; `parse_word` turns them into `Word::part_quoted`, and field
 splitting protects quoted parts using markers it picks from characters absent
 from the data. No in-band marker reaches expansion, so a value holding any
 byte (`\x01`, `\x02` included) stays data.
+Script text that spells a marker is data too. The lexer paths that copy a
+literal source character into word text escape `\x1e`/`\x1f` with the NUL
+sentinel (`push_literal_char`, and `heredoc_body_escapes` for here-document
+bodies): unquoted and double-quoted word text, concatenated quoted segments,
+backslash escapes, `${...}` operands outside subscripts, extglob group bodies,
+bracket-pattern and compound-array words, and here-document bodies. So
+`printf '[%s]' A$'\x1f'B`, `IFS=$'\x1f'` and an unquoted or double-quoted
+literal separator all keep the byte. Unescaped it was read as a marker and
+deleted, which also let a builtin diagnostic quote back text the script never
+spelled — see
+[builtin diagnostics and fuzzing](../security/security-testing.md#builtin-diagnostics-and-fuzzing).
+
+The sentinel is only safe where the text it guards is not decoded a second
+time. An ANSI-C `$'...'` span inside `${...}` resolves its own escapes
+downstream and that decode does not consume the sentinel, so the span's quote
+arm escapes a marker only for a plain `'...'` span; escaping the ANSI-C one
+leaked a raw NUL into the value. The `{`/`}` escape in the same arm is
+unconditional and still leaks for that reason
+(`"${x:-$'{a}'}"` is `\0{a\0}`, bash gives `{a}`); it cannot simply be dropped
+because it is load-bearing for the outer `${` brace matching, so making it
+decode-aware is left for its own change. Pinned by
+`quote_marker_byte_tests::brace_in_an_ansi_c_operand_leaks_the_sentinel_a_known_divergence`.
+
+Two paths copy source verbatim instead. A nested `$(...)`, `$((...))`, `$[...]`
+or backtick body is copied byte for byte and re-lexed when it runs, so its own
+literal markers survive through that second pass. Subscript text is the
+deliberate exception: it is handed to arithmetic or associative-key evaluation,
+which resolve quoting themselves, so a literal marker in a subscript is still
+dropped. Both shapes are pinned in
+`crates/bashkit/tests/integration/quote_marker_byte_tests.rs`.
 The same markers are used when a single-quoted word continues with a
 double-quoted expansion (`'a'"$1"`, otherwise kept as one literal word) and
 when an empty quoted segment sits beside an expansion (`"$@"""`, `''"$@"`).

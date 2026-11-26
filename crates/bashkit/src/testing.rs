@@ -329,12 +329,32 @@ fn carries_through_expansion(text: &str, needle: &str) -> bool {
 /// does: the harness applies it to every caller, so a new target cannot
 /// forget it.
 ///
-/// Padding mirrors [`DIAGNOSTIC_ECHO_PAD`] — a diagnostic wraps the quoted
-/// slot in `: ` on both sides, so a shape can be spelled across the join.
-/// A shape formed where the slot meets script text *inside* the script is
-/// not covered here; [`input_echo_would_trip`] remains the precise gate for
-/// that case (run 295's `wZTok:`), which is why the targets that call it
-/// keep doing so.
+/// # Spelling a shape across the template join
+///
+/// The echoed slot is an arbitrary *substring* of the script, and the
+/// diagnostic wraps it in its own punctuation, so a banned shape can be
+/// spelled as `(tail of the template prefix) ++ (script text) ++ (head of the
+/// template suffix)` while appearing nowhere in the script. Padding the whole
+/// script with [`DIAGNOSTIC_ECHO_PAD`] only sees a join at the script's own
+/// ends, so nightly fuzz run 310 went red on two targets at once: `awk_fuzz`
+/// on a program of `{ code:…`, which `awk: cmd. line:1: {program}` renders as
+/// ` { code:`, and `printf_fuzz` on an operand of `{ code:`, which
+/// `printf: {arg}: invalid number` renders the same way. Both joins are
+/// interior, so both scripts looked unexplained.
+///
+/// So the decomposition is applied to the *pattern* instead: drop a leading
+/// fragment the template's lead could have supplied and a trailing fragment
+/// its trail could have supplied, then ask whether the remaining core is
+/// script text. Both pads are two bytes, so this is at most nine `contains`
+/// calls, and it loosens only the banned shapes that begin with a space or
+/// end in a colon (` { code:`, `Tok::`, `Undefined::`, `internal error:`) —
+/// every other shape has no fragment to drop and stays absolute. Those four
+/// need it: `printf '%d' 'internal error'` really does render
+/// `printf: internal error: invalid number` with no panic behind it.
+///
+/// An empty core is never accepted. A shape made purely of template text
+/// would mean a builtin's own format string spells it, which is a real
+/// TM-INF-022 bug and not an echo, so it must keep failing.
 ///
 /// # Residual false negative
 ///
@@ -366,8 +386,38 @@ fn carries_through_expansion(text: &str, needle: &str) -> bool {
 /// hidden is a formatter whose leak is *triggered* by parsing the shape.
 fn script_explains(script: &str, pat: &str) -> bool {
     let (lead, trail) = DIAGNOSTIC_ECHO_PAD;
-    carries_through_expansion(script, pat)
-        || carries_through_expansion(&format!("{lead}{}{trail}", script.trim()), pat)
+    for drop_lead in pad_suffixes(lead) {
+        let Some(rest) = pat.strip_prefix(drop_lead) else {
+            continue;
+        };
+        for drop_trail in pad_prefixes(trail) {
+            let Some(core) = rest.strip_suffix(drop_trail) else {
+                continue;
+            };
+            if !core.is_empty() && carries_through_expansion(script, core) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Every suffix of `pad`, longest first and the empty one last: what a
+/// diagnostic's template prefix can contribute immediately left of an echoed
+/// operand. See [`script_explains`].
+fn pad_suffixes(pad: &'static str) -> impl Iterator<Item = &'static str> {
+    pad.char_indices()
+        .map(move |(i, _)| &pad[i..])
+        .chain(std::iter::once(""))
+}
+
+/// Every prefix of `pad`, shortest first and the empty one last: what a
+/// diagnostic's template suffix can contribute immediately right of an echoed
+/// operand. See [`script_explains`].
+fn pad_prefixes(pad: &'static str) -> impl Iterator<Item = &'static str> {
+    pad.char_indices()
+        .map(move |(i, c)| &pad[..i + c.len_utf8()])
+        .chain(std::iter::once(""))
 }
 
 /// Trailing halves of the real-shell diagnostic templates that quote user
@@ -683,6 +733,68 @@ mod tests {
             "script_echo_nul",
             &[],
         );
+    }
+
+    #[test]
+    fn banned_shape_spelled_across_the_template_lead_is_an_echo() {
+        // `printf: {arg}: invalid number` prefixes the operand with `: `, so
+        // an operand of `{ code:` spells ` { code:` while the script holds
+        // only `{ code:`. Nightly fuzz run 310 (`printf_fuzz`, `awk_fuzz`).
+        let result = ExecResult {
+            stderr: "bash: line 1: printf: { code:: invalid number".into(),
+            ..Default::default()
+        };
+        assert_fuzz_invariants(&result, "printf '%d' '{ code:'", "join_lead", &[]);
+    }
+
+    #[test]
+    fn banned_shape_spelled_across_the_template_trail_is_an_echo() {
+        // Run 295: `wZTok:` renders `bash: line 1: wZTok:: syntax error …`,
+        // where the message separator's colon completes `Tok::`.
+        let result = ExecResult {
+            stderr: "bash: line 1: wZTok:: syntax error in expression".into(),
+            ..Default::default()
+        };
+        assert_fuzz_invariants(&result, "echo $((wZTok:))", "join_trail", &[]);
+    }
+
+    #[test]
+    fn banned_shape_spelled_across_both_template_joins_is_an_echo() {
+        // Both halves at once: an operand of `{ code` renders
+        // `printf: { code: invalid number`, whose ` { code:` is the lead's
+        // space plus the operand plus the separator's colon.
+        let result = ExecResult {
+            stderr: "bash: line 1: printf: { code: invalid number".into(),
+            ..Default::default()
+        };
+        assert_fuzz_invariants(&result, "printf '%d' '{ code'", "join_both", &[]);
+    }
+
+    #[test]
+    #[should_panic(expected = "stderr leaks banned shape ` { code:`")]
+    fn template_join_attribution_still_needs_the_core_in_the_script() {
+        // Decomposition only forgives the pad fragments. A script that spells
+        // none of the cores (` { code:`, `{ code:`, ` { code`, `{ code`) is
+        // still unexplained, so a Debug shape there is a real leak.
+        let result = ExecResult {
+            stderr: "parse failed: { code: 3 } at offset 1".into(),
+            ..Default::default()
+        };
+        assert_fuzz_invariants(&result, "jq '.a' f.json", "join_unexplained", &[]);
+    }
+
+    #[test]
+    #[should_panic(expected = "stderr leaks banned shape `: `")]
+    fn a_shape_made_only_of_template_text_is_still_a_leak() {
+        // An empty core would mean the shape is entirely the diagnostic's own
+        // punctuation — a format string spelling it, not an echo — so it must
+        // not be excused. Exercised through the per-tool list, since no
+        // universal shape is a substring of the pad.
+        let result = ExecResult {
+            stderr: "tool: boom".into(),
+            ..Default::default()
+        };
+        assert_fuzz_invariants(&result, "tool run", "empty_core", &[": "]);
     }
 
     #[test]
