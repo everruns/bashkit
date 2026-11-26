@@ -1,8 +1,9 @@
 import test from "ava";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Bash, FileSystem } from "../wrapper.js";
+import { removeTempDir } from "./temp-dir.js";
 
 // ============================================================================
 // VFS — readFile / writeFile
@@ -190,7 +191,7 @@ test("real filesystem requires and enforces allowedMountPaths", (t) => {
     const fs = FileSystem.real(allowed, { allowedMountPaths: [allowed] });
     t.is(fs.readFile("/hello.txt"), "host\n");
   } finally {
-    rmSync(allowed, { recursive: true, force: true });
-    rmSync(denied, { recursive: true, force: true });
+    removeTempDir(allowed);
+    removeTempDir(denied);
   }
 });

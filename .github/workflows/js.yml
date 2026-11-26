@@ -382,7 +382,15 @@ jobs:
           done
           pnpm run build:cjs
           pnpm run build:ts
-      - run: pnpm exec ava __test__/runtime-functions.spec.ts
+      - if: ${{ runner.os != 'Windows' }}
+        run: pnpm exec ava __test__/runtime-functions.spec.ts
+        working-directory: crates/bashkit-js
+      # publish-js.yml runs the whole ava suite on Windows before it uploads
+      # to npm. Run it here too, so a Windows-only failure (v0.22.0: RealFs
+      # root handles made temp-dir cleanup return EBUSY or EPERM) blocks the PR
+      # instead of the release.
+      - if: ${{ runner.os == 'Windows' }}
+        run: pnpm test
         working-directory: crates/bashkit-js
       - run: node --test __test__/runtime-compat/runtime-functions.test.mjs
         working-directory: crates/bashkit-js

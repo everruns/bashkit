@@ -7,10 +7,11 @@
 // half-installed after a rebuild.
 
 import test from "ava";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Bash, BashTool, FileSystem } from "../wrapper.js";
+import { removeTempDir } from "./temp-dir.js";
 
 // ----------------------------------------------------------------------------
 // setEnv — live application
@@ -154,7 +155,7 @@ test("Bash: reset preserves a runtime host directory mount", (t) => {
       "# host skill\n",
     );
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    removeTempDir(dir);
   }
 });
 

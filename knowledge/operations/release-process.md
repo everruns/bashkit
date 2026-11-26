@@ -188,6 +188,12 @@ part of the release has already shipped: v0.17.0 reached crates.io, PyPI, and
 `publish-js.yml` still ran ava on Node 20 after `js.yml` had gated it to Node
 22+ (ava >= 8 requirement).
 
+Operating systems count too, and the parity script does not check them.
+v0.22.0 reached every registry except native npm because `publish-js.yml`
+ran the whole ava suite on Windows while `js.yml` ran only one spec file
+there; RealFs root handles (#3008) made two tests' temp-dir cleanup fail
+with EBUSY or EPERM. The Windows lane of `js.yml` now runs the whole suite.
+
 `scripts/check_workflow_parity.py` (`just check-workflow-parity`, part of `just
 check` and of the `scripts/tests` suite CI runs) compares each release workflow
 against its CI counterpart and fails on:
