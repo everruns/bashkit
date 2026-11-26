@@ -387,7 +387,7 @@ jobs:
         working-directory: crates/bashkit-js
       # publish-js.yml runs the whole ava suite on Windows before it uploads
       # to npm. Run it here too, so a Windows-only failure (v0.22.0: RealFs
-      # root handles made temp-dir cleanup return EBUSY) blocks the PR
+      # root handles made temp-dir cleanup return EBUSY or EPERM) blocks the PR
       # instead of the release.
       - if: ${{ runner.os == 'Windows' }}
         run: pnpm test
