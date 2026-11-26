@@ -186,11 +186,27 @@ jobs:
         with:
           bun-version: ${{ matrix.version }}
 
+      # Deno's canary-latest.txt can briefly point to a missing binary. Keep
+      # exercising the binding against stable 2.x and report the fallback.
+      - name: Check Deno canary artifact
+        id: deno_canary
+        if: matrix.runtime == 'deno' && matrix.version == 'canary'
+        shell: bash
+        run: |
+          sha="$(curl -fsSL --retry 2 --max-time 15 https://dl.deno.land/canary-latest.txt || true)"
+          if [[ "$sha" =~ ^[0-9a-f]{40}$ ]] && curl -fsSI --retry 2 --max-time 15 -o /dev/null "https://dl.deno.land/canary/$sha/deno-x86_64-unknown-linux-gnu.zip"; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Deno canary artifact unavailable; testing stable 2.x instead"
+            echo "Deno canary artifact unavailable; this job tested stable 2.x instead." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       - name: Setup Deno
         if: matrix.runtime == 'deno'
         uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2
         with:
-          deno-version: ${{ matrix.version }}
+          deno-version: ${{ matrix.version == 'canary' && steps.deno_canary.outputs.available != 'true' && '2.x' || matrix.version }}
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
