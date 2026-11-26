@@ -2781,7 +2781,19 @@ impl<'a> Lexer<'a> {
                         if matches!(q, '{' | '}') {
                             content.push('\x00');
                         }
-                        push_literal_char(content, q);
+                        // Only the plain `'...'` span needs the sentinel. An
+                        // ANSI-C `$'...'` span is decoded again downstream and
+                        // that decode does not consume the literal sentinel, so
+                        // escaping there leaked a raw NUL into the value
+                        // (`"${x:-$'A<1f>B'}"` became `A\0<1f>B`); its markers
+                        // already survive unescaped. The plain span is not
+                        // decoded again, so without the sentinel it lost them
+                        // (`"${x:-'A<1f>B'}"` became `'AB'`).
+                        if ansi_c {
+                            content.push(q);
+                        } else {
+                            push_literal_char(content, q);
+                        }
                         if ansi_c && q == '\\' {
                             if let Some(n) = self.peek_char() {
                                 self.advance();

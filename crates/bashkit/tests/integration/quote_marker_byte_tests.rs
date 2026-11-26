@@ -49,6 +49,19 @@ fn marker_cases() -> Vec<String> {
             // because bashkit's backslash handling there already diverges
             // from bash for every character.
             format!(r#"unset x; printf '[%s]' "${{x:-A\{m}B}}""#),
+            // Quoted spans inside a `${...}` operand. The plain `'...'` span
+            // needs the literal sentinel; the ANSI-C `$'...'` span is decoded
+            // again downstream and must NOT get one, or a raw NUL leaks into
+            // the value. Both directions are regressions this pins.
+            format!(r#"unset x; printf '[%s]' "${{x:-'A{m}B'}}""#),
+            format!(r#"unset x; printf '[%s]' "${{x:-$'A{m}B'}}""#),
+            format!(r#"unset x; printf '[%s]' "${{x:-"A{m}B"}}""#),
+            format!(r#"unset x; printf '[%s]' ${{x:-'A{m}B'}}"#),
+            format!(r#"unset x; printf '[%s]' ${{x:-$'A{m}B'}}"#),
+            // Pattern and replacement operands around the byte.
+            format!(r#"x=aA{m}Bz; printf '[%s]' "${{x%%B{m}z}}""#),
+            format!(r#"x=A{m}B; printf '[%s]' "${{x/{m}/-}}""#),
+            format!(r#"x=A{m}B; printf '[%s]' "${{#x}}""#),
             // A brace tail on a word carrying the byte (the unquoted-glob
             // path). Extglob is deliberately not covered here: `shopt -s
             // extglob` in the same `-c` string takes effect after bash has
@@ -277,6 +290,38 @@ async fn backslash_escaped_markers_take_the_ordinary_character_path() {
                 got.replace(m, "Z"),
                 plain,
                 "{quoted_label}: a marker must take the same path as any other character"
+            );
+        }
+    }
+}
+
+/// The literal sentinel must never reach a value. `push_literal_char` escapes
+/// a marker byte for `parse_word`, but some readers hand their span to a
+/// second decode that does not consume the sentinel — the ANSI-C `$'...'` span
+/// inside `${...}` is one, where escaping turned
+/// `"${x:-$'A<1f>B'}"` into `A\0<1f>B`. Any stray NUL in output means a
+/// sentinel was added on a path that does not decode it.
+#[tokio::test]
+async fn the_literal_sentinel_never_leaks_into_a_value() {
+    let mut bash = Bash::new();
+    for m in ['\u{1e}', '\u{1f}'] {
+        for script in [
+            format!(r#"unset x; printf '[%s]' "${{x:-$'A{m}B'}}""#),
+            format!(r#"unset x; printf '[%s]' "${{x:-'A{m}B'}}""#),
+            format!(r#"unset x; printf '[%s]' "${{x:-"A{m}B"}}""#),
+            format!(r#"unset x; printf '[%s]' ${{x:-$'A{m}B'}}"#),
+            format!("printf '[%s]' $'A{m}B'"),
+            format!("printf '[%s]' \"A{m}B\""),
+            format!("printf '[%s]' @('A{m}B')"),
+        ] {
+            let out = bash.exec(&script).await.unwrap().stdout.to_string();
+            assert!(
+                !out.contains('\0'),
+                "a literal sentinel leaked for {script:?}: {out:?}"
+            );
+            assert!(
+                out.contains(m),
+                "the byte must survive for {script:?}: {out:?}"
             );
         }
     }
