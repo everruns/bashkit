@@ -342,16 +342,20 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
     #[cfg(feature = "experimental_jq")]
     let interruption = std::rc::Rc::new(std::cell::RefCell::new(None));
     #[cfg(feature = "experimental_jq")]
+    let timed_out = std::rc::Rc::new(std::cell::Cell::new(false));
+    #[cfg(feature = "experimental_jq")]
     let stop = {
         let deadline = deadline.clone();
         let budget = ctx.execution_budget();
         let interruption = interruption.clone();
+        let timed_out = timed_out.clone();
         Some(Box::new(move || {
             if deadline.as_ref().is_some_and(|deadline| {
                 deadline
                     .try_with(ExecutionDeadline::is_expired)
                     .unwrap_or(true)
             }) {
+                timed_out.set(true);
                 return true;
             }
             if let Some(budget) = &budget {
@@ -667,6 +671,16 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
         Ok(result) => {
             if meter.tripped() {
                 return size_error(&meter);
+            }
+            // On panic=abort targets, the poll hook records a stop but cannot
+            // unwind. If evaluation later returns, report that stop here.
+            #[cfg(feature = "experimental_jq")]
+            if timed_out.get() {
+                return Ok(ExecResult::err("jq: execution timed out\n".to_string(), 5));
+            }
+            #[cfg(feature = "experimental_jq")]
+            if let Some(error) = interruption.borrow_mut().take() {
+                return Err(error);
             }
             if let Some(error) = input_error.into_inner() {
                 return Err(error);
