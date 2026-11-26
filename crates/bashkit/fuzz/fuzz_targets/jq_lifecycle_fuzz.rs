@@ -66,11 +66,18 @@ fuzz_target!(|data: &[u8]| {
                     .max_live_intermediate_bytes(
                         [16_384, 65_536, 1_048_576, 32_000_000][byte(4) % 4],
                     )
-                    .timeout(std::time::Duration::from_millis(200)),
+                    .timeout(std::time::Duration::from_secs(5)),
             )
             .build();
         let script = format!("jq -nc '{filter}'");
-        bashkit::testing::fuzz_exec(&mut bash, &script, "jq_lifecycle_fuzz", &[]).await;
+        let result = bash
+            .exec_with_options(
+                &script,
+                bashkit::ExecOptions::new().timeout(std::time::Duration::from_millis(200)),
+            )
+            .await
+            .unwrap_or_else(|error| bashkit::ExecResult::err(error.to_string(), 1));
+        bashkit::testing::assert_fuzz_invariants(&result, &script, "jq_lifecycle_fuzz", &[]);
 
         // A fixed, non-fuzzed probe verifies that error/unwind cleanup lets the
         // next host request use the same interpreter and fresh meter normally.

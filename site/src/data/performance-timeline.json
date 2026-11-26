@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-25T20:50:28.000Z",
+  "generatedAt": "2026-11-26T00:09:34.000Z",
   "sources": {
     "bench": "crates/bashkit-bench/results/*.json",
     "criterion": "crates/bashkit/benches/results/*.md",
@@ -9,7 +9,7 @@
   },
   "summary": {
     "benchRuns": 17,
-    "criterionRuns": 29,
+    "criterionRuns": 30,
     "evalRuns": 58,
     "latestBench": {
       "id": "bench-454522b0b8c5-linux-x86_64-1795580000",
@@ -3019,6 +3019,30 @@
       "bestImprovement": {
         "name": "`jq/interleaved_filters`",
         "changePct": -6.8
+      }
+    },
+    {
+      "id": "criterion-jq-paired-linux-x86_64-1795651774",
+      "kind": "criterion",
+      "family": "jq",
+      "label": "Criterion jq Paired Backend Benchmark",
+      "date": "2026-11-26",
+      "timestamp": "2026-11-26T00:09:34.000Z",
+      "source": "crates/bashkit/benches/results/criterion-jq-paired-linux-x86_64-1795651774.md",
+      "reportSource": "crates/bashkit/benches/results/criterion-jq-paired-linux-x86_64-1795651774.md",
+      "cases": 15,
+      "medianUs": 3411,
+      "p95Us": 39658.9,
+      "medianChangePct": 0.3,
+      "meanChangePct": 1.5,
+      "bestChangePct": -2.6,
+      "fastestCase": {
+        "name": "`jq/single_lookup`",
+        "us": 496
+      },
+      "bestImprovement": {
+        "name": "`jq/object_copy_on_write`",
+        "changePct": -2.6
       }
     }
   ],
@@ -10889,6 +10913,15 @@
       "detail": "6.8% faster in `jq/interleaved_filters`",
       "metric": 0,
       "source": "crates/bashkit/benches/results/criterion-jq-owned-cloud-linux-x86_64-1795639828.md"
+    },
+    {
+      "date": "2026-11-26",
+      "timestamp": "2026-11-26T00:09:34.000Z",
+      "kind": "Criterion",
+      "title": "jq",
+      "detail": "2.6% faster in `jq/object_copy_on_write`",
+      "metric": 0.3,
+      "source": "crates/bashkit/benches/results/criterion-jq-paired-linux-x86_64-1795651774.md"
     }
   ]
 }

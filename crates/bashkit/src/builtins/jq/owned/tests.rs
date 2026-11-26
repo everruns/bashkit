@@ -81,7 +81,32 @@ fn owning_iterator_keeps_storage_charged_until_drop() {
         retained,
         "partial consumption keeps capacity"
     );
+    for _ in iter.by_ref() {}
+    assert_eq!(
+        meter::headroom(),
+        retained,
+        "exhaustion still keeps capacity"
+    );
     drop(iter);
+    assert_eq!(meter::headroom(), initial);
+
+    let key = Val::utf8_str("key");
+    let with_key = meter::headroom();
+    let mut object = Container::<Map>::default();
+    object.insert(key.clone(), Val::Null).unwrap();
+    let retained = meter::headroom();
+    let mut iter = object.into_iter();
+    assert_eq!(meter::headroom(), retained);
+    assert!(iter.next().is_some());
+    assert!(iter.next().is_none());
+    assert_eq!(
+        meter::headroom(),
+        retained,
+        "object iterator keeps capacity"
+    );
+    drop(iter);
+    assert_eq!(meter::headroom(), with_key);
+    drop(key);
     assert_eq!(meter::headroom(), initial);
 }
 
@@ -95,7 +120,7 @@ async fn synchronous_evaluation_observes_host_cancellation() {
         std::thread::sleep(std::time::Duration::from_millis(50));
         token.store(true, std::sync::atomic::Ordering::Relaxed);
     });
-    let start = std::time::Instant::now();
+    let start = crate::time_compat::Instant::now();
     let result = bash.exec("jq -n 'until(false; .)'").await;
     cancel.join().unwrap();
     assert!(matches!(result, Err(crate::Error::Cancelled)));

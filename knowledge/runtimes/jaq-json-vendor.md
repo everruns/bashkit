@@ -53,6 +53,15 @@ records about 9% overhead for array updates and 13% for object updates in an
 exploratory single pair. Keep the feature disabled by default; these results
 do not establish a speedup.
 
+The [three-round release-profile comparison](../../crates/bashkit/benches/results/criterion-jq-paired-linux-x86_64-1795651774.md)
+after tuning finds near parity on array updates/COW, about 2% faster object
+updates, and about 3% faster object COW. Array concatenation is about 12%
+slower and sort/unique about 7% slower. These are workload-specific medians;
+the experiment is not a general performance win. Thin-LTO iteration against
+the first owned implementation measured 6% faster array updates and 11%
+faster object updates in alternating rounds; only same-profile comparisons
+support that optimization claim.
+
 `Val` selects `Container<T>` instead of raw `Metered<T>` bodies under the
 feature. Its private body and immutable `Deref` prohibit mutable entry handles,
 mutable child references and unchecked growth. Type-specific set, insert,
