@@ -146,7 +146,15 @@ fn parse_at<L: LexAlloc>(next: u8, lexer: &mut L, depth: usize) -> Result<Val, h
                 Ok::<_, hifijson::Error>(())
             })?;
             #[cfg(feature = "experimental_jq")]
-            { super::Rc::new(arr) }
+            {
+                // Pin the reader's contextual depth invariant in test builds.
+                // Release builds avoid rescanning the completed value.
+                debug_assert!(
+                    depth + arr.depth(super::ValueDepth::value_depth)
+                        <= super::meter::MAX_VALUE_DEPTH
+                );
+                super::Rc::new(arr)
+            }
             #[cfg(not(feature = "experimental_jq"))]
             super::metered(arr)
         }),
@@ -167,7 +175,13 @@ fn parse_at<L: LexAlloc>(next: u8, lexer: &mut L, depth: usize) -> Result<Val, h
                 Ok::<_, hifijson::Error>(())
             })?;
             #[cfg(feature = "experimental_jq")]
-            return Ok(Val::Obj(super::Rc::new(obj)));
+            {
+                debug_assert!(
+                    depth + obj.depth(super::ValueDepth::value_depth)
+                        <= super::meter::MAX_VALUE_DEPTH
+                );
+                return Ok(Val::Obj(super::Rc::new(obj)));
+            }
             #[cfg(not(feature = "experimental_jq"))]
             Val::obj(obj)
         },

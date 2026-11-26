@@ -24,6 +24,19 @@ const CHILD: &str = "BASHKIT_JQ_VALUE_DEPTH_CHILD";
 const DEPTH_ERROR: &str = "jq: error: value nesting depth limit (100) exceeded\n";
 const TRAVERSAL_CHILD: &str = "BASHKIT_JQ_TRAVERSAL_CHILD";
 
+#[tokio::test]
+async fn reader_accepts_exact_depth_limit() {
+    let mut bash = bashkit::Bash::new();
+    for filter in [
+        "(\"[\" * 100 + \"0\" + \"]\" * 100) | fromjson | length",
+        "(\"{\\\"a\\\":\" * 100 + \"0\" + \"}\" * 100) | fromjson | length",
+    ] {
+        let result = bash.exec(&format!("jq -n '{filter}'")).await.unwrap();
+        assert_eq!(result.exit_code, 0, "{filter}: {}", result.stderr);
+        assert_eq!(result.stdout, "1\n", "{filter}");
+    }
+}
+
 #[test]
 fn lifecycle_traversals_bounded() {
     bounded_child::run(
@@ -154,7 +167,9 @@ const REVIEWED: &[(&str, &str)] = &[
     ("jaq_json/mod.rs", "Rc::make_mut(&mut l).append(&r)?;"),
     ("jaq_json/mod.rs", "Rc::make_mut(&mut l).append(&r)?;"),
     ("jaq_json/mod.rs", "Rc::make_mut(&mut l).subtract(&r)?;"),
-    ("jaq_json/read.rs", "{ super::Rc::new(arr) }"),
+    // Reader attachments use checked push/insert; debug builds verify the
+    // completed container's contextual depth before these Rc constructions.
+    ("jaq_json/read.rs", "super::Rc::new(arr)"),
     (
         "jaq_json/read.rs",
         "return Ok(Val::Obj(super::Rc::new(obj)));",
