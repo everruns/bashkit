@@ -5534,7 +5534,10 @@ pub(crate) fn arith_exec_text(raw: &str) -> String {
 /// for its own parser (only `\<newline>` is removed); backticks become
 /// `$(...)`.
 fn heredoc_body_escapes(content: &str) -> String {
-    if !content.contains(['\\', '`']) && !content.contains("$'") {
+    // `\u{1e}`/`\u{1f}` are `parse_word`'s quote-boundary markers, so a body
+    // byte that spells one has to leave here behind the NUL sentinel or it is
+    // read as a marker and dropped. See `lexer::push_literal_char`.
+    if !content.contains(['\\', '`', '\u{1e}', '\u{1f}']) && !content.contains("$'") {
         return content.to_string();
     }
     let mut out = String::with_capacity(content.len());
@@ -5599,6 +5602,10 @@ fn heredoc_body_escapes(content: &str) -> String {
                     }
                 }
                 out.push(')');
+            }
+            '\u{1e}' | '\u{1f}' => {
+                out.push('\x00');
+                out.push(c);
             }
             _ => out.push(c),
         }

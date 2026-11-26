@@ -67,6 +67,7 @@ pub mod markkit_builtin_tests;
 pub mod memory_growth_security_tests;
 pub mod mixed_control_tests;
 pub mod output_file_tests;
+pub mod quote_marker_byte_tests;
 pub mod streaming_command_tests;
 pub mod tar_files_from_budget_tests;
 // Both assert named-IANA-zone behavior, which only exists with `tzdata`.

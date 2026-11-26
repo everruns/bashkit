@@ -37,6 +37,29 @@ const DEFAULT_MAX_SUBST_DEPTH: usize = 50;
 const QUOTED_SEGMENT_START: char = '\u{1e}';
 const QUOTED_SEGMENT_END: char = '\u{1f}';
 
+/// Append one literal source character to word text, hiding the lexer's own
+/// quote-boundary markers behind the NUL literal sentinel.
+///
+/// The markers are in-band: `parse_word` reads a bare `\u{1e}`/`\u{1f}` as a
+/// quotedness boundary and consumes it. A marker byte that came from the
+/// *script* is data, though — 0x1e/0x1f are ordinary record/unit separators in
+/// real data, and `IFS=$'\x1f'` is a common idiom — so it has to reach
+/// `parse_word` escaped, exactly as a single-quoted segment already does via
+/// `push_literal_with_escaped_dollar`.
+///
+/// Unescaped, the byte was silently deleted from unquoted and double-quoted
+/// text: `printf '[%s]' A<1f>B` printed `[AB]` where bash prints `[A<1f>B]`.
+/// That also broke the fuzz harness' leak attribution, which compares a
+/// builtin's stderr against the script that produced it — the script carried
+/// `target/debug/<1f><1f><1f>deps/` and stderr the banned host path
+/// `target/debug/deps/` (nightly fuzz `tomlq_fuzz`).
+fn push_literal_char(word: &mut String, ch: char) {
+    if matches!(ch, QUOTED_SEGMENT_START | QUOTED_SEGMENT_END) {
+        word.push('\x00');
+    }
+    word.push(ch);
+}
+
 #[derive(Default)]
 struct ContinuationFlags {
     has_unquoted_expansion: bool,
@@ -901,7 +924,7 @@ impl<'a> Lexer<'a> {
                                 }
                                 _ => {
                                     word.push('\\');
-                                    word.push(next);
+                                    push_literal_char(&mut word, next);
                                     self.advance();
                                 }
                             }
@@ -937,13 +960,14 @@ impl<'a> Lexer<'a> {
                         }
                         continue;
                     }
-                    if quote_char == '\'' && matches!(c, '$' | '\u{1e}' | '\u{1f}') {
+                    if quote_char == '\'' && c == '$' {
                         // Preserve literal '$' semantics from single-quoted
                         // segments when concatenated into an existing word
                         // (e.g. foo'$(id)' or VAR='${HOME}').
                         word.push('\x00');
                     }
-                    word.push(c);
+                    // A marker byte is data inside either quote kind.
+                    push_literal_char(&mut word, c);
                     self.advance();
                 }
                 if !closed {
@@ -1016,7 +1040,7 @@ impl<'a> Lexer<'a> {
                 // reserved word, not a metacharacter, so it stays inside the
                 // word unless it stands alone (`echo }}` prints `}}`). `{`
                 // keeps a brace tail in the word (`[k]="v"{1,2}`).
-                word.push(ch);
+                push_literal_char(&mut word, ch);
                 self.advance();
             } else {
                 break;
@@ -1101,7 +1125,7 @@ impl<'a> Lexer<'a> {
                                 }
                                 _ => {
                                     word.push('\\');
-                                    word.push(next);
+                                    push_literal_char(&mut word, next);
                                     self.advance();
                                 }
                             }
@@ -1142,13 +1166,14 @@ impl<'a> Lexer<'a> {
                         }
                         continue;
                     }
-                    if quote_char == '\'' && matches!(c, '$' | '\u{1e}' | '\u{1f}') {
+                    if quote_char == '\'' && c == '$' {
                         // Preserve literal '$' semantics from single-quoted
                         // segments when concatenated into an existing word
                         // (e.g. foo'$(id)' or VAR='${HOME}').
                         word.push('\x00');
                     }
-                    word.push(c);
+                    // A marker byte is data inside either quote kind.
+                    push_literal_char(&mut word, c);
                     self.advance();
                 }
                 if !closed {
@@ -1217,7 +1242,7 @@ impl<'a> Lexer<'a> {
                                     }
                                     _ => {
                                         word.push('\\');
-                                        word.push(next);
+                                        push_literal_char(&mut word, next);
                                         self.advance();
                                     }
                                 }
@@ -1396,7 +1421,9 @@ impl<'a> Lexer<'a> {
                         if Self::is_glob_escape_char(next) {
                             quoted_ranges.push((word.len(), word.len() + next.len_utf8()));
                         }
-                        word.push(next);
+                        // A marker is never a glob escape char, so the range
+                        // above is unaffected by the sentinel this may add.
+                        push_literal_char(&mut word, next);
                         self.advance();
                     }
                 } else {
@@ -1478,7 +1505,7 @@ impl<'a> Lexer<'a> {
                 if matches!(ch, '*' | '?' | '[') {
                     has_unquoted_glob = true;
                 }
-                word.push(ch);
+                push_literal_char(&mut word, ch);
                 self.advance();
             } else if matches!(ch, ' ' | '\t' | '&' | '|' | '<' | '>' | '(' | ')')
                 && self.spaced_subscript
@@ -1654,7 +1681,7 @@ impl<'a> Lexer<'a> {
                         if matches!(ch, '\x00' | '$') {
                             content.push('\x00');
                         }
-                        content.push(ch);
+                        push_literal_char(content, ch);
                         self.advance();
                     }
                     if !closed {
@@ -1731,7 +1758,7 @@ impl<'a> Lexer<'a> {
                             if next == '$' {
                                 content.push('\x00');
                             }
-                            content.push(next);
+                            push_literal_char(content, next);
                             self.advance();
                             flags.quoted_ranges.push((start, content.len()));
                         }
@@ -1771,7 +1798,7 @@ impl<'a> Lexer<'a> {
                     if matches!(ch, '*' | '?' | '[' | '{') {
                         flags.has_unquoted_glob = true;
                     }
-                    content.push(ch);
+                    push_literal_char(content, ch);
                     self.advance();
                 }
                 _ => break,
@@ -1966,7 +1993,7 @@ impl<'a> Lexer<'a> {
                             '{' | '}' => word.push('\x00'),
                             _ => {}
                         }
-                        word.push(q);
+                        push_literal_char(word, q);
                     }
                     if !closed {
                         return Err("unterminated double quote".to_string());
@@ -2007,7 +2034,10 @@ impl<'a> Lexer<'a> {
                         break;
                     }
                 }
-                _ => word.push(c),
+                // Subscript text stays verbatim for subscript evaluation; see
+                // `read_param_expansion_into`.
+                _ if subscript > 0 => word.push(c),
+                _ => push_literal_char(word, c),
             }
         }
         Ok(())
@@ -2373,7 +2403,7 @@ impl<'a> Lexer<'a> {
                             }
                             _ => {
                                 content.push('\\');
-                                content.push(next);
+                                push_literal_char(content, next);
                                 self.advance();
                             }
                         }
@@ -2401,7 +2431,7 @@ impl<'a> Lexer<'a> {
                 }
                 '`' => self.read_dquote_backtick_into(content),
                 _ => {
-                    content.push(ch);
+                    push_literal_char(content, ch);
                     self.advance();
                 }
             }
@@ -2653,8 +2683,23 @@ impl<'a> Lexer<'a> {
     /// before parser fuel is checked, so recursion here can overflow the host stack.
     fn read_param_expansion_into(&mut self, content: &mut String) -> Result<(), String> {
         let mut depth = 1usize;
+        // Subscript text is handed to arithmetic (`${a[i+1]}`) or associative
+        // key expansion (`${m[k]}`), which resolve quoting themselves and have
+        // their own handling of marker bytes, so it is copied verbatim and
+        // `push_literal_char` is applied only to operand text.
+        let mut subscript = 0usize;
         while let Some(c) = self.peek_char() {
             match c {
+                '[' => {
+                    subscript += 1;
+                    content.push(c);
+                    self.advance();
+                }
+                ']' => {
+                    subscript = subscript.saturating_sub(1);
+                    content.push(c);
+                    self.advance();
+                }
                 '{' => {
                     if depth >= self.max_subst_depth {
                         return Err("parameter expansion nesting too deep".to_string());
@@ -2705,7 +2750,7 @@ impl<'a> Lexer<'a> {
                                 content.push('\x00');
                                 content.push(q);
                             }
-                            _ => content.push(q),
+                            _ => push_literal_char(content, q),
                         }
                     }
                 }
@@ -2721,7 +2766,7 @@ impl<'a> Lexer<'a> {
                         if matches!(q, '{' | '}') {
                             content.push('\x00');
                         }
-                        content.push(q);
+                        push_literal_char(content, q);
                         if ansi_c && q == '\\' {
                             if let Some(n) = self.peek_char() {
                                 self.advance();
@@ -2792,7 +2837,11 @@ impl<'a> Lexer<'a> {
                     }
                 }
                 _ => {
-                    content.push(c);
+                    if subscript > 0 {
+                        content.push(c);
+                    } else {
+                        push_literal_char(content, c);
+                    }
                     self.advance();
                 }
             }
@@ -2875,7 +2924,7 @@ impl<'a> Lexer<'a> {
             if matches!(ch, '(' | ')') {
                 break;
             }
-            word.push(ch);
+            push_literal_char(&mut word, ch);
             self.advance();
             if ch == ']' {
                 break;
@@ -2891,7 +2940,7 @@ impl<'a> Lexer<'a> {
                 return self.read_word_starting_with(&word);
             } else if self.is_word_char(ch) || matches!(ch, '{' | '}') {
                 // Braces are word text too (`[k]=v{1,2}`, `[ab]{x,y}`).
-                word.push(ch);
+                push_literal_char(&mut word, ch);
                 self.advance();
             } else {
                 break;

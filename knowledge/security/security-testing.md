@@ -272,6 +272,20 @@ See the [threat model](threat-model.md) and the `bashkit::testing` rustdoc.
 A banned shape the executed script itself spells is an echo, not a leak, and
 `assert_fuzz_invariants` skips it for that script only (`script_explains`).
 A diagnostic that quotes its operand therefore needs no new strip template.
+The echoed operand is a substring of the script and the diagnostic frames it
+with its own punctuation, so attribution decomposes the *pattern*: it drops a
+leading fragment the template's `: ` lead could supply and a trailing fragment
+its `: ` trail could supply, then asks whether the remaining core is script
+text. That is what excuses ` { code:` in `awk: cmd. line:1: { code:…` and in
+`printf: { code:: invalid number`. Only the shapes starting with a space or
+ending in a colon have a fragment to drop; the rest stay absolute, and an
+empty core is never accepted, so a builtin format string that spells a shape
+itself still fails.
+Attribution compares against the raw script, so a lexer that rewrites word
+text breaks it: dropped `\x1e`/`\x1f` bytes once turned
+`tomlq 'target/debug/\x1f\x1f\x1fdeps/'` into a diagnostic quoting the banned
+host path `target/debug/deps/`. See the
+[parser design](../foundations/parser.md) on marker bytes in script text.
 `assert_no_leak` has no script to attribute against and stays absolute, so
 hand-written `no_leak_*` cases must not put a banned shape in their input.
 Replays of the inputs that turned nightly fuzz runs red live in

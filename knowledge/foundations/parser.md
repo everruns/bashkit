@@ -116,6 +116,14 @@ in `\x1e`/`\x1f`; `parse_word` turns them into `Word::part_quoted`, and field
 splitting protects quoted parts using markers it picks from characters absent
 from the data. No in-band marker reaches expansion, so a value holding any
 byte (`\x01`, `\x02` included) stays data.
+Script text that spells a marker is data too: every lexer path that copies a
+literal source character escapes `\x1e`/`\x1f` with the NUL sentinel
+(`push_literal_char`, and `heredoc_body_escapes` for here-document bodies), so
+`printf '[%s]' A$'\x1f'B`, `IFS=$'\x1f'` and an unquoted or double-quoted
+literal separator all keep the byte. Unescaped it was read as a marker and
+deleted, which also let a builtin diagnostic quote back text the script never
+spelled — see
+[builtin diagnostics and fuzzing](../security/security-testing.md#builtin-diagnostics-and-fuzzing).
 The same markers are used when a single-quoted word continues with a
 double-quoted expansion (`'a'"$1"`, otherwise kept as one literal word) and
 when an empty quoted segment sits beside an expansion (`"$@"""`, `''"$@"`).

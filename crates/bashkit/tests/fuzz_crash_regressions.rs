@@ -186,3 +186,79 @@ async fn a_bare_banned_shape_framed_only_by_template_text_is_an_echo() {
         fuzz_exec(&mut bash, &script, "printf_fuzz", &[]).await;
     }
 }
+
+/// `awk_fuzz` run 310: the awk program was `{ code:…`, and
+/// `awk: cmd. line:1: {program}` prefixes it with `line:1: `. The Debug shape
+/// ` { code:` is spelled across that join — the leading space is the
+/// template's, the rest is the program — so it appears nowhere in the script.
+/// Whole-script padding cannot see an interior join, which is why
+/// `script_explains` pads the *pattern* instead.
+#[tokio::test]
+async fn awk_crash_code_shape_across_template_join_is_an_echo_not_a_leak() {
+    fuzz_init();
+    let data = b64("eyBjb2RlOgAAAAAAAABobw==");
+    let input = std::str::from_utf8(&data).expect("crash unit is UTF-8");
+    let (program, input_data) = match input.find('\n') {
+        Some(pos) => (&input[..pos], &input[pos + 1..]),
+        None => (input, "a b c\n1 2 3\n"),
+    };
+    let mut bash = bash(4096);
+    for script in [
+        format!("echo '{}' | awk '{}'", sq(input_data), sq(program)),
+        format!("echo '{}' | awk -F: '{}'", sq(input_data), sq(program)),
+    ] {
+        fuzz_exec(&mut bash, &script, "awk_fuzz", &[]).await;
+    }
+}
+
+/// `printf_fuzz` run 310: the same interior join one builtin further on.
+/// `printf: {arg}: invalid number` prefixes the operand with `printf: `, so an
+/// operand of `{ code:` spells ` { code:`. The target's
+/// `input_echo_would_trip` gate pads the whole input and so misses it too;
+/// attribution in the harness is what has to cover this.
+#[tokio::test]
+async fn printf_crash_code_shape_across_template_join_is_an_echo_not_a_leak() {
+    fuzz_init();
+    let data = b64("JWNgY2B7IGNvZGU6Cgp7IGNvZGU6Cgo=");
+    let input = std::str::from_utf8(&data).expect("crash unit is UTF-8");
+    let (format_str, args_str) = match input.find('\n') {
+        Some(pos) => (&input[..pos], &input[pos + 1..]),
+        None => (input, ""),
+    };
+    let args_joined = args_str
+        .lines()
+        .map(|a| format!("'{}'", sq(a)))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let mut bash = bash(4096);
+    for script in [
+        format!("printf '{}' {}", sq(format_str), args_joined),
+        format!("printf -v result '{}' {}", sq(format_str), args_joined),
+        format!("printf '%d %o %x' {args_joined}"),
+    ] {
+        fuzz_exec(&mut bash, &script, "printf_fuzz", &[]).await;
+    }
+}
+
+/// `tomlq_fuzz` run 310: the query held `target/debug/\x1f\x1f\x1fdeps/`, which
+/// is *not* the banned host path — until the diagnostic sanitizes the control
+/// bytes out of the quoted operand and `tomlq: path '…' not found` reads
+/// `target/debug/deps/`. Attribution compares against the raw script, so it
+/// has to account for the same sanitization the renderer applies.
+#[tokio::test]
+async fn tomlq_crash_control_bytes_sanitized_into_host_path_is_an_echo() {
+    fuzz_init();
+    let data = b64("UwAAAAAnJ0BAQEAnCicAAAAAAAoAdGFyZ2V0L2RlYnVnLx8fH2RlcHMvOgE=");
+    let input = std::str::from_utf8(&data).expect("crash unit is UTF-8");
+    let (toml_doc, query) = match input.find('\n') {
+        Some(pos) => (&input[..pos], &input[pos + 1..]),
+        None => (input, "."),
+    };
+    let mut bash = bash(4096);
+    for script in [
+        format!("echo '{}' | tomlq '{}'", sq(toml_doc), sq(query)),
+        format!("echo '{}' | tomlq", sq(toml_doc)),
+    ] {
+        fuzz_exec(&mut bash, &script, "tomlq_fuzz", &[]).await;
+    }
+}
