@@ -462,8 +462,21 @@ tokio = { version = "1", features = ["rt-multi-thread", "fs"] }
 # (TM-DOS-142, interpreter/grow_stack.rs). Already in the tree via Monty.
 stacker = "0.1.25"
 # markkit builtin (native only: markkit-cli needs tokio's multi-thread rt).
-markkit-cli = { version = "0.3.1", default-features = false, features = ["all_formats"], optional = true }
-markkit = { version = "0.3.1", default-features = false, features = ["all_formats"], optional = true }
+#
+# Capped below 0.3.2 to hold the consumer Rust floor. markkit 0.3.2 moved from
+# `mail-parser ^0.11` to `^1.0`, and every mail-parser 1.x declares
+# `rust-version = 1.98`, so a fresh external consumer resolved on 1.96 (the
+# required `msrv` job, which deliberately ignores this repository's Cargo.lock)
+# stops at `rustc 1.96.0 is not supported by mail-parser@1.0.2`. The workspace
+# lock already pins 0.3.1, so this only stops fresh resolution drifting past
+# the floor -- exactly the drift that job exists to catch. markkit-cli is
+# capped in lockstep because markkit-cli 0.3.3 requires `markkit ^0.3.3`.
+#
+# Lift both together once the floor rises to 1.98 or later on purpose, or once
+# markkit's mail-parser dependency supports 1.96 again. See
+# knowledge/operations/testing.md#rust-toolchain-and-consumer-compatibility.
+markkit-cli = { version = ">=0.3.1, <0.3.2", default-features = false, features = ["all_formats"], optional = true }
+markkit = { version = ">=0.3.1, <0.3.2", default-features = false, features = ["all_formats"], optional = true }
 # fetchkit builtin (native only). No `reqwest-tls`: all traffic goes through
 # bashkit's HttpClient, so fetchkit adds no TLS stack.
 fetchkit-cli = { version = "0.7.2", default-features = false, features = ["docs-pdf", "docs-markkit"], optional = true }
