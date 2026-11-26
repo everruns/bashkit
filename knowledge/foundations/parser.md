@@ -116,14 +116,25 @@ in `\x1e`/`\x1f`; `parse_word` turns them into `Word::part_quoted`, and field
 splitting protects quoted parts using markers it picks from characters absent
 from the data. No in-band marker reaches expansion, so a value holding any
 byte (`\x01`, `\x02` included) stays data.
-Script text that spells a marker is data too: every lexer path that copies a
-literal source character escapes `\x1e`/`\x1f` with the NUL sentinel
-(`push_literal_char`, and `heredoc_body_escapes` for here-document bodies), so
+Script text that spells a marker is data too. The lexer paths that copy a
+literal source character into word text escape `\x1e`/`\x1f` with the NUL
+sentinel (`push_literal_char`, and `heredoc_body_escapes` for here-document
+bodies): unquoted and double-quoted word text, concatenated quoted segments,
+backslash escapes, `${...}` operands outside subscripts, extglob group bodies,
+bracket-pattern and compound-array words, and here-document bodies. So
 `printf '[%s]' A$'\x1f'B`, `IFS=$'\x1f'` and an unquoted or double-quoted
 literal separator all keep the byte. Unescaped it was read as a marker and
 deleted, which also let a builtin diagnostic quote back text the script never
 spelled — see
 [builtin diagnostics and fuzzing](../security/security-testing.md#builtin-diagnostics-and-fuzzing).
+
+Two paths copy source verbatim instead. A nested `$(...)`, `$((...))`, `$[...]`
+or backtick body is copied byte for byte and re-lexed when it runs, so its own
+literal markers survive through that second pass. Subscript text is the
+deliberate exception: it is handed to arithmetic or associative-key evaluation,
+which resolve quoting themselves, so a literal marker in a subscript is still
+dropped. Both shapes are pinned in
+`crates/bashkit/tests/integration/quote_marker_byte_tests.rs`.
 The same markers are used when a single-quoted word continues with a
 double-quoted expansion (`'a'"$1"`, otherwise kept as one literal word) and
 when an empty quoted segment sits beside an expansion (`"$@"""`, `''"$@"`).

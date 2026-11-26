@@ -1440,7 +1440,10 @@ impl<'a> Lexer<'a> {
                 self.advance();
                 let mut depth = 1;
                 while let Some(c) = self.peek_char() {
-                    word.push(c);
+                    // A marker is never `(`, `)`, a quote or a backslash, so
+                    // the sentinel this may add leaves the depth counting,
+                    // `extglob_escaped` and the `word.pop()` arms below alone.
+                    push_literal_char(&mut word, c);
                     self.advance();
                     match c {
                         '(' => depth += 1,
@@ -1457,7 +1460,7 @@ impl<'a> Lexer<'a> {
                                     word.pop();
                                     Self::push_extglob_literal(&mut word, esc);
                                 } else {
-                                    word.push(esc);
+                                    push_literal_char(&mut word, esc);
                                 }
                                 self.advance();
                             }
@@ -1941,7 +1944,11 @@ impl<'a> Lexer<'a> {
                     Some(n) => {
                         self.advance();
                         word.push('\\');
-                        word.push(n);
+                        if subscript > 0 {
+                            word.push(n);
+                        } else {
+                            push_literal_char(word, n);
+                        }
                     }
                     None => word.push('\\'),
                 },
@@ -1979,7 +1986,7 @@ impl<'a> Lexer<'a> {
                                 word.push('\\');
                                 if let Some(n) = self.peek_char() {
                                     self.advance();
-                                    word.push(n);
+                                    push_literal_char(word, n);
                                 }
                                 continue;
                             }
@@ -2734,7 +2741,7 @@ impl<'a> Lexer<'a> {
                                 content.push('\\');
                                 if let Some(n) = self.peek_char() {
                                     self.advance();
-                                    content.push(n);
+                                    push_literal_char(content, n);
                                 }
                             }
                             '$' if self.peek_char() == Some('{') => {
@@ -2812,7 +2819,11 @@ impl<'a> Lexer<'a> {
                             }
                             _ => {
                                 content.push('\\');
-                                content.push(esc);
+                                if subscript > 0 {
+                                    content.push(esc);
+                                } else {
+                                    push_literal_char(content, esc);
+                                }
                                 self.advance();
                             }
                         }
@@ -2904,7 +2915,9 @@ impl<'a> Lexer<'a> {
                     if c == '\n' {
                         break;
                     }
-                    word.push(c);
+                    // A marker is never `(` or `)`, so depth counting is
+                    // unaffected by the sentinel this may add.
+                    push_literal_char(&mut word, c);
                     self.advance();
                     match c {
                         '(' => depth += 1,

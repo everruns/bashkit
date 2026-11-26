@@ -42,6 +42,13 @@ fn marker_cases() -> Vec<String> {
             // A `${...}` operand and a pattern operator inside one.
             format!(r#"x=aA{m}Bz; printf '[%s]' "${{x#aA{m}}}""#),
             format!(r#"x=q; printf '[%s]' "${{x:+A{m}B}}""#),
+            // Backslash-escaped marker in a quoted `${...}` operand: the
+            // reader keeps the backslash and the byte, as bash does. The
+            // double-quoted-span form is in
+            // `backslash_escaped_markers_take_the_ordinary_character_path`,
+            // because bashkit's backslash handling there already diverges
+            // from bash for every character.
+            format!(r#"unset x; printf '[%s]' "${{x:-A\{m}B}}""#),
             // A brace tail on a word carrying the byte (the unquoted-glob
             // path). Extglob is deliberately not covered here: `shopt -s
             // extglob` in the same `-c` string takes effect after bash has
@@ -56,6 +63,12 @@ fn marker_cases() -> Vec<String> {
             format!("x=A{m}B; printf '[%s]' \"${{x}}\""),
             // Command substitution output is data, never rescanned for markers.
             format!("printf '[%s]' \"$(printf 'A{m}B')\""),
+            // A nested body is copied verbatim and re-lexed when it runs, so a
+            // literal marker inside it survives that second pass.
+            format!("echo $(echo 'A{m}B')"),
+            format!("echo \"$(echo 'A{m}B')\""),
+            format!("echo `echo 'A{m}B'`"),
+            format!("echo $(printf '[%s]' \"A{m}B\")"),
             // A word that also globs keeps the unquoted-glob path.
             format!("printf '[%s]' A{m}B*"),
             // Array element text. Subscripts are deliberately absent: see
@@ -175,4 +188,84 @@ async fn subscript_text_keeps_its_pre_existing_shape() {
         .await
         .unwrap();
     assert_eq!(ansi.stdout.to_string(), "[V]");
+}
+
+/// Extglob group bodies keep the byte too. bashkit parses `@(...)` as a group
+/// without `shopt -s extglob`, so the oracle runs with `-O extglob` to compare
+/// like with like — plain `bash -c` makes `@(` a syntax error instead.
+#[tokio::test]
+#[cfg_attr(not(unix), ignore = "compares against host Unix bash")]
+async fn extglob_group_bodies_keep_marker_bytes() {
+    if std::process::Command::new("bash")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
+        eprintln!("skip: bash is not installed");
+        return;
+    }
+    for m in ['\u{1e}', '\u{1f}'] {
+        for script in [
+            format!("printf '[%s]' @(A{m}B)"),
+            format!("printf '[%s]' x@(A{m}B)y"),
+            format!("printf '[%s]' @(A{m}B|zz)"),
+        ] {
+            let host = std::process::Command::new("bash")
+                .args(["--noprofile", "--norc", "-O", "extglob", "-c", &script])
+                .env_clear()
+                .env("LC_ALL", "C")
+                .output()
+                .unwrap();
+            let actual = Bash::new().exec(&script).await.unwrap();
+            assert_eq!(
+                actual.stdout.as_bytes(),
+                host.stdout,
+                "stdout differs for {script:?}\n  bashkit: {:?}\n  bash:    {:?}",
+                actual.stdout.to_string(),
+                String::from_utf8_lossy(&host.stdout),
+            );
+        }
+    }
+}
+
+/// Backslash-escaped markers in `${...}` operands survive and take exactly
+/// the path an ordinary character takes.
+///
+/// Not compared with bash: bashkit's backslash handling in these two readers
+/// already diverges from bash for *every* character, not just these bytes —
+/// `${x:-A\ZB}` unquoted is `A\ZB` here and `AZB` in bash, and
+/// `"${x:-"A\ZB"}"` is `A\\ZB` here and `AZB` in bash. Those are
+/// pre-existing and independent of marker handling, so what this pins is the
+/// property this change is about: a marker byte is data like any other byte,
+/// never silently deleted.
+#[tokio::test]
+async fn backslash_escaped_markers_take_the_ordinary_character_path() {
+    let mut bash = Bash::new();
+    for (quoted_label, marker_script, plain_script) in [
+        (
+            "unquoted operand",
+            r#"unset x; printf '[%s]' ${x:-A\MB}"#,
+            r#"unset x; printf '[%s]' ${x:-A\ZB}"#,
+        ),
+        (
+            "double-quoted span inside the operand",
+            r#"unset x; printf '[%s]' "${x:-"A\MB"}""#,
+            r#"unset x; printf '[%s]' "${x:-"A\ZB"}""#,
+        ),
+    ] {
+        for m in ['\u{1e}', '\u{1f}'] {
+            let marked = marker_script.replace('M', &m.to_string());
+            let got = bash.exec(&marked).await.unwrap().stdout.to_string();
+            assert!(
+                got.contains(m),
+                "{quoted_label}: the byte must survive {marked:?}; got {got:?}"
+            );
+            let plain = bash.exec(plain_script).await.unwrap().stdout.to_string();
+            assert_eq!(
+                got.replace(m, "Z"),
+                plain,
+                "{quoted_label}: a marker must take the same path as any other character"
+            );
+        }
+    }
 }
