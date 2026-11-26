@@ -326,3 +326,40 @@ async fn the_literal_sentinel_never_leaks_into_a_value() {
         }
     }
 }
+
+/// TODO: a brace inside an ANSI-C operand of `${...}` still leaks the literal
+/// sentinel. `"${x:-$'{a}'}"` yields `\0{a\0}` here where bash gives `{a}`.
+///
+/// Pre-existing and unrelated to marker bytes — verified byte-for-byte
+/// identical on `origin/main` — but the same shape as the marker leak fixed in
+/// this change: the `{`/`}` NUL-escape in `read_param_expansion_into`'s quote
+/// span is unconditional, and the ANSI-C span's second decode does not consume
+/// the sentinel. It is not fixable the way the marker sentinel was, by simply
+/// not adding it: that escape is load-bearing for the outer `${` brace
+/// matching (`"${v-\}}"`), so the brace sentinel has to become decode-aware
+/// instead. Left for its own change.
+///
+/// Note the unquoted operand is already correct, so only the double-quoted
+/// path leaks. This test pins both so the next change here is deliberate.
+#[tokio::test]
+async fn brace_in_an_ansi_c_operand_leaks_the_sentinel_a_known_divergence() {
+    let mut bash = Bash::new();
+    let quoted = bash
+        .exec(r#"unset x; printf '[%s]' "${x:-$'{a}'}""#)
+        .await
+        .unwrap();
+    assert_eq!(
+        quoted.stdout.to_string(),
+        "[\0{a\0}]",
+        "pinning the known leak; bash gives [{{a}}]"
+    );
+    let unquoted = bash
+        .exec(r#"unset x; printf '[%s]' ${x:-$'{a}'}"#)
+        .await
+        .unwrap();
+    assert_eq!(
+        unquoted.stdout.to_string(),
+        "[{a}]",
+        "the unquoted operand is already correct and must stay so"
+    );
+}
