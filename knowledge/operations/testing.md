@@ -822,7 +822,7 @@ cross-runtime compatibility.
 |---------|----------|-----------|----------------|----------|
 | Node    | 20, 22, 24, latest | Yes | Yes | Yes |
 | Bun     | latest, canary | No | Yes | Yes |
-| Deno    | 2.x, canary | No | Yes | Yes |
+| Deno    | 2.x | No | Yes | Yes |
 
 ### Maintenance Rules
 
