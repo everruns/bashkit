@@ -646,9 +646,21 @@ run-272 forgery one parser further down the pipeline: libFuzzer still harvests
 the canary from the detector's own `contains`, and a spliced quote now survives
 the comparison that a spliced NUL already did not. `carries_through_expansion`
 therefore strips `DROPPED_BY_PARSERS` as well as NUL. Stripping can only add
-matches, and since no banned shape and no part of the canary contains any of
-those characters, every match it adds is a parser dropping punctuation out of
-script text — an echo by definition.
+matches, and no banned shape and no part of the canary contains any of those
+characters, so the matches it adds are a parser dropping punctuation out of
+script text.
+
+That is an over-approximation, deliberately. The strip is unconditional and
+context-free, while a real parser drops those characters only in particular
+positions — a `"` inside single quotes is data the shell keeps, `\` goes only
+in escape position, and the csv quote rules are not the shell's — so a match
+can be added for a splice no parser would have undone. Combined with
+attribution being whole-script and whole-stderr, a fragment spliced in one part
+of the script can excuse a genuine occurrence elsewhere in the same execution.
+This is the same residual false negative `script_explains` carries, accepted
+for the same reasons, and erring toward over-approximation is the right
+direction here: under-approximating is what turns the nightly red on the
+detector's own dictionary, as runs 272, 304, 310 and 45932089002 each did.
 
 `printf_fuzz` tripped the stderr byte cap with 1,283 bytes. `printf '%d %o %x'`
 cycles its format over every operand, so 34 non-numeric operands drew 34
