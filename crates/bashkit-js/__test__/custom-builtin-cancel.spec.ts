@@ -150,12 +150,28 @@ test("a graceful return near the deadline leaves the builtin signal intact", asy
 
 test("Ctrl+C aborts a held server connection via ctx.fetch: exit 130", async (t) => {
   const http = await import("node:http");
-  let serverAborted = false;
+  // Resolve on the first sign the client went away, rather than sampling a
+  // flag on a fixed schedule. `bash.cancel()` aborts the builtin controller
+  // synchronously before it calls `native.cancel()`, and `abort()` dispatches
+  // to undici in the same tick, so by the time `execute()` resolves the
+  // request is already aborted — what is left is the kernel and the server's
+  // event loop noticing, which is neither instant nor uniform across
+  // platforms. The old code polled `req` 'close' for a fixed 2s and called a
+  // slower delivery a failure: that is what reddened the windows-latest lane
+  // of JS run 45816668178 while every other lane passed. Waiting on an event
+  // makes the usual case immediate and the slow case tolerant, and watching
+  // the socket as well as the request drops the assumption that `req` 'close'
+  // is the event that lands first on every platform.
+  let sawDisconnect!: () => void;
+  const disconnected = new Promise<void>((resolve) => {
+    sawDisconnect = resolve;
+  });
   const server = http.createServer((req, _res) => {
     // Hold the response indefinitely; detect the client going away.
-    req.on("close", () => {
-      serverAborted = true;
-    });
+    req.on("close", sawDisconnect);
+    req.on("aborted", sawDisconnect);
+    req.socket.on("close", sawDisconnect);
+    req.socket.on("error", sawDisconnect);
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
   t.teardown(() => server.close());
@@ -179,9 +195,14 @@ test("Ctrl+C aborts a held server connection via ctx.fetch: exit 130", async (t)
     const elapsed = Date.now() - start;
     t.is(cancelled.exitCode, 130);
     t.true(elapsed < 10000, `cancellation took ${elapsed}ms`);
-    for (let i = 0; i < 100 && !serverAborted; i++) {
-      await new Promise((r) => setTimeout(r, 20));
-    }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const serverAborted = await Promise.race([
+      disconnected.then(() => true),
+      new Promise<boolean>((resolve) => {
+        timer = setTimeout(() => resolve(false), 20000);
+      }),
+    ]);
+    if (timer !== undefined) clearTimeout(timer);
     t.true(serverAborted, "server saw the connection abort");
     const next = await bash.execute("echo next:$MARKER");
     t.is(next.exitCode, 0);

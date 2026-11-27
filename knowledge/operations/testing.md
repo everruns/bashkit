@@ -830,3 +830,13 @@ cross-runtime compatibility.
 2. runtime-compat tests use only `node:test`, `node:assert`, `node:module`
 3. Files are plain `.mjs` (no TypeScript)
 4. Keep files focused, one file per concern area
+5. A test that waits on something outside its own event loop — a socket
+   closing, a child exiting, the OS noticing an abort — waits on the event,
+   not on a fixed number of polling rounds. The ava suite runs on
+   `windows-latest` as well as ubuntu (the `Runtime callbacks` lane of
+   `js.yml`, which gates `JS Check`), and delivery there is slower and ordered
+   differently: JS run 45816668178 reddened main when a 2s poll for the
+   server-side `req` 'close' of an aborted `ctx.fetch` ran out on Windows
+   alone. Resolve a promise from every event that would signal the condition
+   and race it against one generous timeout, so the pass is immediate and only
+   a genuine failure to propagate fails
