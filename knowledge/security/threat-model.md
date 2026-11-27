@@ -656,12 +656,23 @@ cycles its format over every operand, so 34 non-numeric operands drew 34
 inside the `max_stderr_bytes(4096)` the target itself configures. The harness
 was holding a whole-execution budget to a single diagnostic's size, so any
 script landing in 1024..=4096 was guaranteed to fail — the cap was
-unsatisfiable rather than strict. It now matches the engine ceiling, which
-preserves what the assertion was written for: it says the engine honored the
-stderr limit it was given, and 10 MB of library spam still fails. Attribution
-remains unable to relax it (`attribution_does_not_relax_the_stderr_cap`), and
-that test is now sized off the constant so raising the cap cannot quietly turn
-it into a no-op. Crash-unit replays for both live in
+unsatisfiable rather than strict. The fuzz path now has its own
+`MAX_FUZZ_STDERR_BYTES` at the largest configured ceiling, which preserves what
+the assertion was written for: it says the engine honored the stderr limit it
+was given, and 10 MB of library spam still fails.
+
+The first attempt raised the one shared `MAX_STDERR_BYTES` instead, which also
+moved `assert_no_leak` — the strict path the threat model calls absolute — from
+1 KiB to 4 KiB, letting a builtin emit kilobytes of Debug spam past it. Review
+caught it; the caps are now separate constants and
+`loosening_the_fuzz_cap_did_not_loosen_the_strict_path` fails if they are ever
+collapsed back. Attribution still cannot relax either
+(`attribution_does_not_relax_the_stderr_cap`, now sized off the constant so
+raising a cap cannot quietly turn it into a no-op). Eight targets configure no
+limit at all and so take the 1 MiB default; for them the harness cap is the
+operative bound rather than a satisfiable one, so the same false positive can
+recur there, and the fix then is to give that target an explicit
+`max_stderr_bytes`. Crash-unit replays for both failures live in
 `crates/bashkit/tests/fuzz_crash_regressions.rs`.
 
 Display of a **Bashkit** error is not a safe formatter either: `Error`'s own
@@ -712,16 +723,21 @@ machinery (`bashkit::testing::assert_fuzz_invariants`):
   `/.cargo/registry/`, `target/{debug,release}/deps/`,
   `/.rustup/toolchains/` so leaked panic backtraces / build-artifact
   paths fail the assertion.
-- **stderr flooding**: whole-execution stderr capped at
-  `MAX_STDERR_BYTES` (4 KiB, the largest `max_stderr_bytes` any fuzz
-  target configures), one bad input that produces 10 MB of
-  library-error spam trips this. The cap tracks that figure
-  deliberately: for a target that configured it, a tighter harness
-  number is unsatisfiable, because the engine may emit right up to the
-  limit it was given (run 45932089002, below); for the targets that
-  configure nothing it stays a harness-side flood bound. The bound on a
-  *single* diagnostic is a separate invariant (L-ARITH-002,
-  `MAX_ARITHMETIC_DIAG_ECHO`), still 1 KiB.
+- **stderr flooding**: one bad input that produces 10 MB of
+  library-error spam trips this. There are **two** caps, and they are
+  deliberately different. The strict per-builtin path
+  (`assert_no_leak`) stays at `MAX_STDERR_BYTES` (1 KiB): a
+  hand-written `no_leak_*` case controls its own input and has no
+  reason to emit kilobytes. The fuzz path (`assert_fuzz_invariants`)
+  uses `MAX_FUZZ_STDERR_BYTES` (4 KiB), the largest `max_stderr_bytes`
+  any target configures, because a target inlines bytes it did not
+  choose and the engine truncates only at the limit that target
+  declared — so a tighter harness number there is unsatisfiable rather
+  than strict (run 45932089002, below). Keeping them separate matters:
+  sharing one constant is how raising the fuzz figure first silently
+  relaxed the strict path. The bound on a *single* diagnostic is a
+  third, separate invariant (L-ARITH-002,
+  `MAX_ARITHMETIC_DIAG_ECHO`), also 1 KiB.
 
 Fuzz/proptest targets inline arbitrary input bytes into shell scripts, so bash/ls/uutils
 clap CLIs echo the input verbatim in error chrome (`bash: <cmd>: command not found`,
