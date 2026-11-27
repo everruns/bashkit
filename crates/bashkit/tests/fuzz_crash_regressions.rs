@@ -124,6 +124,63 @@ async fn csv_crash_rustup_toolchains_is_an_echo_not_a_leak() {
     }
 }
 
+/// `csv_fuzz`, Fuzz Testing run 45932089002: the input carried the host canary
+/// with a `"` spliced into it (`..._D"O_NOT_LEAK`). `echo` passed that through
+/// verbatim, then `csv headers` dropped the `"` as a CSV quote character and
+/// printed the canary whole — so stdout held a token the script text never
+/// spelled, and the TM-INF-013 assertion fired with no builtin having read
+/// host env. libFuzzer harvests the canary from the detector's own `contains`,
+/// so this is a forgery the harness armed; attribution now looks through the
+/// characters a parser drops (`DROPPED_BY_PARSERS`).
+#[tokio::test]
+async fn csv_crash_quote_forged_canary_is_an_echo_not_a_leak() {
+    fuzz_init();
+    let data =
+        b64("CgAKLwoACgAKCkJBU0hLSVRfRlVaWl9IT1NUX0NBTkFSWV80N2E4M2JjZl9EIk9fTk9UX0xFQUsFCgUKW1s=");
+    let input = std::str::from_utf8(&data).expect("crash unit is UTF-8");
+    let mut bash = bash(4096);
+    for script in [
+        format!("echo '{}' | csv headers", sq(input)),
+        format!("echo '{}' | csv count", sq(input)),
+        format!("echo '{}' | csv select 1", sq(input)),
+        format!("echo '{}' | csv -d '\\t' headers", sq(input)),
+    ] {
+        fuzz_exec(&mut bash, &script, "csv_fuzz", &[]).await;
+    }
+}
+
+/// `printf_fuzz`, Fuzz Testing run 45932089002: `printf '%d %o %x'` cycles its
+/// format over every operand, so this unit's 34 non-numeric operands each drew
+/// an `invalid number` diagnostic — 1,283 bytes of bounded, legitimate stderr,
+/// under the `max_stderr_bytes(4096)` the target configures but over the
+/// harness's old 1 KiB cap. Not a flood: the harness was holding a
+/// whole-execution budget to a single diagnostic's size.
+#[tokio::test]
+async fn printf_crash_per_operand_diagnostics_are_not_a_flood() {
+    fuzz_init();
+    let data = b64(
+        "SwoKDgogCg4KIAoOCgoOCiAKDgoOCiAKDgolCg4KIAoOCiAKDgoOCiBACg4OCiAKDgolCg4KIAoOCiAKDgoOCiBACg4KIA==",
+    );
+    let input = std::str::from_utf8(&data).expect("crash unit is UTF-8");
+    let (format_str, args_str) = match input.find('\n') {
+        Some(pos) => (&input[..pos], &input[pos + 1..]),
+        None => (input, ""),
+    };
+    let args_joined = args_str
+        .lines()
+        .map(|a| format!("'{}'", sq(a)))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let mut bash = bash(4096);
+    for script in [
+        format!("printf '{}' {}", sq(format_str), args_joined),
+        format!("printf -v result '{}' {}", sq(format_str), args_joined),
+        format!("printf '%d %o %x' {args_joined}"),
+    ] {
+        fuzz_exec(&mut bash, &script, "printf_fuzz", &[]).await;
+    }
+}
+
 /// `tomlq_fuzz` run 304: `tomlq: path '<query>' not found` quotes the query
 /// verbatim, and the query was `/.rustup/toolchains/…`.
 #[tokio::test]

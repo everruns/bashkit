@@ -634,6 +634,36 @@ static source scan and the per-tool `assert_no_leak` cases stay absolute. Only
 a formatter whose leak is *triggered* by parsing the shape is genuinely
 hidden.
 
+Run 45932089002 turned both halves of that design red again, each for a
+reason the earlier runs had not reached, and neither was a product bug.
+
+`csv_fuzz` reported the host canary in stdout from the input
+`BASHKIT_FUZZ_HOST_CANARY_47a83bcf_D"O_NOT_LEAK`. `echo` passed the bytes
+through verbatim and `csv headers` then removed the `"` as its CSV quote
+character, printing the canary whole — so the output carried a token the script
+text never spelled, and attribution could not account for it. This is the
+run-272 forgery one parser further down the pipeline: libFuzzer still harvests
+the canary from the detector's own `contains`, and a spliced quote now survives
+the comparison that a spliced NUL already did not. `carries_through_expansion`
+therefore strips `DROPPED_BY_PARSERS` as well as NUL. Stripping can only add
+matches, and since no banned shape and no part of the canary contains any of
+those characters, every match it adds is a parser dropping punctuation out of
+script text — an echo by definition.
+
+`printf_fuzz` tripped the stderr byte cap with 1,283 bytes. `printf '%d %o %x'`
+cycles its format over every operand, so 34 non-numeric operands drew 34
+`invalid number` diagnostics: output linear in the input, bounded, and well
+inside the `max_stderr_bytes(4096)` the target itself configures. The harness
+was holding a whole-execution budget to a single diagnostic's size, so any
+script landing in 1024..=4096 was guaranteed to fail — the cap was
+unsatisfiable rather than strict. It now matches the engine ceiling, which
+preserves what the assertion was written for: it says the engine honored the
+stderr limit it was given, and 10 MB of library spam still fails. Attribution
+remains unable to relax it (`attribution_does_not_relax_the_stderr_cap`), and
+that test is now sized off the constant so raising the cap cannot quietly turn
+it into a no-op. Crash-unit replays for both live in
+`crates/bashkit/tests/fuzz_crash_regressions.rs`.
+
 Display of a **Bashkit** error is not a safe formatter either: `Error`'s own
 variants stringify as Rust enum shapes (`io error: `, `internal error: `) that
 no shell prints, and `internal error:` is in `UNIVERSAL_BANNED`. Builtins
@@ -673,13 +703,25 @@ machinery (`bashkit::testing::assert_fuzz_invariants`):
   assertion is scoped by attribution: a canary the executed script
   itself contains is the shell echoing input back, not a host read
   (run 272, above), so only an unexplained occurrence fails.
+  Attribution looks through the characters a parser on the way *deletes*
+  from the data it carries (`DROPPED_BY_PARSERS`: NUL from shell word
+  expansion, and `"`/`'`/`\` from shell quote removal or the `csv`
+  field parser), because a canary spliced with one of those still
+  arrives intact (run 45932089002, below).
 - **TM-INF-016 (host paths)**: `UNIVERSAL_BANNED` includes `/rustc/`,
   `/.cargo/registry/`, `target/{debug,release}/deps/`,
   `/.rustup/toolchains/` so leaked panic backtraces / build-artifact
   paths fail the assertion.
-- **stderr flooding**: per-call stderr capped at `MAX_STDERR_BYTES`
-  (1 KB), one bad input that produces 10 MB of library-error spam
-  trips this.
+- **stderr flooding**: whole-execution stderr capped at
+  `MAX_STDERR_BYTES` (4 KiB, the largest `max_stderr_bytes` any fuzz
+  target configures), one bad input that produces 10 MB of
+  library-error spam trips this. The cap tracks that figure
+  deliberately: for a target that configured it, a tighter harness
+  number is unsatisfiable, because the engine may emit right up to the
+  limit it was given (run 45932089002, below); for the targets that
+  configure nothing it stays a harness-side flood bound. The bound on a
+  *single* diagnostic is a separate invariant (L-ARITH-002,
+  `MAX_ARITHMETIC_DIAG_ECHO`), still 1 KiB.
 
 Fuzz/proptest targets inline arbitrary input bytes into shell scripts, so bash/ls/uutils
 clap CLIs echo the input verbatim in error chrome (`bash: <cmd>: command not found`,

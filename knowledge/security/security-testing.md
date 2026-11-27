@@ -291,6 +291,24 @@ hand-written `no_leak_*` cases must not put a banned shape in their input.
 Replays of the inputs that turned nightly fuzz runs red live in
 `crates/bashkit/tests/fuzz_crash_regressions.rs`.
 
+Attribution also looks through the characters a parser on the way *deletes*
+from the data it carries (`DROPPED_BY_PARSERS`): NUL, which shell word
+expansion drops, and `"`/`'`/`\`, which shell quote removal and the `csv`
+field parser drop. A needle spliced with one of those still reaches the output
+intact, so the script has to be matched the same way -- run 45932089002 flagged
+the host canary from a `csv` field spelled `..._D"O_NOT_LEAK`.
+
+Keep the two stderr budgets distinct. "Cap diagnostics at 1 KB" above is the
+bound on a *single* diagnostic (L-ARITH-002). `MAX_STDERR_BYTES` is the
+*whole-execution* budget and must track the largest
+`ExecutionLimits::max_stderr_bytes` any target configures (4 KiB), because the
+engine may emit right up to the limit it was given: a tighter harness figure
+fails a legitimately chatty script rather than catching anything. Run
+45932089002 hit this on `printf_fuzz`, where one `invalid number` diagnostic
+per operand came to 1,283 bytes. A target that configures a lower figure is
+still held to it by the engine, and the eight targets that configure nothing
+keep the 4 KiB harness bound.
+
 ## Filesystem Certification
 
 The backend-neutral helper in

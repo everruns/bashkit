@@ -59,10 +59,45 @@ pub const UNIVERSAL_BANNED: &[&str] = &[
     "/.rustup/toolchains/",
 ];
 
-/// Cap on per-call stderr length. A single bad input must not flood
+/// Cap on per-execution stderr length. A single bad input must not flood
 /// stderr beyond this — catches "one bad regex generates 10 MB of
 /// library error spam" regressions.
-pub const MAX_STDERR_BYTES: usize = 1024;
+///
+/// This is a *whole-execution* budget, and a target that builds
+/// `ExecutionLimits::max_stderr_bytes(N)` is declaring N bytes acceptable for
+/// its scripts. The harness must therefore not sit below the largest N any
+/// target configures: the engine truncates only at its own limit, so a tighter
+/// harness cap rejects legitimately chatty-but-bounded output instead of
+/// catching anything. Fifteen of the 26 fuzz targets configure 4096, three
+/// configure 1024, and the rest take the 1 MiB default — so at 1024 this
+/// assertion was guaranteed to fire somewhere in 1024..=4096. Fuzz Testing run
+/// 45932089002 hit it on `printf_fuzz`, whose `printf '%d %o %x'` cycles its
+/// format over every operand and so emits one `invalid number` diagnostic per
+/// operand; 34 non-numeric operands rendered 1,283 bytes of entirely
+/// legitimate output. Matching the largest configured ceiling keeps the
+/// original intent intact: for those targets the assertion now says "the
+/// engine honored the stderr limit it was given", which is exactly the
+/// 10-MB-spam regression it was written for, and for the targets that
+/// configure nothing it stays the deliberate harness-side flood bound it
+/// always was.
+///
+/// Do not confuse this with the bound on a *single* diagnostic. One
+/// diagnostic staying small is a separate product invariant (L-ARITH-002,
+/// `MAX_ARITHMETIC_DIAG_ECHO`) covered by
+/// `tests/integration/diagnostic_prefix_tests.rs`; conflating the two is what
+/// produced the false positive.
+pub const MAX_STDERR_BYTES: usize = 4096;
+
+/// The largest `ExecutionLimits::max_stderr_bytes` any fuzz target explicitly
+/// builds. Lowering [`MAX_STDERR_BYTES`] below it would make the assertion
+/// unsatisfiable for those targets again, so the mismatch is a compile error
+/// rather than a nightly-only failure. Raise this if a target ever configures
+/// a larger budget.
+const FUZZ_TARGET_STDERR_LIMIT: usize = 4096;
+const _: () = assert!(
+    MAX_STDERR_BYTES >= FUZZ_TARGET_STDERR_LIMIT,
+    "MAX_STDERR_BYTES is tighter than the max_stderr_bytes the fuzz targets configure"
+);
 
 /// Magic value seeded into the host OS environment by `fuzz_init`. If
 /// this string ever appears in builtin stdout or stderr, a builtin is
@@ -294,16 +329,50 @@ pub fn input_echo_would_trip(input: &str) -> bool {
 /// contains `"`, so it needs no padding of its own.
 const DIAGNOSTIC_ECHO_PAD: (&str, &str) = (": ", ": ");
 
-/// True when `text` carries `needle` into a diagnostic — literally, or
-/// after the shell drops NUL bytes during word expansion, which turns
-/// `</r\0ustc/` into `/rustc/` and `\0{ code:` into ` { code:`.
+/// Characters a parser between script text and output *deletes* from the data
+/// it carries, so a needle can reach the output intact while the script spells
+/// it only with one of these spliced in. See [`carries_through_expansion`].
+///
+///  - `\0` — shell word expansion drops NUL, turning `</r\0ustc/` into
+///    `/rustc/` and `\0{ code:` into ` { code:`.
+///  - `"`, `'`, `\` — shell quote removal drops them, and the `csv` builtin's
+///    field parser drops `"` as its quote character.
+const DROPPED_BY_PARSERS: &[char] = &['\0', '"', '\'', '\\'];
+
+/// True when `text` carries `needle` into the output — literally, or after a
+/// parser on the way drops one of [`DROPPED_BY_PARSERS`] out of it.
 ///
 /// Comparing the raw bytes alone is what defeated `glob_fuzz`'s original
-/// pre-filter in runs 218 and 219. The `contains('\0')` guard keeps the
-/// allocation off the common path: almost no input has a NUL, and this
-/// runs once per pattern per fuzz iteration.
+/// pre-filter in runs 218 and 219, which is why NUL removal was folded in. The
+/// quote characters joined it for the same reason one step further down the
+/// pipeline: Fuzz Testing run 45932089002 reported `csv_fuzz` leaking the host
+/// canary from the input `BASHKIT_FUZZ_HOST_CANARY_47a83bcf_D"O_NOT_LEAK`.
+/// `echo` passed that through verbatim, then `csv headers` removed the `"` as
+/// a CSV quote and printed the canary whole, so the output carried a token the
+/// script text never spelled. libFuzzer harvests the canary from this very
+/// comparison (see [`input_echo_would_trip`]), so splicing a quote into it is
+/// a forgery the detector armed, not a host-env read.
+///
+/// The `contains` guard keeps the allocation off the common path: this runs
+/// once per pattern per fuzz iteration. Stripping can only *add* matches, so
+/// it only ever widens attribution — and since no [`UNIVERSAL_BANNED`] shape
+/// and no part of the canary contains any of these characters, every match it
+/// adds is a parser dropping punctuation out of script text, which is an echo
+/// by definition.
 fn carries_through_expansion(text: &str, needle: &str) -> bool {
-    text.contains(needle) || (text.contains('\0') && text.replace('\0', "").contains(needle))
+    if text.contains(needle) {
+        return true;
+    }
+    if text.contains(DROPPED_BY_PARSERS) {
+        let stripped: String = text
+            .chars()
+            .filter(|c| !DROPPED_BY_PARSERS.contains(c))
+            .collect();
+        if stripped.contains(needle) {
+            return true;
+        }
+    }
+    false
 }
 
 /// True when `script` itself spells `pat`, so a diagnostic that quotes any
@@ -834,10 +903,14 @@ mod tests {
     #[test]
     fn attribution_does_not_relax_the_stderr_cap() {
         // A script that spells a banned shape still may not flood stderr.
+        // Sized off the constant so raising the cap cannot silently turn this
+        // into a no-op, the way the literal `repeat(200)` did.
+        const SHAPE: &str = "Undefined::";
         let result = ExecResult {
-            stderr: "Undefined::".repeat(200).into(),
+            stderr: SHAPE.repeat(MAX_STDERR_BYTES / SHAPE.len() + 1).into(),
             ..Default::default()
         };
+        assert!(result.stderr.len() > MAX_STDERR_BYTES);
         let err = std::panic::catch_unwind(|| {
             assert_fuzz_invariants(&result, "echo Undefined::", "cap_still_on", &[]);
         })
@@ -1032,5 +1105,85 @@ mod tests {
         let s = "Usage: see Span { for details\n";
         let stripped = strip_real_shell_error_lines(s);
         assert!(stripped.contains("Span {"), "stripped: {stripped:?}");
+    }
+
+    /// Fuzz Testing run 45932089002, `csv_fuzz`: the input carried the canary
+    /// with a `"` spliced into it, `echo` passed it through verbatim, and
+    /// `csv headers` removed the quote as a CSV quote character — so the
+    /// canary reached stdout whole while the script text never spelled it.
+    /// End-to-end on purpose: the quote removal belongs to the csv builtin,
+    /// so a hand-built `ExecResult` would not prove the path exists.
+    #[tokio::test]
+    async fn canary_forged_with_a_quote_the_csv_parser_drops_is_not_a_leak() {
+        let (head, tail) = FUZZ_HOST_CANARY.split_at(FUZZ_HOST_CANARY.len() - 10);
+        let forged = format!("{head}\"{tail}");
+        assert!(
+            !forged.contains(FUZZ_HOST_CANARY),
+            "forgery must not be literal"
+        );
+        let script = format!("echo '{}' | csv headers", forged.replace('\'', "'\\''"));
+        let result = run(&script).await;
+        // Precondition: the builtin really does reconstitute the canary.
+        assert!(
+            result.stdout.contains(FUZZ_HOST_CANARY),
+            "csv no longer drops the quote, so this regression is unreachable: {:?}",
+            result.stdout.to_string()
+        );
+        // The script explains it, so this is a forgery and not a host-env read.
+        assert_fuzz_invariants(&result, &script, "canary_quote_forge", &[]);
+    }
+
+    #[test]
+    #[should_panic(expected = "FUZZ canary leaked into stdout")]
+    fn a_script_with_quotes_that_cannot_spell_the_canary_still_leaks() {
+        // Dropping quote characters must not blanket-excuse any script that
+        // merely contains one: this script quotes something else entirely.
+        let result = ExecResult {
+            stdout: FUZZ_HOST_CANARY.into(),
+            ..Default::default()
+        };
+        assert_fuzz_invariants(
+            &result,
+            "echo '\"unrelated\"' | csv headers",
+            "canary_leak_quoted",
+            &[],
+        );
+    }
+
+    /// Fuzz Testing run 45932089002, `printf_fuzz`: `printf '%d %o %x'` cycles
+    /// its format over every operand, so N non-numeric operands emit N
+    /// `invalid number` diagnostics. Thirty-four of them came to 1,283 bytes —
+    /// bounded, legitimate output well inside the `max_stderr_bytes(4096)` the
+    /// target configures, yet over the harness's old 1 KiB cap.
+    #[test]
+    fn per_operand_diagnostics_within_the_engine_limit_are_not_a_flood() {
+        let line = "bash: line 1: printf:  : invalid number\n";
+        let stderr = line.repeat(33);
+        assert!(
+            (1024..=4096).contains(&stderr.len()),
+            "fixture must land in the band the old cap rejected: {} bytes",
+            stderr.len()
+        );
+        let result = ExecResult {
+            stderr: stderr.into(),
+            ..Default::default()
+        };
+        assert_fuzz_invariants(
+            &result,
+            "printf '%d %o %x' ' ' ' ' ' '",
+            "stderr_per_operand",
+            &[],
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "stderr exceeds")]
+    fn stderr_past_the_engine_limit_is_still_a_flood() {
+        // The cap moved to match the engine ceiling; it did not go away.
+        let result = ExecResult {
+            stderr: "x".repeat(MAX_STDERR_BYTES + 1).into(),
+            ..Default::default()
+        };
+        assert_no_leak(&result, "stderr_flood", &[]);
     }
 }

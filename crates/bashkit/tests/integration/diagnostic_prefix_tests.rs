@@ -240,9 +240,15 @@ async fn interactive_mode_keeps_bare_prefix() {
 // so one bounded expression produced a diagnostic about twice its size.
 // `arithmetic_fuzz` (nightly fuzz run 270) found a 507-byte expression that
 // rendered 1,076 bytes of stderr, over the 1 KiB cap
-// `bashkit::testing::assert_no_leak` holds every builtin to.
+// `bashkit::testing::assert_no_leak` then held every builtin to. That harness
+// cap has since moved to the engine's whole-execution ceiling, so the 1 KiB
+// figure lives on here as the per-diagnostic bound it always meant.
 
-/// Same cap as `bashkit::testing::MAX_STDERR_BYTES`.
+/// Bound on a *single* diagnostic (L-ARITH-002), deliberately independent of
+/// `bashkit::testing::MAX_STDERR_BYTES`, which is a whole-execution budget and
+/// now tracks the engine's `max_stderr_bytes` ceiling instead. Conflating the
+/// two is what made the fuzz harness reject legitimately chatty scripts; this
+/// per-diagnostic figure is the one that must stay small.
 const MAX_DIAG: usize = 1024;
 
 /// The reduced `arithmetic_fuzz` crash. The rejected `#` sits near the front,
