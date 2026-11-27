@@ -226,6 +226,11 @@ test("Ctrl+C aborts a held server connection via ctx.fetch: exit 130", async (t)
     // disconnect timeout further down.
     const arrived = await raceWithTimeout(requestArrived, 30000);
     t.true(arrived, "server received the held request before cancel");
+    // Stop here on failure. Everything below is about aborting a request that
+    // is in flight, so without one it would cancel nothing, wait out the full
+    // disconnect timeout and report a second failure pointing away from the
+    // cause. `t.teardown`/`finally` still close the server.
+    if (!arrived) return;
     // Timed from the cancel, not from `execute`: the bound below is about how
     // fast cancellation unwinds, and starting the clock earlier would fold in
     // however long dispatch and connection setup took on a slow runner.
