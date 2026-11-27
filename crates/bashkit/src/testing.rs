@@ -59,10 +59,59 @@ pub const UNIVERSAL_BANNED: &[&str] = &[
     "/.rustup/toolchains/",
 ];
 
-/// Cap on per-call stderr length. A single bad input must not flood
-/// stderr beyond this — catches "one bad regex generates 10 MB of
-/// library error spam" regressions.
+/// Cap on per-call stderr length for the **strict** per-builtin path
+/// ([`assert_no_leak`]). A hand-written `no_leak_*` case controls its own
+/// input, so it has no reason to produce kilobytes of diagnostics: this stays
+/// tight and catches "one bad regex generates 10 MB of library error spam"
+/// regressions.
+///
+/// Do not confuse this with the bound on a *single* diagnostic. One
+/// diagnostic staying small is a separate product invariant (L-ARITH-002,
+/// `MAX_ARITHMETIC_DIAG_ECHO`) covered by
+/// `tests/integration/diagnostic_prefix_tests.rs`.
 pub const MAX_STDERR_BYTES: usize = 1024;
+
+/// Cap on whole-execution stderr length for the **fuzz** path
+/// ([`assert_fuzz_invariants`]), which is looser than [`MAX_STDERR_BYTES`] on
+/// purpose.
+///
+/// A fuzz target inlines bytes it does not choose, and one that builds
+/// `ExecutionLimits::max_stderr_bytes(N)` is declaring N bytes acceptable for
+/// its scripts. The engine truncates only at that limit, so a harness cap
+/// below N rejects legitimately chatty-but-bounded output instead of catching
+/// anything. Sharing the strict 1024 figure did exactly that: Fuzz Testing run
+/// 45932089002 failed `printf_fuzz`, whose `printf '%d %o %x'` cycles its
+/// format over every operand and so emits one `invalid number` diagnostic per
+/// operand — 34 non-numeric operands rendered 1,283 bytes, inside the 4096 the
+/// target itself configures. Any script landing in 1024..=4096 failed by
+/// construction, so the cap was unsatisfiable rather than strict. At the
+/// largest configured ceiling the assertion says "the engine honored the
+/// stderr limit it was given", which is the regression it was written for.
+///
+/// # Residual: targets that configure nothing
+///
+/// Fifteen of the 26 fuzz targets configure 4096 and three configure 1024; the
+/// remaining eight take the 1 MiB default, which is 256x this cap. For those
+/// the harness — not a declared budget — is the operative bound, so this is a
+/// deliberate flood limit for them rather than a satisfiable-by-construction
+/// one, and the same false positive can recur there: a legitimate >4 KiB
+/// stderr the engine would permit still trips it. That is a narrow risk today
+/// (none of the eight drives a per-operand diagnostic loop the way `printf`
+/// does), and the fix when it happens is to give that target an explicit
+/// `max_stderr_bytes` declaring its real budget, not to raise this constant
+/// blindly.
+pub const MAX_FUZZ_STDERR_BYTES: usize = 4096;
+
+/// The largest `ExecutionLimits::max_stderr_bytes` any fuzz target explicitly
+/// builds. Lowering [`MAX_FUZZ_STDERR_BYTES`] below it would make the
+/// assertion unsatisfiable for those targets again, so the mismatch is a
+/// compile error rather than a nightly-only failure. Raise this if a target
+/// ever configures a larger budget.
+const FUZZ_TARGET_STDERR_LIMIT: usize = 4096;
+const _: () = assert!(
+    MAX_FUZZ_STDERR_BYTES >= FUZZ_TARGET_STDERR_LIMIT,
+    "MAX_FUZZ_STDERR_BYTES is tighter than the max_stderr_bytes the fuzz targets configure"
+);
 
 /// Magic value seeded into the host OS environment by `fuzz_init`. If
 /// this string ever appears in builtin stdout or stderr, a builtin is
@@ -294,16 +343,65 @@ pub fn input_echo_would_trip(input: &str) -> bool {
 /// contains `"`, so it needs no padding of its own.
 const DIAGNOSTIC_ECHO_PAD: (&str, &str) = (": ", ": ");
 
-/// True when `text` carries `needle` into a diagnostic — literally, or
-/// after the shell drops NUL bytes during word expansion, which turns
-/// `</r\0ustc/` into `/rustc/` and `\0{ code:` into ` { code:`.
+/// Characters a parser between script text and output *deletes* from the data
+/// it carries, so a needle can reach the output intact while the script spells
+/// it only with one of these spliced in. See [`carries_through_expansion`].
+///
+///  - `\0` — shell word expansion drops NUL, turning `</r\0ustc/` into
+///    `/rustc/` and `\0{ code:` into ` { code:`.
+///  - `"`, `'`, `\` — shell quote removal drops them, and the `csv` builtin's
+///    field parser drops `"` as its quote character.
+const DROPPED_BY_PARSERS: &[char] = &['\0', '"', '\'', '\\'];
+
+/// True when `text` carries `needle` into the output — literally, or after a
+/// parser on the way drops one of [`DROPPED_BY_PARSERS`] out of it.
 ///
 /// Comparing the raw bytes alone is what defeated `glob_fuzz`'s original
-/// pre-filter in runs 218 and 219. The `contains('\0')` guard keeps the
-/// allocation off the common path: almost no input has a NUL, and this
-/// runs once per pattern per fuzz iteration.
+/// pre-filter in runs 218 and 219, which is why NUL removal was folded in. The
+/// quote characters joined it for the same reason one step further down the
+/// pipeline: Fuzz Testing run 45932089002 reported `csv_fuzz` leaking the host
+/// canary from the input `BASHKIT_FUZZ_HOST_CANARY_47a83bcf_D"O_NOT_LEAK`.
+/// `echo` passed that through verbatim, then `csv headers` removed the `"` as
+/// a CSV quote and printed the canary whole, so the output carried a token the
+/// script text never spelled. libFuzzer harvests the canary from this very
+/// comparison (see [`input_echo_would_trip`]), so splicing a quote into it is
+/// a forgery the detector armed, not a host-env read.
+///
+/// The `contains` guard keeps the allocation off the common path: this runs
+/// once per pattern per fuzz iteration.
+///
+/// # This over-approximates, deliberately
+///
+/// The strip is unconditional and context-free, while a real parser drops
+/// these characters only in particular positions: a `"` inside single quotes
+/// is data the shell keeps, `\` is removed only in escape position, and the
+/// csv quote rules are not the shell's. So a match can be added for a splice
+/// no parser would actually have undone. Combined with attribution being
+/// whole-script and whole-stderr, that means a fragment spliced in one part of
+/// the script can excuse a genuine occurrence elsewhere in the same execution.
+///
+/// This is the same residual false negative [`script_explains`] documents, and
+/// it is accepted for the same reasons: the miss is per-input rather than
+/// per-bug, so the fuzzer reaches the same formatter through inputs that do
+/// not carry the splice, and the static source scan plus the per-tool
+/// [`assert_no_leak`] cases stay absolute. Erring toward over-approximation is
+/// the right direction here — under-approximating turns the nightly red on the
+/// detector's own dictionary, which is what runs 272, 304, 310 and 45932089002
+/// each did.
 fn carries_through_expansion(text: &str, needle: &str) -> bool {
-    text.contains(needle) || (text.contains('\0') && text.replace('\0', "").contains(needle))
+    if text.contains(needle) {
+        return true;
+    }
+    if text.contains(DROPPED_BY_PARSERS) {
+        let stripped: String = text
+            .chars()
+            .filter(|c| !DROPPED_BY_PARSERS.contains(c))
+            .collect();
+        if stripped.contains(needle) {
+            return true;
+        }
+    }
+    false
 }
 
 /// True when `script` itself spells `pat`, so a diagnostic that quotes any
@@ -545,8 +643,8 @@ fn is_clap_error_chrome_line(line: &str) -> bool {
 pub fn assert_fuzz_invariants(result: &ExecResult, script: &str, ctx: &str, tool_banned: &[&str]) {
     let stderr = &result.stderr;
     assert!(
-        stderr.len() <= MAX_STDERR_BYTES,
-        "[{ctx}] stderr exceeds {MAX_STDERR_BYTES} bytes ({} bytes):\n---\n{stderr}\n---",
+        stderr.len() <= MAX_FUZZ_STDERR_BYTES,
+        "[{ctx}] stderr exceeds {MAX_FUZZ_STDERR_BYTES} bytes ({} bytes):\n---\n{stderr}\n---",
         stderr.len()
     );
     let stripped = strip_real_shell_error_lines(stderr);
@@ -579,12 +677,22 @@ pub fn assert_fuzz_invariants(result: &ExecResult, script: &str, ctx: &str, tool
     }
 }
 
+/// Clip `s` to at most `max` bytes for a failure message.
+///
+/// Floors the cut to a character boundary: callers pass a fixed byte budget
+/// and the strings here are arbitrary fuzz output, so slicing at `max`
+/// directly panics whenever that offset lands inside a multi-byte character —
+/// turning a clear assertion message into an unrelated backtrace on exactly
+/// the path that reports a canary leak.
 fn truncate(s: &str, max: usize) -> String {
     if s.len() <= max {
-        s.to_string()
-    } else {
-        format!("{}...<truncated>", &s[..max.min(s.len())])
+        return s.to_string();
     }
+    let mut end = max;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}...<truncated>", &s[..end])
 }
 
 /// Decode one CPython HTTP bridge request record (the bytes the guest hands
@@ -834,10 +942,14 @@ mod tests {
     #[test]
     fn attribution_does_not_relax_the_stderr_cap() {
         // A script that spells a banned shape still may not flood stderr.
+        // Sized off the constant so raising the cap cannot silently turn this
+        // into a no-op, the way the literal `repeat(200)` did.
+        const SHAPE: &str = "Undefined::";
         let result = ExecResult {
-            stderr: "Undefined::".repeat(200).into(),
+            stderr: SHAPE.repeat(MAX_FUZZ_STDERR_BYTES / SHAPE.len() + 1).into(),
             ..Default::default()
         };
+        assert!(result.stderr.len() > MAX_FUZZ_STDERR_BYTES);
         let err = std::panic::catch_unwind(|| {
             assert_fuzz_invariants(&result, "echo Undefined::", "cap_still_on", &[]);
         })
@@ -1032,5 +1144,116 @@ mod tests {
         let s = "Usage: see Span { for details\n";
         let stripped = strip_real_shell_error_lines(s);
         assert!(stripped.contains("Span {"), "stripped: {stripped:?}");
+    }
+
+    /// Fuzz Testing run 45932089002, `csv_fuzz`: the input carried the canary
+    /// with a `"` spliced into it, `echo` passed it through verbatim, and
+    /// `csv headers` removed the quote as a CSV quote character — so the
+    /// canary reached stdout whole while the script text never spelled it.
+    /// End-to-end on purpose: the quote removal belongs to the csv builtin,
+    /// so a hand-built `ExecResult` would not prove the path exists.
+    #[tokio::test]
+    async fn canary_forged_with_a_quote_the_csv_parser_drops_is_not_a_leak() {
+        let (head, tail) = FUZZ_HOST_CANARY.split_at(FUZZ_HOST_CANARY.len() - 10);
+        let forged = format!("{head}\"{tail}");
+        assert!(
+            !forged.contains(FUZZ_HOST_CANARY),
+            "forgery must not be literal"
+        );
+        let script = format!("echo '{}' | csv headers", forged.replace('\'', "'\\''"));
+        let result = run(&script).await;
+        // Precondition: the builtin really does reconstitute the canary.
+        assert!(
+            result.stdout.contains(FUZZ_HOST_CANARY),
+            "csv no longer drops the quote, so this regression is unreachable: {:?}",
+            result.stdout.to_string()
+        );
+        // The script explains it, so this is a forgery and not a host-env read.
+        assert_fuzz_invariants(&result, &script, "canary_quote_forge", &[]);
+    }
+
+    #[test]
+    #[should_panic(expected = "FUZZ canary leaked into stdout")]
+    fn a_script_with_quotes_that_cannot_spell_the_canary_still_leaks() {
+        // Dropping quote characters must not blanket-excuse any script that
+        // merely contains one: this script quotes something else entirely.
+        let result = ExecResult {
+            stdout: FUZZ_HOST_CANARY.into(),
+            ..Default::default()
+        };
+        assert_fuzz_invariants(
+            &result,
+            "echo '\"unrelated\"' | csv headers",
+            "canary_leak_quoted",
+            &[],
+        );
+    }
+
+    /// Fuzz Testing run 45932089002, `printf_fuzz`: `printf '%d %o %x'` cycles
+    /// its format over every operand, so N non-numeric operands emit N
+    /// `invalid number` diagnostics. Thirty-four of them came to 1,283 bytes —
+    /// bounded, legitimate output well inside the `max_stderr_bytes(4096)` the
+    /// target configures, yet over the harness's old 1 KiB cap.
+    #[test]
+    fn per_operand_diagnostics_within_the_engine_limit_are_not_a_flood() {
+        let line = "bash: line 1: printf:  : invalid number\n";
+        let stderr = line.repeat(33);
+        assert!(
+            (1024..=4096).contains(&stderr.len()),
+            "fixture must land in the band the old cap rejected: {} bytes",
+            stderr.len()
+        );
+        let result = ExecResult {
+            stderr: stderr.into(),
+            ..Default::default()
+        };
+        assert_fuzz_invariants(
+            &result,
+            "printf '%d %o %x' ' ' ' ' ' '",
+            "stderr_per_operand",
+            &[],
+        );
+    }
+
+    #[test]
+    fn truncate_cuts_on_a_char_boundary() {
+        // The canary assertions hand `truncate` arbitrary fuzz output with a
+        // fixed 512-byte budget, so a cut landing inside a multi-byte
+        // character used to panic while *reporting* a leak.
+        let s = "é".repeat(400); // 2 bytes each; 512 splits the 256th
+        assert!(!s.is_char_boundary(512 - 1) || !s.is_char_boundary(511));
+        let out = truncate(&s, 511);
+        assert!(out.ends_with("...<truncated>"));
+        assert!(out.len() < s.len());
+        // Multi-byte at the very first boundary, and the no-op path.
+        assert_eq!(truncate("ée", 1), "...<truncated>");
+        assert_eq!(truncate("abc", 3), "abc");
+    }
+
+    #[test]
+    #[should_panic(expected = "stderr exceeds")]
+    fn stderr_past_the_strict_cap_is_still_a_flood() {
+        // The fuzz path's cap moved; the strict path's did not go away.
+        let result = ExecResult {
+            stderr: "x".repeat(MAX_STDERR_BYTES + 1).into(),
+            ..Default::default()
+        };
+        assert_no_leak(&result, "stderr_flood", &[]);
+    }
+
+    #[test]
+    #[should_panic(expected = "stderr exceeds")]
+    fn loosening_the_fuzz_cap_did_not_loosen_the_strict_path() {
+        // Regression for the review finding on this change: both paths read one
+        // shared constant, so raising it for the fuzz targets silently let a
+        // builtin emit 1-4 KiB of Debug spam past `assert_no_leak`, which the
+        // threat model states is absolute. Sized between the two caps, so it
+        // fails if they are ever collapsed back into one.
+        const { assert!(MAX_STDERR_BYTES < MAX_FUZZ_STDERR_BYTES) }
+        let result = ExecResult {
+            stderr: "x".repeat(MAX_FUZZ_STDERR_BYTES).into(),
+            ..Default::default()
+        };
+        assert_no_leak(&result, "strict_cap_unrelaxed", &[]);
     }
 }

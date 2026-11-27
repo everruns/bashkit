@@ -148,14 +148,62 @@ test("a graceful return near the deadline leaves the builtin signal intact", asy
   }
 });
 
+/**
+ * Resolve true when `signal` settles, false if `ms` elapses first. The timer is
+ * always cleared, so a won race leaves nothing holding the event loop open.
+ */
+async function raceWithTimeout(
+  signal: Promise<unknown>,
+  ms: number,
+): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      signal.then(() => true),
+      new Promise<boolean>((resolve) => {
+        timer = setTimeout(() => resolve(false), ms);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 test("Ctrl+C aborts a held server connection via ctx.fetch: exit 130", async (t) => {
   const http = await import("node:http");
-  let serverAborted = false;
+  // This test cancels an *in-flight* request, so it has to know the request is
+  // actually in flight before cancelling. It used to assume so after a fixed
+  // 200ms, which is a race: `bash.execute` has to reach the native
+  // interpreter, dispatch the builtin, and let undici open the connection
+  // first, and sibling tests in this file show builtin dispatch taking
+  // 1.3-1.5s on `windows-latest`. When 200ms ran out first, `cancel()` landed
+  // before the builtin ran, so no request was ever sent, the handler never
+  // ran, and nothing could ever report a disconnect — the assertion failed on
+  // a request that did not exist. That is the windows-latest flake in JS runs
+  // 45816668178 and 45980836967, and it is why a longer wait for the
+  // disconnect did not help: the two Windows lanes disagree run to run, so
+  // roughly half the time the 200ms won.
+  //
+  // So both halves now wait on events instead of the clock: `requestArrived`
+  // gates the cancel, and `disconnected` resolves on the first signal the
+  // client went away. Watching the socket as well as the request drops the
+  // assumption that `req` 'close' is the event that lands first on every
+  // platform.
+  let sawRequest!: () => void;
+  const requestArrived = new Promise<void>((resolve) => {
+    sawRequest = resolve;
+  });
+  let sawDisconnect!: () => void;
+  const disconnected = new Promise<void>((resolve) => {
+    sawDisconnect = resolve;
+  });
   const server = http.createServer((req, _res) => {
     // Hold the response indefinitely; detect the client going away.
-    req.on("close", () => {
-      serverAborted = true;
-    });
+    sawRequest();
+    req.on("close", sawDisconnect);
+    req.on("aborted", sawDisconnect);
+    req.socket.on("close", sawDisconnect);
+    req.socket.on("error", sawDisconnect);
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
   t.teardown(() => server.close());
@@ -171,17 +219,28 @@ test("Ctrl+C aborts a held server connection via ctx.fetch: exit 130", async (t)
       },
     });
     await bash.execute("MARKER=kept");
-    const start = Date.now();
     const pending = bash.execute("fetchHold");
-    await new Promise((r) => setTimeout(r, 200));
+    // Wait for the server to actually hold the request, so the cancel below
+    // aborts something that exists. Bounded so a request that never arrives
+    // fails here, where the cause is obvious, rather than as a mystery
+    // disconnect timeout further down.
+    const arrived = await raceWithTimeout(requestArrived, 30000);
+    t.true(arrived, "server received the held request before cancel");
+    // Stop here on failure. Everything below is about aborting a request that
+    // is in flight, so without one it would cancel nothing, wait out the full
+    // disconnect timeout and report a second failure pointing away from the
+    // cause. `t.teardown`/`finally` still close the server.
+    if (!arrived) return;
+    // Timed from the cancel, not from `execute`: the bound below is about how
+    // fast cancellation unwinds, and starting the clock earlier would fold in
+    // however long dispatch and connection setup took on a slow runner.
+    const start = Date.now();
     bash.cancel(); // programmatic Ctrl+C
     const cancelled = await pending;
     const elapsed = Date.now() - start;
     t.is(cancelled.exitCode, 130);
     t.true(elapsed < 10000, `cancellation took ${elapsed}ms`);
-    for (let i = 0; i < 100 && !serverAborted; i++) {
-      await new Promise((r) => setTimeout(r, 20));
-    }
+    const serverAborted = await raceWithTimeout(disconnected, 20000);
     t.true(serverAborted, "server saw the connection abort");
     const next = await bash.execute("echo next:$MARKER");
     t.is(next.exitCode, 0);

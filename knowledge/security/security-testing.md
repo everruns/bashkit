@@ -291,6 +291,33 @@ hand-written `no_leak_*` cases must not put a banned shape in their input.
 Replays of the inputs that turned nightly fuzz runs red live in
 `crates/bashkit/tests/fuzz_crash_regressions.rs`.
 
+Attribution also looks through the characters a parser on the way *deletes*
+from the data it carries (`DROPPED_BY_PARSERS`): NUL, which shell word
+expansion drops, and `"`/`'`/`\`, which shell quote removal and the `csv`
+field parser drop. A needle spliced with one of those still reaches the output
+intact, so the script has to be matched the same way -- run 45932089002 flagged
+the host canary from a `csv` field spelled `..._D"O_NOT_LEAK`.
+
+Keep the three stderr budgets distinct, and do not let one constant serve two
+of them. "Cap diagnostics at 1 KB" above is the bound on a *single* diagnostic
+(L-ARITH-002). `MAX_STDERR_BYTES` (1 KiB) is the per-call budget for the strict
+path, `assert_no_leak`, whose cases choose their own input. The fuzz path uses
+`MAX_FUZZ_STDERR_BYTES` (4 KiB), the largest
+`ExecutionLimits::max_stderr_bytes` any target configures, because a fuzz
+target inlines bytes it did not choose and the engine emits up to the limit
+that target declared — so a tighter harness figure there fails a legitimately
+chatty script rather than catching anything. Run 45932089002 hit this on
+`printf_fuzz`, where one `invalid number` diagnostic per operand came to 1,283
+bytes.
+
+Raising a single shared constant is the trap: it moves the strict cap too,
+which is why these are now separate and
+`loosening_the_fuzz_cap_did_not_loosen_the_strict_path` guards the split. The
+eight targets that configure no limit take the 1 MiB default, so for them the
+4 KiB harness figure is the operative bound rather than a satisfiable one — if
+one of them ever emits legitimately more, give it an explicit
+`max_stderr_bytes` rather than raising the harness cap.
+
 ## Filesystem Certification
 
 The backend-neutral helper in

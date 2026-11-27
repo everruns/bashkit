@@ -830,3 +830,18 @@ cross-runtime compatibility.
 2. runtime-compat tests use only `node:test`, `node:assert`, `node:module`
 3. Files are plain `.mjs` (no TypeScript)
 4. Keep files focused, one file per concern area
+5. A test that needs something to have *happened* before it acts waits on the
+   event that says so, never on a fixed delay. The ava suite runs on
+   `windows-latest` as well as ubuntu (the `Runtime callbacks` lane of
+   `js.yml`, which gates `JS Check`), and builtin dispatch there can take
+   1.3-1.5s, so a sleep tuned on Linux loses the race about half the time.
+   This cost two red runs on main (45816668178, 45980836967): a cancellation
+   test slept 200ms assuming its `ctx.fetch` was in flight, then cancelled.
+   When dispatch had not finished, no request was ever sent, so the server
+   handler never ran and no amount of waiting afterwards could observe the
+   disconnect the test asserted — the failure looked like a slow platform and
+   was really a request that did not exist. Reproduce the shape with
+   `bash.cancel()` before dispatch: exit 130, zero requests, zero closes.
+   Gate on the real signal (`requestArrived`), and resolve the outcome from
+   every event that could report it, raced against one generous timeout, so a
+   pass is immediate and only a genuine failure fails

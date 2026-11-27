@@ -634,6 +634,59 @@ static source scan and the per-tool `assert_no_leak` cases stay absolute. Only
 a formatter whose leak is *triggered* by parsing the shape is genuinely
 hidden.
 
+Run 45932089002 turned both halves of that design red again, each for a
+reason the earlier runs had not reached, and neither was a product bug.
+
+`csv_fuzz` reported the host canary in stdout from the input
+`BASHKIT_FUZZ_HOST_CANARY_47a83bcf_D"O_NOT_LEAK`. `echo` passed the bytes
+through verbatim and `csv headers` then removed the `"` as its CSV quote
+character, printing the canary whole — so the output carried a token the script
+text never spelled, and attribution could not account for it. This is the
+run-272 forgery one parser further down the pipeline: libFuzzer still harvests
+the canary from the detector's own `contains`, and a spliced quote now survives
+the comparison that a spliced NUL already did not. `carries_through_expansion`
+therefore strips `DROPPED_BY_PARSERS` as well as NUL. Stripping can only add
+matches, and no banned shape and no part of the canary contains any of those
+characters, so the matches it adds are a parser dropping punctuation out of
+script text.
+
+That is an over-approximation, deliberately. The strip is unconditional and
+context-free, while a real parser drops those characters only in particular
+positions — a `"` inside single quotes is data the shell keeps, `\` goes only
+in escape position, and the csv quote rules are not the shell's — so a match
+can be added for a splice no parser would have undone. Combined with
+attribution being whole-script and whole-stderr, a fragment spliced in one part
+of the script can excuse a genuine occurrence elsewhere in the same execution.
+This is the same residual false negative `script_explains` carries, accepted
+for the same reasons, and erring toward over-approximation is the right
+direction here: under-approximating is what turns the nightly red on the
+detector's own dictionary, as runs 272, 304, 310 and 45932089002 each did.
+
+`printf_fuzz` tripped the stderr byte cap with 1,283 bytes. `printf '%d %o %x'`
+cycles its format over every operand, so 34 non-numeric operands drew 34
+`invalid number` diagnostics: output linear in the input, bounded, and well
+inside the `max_stderr_bytes(4096)` the target itself configures. The harness
+was holding a whole-execution budget to a single diagnostic's size, so any
+script landing in 1024..=4096 was guaranteed to fail — the cap was
+unsatisfiable rather than strict. The fuzz path now has its own
+`MAX_FUZZ_STDERR_BYTES` at the largest configured ceiling, which preserves what
+the assertion was written for: it says the engine honored the stderr limit it
+was given, and 10 MB of library spam still fails.
+
+The first attempt raised the one shared `MAX_STDERR_BYTES` instead, which also
+moved `assert_no_leak` — the strict path the threat model calls absolute — from
+1 KiB to 4 KiB, letting a builtin emit kilobytes of Debug spam past it. Review
+caught it; the caps are now separate constants and
+`loosening_the_fuzz_cap_did_not_loosen_the_strict_path` fails if they are ever
+collapsed back. Attribution still cannot relax either
+(`attribution_does_not_relax_the_stderr_cap`, now sized off the constant so
+raising a cap cannot quietly turn it into a no-op). Eight targets configure no
+limit at all and so take the 1 MiB default; for them the harness cap is the
+operative bound rather than a satisfiable one, so the same false positive can
+recur there, and the fix then is to give that target an explicit
+`max_stderr_bytes`. Crash-unit replays for both failures live in
+`crates/bashkit/tests/fuzz_crash_regressions.rs`.
+
 Display of a **Bashkit** error is not a safe formatter either: `Error`'s own
 variants stringify as Rust enum shapes (`io error: `, `internal error: `) that
 no shell prints, and `internal error:` is in `UNIVERSAL_BANNED`. Builtins
@@ -673,13 +726,30 @@ machinery (`bashkit::testing::assert_fuzz_invariants`):
   assertion is scoped by attribution: a canary the executed script
   itself contains is the shell echoing input back, not a host read
   (run 272, above), so only an unexplained occurrence fails.
+  Attribution looks through the characters a parser on the way *deletes*
+  from the data it carries (`DROPPED_BY_PARSERS`: NUL from shell word
+  expansion, and `"`/`'`/`\` from shell quote removal or the `csv`
+  field parser), because a canary spliced with one of those still
+  arrives intact (run 45932089002, below).
 - **TM-INF-016 (host paths)**: `UNIVERSAL_BANNED` includes `/rustc/`,
   `/.cargo/registry/`, `target/{debug,release}/deps/`,
   `/.rustup/toolchains/` so leaked panic backtraces / build-artifact
   paths fail the assertion.
-- **stderr flooding**: per-call stderr capped at `MAX_STDERR_BYTES`
-  (1 KB), one bad input that produces 10 MB of library-error spam
-  trips this.
+- **stderr flooding**: one bad input that produces 10 MB of
+  library-error spam trips this. There are **two** caps, and they are
+  deliberately different. The strict per-builtin path
+  (`assert_no_leak`) stays at `MAX_STDERR_BYTES` (1 KiB): a
+  hand-written `no_leak_*` case controls its own input and has no
+  reason to emit kilobytes. The fuzz path (`assert_fuzz_invariants`)
+  uses `MAX_FUZZ_STDERR_BYTES` (4 KiB), the largest `max_stderr_bytes`
+  any target configures, because a target inlines bytes it did not
+  choose and the engine truncates only at the limit that target
+  declared — so a tighter harness number there is unsatisfiable rather
+  than strict (run 45932089002, below). Keeping them separate matters:
+  sharing one constant is how raising the fuzz figure first silently
+  relaxed the strict path. The bound on a *single* diagnostic is a
+  third, separate invariant (L-ARITH-002,
+  `MAX_ARITHMETIC_DIAG_ECHO`), also 1 KiB.
 
 Fuzz/proptest targets inline arbitrary input bytes into shell scripts, so bash/ls/uutils
 clap CLIs echo the input verbatim in error chrome (`bash: <cmd>: command not found`,

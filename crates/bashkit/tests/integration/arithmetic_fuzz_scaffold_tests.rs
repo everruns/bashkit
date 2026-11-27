@@ -2,7 +2,7 @@
 //
 // The target wraps its input in `echo $((...))` and asserts the fuzz
 // invariants: no panic, and stderr that neither leaks Debug shapes/host paths
-// nor runs past `bashkit::testing::MAX_STDERR_BYTES`.
+// nor runs past `bashkit::testing::MAX_FUZZ_STDERR_BYTES`.
 //
 // An arithmetic error names the expression and then the unparsed rest as the
 // "error token". Both come from the script, so an expression whose first
